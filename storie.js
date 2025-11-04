@@ -1268,9 +1268,34 @@ class LuaState {
                 return 1;
             }
             
-            // Check story modules
+            // PRIORITY 1: Check Gist Lua files (external modules)
+            if (engine.gistLuaFiles && engine.gistLuaFiles[moduleName]) {
+                const code = engine.gistLuaFiles[moduleName];
+                console.log(`Loading Lua module from gist: ${moduleName}`);
+                
+                if (fengari.lauxlib.luaL_loadstring(L, fengari.to_luastring(code)) === 0) {
+                    if (lua.lua_pcall(L, 0, 1, 0) === 0) {
+                        loadedModules[moduleName] = true;
+                        lua.lua_pushvalue(L, -1);
+                        lua.lua_setglobal(L, fengari.to_luastring("_LOADED_" + moduleName));
+                        return 1;
+                    } else {
+                        const err = fengari.to_jsstring(lua.lua_tostring(L, -1));
+                        lua.lua_pushstring(L, fengari.to_luastring("Error executing gist module '" + moduleName + "': " + err));
+                        return lua.lua_error(L);
+                    }
+                } else {
+                    const err = fengari.to_jsstring(lua.lua_tostring(L, -1));
+                    lua.lua_pushstring(L, fengari.to_luastring("Error loading gist module '" + moduleName + "': " + err));
+                    return lua.lua_error(L);
+                }
+            }
+            
+            // PRIORITY 2: Check story embedded modules (```lua module: name)
             if (engine.story && engine.story.modules[moduleName]) {
                 const code = engine.story.modules[moduleName];
+                console.log(`Loading embedded Lua module: ${moduleName}`);
+                
                 if (fengari.lauxlib.luaL_loadstring(L, fengari.to_luastring(code)) === 0) {
                     if (lua.lua_pcall(L, 0, 1, 0) === 0) {
                         loadedModules[moduleName] = true;
@@ -2181,12 +2206,21 @@ class StorieEngine {
                 
                 const data = await response.json();
                 
-                // Find markdown file in gist
+                // Find markdown file and collect Lua files
                 let markdown = null;
+                const luaFiles = {};
+                
                 for (const [filename, file] of Object.entries(data.files)) {
                     if (filename.endsWith('.md') || filename.endsWith('.markdown')) {
-                        markdown = file.content;
-                        break;
+                        // Use first markdown file found
+                        if (!markdown) {
+                            markdown = file.content;
+                        }
+                    } else if (filename.endsWith('.lua')) {
+                        // Store Lua file for require() system
+                        const moduleName = filename.replace('.lua', '');
+                        luaFiles[moduleName] = file.content;
+                        console.log(`Found Lua module in gist: ${moduleName}`);
                     }
                 }
                 
@@ -2200,16 +2234,21 @@ class StorieEngine {
                     }
                 }
                 
+                // Store Lua files for the Lua state to access
+                this.gistLuaFiles = luaFiles;
+                
                 return markdown;
             } catch (error) {
                 console.error('Failed to load gist:', error);
                 showError(`Failed to load gist ${gistId}: ${error.message}. Loading default story instead.`);
                 // Fallback to default
+                this.gistLuaFiles = {};
                 return DEFAULT_MARKDOWN;
             }
         }
         
         // No gist parameter, use default markdown
+        this.gistLuaFiles = {};
         return DEFAULT_MARKDOWN;
     }
 

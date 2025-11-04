@@ -1,6 +1,6 @@
 ---
 title: "The Depths of Khel-Daran"
-author: "Interactive Dungeon Adventure"
+author: "Maddest Labs"
 minWidth: 80
 minHeight: 24
 ---
