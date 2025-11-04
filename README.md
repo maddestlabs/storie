@@ -12,8 +12,8 @@ Test out the engine right here on GitHub: [Storie](maddestlabs.github.io/storie/
 Point to a gist markdown document to see it render with '?gist=xxxxxx'.
 
 For example:
-- [Depths Game Example](https://maddestlabs.github.io/storie/?gist=953d53977dffc6a0cc3ba3bf60962d44)
-- [TUI Example](https://maddestlabs.github.io/storie/?gist=4e17084698c56e73b665334b61b1622f)
+- [Depths Game Example](https://maddestlabs.github.io/storie/?gist=953d53977dffc6a0cc3ba3bf60962d44) | [Gist](https://gist.github.com/R3V1Z3/953d53977dffc6a0cc3ba3bf60962d44)
+- [TUI Example](https://maddestlabs.github.io/storie/?gist=4e17084698c56e73b665334b61b1622f) | [Gist](https://gist.github.com/R3V1Z3/4e17084698c56e73b665334b61b1622f)
 
 ## Features
 - Made with Nim. Super fast compilation with small executables (<1.5MB).
