@@ -6,6 +6,15 @@ Storie is sort of a terminal game engine. It's built with real-time interaction 
 
 The engine lets users craft interactive experiences with Markdown and executable Lua code blocks.
 
+## Try it out
+Test out the engine right here on GitHub: [Storie](maddestlabs.github.io/storie/)
+
+Point to a gist markdown document to see it render with '?gist=xxxxxx'.
+
+For example:
+- [Depths Game Example](https://maddestlabs.github.io/storie/?gist=953d53977dffc6a0cc3ba3bf60962d44)
+- [TUI Example](https://maddestlabs.github.io/storie/?gist=4e17084698c56e73b665334b61b1622f)
+
 ## Features
 - Made with Nim. Super fast compilation with small executables (<1.5MB).
 - Single-file distribution. Easily bundle a Markdown file and Lua modules into the executable for easy distribution as a single file.
