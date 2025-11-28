@@ -198,9 +198,19 @@ if [ "$OUTPUT_DIR" != "web" ]; then
         cp web/index.html "$OUTPUT_DIR/index.html"
         echo "  - $OUTPUT_DIR/index.html (copied from web/)"
     fi
+    # Copy index.md if it exists (needed at runtime)
+    if [ -f "index.md" ]; then
+        cp index.md "$OUTPUT_DIR/index.md"
+        echo "  - $OUTPUT_DIR/index.md (runtime content)"
+    fi
 else
     echo "  - $OUTPUT_DIR/backstorie.js (JavaScript interface)"
     echo "  - $OUTPUT_DIR/index.html (HTML template)"
+    # Copy index.md if it exists (needed at runtime)
+    if [ -f "index.md" ]; then
+        cp index.md "$OUTPUT_DIR/index.md"
+        echo "  - $OUTPUT_DIR/index.md (runtime content)"
+    fi
 fi
 
 # Check for required supporting files
