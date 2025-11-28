@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backstorie - Terminal Engine</title>
+    <style>
+        @font-face {
+            font-family: 'AnomalyMono';
+            src: url('assets/AnomalyMono-Powerline.otf') format('opentype');
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #000;
+            overflow: hidden;
+            font-family: 'AnomalyMono', 'Consolas', 'Monaco', monospace;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+        
+        #terminal {
+            display: block;
+            background: #000;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            font-smooth: never;
+            -webkit-font-smoothing: none;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        
+        #loading {
+            position: absolute;
+            color: #0f0;
+            font-size: 16px;
+            text-align: center;
+            z-index: 10;
+        }
+        
+        #loading.hidden {
+            display: none;
+        }
+        
+        .error {
+            color: #f00;
+            background: #300;
+            padding: 20px;
+            border: 2px solid #f00;
+            max-width: 600px;
+            margin: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="loading">
+            <div>Loading Backstorie...</div>
+            <div id="progress"></div>
+        </div>
+        <canvas id="terminal" tabindex="0"></canvas>
+    </div>
+    
+    <script>
+        // Setup Module before loading WASM (Emscripten will merge with this)
+        const canvas = document.getElementById('terminal');
+        const loading = document.getElementById('loading');
+        const progress = document.getElementById('progress');
+        const container = document.getElementById('container');
+        
+        var Module = {
+            canvas: canvas,
+            print: function(text) {
+                console.log(text);
+            },
+            printErr: function(text) {
+                console.error(text);
+            },
+            setStatus: function(text) {
+                if (text) {
+                    progress.textContent = text;
+                } else {
+                    loading.classList.add('hidden');
+                }
+            },
+            onRuntimeInitialized: function() {
+                if (typeof initBackstorie === 'function') {
+                    initBackstorie();
+                } else {
+                    console.error('initBackstorie function not found. Make sure backstorie.js is loaded.');
+                }
+            }
+        };
+    </script>
+    
+    <!-- Load our terminal interface first -->
+    <script src="backstorie.js"></script>
+    
+    <!-- Then load the WASM module -->
+    <script src="backstorie.wasm.js" onerror="document.getElementById('container').innerHTML = '<div class=\'error\'><h2>Failed to load WASM module</h2><p>Make sure backstorie.wasm.js exists in the same directory.</p></div>';"></script>
+</body>
+</html>

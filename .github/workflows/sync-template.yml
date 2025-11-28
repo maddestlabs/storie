@@ -1,0 +1,131 @@
+name: Sync from Backstorie Template
+
+# This workflow syncs updates from the Backstorie template repository.
+# - In the Backstorie repo itself: Does nothing (or can sync from your upstream if you fork it)
+# - In repos created from template: Available to manually pull updates from maddestlabs/backstorie
+
+on:
+  workflow_dispatch:      # Manual triggering only
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          submodules: false
+
+      - name: Detect if this is a template-derived repo
+        id: detect
+        run: |
+          REPO_NAME="${{ github.repository }}"
+          
+          # Check if this is the original Backstorie repo
+          if [ "$REPO_NAME" = "maddestlabs/backstorie" ]; then
+            echo "is_template_origin=true" >> $GITHUB_OUTPUT
+            echo "This is the original Backstorie repository. Skipping sync."
+          else
+            echo "is_template_origin=false" >> $GITHUB_OUTPUT
+            echo "This is a template-derived repository. Will sync from upstream."
+          fi
+
+      - name: Configure git
+        if: steps.detect.outputs.is_template_origin == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        if: steps.detect.outputs.is_template_origin == 'false'
+        run: |
+          git remote add upstream https://github.com/maddestlabs/backstorie.git || true
+          git fetch upstream
+
+      - name: Create sync branch
+        if: steps.detect.outputs.is_template_origin == 'false'
+        id: create_branch
+        run: |
+          BRANCH_NAME="sync-backstorie-$(date +%Y%m%d-%H%M%S)"
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          git checkout -b "$BRANCH_NAME"
+
+      - name: Merge upstream changes
+        if: steps.detect.outputs.is_template_origin == 'false'
+        id: merge
+        continue-on-error: true
+        run: |
+          # Try to merge, handling conflicts gracefully
+          if git merge upstream/main --no-edit --allow-unrelated-histories; then
+            echo "merge_status=success" >> $GITHUB_OUTPUT
+            echo "Merge completed successfully"
+          else
+            echo "merge_status=conflicts" >> $GITHUB_OUTPUT
+            echo "Merge has conflicts - will create PR for manual resolution"
+            # Stage all changes (including conflicts)
+            git add -A
+            git commit -m "chore: sync from backstorie template (has conflicts)" || true
+          fi
+          
+          # Restore index.nim from HEAD to exclude it from sync
+          if [ -f "index.nim" ]; then
+            git checkout HEAD -- index.nim || true
+            echo "Excluded index.nim from sync"
+          fi
+
+      - name: Push sync branch
+        if: steps.detect.outputs.is_template_origin == 'false'
+        run: |
+          git push -u origin "${{ steps.create_branch.outputs.branch_name }}"
+
+      - name: Create Pull Request
+        if: steps.detect.outputs.is_template_origin == 'false'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ steps.create_branch.outputs.branch_name }}
+          title: '🔄 Sync from Backstorie template'
+          body: |
+            ## Automated Template Sync
+            
+            This PR syncs updates from the [Backstorie template repository](https://github.com/maddestlabs/backstorie).
+            
+            ### What to do:
+            
+            1. **Review the changes** carefully to understand what's being updated
+            2. **Test locally** to ensure compatibility with your customizations
+            3. **Resolve conflicts** if any (see Files Changed tab)
+            4. **Merge** when ready
+            
+            ### Merge Status
+            
+            ${{ steps.merge.outputs.merge_status == 'conflicts' && '⚠️ **Has Conflicts** - Manual resolution required' || '✅ **Clean Merge** - No conflicts detected' }}
+            
+            ### Tips for Conflict Resolution
+            
+            - Core engine files (`backstorie.nim`, `lib/*`) should generally accept upstream changes
+            - Your custom files should keep your changes
+            - Configuration files may need manual merging
+            
+            ---
+            
+            🤖 This PR was created by a manually-triggered GitHub Actions workflow.
+            
+            To disable this workflow entirely, delete or disable `.github/workflows/sync-template.yml`
+          labels: |
+            dependencies
+            automated
+            template-sync
+          draft: ${{ steps.merge.outputs.merge_status == 'conflicts' }}
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ "${{ steps.detect.outputs.is_template_origin }}" = "true" ]; then
+            echo "✅ Running in original Backstorie repo - no sync needed"
+          elif [ "${{ steps.detect.outputs.is_template_origin }}" = "false" ]; then
+            echo "✅ Sync PR created for template-derived repository"
+          fi
