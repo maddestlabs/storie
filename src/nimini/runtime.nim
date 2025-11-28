@@ -1,6 +1,6 @@
 # Clean, strict, Nim compatible runtime for Nimini
 
-import std/[tables, math]
+import std/[tables, math, strutils]
 import ast
 
 # ------------------------------------------------------------------------------
@@ -180,15 +180,25 @@ proc toFloat(v: Value): float =
   case v.kind
   of vkInt: float(v.i)
   of vkFloat: v.f
+  of vkString:
+    try:
+      parseFloat(v.s)
+    except:
+      quit "Runtime Error: Cannot convert string '" & v.s & "' to float"
   else:
-    quit "Expected numeric value, got " & $v.kind
+    quit "Runtime Error: Expected numeric value, got " & $v.kind & " (value: " & $v & ")"
 
 proc toInt(v: Value): int =
   case v.kind
   of vkInt: v.i
   of vkFloat: int(v.f)
+  of vkString:
+    try:
+      parseInt(v.s)
+    except:
+      quit "Runtime Error: Cannot convert string '" & v.s & "' to int"
   else:
-    quit "Expected numeric value, got " & $v.kind
+    quit "Runtime Error: Expected numeric value, got " & $v.kind & " (value: " & $v & ")"
 
 # ------------------------------------------------------------------------------
 # Return Propagation
@@ -269,6 +279,9 @@ proc evalExpr(e: Expr; env: ref Env): Value =
         valInt(-toInt(v))
     of "not":
       valBool(not toBool(v))
+    of "$":
+      # String conversion operator - convert any value to string
+      valString($v)
     else:
       quit "Unknown unary op: " & e.unaryOp
 
@@ -291,34 +304,44 @@ proc evalExpr(e: Expr; env: ref Env): Value =
     let l = evalExpr(e.left, env)
     let r = evalExpr(e.right, env)
 
-    # Check if both operands are integers for arithmetic ops
-    let bothInts = (l.kind == vkInt and r.kind == vkInt)
-    let lf = toFloat(l)
-    let rf = toFloat(r)
-
     case e.op
-    of "+":
-      if bothInts: valInt(l.i + r.i)
-      else: valFloat(lf + rf)
-    of "-":
-      if bothInts: valInt(l.i - r.i)
-      else: valFloat(lf - rf)
-    of "*":
-      if bothInts: valInt(l.i * r.i)
-      else: valFloat(lf * rf)
-    of "/":
-      if bothInts: valInt(l.i div r.i)
-      else: valFloat(lf / rf)
-    of "%":
-      if bothInts: valInt(l.i mod r.i)
-      else: valFloat(lf mod rf)
+    of "+", "-", "*", "/", "%":
+      # Arithmetic operators - check if both operands are integers
+      let bothInts = (l.kind == vkInt and r.kind == vkInt)
+      case e.op
+      of "+":
+        if bothInts: valInt(l.i + r.i)
+        else: valFloat(toFloat(l) + toFloat(r))
+      of "-":
+        if bothInts: valInt(l.i - r.i)
+        else: valFloat(toFloat(l) - toFloat(r))
+      of "*":
+        if bothInts: valInt(l.i * r.i)
+        else: valFloat(toFloat(l) * toFloat(r))
+      of "/":
+        if bothInts: valInt(l.i div r.i)
+        else: valFloat(toFloat(l) / toFloat(r))
+      of "%":
+        if bothInts: valInt(l.i mod r.i)
+        else: valFloat(toFloat(l).float mod toFloat(r).float)
+      else: valNil()  # should never reach
+    
+    of "&":
+      # String concatenation - convert both operands to strings
+      valString($l & $r)
 
-    of "==": valBool(lf == rf)
-    of "!=": valBool(lf != rf)
-    of "<":  valBool(lf <  rf)
-    of "<=": valBool(lf <= rf)
-    of ">":  valBool(lf >  rf)
-    of ">=": valBool(lf >= rf)
+    of "==", "!=", "<", "<=", ">", ">=":
+      # Comparison operators - convert to float for comparison
+      let lf = toFloat(l)
+      let rf = toFloat(r)
+      case e.op
+      of "==": valBool(lf == rf)
+      of "!=": valBool(lf != rf)
+      of "<":  valBool(lf <  rf)
+      of "<=": valBool(lf <= rf)
+      of ">":  valBool(lf >  rf)
+      of ">=": valBool(lf >= rf)
+      else: valNil()  # should never reach
     else:
       quit "Unknown binary op: " & e.op
 

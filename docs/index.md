@@ -17,6 +17,6 @@ bgClearTransparent()
 bgFillRect(0, 0, termWidth, 1, "─")
 bgFillRect(0, termHeight - 1, termWidth, 1, "─")
 
-# Show frame counter in top-left
-fgWriteText(2, 1, "Frame:")
+# Show FPS and frame counter in top-left
+fgWriteText(2, 1, "FPS: " & $int(fps) & " | Frame: " & $frameCount)
 ```

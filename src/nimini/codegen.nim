@@ -105,6 +105,8 @@ proc genExpr*(e: Expr; ctx: CodegenContext): string =
       result = "-(" & operand & ")"
     of "not":
       result = "not (" & operand & ")"
+    of "$":
+      result = "$(" & operand & ")"
     else:
       result = e.unaryOp & "(" & operand & ")"
 
@@ -113,7 +115,7 @@ proc genExpr*(e: Expr; ctx: CodegenContext): string =
     let right = genExpr(e.right, ctx)
 
     case e.op
-    of "+", "-", "*", "/", "%":
+    of "+", "-", "*", "/", "%", "&":
       result = "(" & left & " " & e.op & " " & right & ")"
     of "==", "!=", "<", "<=", ">", ">=":
       result = "(" & left & " " & e.op & " " & right & ")"

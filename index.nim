@@ -72,6 +72,43 @@ var gBgLayer: Layer
 var gFgLayer: Layer
 var gTextStyle, gBorderStyle, gInfoStyle: Style
 
+# Type conversion functions
+proc nimini_int(env: ref Env; args: seq[Value]): Value =
+  ## Convert a value to integer
+  if args.len > 0:
+    case args[0].kind
+    of vkInt: return args[0]
+    of vkFloat: return valInt(args[0].f.int)
+    of vkString: 
+      try:
+        return valInt(parseInt(args[0].s))
+      except:
+        return valInt(0)
+    of vkBool: return valInt(if args[0].b: 1 else: 0)
+    else: return valInt(0)
+  return valInt(0)
+
+proc nimini_float(env: ref Env; args: seq[Value]): Value =
+  ## Convert a value to float
+  if args.len > 0:
+    case args[0].kind
+    of vkFloat: return args[0]
+    of vkInt: return valFloat(args[0].i.float)
+    of vkString: 
+      try:
+        return valFloat(parseFloat(args[0].s))
+      except:
+        return valFloat(0.0)
+    of vkBool: return valFloat(if args[0].b: 1.0 else: 0.0)
+    else: return valFloat(0.0)
+  return valFloat(0.0)
+
+proc nimini_str(env: ref Env; args: seq[Value]): Value =
+  ## Convert a value to string
+  if args.len > 0:
+    return valString($args[0])
+  return valString("")
+
 # Print function
 proc print(env: ref Env; args: seq[Value]): Value {.nimini.} =
   var output = ""
@@ -162,6 +199,11 @@ proc createNiminiContext(state: AppState): NiminiContext =
   ## Create a Nimini interpreter context with exposed APIs
   initRuntime()
   
+  # Register type conversion functions with custom names
+  registerNative("int", nimini_int)
+  registerNative("float", nimini_float)
+  registerNative("str", nimini_str)
+  
   # Auto-register all {.nimini.} pragma functions
   exportNiminiProcs(
     print,
@@ -192,6 +234,9 @@ proc executeCodeBlock(context: NiminiContext, codeBlock: CodeBlock, state: AppSt
     
     # Add user code
     scriptCode.add(codeBlock.code)
+    
+    # Debug: print generated script (uncomment to debug)
+    # echo "=== Generated Script ===\n", scriptCode, "\n=== End Script ===\n"
     
     let tokens = tokenizeDsl(scriptCode)
     let program = parseDsl(tokens)
