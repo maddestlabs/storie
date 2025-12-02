@@ -384,26 +384,38 @@ proc runLifecycleBlocks(lifecycle: string) =
     # No content loaded yet
     return
   
+  var executedCount = 0
   for blk in storieCtx.codeBlocks:
     if blk.lifecycle == lifecycle:
       discard executeCodeBlock(niminiCtx, blk)
+      executedCount += 1
+  
+  # Log render execution on first few frames to verify it's running
+  when defined(emscripten):
+    if lifecycle == "render" and appState.frameCount < 5:
+      echo "Frame ", appState.frameCount, ": Executed ", executedCount, " ", lifecycle, " blocks"
 
 proc loadContent(mdContent: string) =
   ## Load markdown content - can be called at any time
   if storieCtx.isNil:
     storieCtx = StorieContext()
   
-  storieCtx.codeBlocks = parseMarkdown(mdContent)
+  # Parse the markdown
+  let newBlocks = parseMarkdown(mdContent)
+  
+  echo "Parsed ", newBlocks.len, " code blocks from markdown content"
+  
+  # Replace code blocks (don't just assign, ensure it's a fresh reference)
+  storieCtx.codeBlocks = newBlocks
   contentLoaded = true
   contentInitRun = false
-  
-  echo "Loaded ", storieCtx.codeBlocks.len, " code blocks from markdown"
   
   # Show what we loaded
   let initCount = storieCtx.codeBlocks.filterIt(it.lifecycle == "init").len
   let renderCount = storieCtx.codeBlocks.filterIt(it.lifecycle == "render").len
   let updateCount = storieCtx.codeBlocks.filterIt(it.lifecycle == "update").len
-  echo "  Init: ", initCount, ", Update: ", updateCount, ", Render: ", renderCount
+  echo "Loaded content - Init: ", initCount, ", Update: ", updateCount, ", Render: ", renderCount
+  echo "storieCtx.codeBlocks.len is now: ", storieCtx.codeBlocks.len
 
 proc tryRunContentInit() =
   ## Try to run init blocks if content is loaded but init hasn't run yet
