@@ -161,6 +161,7 @@ proc TTF_Quit*() {.importc, header: ttfHeader.}
 proc TTF_OpenFont*(file: cstring, ptsize: cfloat): ptr TTF_Font {.importc, header: ttfHeader.}
 proc TTF_CloseFont*(font: ptr TTF_Font) {.importc, header: ttfHeader.}
 proc TTF_RenderText_Solid*(font: ptr TTF_Font, text: cstring, length: csize_t, fg: SDL_Color): ptr SDL_Surface {.importc, header: ttfHeader.}
+proc TTF_RenderText_Blended*(font: ptr TTF_Font, text: cstring, length: csize_t, fg: SDL_Color): ptr SDL_Surface {.importc, header: ttfHeader.}
 proc TTF_RenderGlyph_Solid*(font: ptr TTF_Font, ch: uint32, fg: SDL_Color): ptr SDL_Surface {.importc, header: ttfHeader.}
 
 # Surface and texture functions for text rendering

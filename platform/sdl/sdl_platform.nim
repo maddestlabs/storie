@@ -401,10 +401,10 @@ proc display*(p: SdlPlatform, renderBuffer: RenderBuffer) =
           textW = entry.width
           textH = entry.height
         else:
-          # Render text to texture
+          # Render text to texture with blended (antialiased) rendering for better quality
           let sdlColor = SDL_Color(r: c.r, g: c.g, b: c.b, a: c.a)
-          let surface = TTF_RenderText_Solid(p.font, cmd.textContent.cstring, 
-                                             cmd.textContent.len.csize_t, sdlColor)
+          let surface = TTF_RenderText_Blended(p.font, cmd.textContent.cstring, 
+                                               cmd.textContent.len.csize_t, sdlColor)
           
           if not surface.isNil:
             textW = surface.w
