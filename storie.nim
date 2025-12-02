@@ -440,6 +440,12 @@ proc tryRunContentInit() =
 
 proc initStorieContext() =
   ## Initialize the Storie context - loads default content unless waiting for dynamic content
+  
+  # If storieCtx already exists with content, don't reinitialize
+  if not storieCtx.isNil and storieCtx.codeBlocks.len > 0:
+    echo "storieCtx already has ", storieCtx.codeBlocks.len, " code blocks, skipping reinitialization"
+    return
+  
   storieCtx = StorieContext(codeBlocks: @[])
   
   when defined(emscripten):
