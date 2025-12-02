@@ -380,6 +380,10 @@ proc runLifecycleBlocks(lifecycle: string) =
   if storieCtx.isNil:
     return
   
+  if storieCtx.codeBlocks.len == 0:
+    # No content loaded yet
+    return
+  
   for blk in storieCtx.codeBlocks:
     if blk.lifecycle == lifecycle:
       discard executeCodeBlock(niminiCtx, blk)
@@ -409,14 +413,18 @@ proc tryRunContentInit() =
   if contentInitRun:
     return
   
-  if niminiCtx.isNil or appState.isNil:
-    # Not ready yet, will try again
+  if niminiCtx.isNil:
+    echo "DEBUG: Cannot run init - niminiCtx is nil"
+    return
+    
+  if appState.isNil:
+    echo "DEBUG: Cannot run init - appState is nil"
     return
   
-  echo "Running content init blocks..."
+  echo "=== Running content init blocks ==="
   runLifecycleBlocks("init")
   contentInitRun = true
-  echo "Content initialized and ready"
+  echo "=== Content initialized and ready ==="
 
 proc initStorieContext() =
   ## Initialize the Storie context - loads default content unless waiting for dynamic content
@@ -507,6 +515,9 @@ proc mainLoopIteration() =
     runLifecycleBlocks("update")
     
     accumulator -= fixedDt
+  
+  # Try init again right before render (catches late-loading gists)
+  tryRunContentInit()
   
   # Clear layer commands
   appState.bgLayer.renderBuffer.clearCommands()

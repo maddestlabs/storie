@@ -79,8 +79,10 @@
         
         function tryLoadGist() {
             // Only load if both module and gist are ready
+            console.log('tryLoadGist called - moduleReady:', moduleReady, 'gistReady:', gistReady, 'hasMarkdown:', !!gistMarkdown);
+            
             if (moduleReady && gistReady && gistMarkdown) {
-                console.log('Loading markdown from gist (' + gistMarkdown.length + ' bytes)');
+                console.log('=== Loading markdown from gist (' + gistMarkdown.length + ' bytes) ===');
                 try {
                     // Call the exported C function
                     // Note: ccall with 'string' type handles memory allocation automatically
@@ -93,8 +95,9 @@
                             [gistMarkdown],        // arguments
                             { async: false }       // options
                         );
+                        console.log('=== ccall completed, result:', result, '===');
                         document.getElementById('status').textContent = 'Running from gist - Press ESC to quit';
-                        console.log('Successfully loaded gist content');
+                        console.log('=== Successfully loaded gist content ===');
                     } else if (typeof Module._loadMarkdownFromJS === 'function') {
                         // Fallback: manually allocate string in WASM memory
                         console.log('Using manual string allocation');
