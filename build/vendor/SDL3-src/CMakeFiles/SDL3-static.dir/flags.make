@@ -6,7 +6,7 @@ C_DEFINES = -DSDL_BUILD_MAJOR_VERSION=3 -DSDL_BUILD_MICRO_VERSION=3 -DSDL_BUILD_
 
 C_INCLUDES = -I/workspaces/Storie/build/vendor/SDL3-src/include-config-release/build_config -I/workspaces/Storie/build/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/vendor/SDL3-src/src
 
-C_FLAGS = -O3 -DNDEBUG -std=gnu11 -Wall -Wundef -Wfloat-conversion -fno-strict-aliasing -Wshadow -Wno-unused-local-typedefs -Wimplicit-fallthrough -fdiagnostics-color=always -idirafter/workspaces/Storie/vendor/SDL3-src/src/video/khronos -D_REENTRANT
+C_FLAGS = -O3 -DNDEBUG -std=gnu11 -fPIC -Wall -Wundef -Wfloat-conversion -fno-strict-aliasing -Wshadow -Wno-unused-local-typedefs -Wimplicit-fallthrough -fdiagnostics-color=always -idirafter/workspaces/Storie/vendor/SDL3-src/src/video/khronos -D_REENTRANT
 
 # PCH options: vendor/SDL3-src/CMakeFiles/SDL3-static.dir/cmake_pch.h.gch_OPTIONS = -Winvalid-pch;-x;c-header;-include;/workspaces/Storie/build/vendor/SDL3-src/CMakeFiles/SDL3-static.dir/cmake_pch.h
 

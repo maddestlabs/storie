@@ -1,5 +1,4 @@
 ## Storie SDL3 - Main engine using SDL3 platform backend with markdown support
-## This is the SDL3 equivalent of storie.nim
 
 import strutils, times, os, math, parseopt, sequtils
 import platform/platform_interface

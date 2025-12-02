@@ -6,5 +6,5 @@ C_DEFINES =
 
 C_INCLUDES = -I/workspaces/Storie/build/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL3-src/include
 
-C_FLAGS = -O3 -DNDEBUG -std=gnu11 -Wall -Wundef -Wfloat-conversion -fno-strict-aliasing -Wshadow -Wno-unused-local-typedefs -Wimplicit-fallthrough -fdiagnostics-color=always
+C_FLAGS = -O3 -DNDEBUG -std=gnu11 -fPIC -Wall -Wundef -Wfloat-conversion -fno-strict-aliasing -Wshadow -Wno-unused-local-typedefs -Wimplicit-fallthrough -fdiagnostics-color=always
 

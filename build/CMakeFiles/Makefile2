@@ -63,11 +63,13 @@ CMAKE_BINARY_DIR = /workspaces/Storie/build
 # Directory level rules for the build root directory
 
 # The main recursive "all" target.
-all:
+all: vendor/SDL3-src/all
+all: vendor/SDL_ttf-src/all
 .PHONY : all
 
 # The main recursive "preinstall" target.
-preinstall:
+preinstall: vendor/SDL3-src/preinstall
+preinstall: vendor/SDL_ttf-src/preinstall
 .PHONY : preinstall
 
 # The main recursive "clean" target.

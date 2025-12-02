@@ -6,5 +6,5 @@ C_DEFINES = -DUSING_GENERATED_CONFIG_H
 
 C_INCLUDES = -I/workspaces/Storie/build/vendor/SDL3-src/include-config-release/build_config -I/workspaces/Storie/vendor/SDL3-src/src -I/workspaces/Storie/vendor/SDL3-src/include
 
-C_FLAGS = -O3 -DNDEBUG -std=gnu11 -fvisibility=hidden -Wall -Wundef -Wfloat-conversion -fno-strict-aliasing -Wshadow -Wno-unused-local-typedefs -Wimplicit-fallthrough -fdiagnostics-color=always
+C_FLAGS = -O3 -DNDEBUG -std=gnu11 -fPIC -fvisibility=hidden -Wall -Wundef -Wfloat-conversion -fno-strict-aliasing -Wshadow -Wno-unused-local-typedefs -Wimplicit-fallthrough -fdiagnostics-color=always
 

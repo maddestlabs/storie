@@ -29,6 +29,9 @@ set(SDL_TEST OFF CACHE BOOL "" FORCE)
 set(SDL_TESTS OFF CACHE BOOL "" FORCE)
 set(SDL_DISABLE_INSTALL OFF CACHE BOOL "" FORCE)
 
+# Enable audio subsystem
+set(SDL_AUDIO ON CACHE BOOL "" FORCE)
+
 # Add SDL3 subdirectory
 add_subdirectory(vendor/SDL3-src)
 
