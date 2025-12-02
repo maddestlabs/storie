@@ -1,7 +1,7 @@
 ## Storie SDL3 - Main engine using SDL3 platform backend with markdown support
 ## This is the SDL3 equivalent of storie.nim
 
-import strutils, times, os, math, parseopt
+import strutils, times, os, math, parseopt, sequtils
 import platform/platform_interface
 import platform/pixel_types
 import platform/sdl/sdl_platform
@@ -330,6 +330,7 @@ type
     
 var storieCtx: StorieContext
 var customMarkdownPath: string = ""  # Command-line specified markdown file
+var deferredInitNeeded: bool = false  # WASM: run init blocks after niminiCtx is ready
 
 proc loadMarkdownContent(filePath: string): string =
   ## Load markdown content from a file path
@@ -417,13 +418,25 @@ proc reloadMarkdown(mdContent: string) =
     let lifecycle = if blk.lifecycle.len > 0: blk.lifecycle else: "none"
     echo "  Block ", i+1, ": lifecycle=", lifecycle, ", lines=", blk.code.countLines()
   
-  # Only re-run init blocks if we're not in the middle of initialization
-  # (appState and niminiCtx must be ready)
-  if not appState.isNil and not niminiCtx.isNil:
-    echo "Re-running init lifecycle blocks..."
-    runLifecycleBlocks("init")
-  else:
-    echo "Skipping init blocks (app not fully initialized yet)"
+  # Check if we can run init blocks
+  if niminiCtx.isNil:
+    echo "WARNING: niminiCtx is nil, deferring init blocks until app is ready"
+    deferredInitNeeded = true
+    return
+  
+  if appState.isNil:
+    echo "WARNING: appState is nil, deferring init blocks until app is ready"
+    deferredInitNeeded = true
+    return
+  
+  # Run init blocks now that we have the gist content
+  echo "Running init lifecycle blocks from reloaded markdown..."
+  let initCount = storieCtx.codeBlocks.filterIt(it.lifecycle == "init").len
+  let renderCount = storieCtx.codeBlocks.filterIt(it.lifecycle == "render").len
+  echo "  Init blocks: ", initCount, ", Render blocks: ", renderCount
+  runLifecycleBlocks("init")
+  
+  echo "Markdown reload complete - render blocks will run on next frame"
 
 # ================================================================
 # NOTE: JavaScript text rendering hack removed
@@ -584,8 +597,18 @@ proc initApp() =
   # Initialize storie context (load markdown)
   initStorieContext()
   
-  # Run init lifecycle blocks
-  runLifecycleBlocks("init")
+  # Check if we have deferred init blocks from gist that loaded early
+  when defined(emscripten):
+    if deferredInitNeeded:
+      echo "Running deferred init blocks (gist loaded before app was ready)"
+      runLifecycleBlocks("init")
+      deferredInitNeeded = false
+    else:
+      # Run init lifecycle blocks normally
+      runLifecycleBlocks("init")
+  else:
+    # Run init lifecycle blocks
+    runLifecycleBlocks("init")
   
   echo "Storie SDL3 initialized successfully!"
   echo "Press ESC to quit"

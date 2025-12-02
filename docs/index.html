@@ -188,10 +188,12 @@
                     }
                     
                     if (mdFile) {
-                        console.log('Found markdown file in gist:', mdFile.filename);
+                        console.log('Found markdown file in gist:', mdFile.filename, '(' + mdFile.content.length + ' bytes)');
                         gistMarkdown = mdFile.content;
                         gistReady = true;
                         document.getElementById('status').textContent = 'Loaded ' + mdFile.filename + ', starting...';
+                        
+                        console.log('Module ready:', moduleReady, 'Gist ready:', gistReady);
                         
                         // Try loading gist if module is ready
                         tryLoadGist();
