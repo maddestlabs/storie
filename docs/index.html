@@ -65,12 +65,17 @@
     </div>
     
     <script>
-        // Check for ?gist= URL parameter
+        // Check for ?gist= URL parameter BEFORE loading WASM
         const urlParams = new URLSearchParams(window.location.search);
         const gistId = urlParams.get('gist');
         let gistMarkdown = null;
         let moduleReady = false;
         let gistReady = false;
+        
+        // If gist is present, we need to tell WASM not to load default markdown
+        if (gistId) {
+            console.log('Gist parameter detected:', gistId);
+        }
         
         function tryLoadGist() {
             // Only load if both module and gist are ready
@@ -114,6 +119,7 @@
         }
         
         var Module = {
+            waitingForGist: gistId ? true : false,  // Critical: Set BEFORE WASM initializes
             canvas: document.getElementById('canvas'),
             printErr: function(text) {
                 console.error(text);
@@ -122,8 +128,30 @@
             print: function(text) {
                 console.log(text);
             },
+            preRun: [
+                function() {
+                    // This runs BEFORE the main() function
+                    if (gistId) {
+                        console.log('PreRun: Setting wait flag for gist');
+                        // Set the flag directly in WASM memory if possible
+                        // We'll call the function after symbols are available
+                    }
+                }
+            ],
             onRuntimeInitialized: function() {
                 moduleReady = true;
+                
+                // Call setWaitingForGist IMMEDIATELY if gist is present
+                // This must happen before initApp runs
+                if (gistId && typeof Module._setWaitingForGist === 'function') {
+                    console.log('Setting wait flag for gist before app init');
+                    try {
+                        Module._setWaitingForGist();
+                    } catch (e) {
+                        console.error('Error calling setWaitingForGist:', e);
+                    }
+                }
+                
                 console.log('SDL3 with native TTF rendering initialized');
                 
                 // Set up aspect ratio-preserving resize

@@ -7,12 +7,6 @@ print("=== Storie SDL3 Initialized ===")
 print("Display size: " & $width & " x " & $height & " pixels")
 ```
 
-```nim on:update
-# Print status every 2 seconds (120 frames at 60fps)
-if frameCount % 120 == 0:
-  print("Frame: " & $frameCount & " | FPS: " & $fps)
-```
-
 ```nim on:render
 # Clear both layers
 clear()

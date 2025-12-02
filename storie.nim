@@ -10,7 +10,7 @@ import src/nimini
 
 # Emscripten support
 when defined(emscripten):
-  {.passL: "-s EXPORTED_FUNCTIONS=['_main','_loadMarkdownFromJS']".}
+  {.passL: "-s EXPORTED_FUNCTIONS=['_main','_loadMarkdownFromJS','_setWaitingForGist']".}
   {.passL: "-s EXPORTED_RUNTIME_METHODS=['ccall','cwrap']".}
   {.emit: """
   #include <emscripten.h>
@@ -357,8 +357,33 @@ proc loadAndParseMarkdown(markdownPath: string = ""): seq[CodeBlock] =
 
 proc reloadMarkdown(mdContent: string)  # Forward declaration
 
+proc shouldWaitForGist(): bool =
+  ## Check if JavaScript wants us to wait for a gist
+  when defined(emscripten):
+    var result: cint
+    {.emit: """
+    `result` = EM_ASM_INT({
+      if (typeof Module !== 'undefined' && 
+          typeof Module.waitingForGist !== 'undefined' && 
+          Module.waitingForGist === true) {
+        return 1;
+      }
+      return 0;
+    });
+    """.}
+    return result == 1
+  else:
+    return false
+
 proc initStorieContext() =
   ## Initialize the Storie context with markdown code blocks
+  when defined(emscripten):
+    # Check if JavaScript wants us to wait for a gist
+    if shouldWaitForGist():
+      echo "JavaScript requested: Skipping default markdown, waiting for gist"
+      storieCtx = StorieContext(codeBlocks: @[])
+      return
+  
   storieCtx = StorieContext(codeBlocks: loadAndParseMarkdown(customMarkdownPath))
   
   let sourceName = if customMarkdownPath.len > 0: customMarkdownPath else: "index.md"
@@ -491,11 +516,20 @@ when defined(emscripten):
   proc emMainLoop() {.cdecl, exportc.} =
     mainLoopIteration()
   
+  # JavaScript-callable function to check if we should wait for gist
+  var waitingForGist = false
+  
+  proc setWaitingForGist() {.cdecl, exportc.} =
+    ## Tell WASM to skip default markdown and wait for gist
+    waitingForGist = true
+    echo "Waiting for gist to load, skipping default markdown"
+  
   # JavaScript-callable function to load markdown dynamically (for gist support)
   proc loadMarkdownFromJS(mdPtr: cstring) {.cdecl, exportc.} =
     ## Load markdown content from JavaScript (used for ?gist= parameter)
     let mdContent = $mdPtr
     echo "Loading markdown from JavaScript (", mdContent.len, " bytes)"
+    waitingForGist = false
     reloadMarkdown(mdContent)
 
 proc mainLoop() =
