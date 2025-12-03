@@ -58,7 +58,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -r|--release)
-            RELEASE_MODE="-d:release"
+            RELEASE_MODE="-d:release --opt:size"
             shift
             ;;
         -s|--serve)
@@ -137,7 +137,7 @@ export EMCC_CFLAGS="-s ALLOW_MEMORY_GROWTH=1 \
 
 # Additional optimization flags for release mode
 if [ ! -z "$RELEASE_MODE" ]; then
-    export EMCC_CFLAGS="$EMCC_CFLAGS -O3 -s ASSERTIONS=0"
+    export EMCC_CFLAGS="$EMCC_CFLAGS -Oz -s ASSERTIONS=0"
 fi
 
 # Compile
