@@ -133,7 +133,9 @@ export EMCC_CFLAGS="-s ALLOW_MEMORY_GROWTH=1 \
   -s EXPORT_NAME='Module' \
   -s ASSERTIONS=1 \
   --preload-file docs/assets@/assets \
-  -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','UTF8ToString','FS']"
+  -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','UTF8ToString','FS'] \
+  -s USE_WEBGL2=1 \
+  -s FULL_ES3=1"
 
 # Additional optimization flags for release mode
 if [ ! -z "$RELEASE_MODE" ]; then

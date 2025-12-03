@@ -6,7 +6,7 @@
 when defined(emscripten):
   # WebGL bindings via Emscripten
   {.passL: "-lGL".}
-  {.passC: "-s USE_WEBGL2=1".}
+  # WebGL2 flags are set via EMCC_CFLAGS in build-web.sh
 else:
   # Native OpenGL
   when defined(windows):

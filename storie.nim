@@ -838,8 +838,15 @@ proc mainLoop() =
 
 proc initApp(enable3D: bool = false) =
   echo "Initializing Storie SDL3..."
-  if enable3D:
-    echo "3D mode enabled"
+  
+  # For WASM builds, always enable 3D to support dynamic content loading
+  when defined(emscripten):
+    let use3D = true
+    echo "3D mode enabled (WASM default)"
+  else:
+    let use3D = enable3D
+    if enable3D:
+      echo "3D mode enabled"
   
   # Create SDL platform
   appState = AppState()
@@ -852,13 +859,13 @@ proc initApp(enable3D: bool = false) =
   appState.lastFpsUpdate = 0.0
   
   # Initialize platform
-  if not appState.platform.init(enable3D):
+  if not appState.platform.init(use3D):
     echo "Failed to initialize SDL3 platform"
     quit(1)
   appState.platform.setTargetFps(appState.targetFps)
   
   # Initialize 3D if enabled
-  if enable3D:
+  if use3D:
     g3DEnabled = true
     gCamera = newCamera3D(vec3(0, 0, 5), vec3(0, 0, 0), 60.0)
     gShader = createDefaultShader()
