@@ -41,7 +41,58 @@
     </div>
     
     <script>
+        // Parse URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const gistId = urlParams.get('gist'); // Check for gist parameter
+        
+        // Gist loading state
+        let gistMarkdown = null;
+        let moduleReady = false;
+        let gistReady = false;
+        
+        if (gistId) {
+            console.log('Gist parameter detected:', gistId);
+        }
+        
+        function tryLoadGist() {
+            // Only load if both module and gist are ready
+            console.log('tryLoadGist called - moduleReady:', moduleReady, 'gistReady:', gistReady, 'hasMarkdown:', !!gistMarkdown);
+            if (moduleReady && gistReady && gistMarkdown) {
+                console.log('=== Loading markdown from gist (' + gistMarkdown.length + ' bytes) ===');
+                try {
+                    if (typeof Module.ccall === 'function') {
+                        Module.ccall(
+                            'loadMarkdownFromJS',
+                            null,
+                            ['string'],
+                            [gistMarkdown],
+                            { async: false }
+                        );
+                        console.log('=== Successfully loaded gist content via ccall ===');
+                        document.getElementById('status').textContent = 'Running from gist - Press ESC to quit';
+                    } else if (typeof Module._loadMarkdownFromJS === 'function') {
+                        // Fallback: manually allocate string in WASM memory
+                        console.log('Using manual string allocation');
+                        var len = Module.lengthBytesUTF8(gistMarkdown) + 1;
+                        var strPtr = Module._malloc(len);
+                        Module.stringToUTF8(gistMarkdown, strPtr, len);
+                        Module._loadMarkdownFromJS(strPtr);
+                        Module._free(strPtr);
+                        console.log('=== Successfully loaded gist content via manual allocation ===');
+                        document.getElementById('status').textContent = 'Running from gist - Press ESC to quit';
+                    } else {
+                        console.error('Module.ccall and Module._loadMarkdownFromJS not available');
+                        document.getElementById('status').innerHTML = '<span class="error">Gist load failed</span>';
+                    }
+                } catch (e) {
+                    console.error('Error loading gist markdown:', e);
+                    document.getElementById('status').innerHTML = '<span class="error">Error loading gist</span>';
+                }
+            }
+        }
+        
         var Module = {
+            waitingForGist: gistId ? true : false,
             canvas: document.getElementById('canvas'),
             printErr: function(text) {
                 console.error(text);
@@ -51,9 +102,68 @@
                 console.log(text);
             },
             onRuntimeInitialized: function() {
-                document.getElementById('status').textContent = 'Running - Press ESC to quit';
+                moduleReady = true;
+                
+                // Set waiting flag if gist is present
+                if (gistId && typeof Module._setWaitingForGist === 'function') {
+                    console.log('Setting wait flag for gist before app init');
+                    try {
+                        Module._setWaitingForGist();
+                    } catch (e) {
+                        console.error('Error calling setWaitingForGist:', e);
+                    }
+                }
+                
+                // Try loading gist if it's ready
+                if (gistId) {
+                    tryLoadGist();
+                } else {
+                    document.getElementById('status').textContent = 'Running - Press ESC to quit';
+                }
             }
         };
+        
+        // Fetch gist if specified
+        if (gistId) {
+            document.getElementById('status').textContent = 'Loading gist ' + gistId + '...';
+            
+            fetch('https://api.github.com/gists/' + gistId)
+                .then(function(response) {
+                    if (!response.ok) {
+                        throw new Error('Gist not found (HTTP ' + response.status + ')');
+                    }
+                    return response.json();
+                })
+                .then(function(gist) {
+                    // Find first .md file in gist
+                    var mdFile = null;
+                    for (var filename in gist.files) {
+                        if (filename.endsWith('.md')) {
+                            mdFile = gist.files[filename];
+                            break;
+                        }
+                    }
+                    
+                    if (mdFile) {
+                        console.log('Found markdown file in gist:', mdFile.filename, '(' + mdFile.content.length + ' bytes)');
+                        gistMarkdown = mdFile.content;
+                        gistReady = true;
+                        document.getElementById('status').textContent = 'Loaded ' + mdFile.filename + ', starting...';
+                        
+                        // Try loading gist if module is ready
+                        tryLoadGist();
+                    } else {
+                        throw new Error('No .md file found in gist');
+                    }
+                })
+                .catch(function(error) {
+                    console.error('Error loading gist:', error);
+                    document.getElementById('status').innerHTML = '<span class="error">Error: ' + error.message + '</span>';
+                    gistMarkdown = null;
+                });
+        }
+        
+        console.log('Load from gist with URL parameter: ?gist=YOUR_GIST_ID');
     </script>
     <script src="storie.js"></script>
 </body>
