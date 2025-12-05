@@ -1,6 +1,8 @@
 # Storie
 
-Terminal engine in [Nim](https://nim-lang.org/). Build stuff using Markdown with executable Nim code blocks. Fast prototyping that exports to Nim for native compilation across platforms.
+Storie is a minimal, hackable engine for creative coding and live sketches. Built with [Nim](https://nim-lang.org/), it lets you write markdown with executable code blocks in various, simplified languages. Compiles to native binaries or WebAssembly. Swap backends (Raylib/SDL3), modify anything, break things. Made for tinkerers who want zero constraints.
+
+Fast prototyping that exports to Nim for native compilation across platforms.
 
 Check it out live: [Demo](https://maddestlabs.github.io/Storie/)
 
@@ -9,24 +11,16 @@ The engine is built around GitHub features. No need to actually install Nim, or 
 ## Features
 
 Core engine features:
-- **Cross-Platform** - Runs natively in terminals and in web browsers via WebAssembly
-- **Minimal Filesize** - Compiled games/apps average from maybe 400KB to 2MB.
-- **Reusable Libraries** - Helper modules for events, animations, and UI components
-- **Input Handling** - Comprehensive keyboard, mouse, and special key support
-- **Color Support** - True color (24-bit), 256-color, and 8-color terminal support
-- **Layer System** - Z-ordered layers with transparency support
-- **Automatic Terminal Resize Handling** - All layers automatically resize when the terminal or browser window changes size
-- **Direct Callback Architecture** - Simple onInit/onUpdate/onRender callback system
-
-Storie features:
-- Minimal Markdown-like parser
+- **Cross-Platform** - Runs natively and in web browsers via WebAssembly
+- **Fast-Prototyping** - Write code on GitHub Gist and see it run at https://maddestlabs.github.io/Storie?gist=GistID
+- **Minimal Filesize** - Compiled games/apps average from maybe 1MB to 5MB.
 - Nim-based scripting using [Nimini](https://github.com/maddestlabs/nimini)
 
 ## Getting Started
 
 Quick Start:
 - Create a gist using Markdown and Nim code blocks
-- See your gist running live: https://maddestlabs.github.io/Storie?gist=gistid
+- See your gist running live: https://maddestlabs.github.io/Storie?gist=GistID
 
 Create your own project:
 - Create a template from Storie and enable GitHub Pages
