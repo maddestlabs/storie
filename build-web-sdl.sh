@@ -105,7 +105,7 @@ NIM_OPTS="c
   $RELEASE_MODE
   --nimcache:nimcache_wasm_sdl
   -o:$OUTPUT_DIR/${FILE_BASE}.js
-  storie.nim"
+  index.nim"
 
 # SDL3 backend Emscripten flags
 echo "Using SDL3 backend for WASM..."
@@ -128,7 +128,7 @@ fi
 
 # Compile
 echo "Running Nim compiler with Emscripten..."
-echo "  Input: storie.nim"
+echo "  Input: index.nim"
 echo "  Output: $OUTPUT_DIR/${FILE_BASE}.js"
 echo ""
 

@@ -85,10 +85,10 @@ if [ -z "$BACKEND_FLAG" ]; then
         --passL:"$RAYLIB_LIB" \
         --passL:"-lm -lpthread -ldl -lrt" \
         --passL:"-lX11" \
-        storie.nim
+        index.nim
 else
     echo "Compiling Storie (SDL3 backend)..."
-    nim c $RELEASE_MODE $BACKEND_FLAG storie.nim
+    nim c $RELEASE_MODE $BACKEND_FLAG index.nim
 fi
 
 if [ $? -ne 0 ]; then
@@ -98,10 +98,10 @@ fi
 
 # Run if not compile-only
 if [ "$COMPILE_ONLY" = false ]; then
-    echo "Running storie..."
+    echo "Running index..."
     echo ""
-    ./storie "$@"
+    ./index "$@"
 else
     echo "Compilation successful!"
-    echo "Run with: ./storie"
+    echo "Run with: ./index"
 fi

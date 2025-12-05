@@ -1,83 +1,34 @@
-## Storie - Main engine with markdown support
+## Storie - Creative coding engine library
 ## Default backend: Raylib (use -d:sdl3 for SDL3 backend)
+##
+## This is the core engine library. Import this to build custom applications.
+## For the default markdown-based experience, see index.nim
 
-import strutils, times, os, math, parseopt, sequtils
+import strutils, times, os, math
 import platform/platform_interface
 import platform/pixel_types
 import platform/render3d_interface
 import storie_core
 import src/nimini
+export platform_interface, pixel_types, render3d_interface, storie_core, nimini
 
 # Backend selection: raylib by default, SDL3 with -d:sdl3
 when defined(sdl3):
   import platform/sdl/sdl_platform
   import platform/sdl/sdl_render3d
-  echo "Using SDL3 backend"
+  export sdl_platform, sdl_render3d
 else:
   import platform/raylib/raylib_platform
   import platform/raylib/raylib_render3d
   # Import WindowShouldClose from raylib but exclude Color to avoid conflict
   from platform/raylib/raylib_bindings/core import WindowShouldClose
-  echo "Using Raylib backend"
+  export raylib_platform, raylib_render3d, WindowShouldClose
 
 # Emscripten support
 when defined(emscripten):
-  {.passL: "-s EXPORTED_FUNCTIONS=['_main','_loadMarkdownFromJS','_setWaitingForGist']".}
-  {.passL: "-s EXPORTED_RUNTIME_METHODS=['ccall','cwrap']".}
   {.emit: """
   #include <emscripten.h>
   """.}
-
-# ================================================================
-# MARKDOWN PARSER
-# ================================================================
-
-type
-  CodeBlock = object
-    code: string
-    lifecycle: string  # "render", "update", "init", "input", "shutdown"
-    language: string
-
-proc parseMarkdown(content: string): seq[CodeBlock] =
-  ## Parse Markdown content and extract Nim code blocks with lifecycle hooks
-  result = @[]
-  var lines = content.splitLines()
-  var i = 0
-  
-  while i < lines.len:
-    let line = lines[i].strip()
-    
-    # Look for code block start: ```nim or ``` nim
-    if line.startsWith("```") or line.startsWith("``` "):
-      var headerParts = line[3..^1].strip().split()
-      if headerParts.len > 0 and headerParts[0] == "nim":
-        var lifecycle = ""
-        var language = "nim"
-        
-        # Check for on:* attribute (e.g., on:render, on:update)
-        for part in headerParts:
-          if part.startsWith("on:"):
-            lifecycle = part[3..^1]
-            break
-        
-        # Extract code block content
-        var codeLines: seq[string] = @[]
-        inc i
-        while i < lines.len:
-          if lines[i].strip().startsWith("```"):
-            break
-          codeLines.add(lines[i])
-          inc i
-        
-        # Add the code block
-        let blk = CodeBlock(
-          code: codeLines.join("\n"),
-          lifecycle: lifecycle,
-          language: language
-        )
-        result.add(blk)
-    
-    inc i
 
 # ================================================================
 # NIMINI CONTEXT
@@ -513,9 +464,22 @@ proc createNiminiContext(): NiminiContext =
   
   return NiminiContext(env: runtimeEnv)
 
-proc executeCodeBlock(ctx: NiminiContext, blk: CodeBlock): bool =
-  ## Execute a code block using Nimini
-  if blk.code.strip().len == 0:
+# ================================================================
+# PUBLIC API - Execute Nimini Code
+# ================================================================
+
+proc executeNiminiCode*(code: string): bool =
+  ## Execute Nimini code in the global context
+  ## Returns true on success, false on error
+  if niminiCtx.isNil:
+    echo "Error: Nimini context not initialized"
+    return false
+    
+  if appState.isNil:
+    echo "Error: App state not initialized"
+    return false
+  
+  if code.strip().len == 0:
     return true
   
   try:
@@ -530,168 +494,65 @@ proc executeCodeBlock(ctx: NiminiContext, blk: CodeBlock): bool =
     scriptCode.add("\n")
     
     # Add user code
-    scriptCode.add(blk.code)
+    scriptCode.add(code)
     
     let tokens = tokenizeDsl(scriptCode)
     let program = parseDsl(tokens)
-    execProgram(program, ctx.env)
+    execProgram(program, niminiCtx.env)
     
     return true
   except Exception as e:
-    echo "Error in ", blk.lifecycle, " block: ", e.msg
+    echo "Error executing Nimini code: ", e.msg
     return false
 
 # ================================================================
-# LIFECYCLE MANAGEMENT
+# PUBLIC API - Query Engine State
+# ================================================================
+
+proc getFrameCount*(): int =
+  ## Get current frame count
+  if appState.isNil: return 0
+  return appState.frameCount
+
+proc getFps*(): float =
+  ## Get current FPS
+  if appState.isNil: return 0.0
+  return appState.fps
+
+proc getWidth*(): int =
+  ## Get window width
+  if appState.isNil: return 0
+  return appState.width
+
+proc getHeight*(): int =
+  ## Get window height
+  if appState.isNil: return 0
+  return appState.height
+
+proc isRunning*(): bool =
+  ## Check if engine is running
+  if appState.isNil: return false
+  return appState.running
+
+proc stopEngine*() =
+  ## Stop the engine
+  if not appState.isNil:
+    appState.running = false
+
+# ================================================================
+# CALLBACK TYPES
 # ================================================================
 
 type
-  StorieContext = ref object
-    codeBlocks: seq[CodeBlock]
-    
-var storieCtx: StorieContext
-var customMarkdownPath: string = ""  # Command-line specified markdown file
-var contentLoaded: bool = false  # Track if content has been loaded
-var contentInitRun: bool = false  # Track if init blocks have been executed
+  UpdateCallback* = proc() {.closure.}
+  RenderCallback* = proc() {.closure.}
+  InputCallback* = proc() {.closure.}
+  ShutdownCallback* = proc() {.closure.}
 
-proc loadMarkdownContent(filePath: string): string =
-  ## Load markdown content from a file path
-  if fileExists(filePath):
-    return readFile(filePath)
-  else:
-    echo "Warning: ", filePath, " not found"
-    return ""
-
-proc loadAndParseMarkdown(markdownPath: string = ""): seq[CodeBlock] =
-  ## Load and parse markdown from specified path or default index.md
-  when defined(emscripten):
-    # In WASM, embed the default markdown at compile time
-    # (can be overridden via loadMarkdownFromJS)
-    const mdContent = staticRead("index.md")
-    return parseMarkdown(mdContent)
-  else:
-    # Native: read from file (custom path or default index.md)
-    let targetPath = if markdownPath.len > 0: markdownPath else: "index.md"
-    let mdContent = loadMarkdownContent(targetPath)
-    if mdContent.len > 0:
-      return parseMarkdown(mdContent)
-    else:
-      return @[]
-
-proc shouldWaitForGist(): bool =
-  ## Check if JavaScript wants us to wait for a gist
-  when defined(emscripten):
-    var result: cint
-    {.emit: """
-    `result` = EM_ASM_INT({
-      if (typeof Module !== 'undefined' && 
-          typeof Module.waitingForGist !== 'undefined' && 
-          Module.waitingForGist === true) {
-        return 1;
-      }
-      return 0;
-    });
-    """.}
-    return result == 1
-  else:
-    return false
-
-proc runLifecycleBlocks(lifecycle: string) =
-  ## Execute all code blocks for a given lifecycle
-  if storieCtx.isNil:
-    return
-  
-  if storieCtx.codeBlocks.len == 0:
-    # No content loaded yet
-    return
-  
-  var executedCount = 0
-  for blk in storieCtx.codeBlocks:
-    if blk.lifecycle == lifecycle:
-      discard executeCodeBlock(niminiCtx, blk)
-      executedCount += 1
-  
-  # Log render execution on first few frames to verify it's running
-  when defined(emscripten):
-    if lifecycle == "render" and appState.frameCount < 5:
-      echo "Frame ", appState.frameCount, ": Executed ", executedCount, " ", lifecycle, " blocks"
-
-proc loadContent(mdContent: string) =
-  ## Load markdown content - can be called at any time
-  if storieCtx.isNil:
-    storieCtx = StorieContext()
-  
-  # Parse the markdown
-  let newBlocks = parseMarkdown(mdContent)
-  
-  echo "Parsed ", newBlocks.len, " code blocks from markdown content"
-  
-  # Replace code blocks (don't just assign, ensure it's a fresh reference)
-  storieCtx.codeBlocks = newBlocks
-  contentLoaded = true
-  contentInitRun = false
-  
-  # Show what we loaded
-  let initCount = storieCtx.codeBlocks.filterIt(it.lifecycle == "init").len
-  let renderCount = storieCtx.codeBlocks.filterIt(it.lifecycle == "render").len
-  let updateCount = storieCtx.codeBlocks.filterIt(it.lifecycle == "update").len
-  echo "Loaded content - Init: ", initCount, ", Update: ", updateCount, ", Render: ", renderCount
-  echo "storieCtx.codeBlocks.len is now: ", storieCtx.codeBlocks.len
-
-proc tryRunContentInit() =
-  ## Try to run init blocks if content is loaded but init hasn't run yet
-  if not contentLoaded:
-    return
-  
-  if contentInitRun:
-    return
-  
-  if niminiCtx.isNil:
-    echo "DEBUG: Cannot run init - niminiCtx is nil"
-    return
-    
-  if appState.isNil:
-    echo "DEBUG: Cannot run init - appState is nil"
-    return
-  
-  echo "=== Running content init blocks ==="
-  runLifecycleBlocks("init")
-  contentInitRun = true
-  echo "=== Content initialized and ready ==="
-
-proc initStorieContext() =
-  ## Initialize the Storie context - loads default content unless waiting for dynamic content
-  
-  # If storieCtx already exists with content, don't reinitialize
-  if not storieCtx.isNil and storieCtx.codeBlocks.len > 0:
-    echo "storieCtx already has ", storieCtx.codeBlocks.len, " code blocks, skipping reinitialization"
-    return
-  
-  storieCtx = StorieContext(codeBlocks: @[])
-  
-  when defined(emscripten):
-    # Check if JavaScript wants us to wait for a gist
-    if shouldWaitForGist():
-      echo "Waiting for dynamic content (gist), skipping default markdown"
-      return
-  
-  # Load default content
-  let mdContent = when defined(emscripten):
-    const content = staticRead("index.md")
-    content
-  else:
-    let targetPath = if customMarkdownPath.len > 0: customMarkdownPath else: "index.md"
-    loadMarkdownContent(targetPath)
-  
-  if mdContent.len > 0:
-    let sourceName = if customMarkdownPath.len > 0: customMarkdownPath else: "index.md"
-    echo "Loading default content from ", sourceName
-    loadContent(mdContent)
-
-# ================================================================
-# NOTE: JavaScript text rendering hack removed
-# Text is now rendered natively with SDL3_ttf on both platforms
-# ================================================================
+var updateCallback: UpdateCallback = nil
+var renderCallback: RenderCallback = nil
+var inputCallback: InputCallback = nil
+var shutdownCallback: ShutdownCallback = nil
 
 # ================================================================
 # MAIN LOOP
@@ -725,8 +586,9 @@ proc mainLoopIteration() =
         # ESC key is code 27
         if event.keyCode == 27:
           appState.running = false
-        # Run input lifecycle blocks
-        runLifecycleBlocks("input")
+        # Call input callback
+        if not inputCallback.isNil:
+          inputCallback()
     of ResizeEvent:
       # Update dimensions on window resize
       appState.width = event.newWidth
@@ -734,10 +596,6 @@ proc mainLoopIteration() =
       echo "Window resized to ", appState.width, "x", appState.height, " pixels"
     else:
       discard
-  
-  # Try to initialize content if it hasn't been yet
-  # (handles race condition where gist loads during first few frames)
-  tryRunContentInit()
   
   # Fixed timestep update
   accumulator += deltaTime
@@ -750,13 +608,11 @@ proc mainLoopIteration() =
       appState.fps = if deltaTime > 0.0: 1.0 / deltaTime else: 0.0
       appState.lastFpsUpdate = appState.totalTime
     
-    # Run update lifecycle blocks
-    runLifecycleBlocks("update")
+    # Call update callback
+    if not updateCallback.isNil:
+      updateCallback()
     
     accumulator -= fixedDt
-  
-  # Try init again right before render (catches late-loading gists)
-  tryRunContentInit()
   
   # Rendering based on mode
   if g3DEnabled:
@@ -768,20 +624,22 @@ proc mainLoopIteration() =
     let aspect = appState.width.float / appState.height.float
     gRenderer3D.setCamera(gCamera, aspect)
     
-    # Run render lifecycle blocks (user will call 3D drawing functions)
-    runLifecycleBlocks("render")
+    # Call render callback (user will call 3D drawing functions)
+    if not renderCallback.isNil:
+      renderCallback()
     
     # End frame and swap buffers
     gRenderer3D.endFrame3D()
     appState.platform.swapBuffers()
   else:
-    # 2D SDL rendering
+    # 2D rendering
     # Clear layer commands
     appState.bgLayer.renderBuffer.clearCommands()
     appState.fgLayer.renderBuffer.clearCommands()
     
-    # Run render lifecycle blocks
-    runLifecycleBlocks("render")
+    # Call render callback
+    if not renderCallback.isNil:
+      renderCallback()
     
     # Composite layers and display
     let compositeBuffer = newRenderBuffer(appState.width, appState.height)
@@ -803,25 +661,6 @@ when defined(emscripten):
   # Emscripten callback wrapper
   proc emMainLoop() {.cdecl, exportc.} =
     mainLoopIteration()
-  
-  # JavaScript-callable function to check if we should wait for gist
-  var waitingForGist = false
-  
-  proc setWaitingForGist() {.cdecl, exportc.} =
-    ## Tell WASM to skip default markdown and wait for gist
-    waitingForGist = true
-    echo "Waiting for gist to load, skipping default markdown"
-  
-  # JavaScript-callable function to load markdown dynamically (for gist support)
-  proc loadMarkdownFromJS(mdPtr: cstring) {.cdecl, exportc.} =
-    ## Load markdown content from JavaScript (used for ?gist= parameter)
-    let mdContent = $mdPtr
-    echo "Loading markdown from JavaScript (", mdContent.len, " bytes)"
-    waitingForGist = false
-    loadContent(mdContent)
-    # Don't try to run init here - let the normal flow handle it
-    # This might be called before niminiCtx exists
-    echo "Content loaded, will initialize when app is ready"
 
 proc mainLoop() =
   ## Main loop - different implementation for backends
@@ -842,11 +681,30 @@ proc mainLoop() =
     while not WindowShouldClose() and appState.running:
       mainLoopIteration()
 
-proc initApp(enable3D: bool = false) =
+proc initStorie*(
+  width: int = 800,
+  height: int = 600,
+  title: string = "Storie",
+  enable3D: bool = false,
+  targetFps: float = 60.0,
+  updateCallback: UpdateCallback = nil,
+  renderCallback: RenderCallback = nil,
+  inputCallback: InputCallback = nil,
+  shutdownCallback: ShutdownCallback = nil
+) =
+  ## Initialize the Storie engine with custom callbacks
+  ## This is the main API for library usage
+  
   when defined(sdl3):
     echo "Initializing Storie with SDL3 backend..."
   else:
     echo "Initializing Storie with Raylib backend..."
+  
+  # Store callbacks
+  storie.updateCallback = updateCallback
+  storie.renderCallback = renderCallback
+  storie.inputCallback = inputCallback
+  storie.shutdownCallback = shutdownCallback
   
   # 3D mode is optional for all platforms
   let use3D = enable3D
@@ -866,15 +724,15 @@ proc initApp(enable3D: bool = false) =
   else:
     appState.platform = RaylibPlatform()
   appState.running = true
-  appState.targetFps = 60.0
+  appState.targetFps = targetFps
   appState.totalTime = 0.0
   appState.frameCount = 0
-  appState.fps = 60.0
+  appState.fps = targetFps
   appState.lastFpsUpdate = 0.0
   
   # Initialize platform
   if not appState.platform.init(use3D):
-    echo "Failed to initialize SDL3 platform"
+    echo "Failed to initialize platform"
     quit(1)
   appState.platform.setTargetFps(appState.targetFps)
   
@@ -911,21 +769,16 @@ proc initApp(enable3D: bool = false) =
   # Create nimini context
   niminiCtx = createNiminiContext()
   
-  # Initialize storie context (load markdown)
-  initStorieContext()
-  
-  # Now that niminiCtx is ready, try to run content init
-  # (this handles both default content and early-loaded dynamic content)
-  tryRunContentInit()
-  
-  echo "Storie SDL3 initialized successfully!"
+  echo "Storie initialized successfully!"
   echo "Press ESC to quit"
 
-proc shutdownApp() =
-  echo "Shutting down Storie SDL3..."
+proc shutdownStorie*() =
+  ## Shutdown the Storie engine
+  echo "Shutting down Storie..."
   
-  # Run shutdown lifecycle blocks
-  runLifecycleBlocks("shutdown")
+  # Call shutdown callback
+  if not shutdownCallback.isNil:
+    shutdownCallback()
   
   # Shutdown platform
   if not appState.platform.isNil:
@@ -933,56 +786,10 @@ proc shutdownApp() =
   
   echo "Goodbye!"
 
-# ================================================================
-# COMMAND-LINE PARSING
-# ================================================================
-
-var enable3DMode: bool = false
-
-proc parseCommandLine() =
-  ## Parse command-line arguments (desktop only)
-  when not defined(emscripten):
-    var p = initOptParser()
-    while true:
-      p.next()
-      case p.kind
-      of cmdEnd: break
-      of cmdShortOption, cmdLongOption:
-        case p.key
-        of "markdown", "m":
-          customMarkdownPath = p.val
-          echo "Using custom markdown file: ", customMarkdownPath
-        of "3d", "3D":
-          enable3DMode = true
-          echo "3D rendering mode enabled"
-        of "help", "h":
-          echo "Storie SDL3 - Creative coding platform"
-          echo ""
-          echo "Usage: storie [options]"
-          echo ""
-          echo "Options:"
-          echo "  -m, --markdown FILE    Load markdown from custom file (default: index.md)"
-          echo "  --3d                   Enable 3D rendering mode with OpenGL"
-          echo "  -h, --help             Show this help message"
-          quit(0)
-        else:
-          echo "Unknown option: ", p.key
-          echo "Use --help for usage information"
-          quit(1)
-      of cmdArgument:
-        # Allow markdown file as positional argument
-        if customMarkdownPath.len == 0:
-          customMarkdownPath = p.key
-          echo "Using markdown file: ", customMarkdownPath
-
-# ================================================================
-# ENTRY POINT
-# ================================================================
-
-when isMainModule:
-  parseCommandLine()
+proc runStorie*() =
+  ## Run the main loop (blocking call)
+  ## Call this after initStorie()
   try:
-    initApp(enable3DMode)
     mainLoop()
   finally:
-    shutdownApp()
+    shutdownStorie()
