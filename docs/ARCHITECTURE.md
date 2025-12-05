@@ -1,288 +1,211 @@
-# Storie Platform Architecture
+# Storie Architecture Guide
 
-## High-Level Overview
+## Overview
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    User Markdown Code                        │
-│                                                               │
-│  ``` nim on:render                                           │
-│  setColor(255, 0, 0)                                         │
-│  fillRect(10, 10, 100, 100)                                  │
-│  drawCube(2.0)  # 3D if enabled                              │
-│  ```                                                          │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Nimini DSL Interpreter                     │
-│                   (src/nimini/*.nim)                         │
-│                                                               │
-│  • Tokenizer → Parser → Runtime                              │
-│  • Executes lifecycle blocks (init, update, render)         │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      storie.nim                              │
-│                   (Main Engine Core)                         │
-│                                                               │
-│  • Lifecycle management                                      │
-│  • Markdown parsing                                          │
-│  • Nimini function bindings                                  │
-│  • State management (AppState)                               │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-         ┌───────────┴───────────┐
-         ▼                       ▼
-┌─────────────────────┐   ┌─────────────────────┐
-│   2D Rendering      │   │   3D Rendering      │
-│   (pixel_types)     │   │  (render3d_*)       │
-│                     │   │                     │
-│  • RenderBuffer     │   │  • Renderer3D       │
-│  • DrawCommand      │   │  • Camera3D         │
-│  • Layer system     │   │  • Vec3, Mat4       │
-└─────────┬───────────┘   └──────────┬──────────┘
-          │                          │
-          └────────────┬─────────────┘
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Platform Interface (abstract)                   │
-│              (platform_interface.nim)                        │
-│                                                               │
-│  method init()                                               │
-│  method display(RenderBuffer)                                │
-│  method pollEvents(): seq[InputEvent]                        │
-│  method shutdown()                                           │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-        ┌────────────┴────────────┐
-        ▼                         ▼
-┌──────────────────┐      ┌──────────────────┐
-│  SDL3 Backend    │      │ Raylib Backend   │
-│  (sdl_platform)  │      │ (raylib_platform)│
-│                  │      │                  │
-│  • SDL3 window   │      │  • Raylib window │
-│  • SDL3 renderer │      │  • Raylib draw   │
-│  • TTF fonts     │      │  • Built-in text │
-│  • Event system  │      │  • Event system  │
-└────────┬─────────┘      └──────────┬───────┘
-         │                           │
-         ▼                           ▼
-┌──────────────────┐      ┌──────────────────┐
-│ SDL 3D Renderer  │      │ Raylib 3D Render │
-│ (sdl_render3d)   │      │ (raylib_render3d)│
-│                  │      │                  │
-│  • OpenGL/ES     │      │  • Native 3D API │
-│  • Shaders       │      │  • Simple calls  │
-│  • VAO/VBO/EBO   │      │  • Auto lighting │
-└────────┬─────────┘      └──────────┬───────┘
-         │                           │
-         ▼                           ▼
-┌──────────────────┐      ┌──────────────────┐
-│   OpenGL 3.3+    │      │    Raylib 5.0    │
-│   OpenGL ES 3.0  │      │                  │
-└──────────────────┘      └──────────────────┘
-```
+Storie now has a clean separation between the **engine library** and the **application entry points**:
 
-## 2D Rendering Pipeline
+- **`storie.nim`** - Core engine library (import this to build custom apps)
+- **`index.nim`** - Default markdown-based entry point (the "batteries included" experience)
+- **Your custom entry** - Build whatever you want!
+
+## File Structure
 
 ```
-User Code
-   │
-   ▼
-drawRect(10, 10, 100, 100)  [Nimini function]
-   │
-   ▼
-RenderBuffer.drawRect(...)   [Command creation]
-   │
-   ▼
-DrawCommand(kind: DrawRect, ...)  [Stored in buffer]
-   │
-   ▼
-Platform.display(RenderBuffer)    [Frame render]
-   │
-   ├─ SDL3: SDL_RenderFillRect(...)
-   │
-   └─ Raylib: DrawRectangle(...)
+storie.nim           # Engine library - import this
+index.nim            # Default markdown entry point
+storie_core.nim      # Core types and utilities
+platform/            # Platform abstraction (SDL3/Raylib)
+src/nimini/          # Nimini scripting language
+examples/            # Usage examples
 ```
 
-## 3D Rendering Pipeline
+## Usage Patterns
 
-```
-User Code
-   │
-   ▼
-drawCube(2.0)                    [Nimini function]
-   │
-   ▼
-createCubeMeshData(...)          [Platform-agnostic]
-   │
-   ▼
-Renderer3D.drawMesh(meshData)    [Interface method]
-   │
-   ├─ SdlRenderer3D
-   │    └─ createMesh() → VAO/VBO
-   │    └─ shader.use()
-   │    └─ glDrawElements()
-   │
-   └─ RaylibRenderer3D
-        └─ DrawCube() / DrawMesh()
+### 1. Default Markdown Experience (index.nim)
+
+The classic Storie experience - write Nim code in markdown:
+
+```bash
+# Edit index.md with your code blocks
+./build.sh
 ```
 
-## Compile-Time Backend Selection
+**index.md:**
+````markdown
+# My Creative Sketch
 
+```nim on:render
+var x = 100
+fillRect(x, 100, 50, 50)
 ```
-build.sh (no flags)
-   └─> SDL3 Backend (default)
+````
 
-build.sh -d:raylib
-   └─> Raylib Backend
+### 2. Pure Nimini Scripts
 
-build-web.sh
-   └─> SDL3 WASM (~1.5 MB)
+Skip markdown, write Nimini directly:
 
-build-raylib-web.sh -d:raylib
-   └─> Raylib WASM (~750 KB)
-```
-
-## Runtime Backend Selection (Future)
-
-```
-https://example.com/storie.html
-   └─> Loads storie-sdl3.wasm (default)
-
-https://example.com/storie.html?backend=raylib
-   └─> Loads storie-raylib.wasm (smaller, faster load)
-```
-
-## Module Dependency Graph
-
-```
-storie.nim
-   ├─ platform_interface.nim (abstract)
-   ├─ render3d_interface.nim (abstract)
-   ├─ pixel_types.nim
-   ├─ storie_core.nim
-   ├─ nimini/*
-   │
-   ├─ [SDL3 Backend] when not defined(raylib)
-   │    ├─ sdl_platform.nim
-   │    │    ├─ sdl3_bindings/*
-   │    │    └─ platform_interface
-   │    └─ sdl_render3d.nim
-   │         ├─ opengl bindings
-   │         └─ render3d_interface
-   │
-   └─ [Raylib Backend] when defined(raylib)
-        ├─ raylib_platform.nim
-        │    ├─ raylib_bindings.nim
-        │    └─ platform_interface
-        └─ raylib_render3d.nim
-             ├─ raylib_bindings.nim
-             └─ render3d_interface
-```
-
-## File Organization
-
-```
-platform/
-├── platform_interface.nim      # Abstract base for all platforms
-├── render3d_interface.nim      # Abstract base for 3D renderers
-├── pixel_types.nim             # Shared 2D types
-├── render3d.nim                # DEPRECATED (re-exports SDL)
-│
-├── sdl/                        # SDL3 + OpenGL backend
-│   ├── sdl_platform.nim        # ✅ Complete
-│   ├── sdl_render3d.nim        # ✅ Complete  
-│   └── sdl3_bindings/          # ✅ Complete
-│       ├── opengl.nim
-│       └── ...
-│
-└── raylib/                     # Raylib backend
-    ├── raylib_platform.nim     # ⏳ Stub (needs implementation)
-    ├── raylib_render3d.nim     # ⏳ Stub (needs implementation)
-    └── raylib_bindings.nim     # ❌ TODO: Create bindings
-```
-
-## Key Design Patterns
-
-### 1. Interface-Based Polymorphism
 ```nim
-type Platform* = ref object of RootObj
-method display*(p: Platform, buf: RenderBuffer) {.base.}
+import storie
 
-type SdlPlatform* = ref object of Platform
-method display*(p: SdlPlatform, buf: RenderBuffer) = 
-  # SDL-specific implementation
+const script = """
+var x = 100
+while true:
+  clear()
+  fillRect(x, 100, 50, 50)
+"""
+
+proc render() =
+  discard executeNiminiCode(script)
+
+when isMainModule:
+  initStorie(renderCallback = render)
+  runStorie()
 ```
 
-### 2. Backend-Agnostic Data
+### 3. Pure Nim API
+
+Use Storie as a regular Nim library:
+
 ```nim
-type MeshData* = object
-  vertices*: seq[float32]  # Platform-independent
-  indices*: seq[uint16]
+import storie
 
-# Each backend converts to its native format:
-# SDL → VAO/VBO
-# Raylib → Mesh struct
+var x = 0
+
+proc update() =
+  x += 1
+  if x > 800: x = 0
+
+proc render() =
+  # Draw using Nimini for now
+  discard executeNiminiCode("clear(); fillRect(" & $x & ", 100, 50, 50)")
+
+when isMainModule:
+  initStorie(
+    updateCallback = update,
+    renderCallback = render
+  )
+  runStorie()
 ```
 
-### 3. Compile-Time Selection
+### 4. Load Nimini from Files
+
 ```nim
-when defined(raylib):
-  type PlatformImpl = RaylibPlatform
-else:
-  type PlatformImpl = SdlPlatform
+import storie, os
+
+let script = readFile("my_sketch.nimini")
+
+proc render() =
+  discard executeNiminiCode(script)
+
+when isMainModule:
+  initStorie(renderCallback = render)
+  runStorie()
 ```
 
-### 4. Command Pattern (2D)
+## API Reference
+
+### Initialization
+
 ```nim
-type DrawCommand = object
-  case kind: DrawCommandKind
-  of FillRect:
-    rectX, rectY, rectW, rectH: int
-    rectColor: Color
-  # ... stored and executed later
+proc initStorie*(
+  width: int = 800,
+  height: int = 600,
+  title: string = "Storie",
+  enable3D: bool = false,
+  targetFps: float = 60.0,
+  updateCallback: UpdateCallback = nil,
+  renderCallback: RenderCallback = nil,
+  inputCallback: InputCallback = nil,
+  shutdownCallback: ShutdownCallback = nil
+)
 ```
 
-## Performance Characteristics
+### Main Loop
 
-| Feature        | SDL3+OpenGL | Raylib     |
-|----------------|-------------|------------|
-| Binary Size    | 1.5 MB      | ~750 KB    |
-| Init Time      | Medium      | Fast       |
-| 2D Performance | Good        | Excellent  |
-| 3D Performance | Excellent   | Good       |
-| Features       | Maximum     | Essential  |
-| Complexity     | High        | Low        |
+```nim
+proc runStorie*()
+  ## Run the main loop (blocking call)
 
-## Use Case Recommendations
+proc stopEngine*()
+  ## Stop the engine gracefully
 
-**Choose SDL3 when:**
-- Need maximum features
-- Desktop-first application
-- Advanced 3D rendering
-- Custom shaders required
-- Cross-platform priority
+proc shutdownStorie*()
+  ## Clean up resources
+```
 
-**Choose Raylib when:**
-- Web deployment priority
-- Quick prototypes/demos
-- Educational content
-- Mobile-friendly
-- Simplicity over features
+### State Queries
 
-## Future Extensions
+```nim
+proc getFrameCount*(): int
+proc getFps*(): float
+proc getWidth*(): int
+proc getHeight*(): int
+proc isRunning*(): bool
+```
 
-Possible additional backends:
-- **Sokol**: Even smaller than raylib (~300 KB)
-- **WebGPU**: Modern web graphics
-- **Vulkan**: Desktop performance
-- **Metal**: macOS/iOS native
-- **ASCII**: Terminal rendering (fun experiment!)
+### Execute Nimini Code
 
-Each just needs to implement:
-- `Platform` interface
-- `Renderer3D` interface
-- Backend-specific bindings
+```nim
+proc executeNiminiCode*(code: string): bool
+  ## Execute Nimini code in the global context
+  ## Returns true on success, false on error
+```
+
+## Callback Types
+
+```nim
+type
+  UpdateCallback* = proc() {.closure.}
+  RenderCallback* = proc() {.closure.}
+  InputCallback* = proc() {.closure.}
+  ShutdownCallback* = proc() {.closure.}
+```
+
+## Building
+
+### Native Build
+
+```bash
+./build.sh              # Uses index.nim (markdown)
+./build.sh --compile-only
+```
+
+### Custom Entry Point
+
+```bash
+# Compile your own entry point
+nim c --passL:"build/vendor/raylib-build/raylib/libraylib.a" \
+      --passL:"-lm -lpthread -ldl -lrt -lX11" \
+      my_app.nim
+```
+
+### Web Build
+
+```bash
+./build-web.sh          # Uses index.nim
+```
+
+## Examples
+
+See the `examples/` directory:
+
+- `pure_nimini.nim` - Using Nimini scripts without markdown
+- `pure_nim.nim` - Using pure Nim with the engine
+- Other examples showing various patterns
+
+## Why This Design?
+
+1. **Flexibility** - Users can choose their preferred workflow
+2. **Simplicity** - Beginners get markdown, advanced users get full control
+3. **Library First** - Storie is now a proper library, not just an app
+4. **Extensibility** - Easy to build tools on top of Storie
+
+## Migration from Old Code
+
+If you have existing code using `storie.nim` as the entry point:
+
+1. Rename your usage to `index.nim` or
+2. Import `storie` and use the new API pattern
+3. Update build scripts to point to your entry file
+
+The engine functionality is unchanged - only the entry point architecture improved!

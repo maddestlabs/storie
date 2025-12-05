@@ -4,7 +4,7 @@ Storie is a minimal, hackable engine for creative coding and live sketches. Buil
 
 Fast prototyping that exports to Nim for native compilation across platforms.
 
-Check it out live: [Demo](https://maddestlabs.github.io/Storie/)
+Check it out live: [Demo](https://maddestlabs.github.io/storie/)
 
 The engine is built around GitHub features. No need to actually install Nim, or anything for that matter. Just create a new repo from the Storie template, update index.md with your own content and it'll auto-compile for the web. Enable GitHub Pages and you'll see that content served live within moments. GitHub Actions take care of the full compilation process.
 
@@ -12,9 +12,8 @@ The engine is built around GitHub features. No need to actually install Nim, or 
 
 Core engine features:
 - **Cross-Platform** - Runs natively and in web browsers via WebAssembly
-- **Fast-Prototyping** - Write code on GitHub Gist and see it run at https://maddestlabs.github.io/Storie?gist=GistID
-- **Minimal Filesize** - Compiled games/apps average from maybe 1MB to 5MB.
-- Nim-based scripting using [Nimini](https://github.com/maddestlabs/nimini)
+- **Fast-Prototyping** - Write code on GitHub Gist and see it run live. [Example](https://maddestlabs.github.io/storie?gist=bd236fe257f02e371e04f7d9899be0c2) | [Source Gist](https://gist.github.com/R3V1Z3/bd236fe257f02e371e04f7d9899be0c2)
+- **Built with Nim** - Highliy readable code that compiles fast and produces small binaries/executables
 
 ## Getting Started
 
@@ -38,4 +37,4 @@ You'll get a native compiled binary in just moments, Nim compiles super fast.
 ## History
 
 - Successor to [Storiel](https://github.com/maddestlabs/storiel), the Lua-based proof-of-concept.
-- Rebuilt from [Backstorie](https://github.com/maddestlabs/Backstorie), a template that extends concepts from Storiel, providing a more robust foundation for further projects.
+- Rebuilt from [Backstorie](https://github.com/maddestlabs/backstorie), a template that extends concepts from Storiel, providing a more robust foundation for further projects.
