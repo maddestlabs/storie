@@ -25,12 +25,12 @@ Usage: ./build-web-full.sh [OPTIONS]
 Options:
   -h, --help            Show this help message
   -v, --version         Show version information
-  -r, --release         Compile in release mode (optimized)
+  -d, --debug           Compile in debug mode (larger, with assertions)
   -o, --output DIR      Output directory (default: docs)
 
 Examples:
-  ./build-web-full.sh                # Compile to docs/
-  ./build-web-full.sh -r             # Compile optimized
+  ./build-web-full.sh                # Compile optimized (default)
+  ./build-web-full.sh -d             # Compile debug build
 
 The compiled files will be placed in the specified output directory as:
   - storie-raylib-full.js
@@ -54,7 +54,7 @@ Setup Emscripten:
 EOF
 }
 
-RELEASE_MODE=""
+RELEASE_MODE="-d:release --opt:size"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -67,8 +67,8 @@ while [[ $# -gt 0 ]]; do
             echo "Storie WASM compiler (Raylib FULL) version $VERSION"
             exit 0
             ;;
-        -r|--release)
-            RELEASE_MODE="-d:release --opt:size"
+        -d|--debug)
+            RELEASE_MODE=""
             shift
             ;;
         -o|--output)

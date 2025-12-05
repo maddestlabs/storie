@@ -18,12 +18,12 @@ Usage: ./build-web.sh [OPTIONS]
 Options:
   -h, --help            Show this help message
   -v, --version         Show version information
-  -r, --release         Compile in release mode (optimized)
+  -d, --debug           Compile in debug mode (larger, with assertions)
   -o, --output DIR      Output directory (default: docs)
 
 Examples:
-  ./build-web.sh                # Compile to docs/
-  ./build-web.sh -r             # Compile optimized
+  ./build-web.sh                # Compile optimized (default)
+  ./build-web.sh -d             # Compile debug build
 
 The compiled files will be placed in the specified output directory as:
   - storie-raylib.js
@@ -44,7 +44,7 @@ Setup Emscripten:
 EOF
 }
 
-RELEASE_MODE=""
+RELEASE_MODE="-d:release --opt:size"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -57,8 +57,8 @@ while [[ $# -gt 0 ]]; do
             echo "Storie WASM compiler (Raylib) version $VERSION"
             exit 0
             ;;
-        -r|--release)
-            RELEASE_MODE="-d:release --opt:size"
+        -d|--debug)
+            RELEASE_MODE=""
             shift
             ;;
         -o|--output)
@@ -131,7 +131,6 @@ export EMCC_CFLAGS="-s USE_GLFW=3 \
   -s ENVIRONMENT=web \
   -s MODULARIZE=0 \
   -s EXPORT_NAME='Module' \
-  --preload-file docs/assets@/assets \
   -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','UTF8ToString','FS'] \
   -DPLATFORM_WEB \
   -DGRAPHICS_API_OPENGL_ES2 \

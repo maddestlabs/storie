@@ -502,9 +502,9 @@ method display*(p: SdlPlatform, renderBuffer: RenderBuffer) =
             )
             discard SDL_RenderTexture(p.renderer, texture, nil, addr dstRect)
       else:
-        # Minimal build - use SDL_RenderDebugText (built-in, no TTF needed)
-        discard SDL_RenderDebugText(p.renderer, cmd.textX.float, cmd.textY.float, 
-                                     cmd.textContent.cstring)
+        # Minimal build - text rendering not available without TTF
+        # Silently skip text rendering to avoid crashes
+        discard
     
     of DrawPixel:
       let c = cmd.pixelColor
