@@ -5636,10 +5636,10 @@ LA6_: ;
 	(*(*xu_1).p).data[oldLen_1] = y_p1;
 	}BeforeRet_: ;
 }
-N_LIB_PRIVATE N_NIMCALL(void, eqwasMoved___platformZraylibZraylib95platform_u124)(tySequence__nvriSt31gnUeMU1UGN79aEw* dest_p0) {
+N_LIB_PRIVATE N_NIMCALL(void, eqwasMoved___platformZraylibZraylib95platform_u206)(tySequence__nvriSt31gnUeMU1UGN79aEw* dest_p0) {
 	(*dest_p0).len = 0; (*dest_p0).p = NIM_NIL;
 }
-N_LIB_PRIVATE N_NIMCALL(void, eqdestroy___platformZraylibZraylib95platform_u127)(tySequence__nvriSt31gnUeMU1UGN79aEw dest_p0) {
+N_LIB_PRIVATE N_NIMCALL(void, eqdestroy___platformZraylibZraylib95platform_u209)(tySequence__nvriSt31gnUeMU1UGN79aEw dest_p0) {
 	if (dest_p0.p && !(dest_p0.p->cap & NIM_STRLIT_FLAG)) {
  alignedDealloc(dest_p0.p, NIM_ALIGNOF(tyObject_InputEvent__tsZWrgL3X4S3Gz9br6y7dVg));
 }

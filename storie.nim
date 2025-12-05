@@ -974,9 +974,9 @@ proc initStorie*(
   # Create nimini context
   niminiCtx = createNiminiContext()
   
-  # Add key constants to the environment
+  # Add key constants to the environment (platform-agnostic)
   when not defined(sdl3):
-    # Register Raylib key constants in Nimini
+    # Raylib key codes
     niminiCtx.env.defineVar("KEY_SPACE", valInt(KEY_SPACE))
     niminiCtx.env.defineVar("KEY_ENTER", valInt(KEY_ENTER))
     niminiCtx.env.defineVar("KEY_ESCAPE", valInt(KEY_ESCAPE))
@@ -990,6 +990,21 @@ proc initStorie*(
     niminiCtx.env.defineVar("KEY_W", valInt(KEY_W))
     niminiCtx.env.defineVar("KEY_S", valInt(KEY_S))
     niminiCtx.env.defineVar("KEY_D", valInt(KEY_D))
+  else:
+    # SDL3 key codes (using ASCII/scancode values)
+    niminiCtx.env.defineVar("KEY_SPACE", valInt(32))      # Space
+    niminiCtx.env.defineVar("KEY_ENTER", valInt(13))      # Return/Enter  
+    niminiCtx.env.defineVar("KEY_ESCAPE", valInt(27))     # Escape
+    niminiCtx.env.defineVar("KEY_BACKSPACE", valInt(8))   # Backspace
+    niminiCtx.env.defineVar("KEY_TAB", valInt(9))         # Tab
+    niminiCtx.env.defineVar("KEY_RIGHT", valInt(0x4000004F))  # SDL_SCANCODE_RIGHT
+    niminiCtx.env.defineVar("KEY_LEFT", valInt(0x40000050))   # SDL_SCANCODE_LEFT
+    niminiCtx.env.defineVar("KEY_DOWN", valInt(0x40000051))   # SDL_SCANCODE_DOWN
+    niminiCtx.env.defineVar("KEY_UP", valInt(0x40000052))     # SDL_SCANCODE_UP
+    niminiCtx.env.defineVar("KEY_A", valInt(97))          # 'a'
+    niminiCtx.env.defineVar("KEY_W", valInt(119))         # 'w'
+    niminiCtx.env.defineVar("KEY_S", valInt(115))         # 's'
+    niminiCtx.env.defineVar("KEY_D", valInt(100))         # 'd'
   
   echo "Storie initialized successfully!"
   echo "Press ESC to quit"

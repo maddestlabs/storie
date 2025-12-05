@@ -299,8 +299,8 @@ static const struct {
 } TM__OsWUmvNw5UIqmxlnvse82Q_24 = { 27 | NIM_STRLIT_FLAG, "SDL_CreateRenderer failed: " };
 static const NimStringV2 TM__OsWUmvNw5UIqmxlnvse82Q_25 = {27, (NimStrPayload*)&TM__OsWUmvNw5UIqmxlnvse82Q_24};
 static const struct {
-  NI cap; NIM_CHAR data[54+1];
-} TM__OsWUmvNw5UIqmxlnvse82Q_27 = { 54 | NIM_STRLIT_FLAG, "Running SDL3 minimal build (no TTF - using debug text)" };
+  NI cap; NIM_CHAR data[61+1];
+} TM__OsWUmvNw5UIqmxlnvse82Q_27 = { 61 | NIM_STRLIT_FLAG, "Running SDL3 minimal build (no TTF - text rendering disabled)" };
 static const struct {
   NI cap; NIM_CHAR data[19+1];
 } TM__OsWUmvNw5UIqmxlnvse82Q_28 = { 19 | NIM_STRLIT_FLAG, "Window dimensions: " };
@@ -409,7 +409,7 @@ static const NimStringV2 TM__OsWUmvNw5UIqmxlnvse82Q_105 = {90, (NimStrPayload*)&
 N_LIB_PRIVATE TNimTypeV2 NTIv2__PlyfjOI6Unt59cWQnMeZGrg_;
 static NIM_CONST tyArray__nHXaesL0DJZHyVS07ARPRA TM__OsWUmvNw5UIqmxlnvse82Q_22 = {{39, (NimStrPayload*)&TM__OsWUmvNw5UIqmxlnvse82Q_23}}
 ;
-static NIM_CONST tyArray__nHXaesL0DJZHyVS07ARPRA TM__OsWUmvNw5UIqmxlnvse82Q_26 = {{54, (NimStrPayload*)&TM__OsWUmvNw5UIqmxlnvse82Q_27}}
+static NIM_CONST tyArray__nHXaesL0DJZHyVS07ARPRA TM__OsWUmvNw5UIqmxlnvse82Q_26 = {{61, (NimStrPayload*)&TM__OsWUmvNw5UIqmxlnvse82Q_27}}
 ;
 static NIM_CONST tyArray__nHXaesL0DJZHyVS07ARPRA TM__OsWUmvNw5UIqmxlnvse82Q_36 = {{80, (NimStrPayload*)&TM__OsWUmvNw5UIqmxlnvse82Q_37}}
 ;
@@ -781,24 +781,6 @@ LA73_: ;
 LA56_: ;
 	echoBinSafe(TM__OsWUmvNw5UIqmxlnvse82Q_26, 1);
 	(*p_p0).font = ((TTF_Font*) NIM_NIL);
-	SDL_Quit();
-	result = NIM_FALSE;
-	if (colontmpD__7.p && !(colontmpD__7.p->cap & NIM_STRLIT_FLAG)) {
- dealloc(colontmpD__7.p);
-}
-	if (colontmpD__6.p && !(colontmpD__6.p->cap & NIM_STRLIT_FLAG)) {
- dealloc(colontmpD__6.p);
-}
-	if (colontmpD__3.p && !(colontmpD__3.p->cap & NIM_STRLIT_FLAG)) {
- dealloc(colontmpD__3.p);
-}
-	if (colontmpD__2.p && !(colontmpD__2.p->cap & NIM_STRLIT_FLAG)) {
- dealloc(colontmpD__2.p);
-}
-	if (colontmpD_.p && !(colontmpD_.p->cap & NIM_STRLIT_FLAG)) {
- dealloc(colontmpD_.p);
-}
-	goto BeforeRet_;
 	(*p_p0).running = NIM_TRUE;
 	T80_ = initTable__platformZsdlZsdl95platform_u69(((NI)32));
 	if (NIM_UNLIKELY(*nimErr_)) {eqdestroy___platformZsdlZsdl95platform_u209(&T80_); goto LA1_;}

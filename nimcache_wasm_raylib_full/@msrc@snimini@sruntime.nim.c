@@ -464,19 +464,19 @@ static const struct {
 } TM__nbjJQYbAQfEiuK7BKis49aQ_29 = { 1 | NIM_STRLIT_FLAG, "}" };
 static const NimStringV2 TM__nbjJQYbAQfEiuK7BKis49aQ_30 = {1, (NimStrPayload*)&TM__nbjJQYbAQfEiuK7BKis49aQ_29};
 static const NimStringV2 TM__nbjJQYbAQfEiuK7BKis49aQ_31 = {0, (NimStrPayload*)&TM__nbjJQYbAQfEiuK7BKis49aQ_5};
+static const NimStringV2 TM__nbjJQYbAQfEiuK7BKis49aQ_32 = {0, (NimStrPayload*)&TM__nbjJQYbAQfEiuK7BKis49aQ_5};
 static const struct {
   NI cap; NIM_CHAR data[63+1];
-} TM__nbjJQYbAQfEiuK7BKis49aQ_32 = { 63 | NIM_STRLIT_FLAG, "field \'intVal\' is not accessible for type \'Expr\' using \'kind = " };
-static const NimStringV2 TM__nbjJQYbAQfEiuK7BKis49aQ_33 = {63, (NimStrPayload*)&TM__nbjJQYbAQfEiuK7BKis49aQ_32};
+} TM__nbjJQYbAQfEiuK7BKis49aQ_33 = { 63 | NIM_STRLIT_FLAG, "field \'intVal\' is not accessible for type \'Expr\' using \'kind = " };
+static const NimStringV2 TM__nbjJQYbAQfEiuK7BKis49aQ_34 = {63, (NimStrPayload*)&TM__nbjJQYbAQfEiuK7BKis49aQ_33};
 static const struct {
   NI cap; NIM_CHAR data[65+1];
-} TM__nbjJQYbAQfEiuK7BKis49aQ_34 = { 65 | NIM_STRLIT_FLAG, "field \'floatVal\' is not accessible for type \'Expr\' using \'kind = " };
-static const NimStringV2 TM__nbjJQYbAQfEiuK7BKis49aQ_35 = {65, (NimStrPayload*)&TM__nbjJQYbAQfEiuK7BKis49aQ_34};
+} TM__nbjJQYbAQfEiuK7BKis49aQ_35 = { 65 | NIM_STRLIT_FLAG, "field \'floatVal\' is not accessible for type \'Expr\' using \'kind = " };
+static const NimStringV2 TM__nbjJQYbAQfEiuK7BKis49aQ_36 = {65, (NimStrPayload*)&TM__nbjJQYbAQfEiuK7BKis49aQ_35};
 static const struct {
   NI cap; NIM_CHAR data[63+1];
-} TM__nbjJQYbAQfEiuK7BKis49aQ_36 = { 63 | NIM_STRLIT_FLAG, "field \'strVal\' is not accessible for type \'Expr\' using \'kind = " };
-static const NimStringV2 TM__nbjJQYbAQfEiuK7BKis49aQ_37 = {63, (NimStrPayload*)&TM__nbjJQYbAQfEiuK7BKis49aQ_36};
-static const NimStringV2 TM__nbjJQYbAQfEiuK7BKis49aQ_38 = {0, (NimStrPayload*)&TM__nbjJQYbAQfEiuK7BKis49aQ_5};
+} TM__nbjJQYbAQfEiuK7BKis49aQ_37 = { 63 | NIM_STRLIT_FLAG, "field \'strVal\' is not accessible for type \'Expr\' using \'kind = " };
+static const NimStringV2 TM__nbjJQYbAQfEiuK7BKis49aQ_38 = {63, (NimStrPayload*)&TM__nbjJQYbAQfEiuK7BKis49aQ_37};
 static const struct {
   NI cap; NIM_CHAR data[64+1];
 } TM__nbjJQYbAQfEiuK7BKis49aQ_39 = { 64 | NIM_STRLIT_FLAG, "field \'boolVal\' is not accessible for type \'Expr\' using \'kind = " };
@@ -1606,6 +1606,53 @@ N_LIB_PRIVATE N_NIMCALL(tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA
 	result = T1_;
 	return result;
 }
+N_LIB_PRIVATE N_NIMCALL(tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA*, valBool__srcZniminiZruntime_u957)(NIM_BOOL b_p0) {
+	tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA* result;
+	NI colontmpD_;
+	NI colontmpD__2;
+	NF colontmpD__3;
+	NF colontmpD__4;
+	NIM_BOOL colontmpD__5;
+	tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA* T1_;
+	colontmpD_ = (NI)0;
+	colontmpD__2 = (NI)0;
+	colontmpD__3 = (NF)0;
+	colontmpD__4 = (NF)0;
+	colontmpD__5 = (NIM_BOOL)0;
+	T1_ = NIM_NIL;
+	T1_ = (tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA*) nimNewObj(sizeof(tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA), NIM_ALIGNOF(tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA));
+	(*T1_).kind = ((tyEnum_ValueKind__NDEq4UBclNqM9cxgpRzIvuA)3);
+	{
+		if (!b_p0) goto LA4_;
+		colontmpD_ = ((NI)1);
+		(*T1_).i = colontmpD_;
+	}
+	goto LA2_;
+LA4_: ;
+	{
+		colontmpD__2 = ((NI)0);
+		(*T1_).i = colontmpD__2;
+	}
+LA2_: ;
+	{
+		if (!b_p0) goto LA9_;
+		colontmpD__3 = 1.0;
+		(*T1_).f = colontmpD__3;
+	}
+	goto LA7_;
+LA9_: ;
+	{
+		colontmpD__4 = 0.0;
+		(*T1_).f = colontmpD__4;
+	}
+LA7_: ;
+	colontmpD__5 = b_p0;
+	(*T1_).b = colontmpD__5;
+	(*T1_).s = TM__nbjJQYbAQfEiuK7BKis49aQ_32;
+	(*T1_).fnVal = ((tyObject_FunctionValcolonObjectType___r6Yk9cmkbEg1kfXFsfRnvIQ*) NIM_NIL);
+	result = T1_;
+	return result;
+}
 N_LIB_PRIVATE N_NIMCALL(tyObject_Env__3CHZHNtlgDxtzX7rKE9comA*, eqdup___srcZniminiZruntime_u2728)(tyObject_Env__3CHZHNtlgDxtzX7rKE9comA* src_p0, NIM_BOOL cyclic_p1) {
 	tyObject_Env__3CHZHNtlgDxtzX7rKE9comA* result;
 	tyObject_Env__3CHZHNtlgDxtzX7rKE9comA* colontmp_;
@@ -1649,53 +1696,6 @@ NIM_BOOL* nimErr_;
 	}
 LA4_: ;
 	}BeforeRet_: ;
-}
-N_LIB_PRIVATE N_NIMCALL(tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA*, valBool__srcZniminiZruntime_u957)(NIM_BOOL b_p0) {
-	tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA* result;
-	NI colontmpD_;
-	NI colontmpD__2;
-	NF colontmpD__3;
-	NF colontmpD__4;
-	NIM_BOOL colontmpD__5;
-	tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA* T1_;
-	colontmpD_ = (NI)0;
-	colontmpD__2 = (NI)0;
-	colontmpD__3 = (NF)0;
-	colontmpD__4 = (NF)0;
-	colontmpD__5 = (NIM_BOOL)0;
-	T1_ = NIM_NIL;
-	T1_ = (tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA*) nimNewObj(sizeof(tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA), NIM_ALIGNOF(tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA));
-	(*T1_).kind = ((tyEnum_ValueKind__NDEq4UBclNqM9cxgpRzIvuA)3);
-	{
-		if (!b_p0) goto LA4_;
-		colontmpD_ = ((NI)1);
-		(*T1_).i = colontmpD_;
-	}
-	goto LA2_;
-LA4_: ;
-	{
-		colontmpD__2 = ((NI)0);
-		(*T1_).i = colontmpD__2;
-	}
-LA2_: ;
-	{
-		if (!b_p0) goto LA9_;
-		colontmpD__3 = 1.0;
-		(*T1_).f = colontmpD__3;
-	}
-	goto LA7_;
-LA9_: ;
-	{
-		colontmpD__4 = 0.0;
-		(*T1_).f = colontmpD__4;
-	}
-LA7_: ;
-	colontmpD__5 = b_p0;
-	(*T1_).b = colontmpD__5;
-	(*T1_).s = TM__nbjJQYbAQfEiuK7BKis49aQ_38;
-	(*T1_).fnVal = ((tyObject_FunctionValcolonObjectType___r6Yk9cmkbEg1kfXFsfRnvIQ*) NIM_NIL);
-	result = T1_;
-	return result;
 }
 N_LIB_PRIVATE N_NIMCALL(tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA*, getVar__srcZniminiZruntime_u2937)(tyObject_Env__3CHZHNtlgDxtzX7rKE9comA* env_p0, NimStringV2 name_p1) {
 	tyObject_ValuecolonObjectType___RcYJRyWduJExIF9chvHZw9aA* result;
@@ -2562,7 +2562,7 @@ NIM_BOOL* nimErr_;
 	switch ((*e_p0).kind) {
 	case ((tyEnum_ExprKind__WjuAz8QTkRMXY39b9a8vjE7A)0):
 	{
-		if (!(((1 &((NU16)1<<((NU)(((*e_p0).kind))&15U)))!=0))) 		{ raiseFieldErrorStr(TM__nbjJQYbAQfEiuK7BKis49aQ_33, dollar___srcZniminiZast_u13((*e_p0).kind)); goto BeforeRet_;
+		if (!(((1 &((NU16)1<<((NU)(((*e_p0).kind))&15U)))!=0))) 		{ raiseFieldErrorStr(TM__nbjJQYbAQfEiuK7BKis49aQ_34, dollar___srcZniminiZast_u13((*e_p0).kind)); goto BeforeRet_;
 		}
 		result = valInt__srcZniminiZruntime_u951((*e_p0)._kind_1.intVal);
 		if (NIM_UNLIKELY(*nimErr_)) goto BeforeRet_;
@@ -2570,7 +2570,7 @@ NIM_BOOL* nimErr_;
 	break;
 	case ((tyEnum_ExprKind__WjuAz8QTkRMXY39b9a8vjE7A)1):
 	{
-		if (!(((2 &((NU16)1<<((NU)(((*e_p0).kind))&15U)))!=0))) 		{ raiseFieldErrorStr(TM__nbjJQYbAQfEiuK7BKis49aQ_35, dollar___srcZniminiZast_u13((*e_p0).kind)); goto BeforeRet_;
+		if (!(((2 &((NU16)1<<((NU)(((*e_p0).kind))&15U)))!=0))) 		{ raiseFieldErrorStr(TM__nbjJQYbAQfEiuK7BKis49aQ_36, dollar___srcZniminiZast_u13((*e_p0).kind)); goto BeforeRet_;
 		}
 		result = valFloat__srcZniminiZruntime_u954((*e_p0)._kind_2.floatVal);
 		if (NIM_UNLIKELY(*nimErr_)) goto BeforeRet_;
@@ -2578,7 +2578,7 @@ NIM_BOOL* nimErr_;
 	break;
 	case ((tyEnum_ExprKind__WjuAz8QTkRMXY39b9a8vjE7A)2):
 	{
-		if (!(((4 &((NU16)1<<((NU)(((*e_p0).kind))&15U)))!=0))) 		{ raiseFieldErrorStr(TM__nbjJQYbAQfEiuK7BKis49aQ_37, dollar___srcZniminiZast_u13((*e_p0).kind)); goto BeforeRet_;
+		if (!(((4 &((NU16)1<<((NU)(((*e_p0).kind))&15U)))!=0))) 		{ raiseFieldErrorStr(TM__nbjJQYbAQfEiuK7BKis49aQ_38, dollar___srcZniminiZast_u13((*e_p0).kind)); goto BeforeRet_;
 		}
 		result = valString__srcZniminiZruntime_u960((*e_p0)._kind_3.strVal);
 		if (NIM_UNLIKELY(*nimErr_)) goto BeforeRet_;

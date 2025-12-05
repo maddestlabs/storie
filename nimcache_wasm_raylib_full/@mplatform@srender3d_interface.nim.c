@@ -448,7 +448,7 @@ NIM_BOOL* nimErr_;
 	Result[(((NI)10))- 0] = z_p2;
 	}BeforeRet_: ;
 }
-N_LIB_PRIVATE N_NIMCALL(void, eqdestroy___storie_u272)(tyObject_MeshData__i0o8rU9aTRm2iFbbx6dAfdg* dest_p0) {
+N_LIB_PRIVATE N_NIMCALL(void, eqdestroy___storie_u417)(tyObject_MeshData__i0o8rU9aTRm2iFbbx6dAfdg* dest_p0) {
 	eqdestroy___platformZrender3d95interface_u437((*dest_p0).indices);
 	eqdestroy___platformZrender3d95interface_u314((*dest_p0).vertices);
 }

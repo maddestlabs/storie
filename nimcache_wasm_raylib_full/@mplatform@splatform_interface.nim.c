@@ -239,7 +239,7 @@ LA6_: ;
 LA3_: ;
 	return result;
 }
-N_LIB_PRIVATE N_NIMCALL(void, eqsink___platformZraylibZraylib95platform_u503)(tyObject_PlatformcolonObjectType___Qbb9c9cXa9bR0AiUtG9aCfp6Wg** dest_p0, tyObject_PlatformcolonObjectType___Qbb9c9cXa9bR0AiUtG9aCfp6Wg* src_p1) {
+N_LIB_PRIVATE N_NIMCALL(void, eqsink___platformZraylibZraylib95platform_u604)(tyObject_PlatformcolonObjectType___Qbb9c9cXa9bR0AiUtG9aCfp6Wg** dest_p0, tyObject_PlatformcolonObjectType___Qbb9c9cXa9bR0AiUtG9aCfp6Wg* src_p1) {
 	tyObject_PlatformcolonObjectType___Qbb9c9cXa9bR0AiUtG9aCfp6Wg* colontmp_;
 	colontmp_ = (*dest_p0);
 	(*dest_p0) = src_p1;

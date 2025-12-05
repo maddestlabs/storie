@@ -144,9 +144,10 @@ method init*(p: SdlPlatform, enable3D: bool = false): bool =
     # Load font - try multiple paths
     const fontSize = 16.0
     var fontPaths = @[
-      "/assets/fonts/Roboto-Regular.ttf",  # Google Fonts from full build
+      "/assets/AnomalyMono-Powerline.otf",  # Preloaded font for web builds
+      "/assets/fonts/Roboto-Regular.ttf",  # Google Fonts (if available)
       "/assets/fonts/RobotoMono-Regular.ttf",
-      "docs/assets/AnomalyMono-Powerline.otf",
+      "docs/assets/AnomalyMono-Powerline.otf",  # Native build paths
       "assets/AnomalyMono-Powerline.otf"
     ]
     
@@ -158,22 +159,18 @@ method init*(p: SdlPlatform, enable3D: bool = false): bool =
         break
     
     if p.font.isNil:
-      echo "Failed to load font from any path: ", SDL_GetError()
+      echo "Warning: Failed to load font from any path: ", SDL_GetError()
       echo "Tried paths: ", fontPaths
-      TTF_Quit()
-      if not p.renderer.isNil:
-        SDL_DestroyRenderer(p.renderer)
-      if not p.glContext.isNil:
-        SDL_GL_DestroyContext(p.glContext)
-      SDL_DestroyWindow(p.window)
-      SDL_Quit()
-      return false
+      echo "Continuing without custom font (text rendering may not work)"
+      # Don't fail - continue without font
+      # TTF_Quit()  # Keep TTF initialized for potential runtime font loading
+      # Text rendering will be skipped in display() when font is nil
   else:
-    # Minimal build - no TTF, will use SDL_RenderDebugText
-    echo "Running SDL3 minimal build (no TTF - using debug text)"
+    # Minimal build - no TTF available
+    echo "Running SDL3 minimal build (no TTF - text rendering disabled)"
     p.font = nil
-    SDL_Quit()
-    return false
+    # Don't quit - continue without font support
+    # Text will be skipped in display() method
   
   p.running = true
   
