@@ -40,7 +40,7 @@ static N_INLINE(void, addInt__stdZprivateZdigitsutils_u204)(NimStringV2* result_
 static N_INLINE(void, addFloat__system_u4721)(NimStringV2* result_p0, NF x_p1);
 N_LIB_PRIVATE N_NIMCALL(void, addFloatRoundtrip__system_u4726)(NimStringV2* result_p0, NF x_p1);
 static N_INLINE(NIM_BOOL*, nimErrorFlag)(void);
-N_LIB_PRIVATE N_NIMCALL(NimStringV2, collectionToString__platformZsdlZsdl95platform_u103)(tySequence__sM4lkSb7zS6F7OVMvW9cffQ x_p0, NimStringV2 prefix_p1, NimStringV2 separator_p2, NimStringV2 suffix_p3);
+N_LIB_PRIVATE N_NIMCALL(NimStringV2, collectionToString__platformZsdlZsdl95platform_u104)(tySequence__sM4lkSb7zS6F7OVMvW9cffQ x_p0, NimStringV2 prefix_p1, NimStringV2 separator_p2, NimStringV2 suffix_p3);
 N_LIB_PRIVATE N_NIMCALL(void, eqcopy___system_u2642)(NimStringV2* dest_p0, NimStringV2 src_p1);
 static N_INLINE(void, appendString)(NimStringV2* dest_p0, NimStringV2 src_p1);
 static N_INLINE(void, copyMem__system_u1741)(void* dest_p0, void* source_p1, NI size_p2);
@@ -48,7 +48,7 @@ static N_INLINE(void, nimCopyMem)(void* dest_p0, void* source_p1, NI size_p2);
 N_LIB_PRIVATE N_NOINLINE(void, raiseRangeErrorI)(NI64 i_p0, NI64 a_p1, NI64 b_p2);
 N_LIB_PRIVATE N_NOINLINE(void, raiseOverflow)(void);
 N_LIB_PRIVATE N_NIMCALL(void, prepareAdd)(NimStringV2* s_p0, NI addLen_p1);
-N_LIB_PRIVATE N_NIMCALL(void, addQuoted__stdZprivateZoscommon_u119)(NimStringV2* s_p0, NimStringV2 x_p1);
+N_LIB_PRIVATE N_NIMCALL(void, addQuoted__platformZsdlZsdl95platform_u119)(NimStringV2* s_p0, NimStringV2 x_p1);
 N_LIB_PRIVATE N_NIMCALL(void, failedAssertImpl__stdZassertions_u234)(NimStringV2 msg_p0);
 N_LIB_PRIVATE N_NIMCALL(void, addInt__stdZprivateZdigitsutils_u184)(NimStringV2* result_p0, NU64 x_p1);
 static const struct {
@@ -142,7 +142,7 @@ static N_INLINE(void, appendString)(NimStringV2* dest_p0, NimStringV2 src_p1) {
 LA3_: ;
 	}BeforeRet_: ;
 }
-N_LIB_PRIVATE N_NIMCALL(NimStringV2, collectionToString__platformZsdlZsdl95platform_u103)(tySequence__sM4lkSb7zS6F7OVMvW9cffQ x_p0, NimStringV2 prefix_p1, NimStringV2 separator_p2, NimStringV2 suffix_p3) {
+N_LIB_PRIVATE N_NIMCALL(NimStringV2, collectionToString__platformZsdlZsdl95platform_u104)(tySequence__sM4lkSb7zS6F7OVMvW9cffQ x_p0, NimStringV2 prefix_p1, NimStringV2 separator_p2, NimStringV2 suffix_p3) {
 	NimStringV2 result;
 	NIM_BOOL firstElement_1;
 NIM_BOOL* nimErr_;
@@ -174,7 +174,7 @@ LA7_: ;
 appendString((&result), separator_p2);
 				}
 LA5_: ;
-				addQuoted__stdZprivateZoscommon_u119((&result), (*value_1));
+				addQuoted__platformZsdlZsdl95platform_u119((&result), (*value_1));
 				i_1 += ((NI)1);
 				{
 					NI T12_;
@@ -192,12 +192,12 @@ appendString((&result), suffix_p3);
 	}BeforeRet_: ;
 	return result;
 }
-N_LIB_PRIVATE N_NIMCALL(NimStringV2, dollar___platformZsdlZsdl95platform_u99)(tySequence__sM4lkSb7zS6F7OVMvW9cffQ x_p0) {
+N_LIB_PRIVATE N_NIMCALL(NimStringV2, dollar___platformZsdlZsdl95platform_u100)(tySequence__sM4lkSb7zS6F7OVMvW9cffQ x_p0) {
 	NimStringV2 result;
 NIM_BOOL* nimErr_;
 {nimErr_ = nimErrorFlag();
 	result.len = 0; result.p = NIM_NIL;
-	result = collectionToString__platformZsdlZsdl95platform_u103(x_p0, TM__n49a9aYp5BrbXv9a6OCpJYm0g_11, TM__n49a9aYp5BrbXv9a6OCpJYm0g_13, TM__n49a9aYp5BrbXv9a6OCpJYm0g_15);
+	result = collectionToString__platformZsdlZsdl95platform_u104(x_p0, TM__n49a9aYp5BrbXv9a6OCpJYm0g_11, TM__n49a9aYp5BrbXv9a6OCpJYm0g_13, TM__n49a9aYp5BrbXv9a6OCpJYm0g_15);
 	if (NIM_UNLIKELY(*nimErr_)) goto BeforeRet_;
 	}BeforeRet_: ;
 	return result;

@@ -4,26 +4,6 @@
   "outputLastModificationTime": "",
   "compile": [
     [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@psystem@sexceptions.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@psystem@sexceptions.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@psystem@sexceptions.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sdigitsutils.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sdigitsutils.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sdigitsutils.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sassertions.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sassertions.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sassertions.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sdragonbox.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sdragonbox.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sdragonbox.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sformatfloat.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sformatfloat.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sformatfloat.nim.c"
-    ],
-    [
       "/workspaces/Storie/nimcache_wasm_sdl_full/@psystem@sdollars.nim.c",
       "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@psystem@sdollars.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@psystem@sdollars.nim.c"
     ],
@@ -32,56 +12,12 @@
       "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@psystem.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@psystem.nim.c"
     ],
     [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@pparseutils.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@pparseutils.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pparseutils.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@pmath.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@pmath.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pmath.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@palgorithm.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@palgorithm.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@palgorithm.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@pstrutils.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@pstrutils.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstrutils.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@ptimes.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@ptimes.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@ptimes.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sospaths2.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sospaths2.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sospaths2.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@pstd@senvvars.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@senvvars.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@senvvars.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@pstd@scmdline.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@scmdline.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@scmdline.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@spixel_types.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@spixel_types.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@spixel_types.nim.c"
-    ],
-    [
       "/workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@splatform_interface.nim.c",
       "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@splatform_interface.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@splatform_interface.nim.c"
     ],
     [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@srender3d_interface.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@srender3d_interface.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@srender3d_interface.nim.c"
-    ],
-    [
       "/workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sast.nim.c",
       "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sast.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sast.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@phashes.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@phashes.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@phashes.nim.c"
     ],
     [
       "/workspaces/Storie/nimcache_wasm_sdl_full/@ptables.nim.c",
@@ -92,28 +28,8 @@
       "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sruntime.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sruntime.nim.c"
     ],
     [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@stokenizer.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@stokenizer.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@stokenizer.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@splugin.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@splugin.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@splugin.nim.c"
-    ],
-    [
       "/workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sparser.nim.c",
       "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sparser.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sparser.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sbackend.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sbackend.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sbackend.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sbackends@snim_backend.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sbackends@snim_backend.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sbackends@snim_backend.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sfrontend.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sfrontend.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sfrontend.nim.c"
     ],
     [
       "/workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sfrontends@snim_frontend.nim.c",
@@ -122,10 +38,6 @@
     [
       "/workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@ssdl@ssdl_platform.nim.c",
       "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@ssdl@ssdl_platform.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@ssdl@ssdl_platform.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@ssdl@ssdl_render3d.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@ssdl@ssdl_render3d.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@ssdl@ssdl_render3d.nim.c"
     ],
     [
       "/workspaces/Storie/nimcache_wasm_sdl_full/@mstorie.nim.c",
@@ -149,9 +61,6 @@
     "/workspaces/Storie/nimcache_wasm_sdl_full/@palgorithm.nim.c.o",
     "/workspaces/Storie/nimcache_wasm_sdl_full/@pstrutils.nim.c.o",
     "/workspaces/Storie/nimcache_wasm_sdl_full/@ptimes.nim.c.o",
-    "/workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sospaths2.nim.c.o",
-    "/workspaces/Storie/nimcache_wasm_sdl_full/@pstd@senvvars.nim.c.o",
-    "/workspaces/Storie/nimcache_wasm_sdl_full/@pstd@scmdline.nim.c.o",
     "/workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@spixel_types.nim.c.o",
     "/workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@splatform_interface.nim.c.o",
     "/workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@srender3d_interface.nim.c.o",
@@ -171,7 +80,7 @@
     "/workspaces/Storie/nimcache_wasm_sdl_full/@mstorie.nim.c.o",
     "/workspaces/Storie/nimcache_wasm_sdl_full/@mindex.nim.c.o"
   ],
-  "linkcmd": "emcc   -o /workspaces/Storie/docs/storie-sdl-full.js /workspaces/Storie/nimcache_wasm_sdl_full/@psystem@sexceptions.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sdigitsutils.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sassertions.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sdragonbox.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sformatfloat.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@psystem@sdollars.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@psystem.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pparseutils.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pmath.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@palgorithm.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstrutils.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@ptimes.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sospaths2.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@senvvars.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@scmdline.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@spixel_types.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@splatform_interface.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@srender3d_interface.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sast.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@phashes.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@ptables.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sruntime.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@stokenizer.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@splugin.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sparser.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sbackend.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sbackends@snim_backend.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sfrontend.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sfrontends@snim_frontend.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@ssdl@ssdl_platform.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@ssdl@ssdl_render3d.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mstorie.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mindex.nim.c.o  -lm -lm -lrt /workspaces/Storie/build-wasm/vendor/SDL3-src/libSDL3.a /workspaces/Storie/build-wasm/vendor/SDL_ttf-src/libSDL3_ttf.a /workspaces/Storie/build-wasm/vendor/SDL_ttf-src/external/freetype-build/libfreetype.a /workspaces/Storie/build-wasm/vendor/SDL_ttf-src/external/harfbuzz-build/libharfbuzz.a -lGL -s EXPORTED_FUNCTIONS=['_main','_loadMarkdownFromJS','_setWaitingForGist'] -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap']   -ldl",
+  "linkcmd": "emcc   -o /workspaces/Storie/docs/storie-sdl-full.js /workspaces/Storie/nimcache_wasm_sdl_full/@psystem@sexceptions.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sdigitsutils.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sassertions.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sdragonbox.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sformatfloat.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@psystem@sdollars.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@psystem.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pparseutils.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pmath.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@palgorithm.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@pstrutils.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@ptimes.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@spixel_types.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@splatform_interface.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@srender3d_interface.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sast.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@phashes.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@ptables.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sruntime.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@stokenizer.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@splugin.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sparser.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sbackend.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sbackends@snim_backend.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sfrontend.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@msrc@snimini@sfrontends@snim_frontend.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@ssdl@ssdl_platform.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@ssdl@ssdl_render3d.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mstorie.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mindex.nim.c.o  -lm -lm -lrt /workspaces/Storie/build-wasm/vendor/SDL3-src/libSDL3.a /workspaces/Storie/build-wasm/vendor/SDL_ttf-src/libSDL3_ttf.a /workspaces/Storie/build-wasm/vendor/SDL_ttf-src/external/freetype-build/libfreetype.a /workspaces/Storie/build-wasm/vendor/SDL_ttf-src/external/harfbuzz-build/libharfbuzz.a -lGL -s EXPORTED_FUNCTIONS=['_main','_loadMarkdownFromJS','_setWaitingForGist'] -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap']   -ldl",
   "extraCmds": [],
   "configFiles": [
     "/home/codespace/.choosenim/toolchains/nim-2.2.6/config/nim.cfg",

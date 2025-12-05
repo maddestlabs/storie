@@ -4,12 +4,8 @@
 ## This is the core engine library. Import this to build custom applications.
 ## For the default markdown-based experience, see index.nim
 
-import strutils, math
+import strutils, math, times
 import platform/platform_interface
-
-# Import times only for native builds (for cpuTime)
-when not defined(emscripten):
-  import times
 import platform/pixel_types
 import platform/render3d_interface
 import storie_core
@@ -565,21 +561,10 @@ var shutdownCallback: ShutdownCallback = nil
 # Global timing state for main loop
 var lastTime: float = 0.0
 var accumulator: float = 0.0
-when defined(emscripten):
-  var frameCount: int = 0  # Frame counter for WASM builds
 
 proc mainLoopIteration() =
   ## Single iteration of the main loop (called by Emscripten or native loop)
-  # Get current time
-  let currentTime = when defined(emscripten):
-    # WASM: Use frame-based timing (browser controls frame rate)
-    # Assume 60 FPS for delta time calculation
-    frameCount.inc()
-    frameCount.float / 60.0  # Approximate time in seconds
-  else:
-    # Native: Use CPU time for accurate timing
-    cpuTime()
-  
+  let currentTime = cpuTime()
   let deltaTime = if lastTime == 0.0: 0.0 else: currentTime - lastTime
   lastTime = currentTime
   

@@ -4,8 +4,56 @@
   "outputLastModificationTime": "",
   "compile": [
     [
+      "/workspaces/Storie/nimcache_wasm_raylib/@psystem@sexceptions.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@psystem@sexceptions.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@psystem@sexceptions.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@pstd@sprivate@sdigitsutils.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sprivate@sdigitsutils.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sprivate@sdigitsutils.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@pstd@sassertions.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sassertions.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sassertions.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@pstd@sprivate@sdragonbox.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sprivate@sdragonbox.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sprivate@sdragonbox.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@pstd@sformatfloat.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sformatfloat.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sformatfloat.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@psystem@sdollars.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@psystem@sdollars.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@psystem@sdollars.nim.c"
+    ],
+    [
       "/workspaces/Storie/nimcache_wasm_raylib/@psystem.nim.c",
       "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@psystem.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@psystem.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@pparseutils.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@pparseutils.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pparseutils.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@pmath.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@pmath.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pmath.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@palgorithm.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@palgorithm.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@palgorithm.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@pstrutils.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@pstrutils.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstrutils.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@ptimes.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@ptimes.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@ptimes.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@mplatform@spixel_types.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@spixel_types.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@spixel_types.nim.c"
     ],
     [
       "/workspaces/Storie/nimcache_wasm_raylib/@mplatform@splatform_interface.nim.c",
@@ -20,6 +68,10 @@
       "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sast.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sast.nim.c"
     ],
     [
+      "/workspaces/Storie/nimcache_wasm_raylib/@phashes.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@phashes.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@phashes.nim.c"
+    ],
+    [
       "/workspaces/Storie/nimcache_wasm_raylib/@ptables.nim.c",
       "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@ptables.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@ptables.nim.c"
     ],
@@ -28,8 +80,28 @@
       "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sruntime.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sruntime.nim.c"
     ],
     [
+      "/workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@stokenizer.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@stokenizer.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@stokenizer.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@splugin.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@splugin.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@splugin.nim.c"
+    ],
+    [
       "/workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sparser.nim.c",
       "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sparser.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sparser.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sbackend.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sbackend.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sbackend.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sbackends@snim_backend.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sbackends@snim_backend.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sbackends@snim_backend.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sfrontend.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sfrontend.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sfrontend.nim.c"
     ],
     [
       "/workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sfrontends@snim_frontend.nim.c",
@@ -38,6 +110,10 @@
     [
       "/workspaces/Storie/nimcache_wasm_raylib/@mplatform@sraylib@sraylib_platform.nim.c",
       "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@sraylib@sraylib_platform.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@sraylib@sraylib_platform.nim.c"
+    ],
+    [
+      "/workspaces/Storie/nimcache_wasm_raylib/@mplatform@sraylib@sraylib_render3d.nim.c",
+      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -Ivendor/raylib-src/src -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@sraylib@sraylib_render3d.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@sraylib@sraylib_render3d.nim.c"
     ],
     [
       "/workspaces/Storie/nimcache_wasm_raylib/@mstorie.nim.c",
@@ -60,6 +136,7 @@
     "/workspaces/Storie/nimcache_wasm_raylib/@pmath.nim.c.o",
     "/workspaces/Storie/nimcache_wasm_raylib/@palgorithm.nim.c.o",
     "/workspaces/Storie/nimcache_wasm_raylib/@pstrutils.nim.c.o",
+    "/workspaces/Storie/nimcache_wasm_raylib/@ptimes.nim.c.o",
     "/workspaces/Storie/nimcache_wasm_raylib/@mplatform@spixel_types.nim.c.o",
     "/workspaces/Storie/nimcache_wasm_raylib/@mplatform@splatform_interface.nim.c.o",
     "/workspaces/Storie/nimcache_wasm_raylib/@mplatform@srender3d_interface.nim.c.o",
@@ -79,7 +156,7 @@
     "/workspaces/Storie/nimcache_wasm_raylib/@mstorie.nim.c.o",
     "/workspaces/Storie/nimcache_wasm_raylib/@mindex.nim.c.o"
   ],
-  "linkcmd": "emcc   -o /workspaces/Storie/docs/storie-raylib.js /workspaces/Storie/nimcache_wasm_raylib/@psystem@sexceptions.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sprivate@sdigitsutils.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sassertions.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sprivate@sdragonbox.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sformatfloat.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@psystem@sdollars.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@psystem.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pparseutils.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pmath.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@palgorithm.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstrutils.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@spixel_types.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@splatform_interface.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@srender3d_interface.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sast.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@phashes.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@ptables.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sruntime.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@stokenizer.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@splugin.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sparser.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sbackend.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sbackends@snim_backend.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sfrontend.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sfrontends@snim_frontend.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@sraylib@sraylib_platform.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@sraylib@sraylib_render3d.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mstorie.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mindex.nim.c.o  -lm -lm -s USE_GLFW=3 -s ALLOW_MEMORY_GROWTH=1 -s EXPORTED_FUNCTIONS=['_main','_loadMarkdownFromJS','_setWaitingForGist'] -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap']   -ldl",
+  "linkcmd": "emcc   -o /workspaces/Storie/docs/storie-raylib.js /workspaces/Storie/nimcache_wasm_raylib/@psystem@sexceptions.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sprivate@sdigitsutils.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sassertions.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sprivate@sdragonbox.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstd@sformatfloat.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@psystem@sdollars.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@psystem.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pparseutils.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pmath.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@palgorithm.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@pstrutils.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@ptimes.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@spixel_types.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@splatform_interface.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@srender3d_interface.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sast.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@phashes.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@ptables.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sruntime.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@stokenizer.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@splugin.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sparser.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sbackend.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sbackends@snim_backend.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sfrontend.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@msrc@snimini@sfrontends@snim_frontend.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@sraylib@sraylib_platform.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mplatform@sraylib@sraylib_render3d.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mstorie.nim.c.o /workspaces/Storie/nimcache_wasm_raylib/@mindex.nim.c.o  -lm -lm -lrt -s USE_GLFW=3 -s ALLOW_MEMORY_GROWTH=1 -s EXPORTED_FUNCTIONS=['_main','_loadMarkdownFromJS','_setWaitingForGist'] -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap']   -ldl",
   "extraCmds": [],
   "configFiles": [
     "/home/codespace/.choosenim/toolchains/nim-2.2.6/config/nim.cfg",

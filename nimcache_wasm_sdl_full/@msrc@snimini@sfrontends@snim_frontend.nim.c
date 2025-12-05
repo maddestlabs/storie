@@ -98,7 +98,7 @@ static N_INLINE(NIM_BOOL*, nimErrorFlag)(void);
 N_LIB_PRIVATE N_NIMCALL(tyObject_Program__N1ismuKdjTwwRdqZ0AWSnQ, parse__srcZniminiZfrontendsZnim95frontend_u107)(tyObject_NimFrontendcolonObjectType___3DIRXce9bckQvWxfE9aTuVPw* frontend_p0, tySequence__BdfKvzphw6Ov4Sxv8IGz2g tokens_p1);
 static N_INLINE(void, nimZeroMem)(void* p_p0, NI size_p1);
 static N_INLINE(void, nimSetMem__systemZmemory_u7)(void* a_p0, int v_p1, NI size_p2);
-N_LIB_PRIVATE N_NIMCALL(tyObject_Program__N1ismuKdjTwwRdqZ0AWSnQ, parseDsl__srcZniminiZparser_u540)(tySequence__BdfKvzphw6Ov4Sxv8IGz2g tokens_p0);
+N_LIB_PRIVATE N_NIMCALL(tyObject_Program__N1ismuKdjTwwRdqZ0AWSnQ, parseDsl__srcZniminiZparser_u536)(tySequence__BdfKvzphw6Ov4Sxv8IGz2g tokens_p0);
 N_LIB_PRIVATE N_NIMCALL(tyObject_NimFrontendcolonObjectType___3DIRXce9bckQvWxfE9aTuVPw*, getNimFrontend__srcZniminiZfrontendsZnim95frontend_u112)(void);
 N_LIB_PRIVATE N_NIMCALL(void, eqsink___srcZniminiZfrontendsZnim95frontend_u93)(tyObject_NimFrontendcolonObjectType___3DIRXce9bckQvWxfE9aTuVPw** dest_p0, tyObject_NimFrontendcolonObjectType___3DIRXce9bckQvWxfE9aTuVPw* src_p1);
 static N_INLINE(NIM_BOOL, nimDecRefIsLastCyclicDyn)(void* p_p0);
@@ -172,7 +172,7 @@ N_LIB_PRIVATE N_NIMCALL(tyObject_Program__N1ismuKdjTwwRdqZ0AWSnQ, parse__srcZnim
 NIM_BOOL* nimErr_;
 {nimErr_ = nimErrorFlag();
 	nimZeroMem((void*)(&result), sizeof(tyObject_Program__N1ismuKdjTwwRdqZ0AWSnQ));
-	result = parseDsl__srcZniminiZparser_u540(tokens_p1);
+	result = parseDsl__srcZniminiZparser_u536(tokens_p1);
 	if (NIM_UNLIKELY(*nimErr_)) goto BeforeRet_;
 	goto BeforeRet_;
 	}BeforeRet_: ;
