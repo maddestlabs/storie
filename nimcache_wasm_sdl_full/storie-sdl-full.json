@@ -2,16 +2,7 @@
   "cacheVersion": "D20240927T193831",
   "outputFile": "/workspaces/Storie/docs/storie-sdl-full.js",
   "outputLastModificationTime": "",
-  "compile": [
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@psystem.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@psystem.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@psystem.nim.c"
-    ],
-    [
-      "/workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@ssdl@ssdl_platform.nim.c",
-      "emcc -c -w -ferror-limit=3 -fno-strict-aliasing -I/workspaces/Storie/vendor/SDL3-src/include -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-config-release -I/workspaces/Storie/build-wasm/vendor/SDL3-src/include-revision -I/workspaces/Storie/vendor/SDL_ttf-src/include -Os   -I/home/codespace/.choosenim/toolchains/nim-2.2.6/lib -I/workspaces/Storie -o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@ssdl@ssdl_platform.nim.c.o /workspaces/Storie/nimcache_wasm_sdl_full/@mplatform@ssdl@ssdl_platform.nim.c"
-    ]
-  ],
+  "compile": [],
   "link": [
     "/workspaces/Storie/nimcache_wasm_sdl_full/@psystem@sexceptions.nim.c.o",
     "/workspaces/Storie/nimcache_wasm_sdl_full/@pstd@sprivate@sdigitsutils.nim.c.o",

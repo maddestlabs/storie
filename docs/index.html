@@ -53,6 +53,17 @@
     </div>
     
     <script>
+        // Global error handler
+        window.addEventListener('error', function(e) {
+            console.error('Global error:', e.error, e.message, e.filename, e.lineno, e.colno);
+            document.getElementById('status').innerHTML = '<span class="error">Error: ' + e.message + '</span>';
+        });
+        
+        window.addEventListener('unhandledrejection', function(e) {
+            console.error('Unhandled promise rejection:', e.reason);
+            document.getElementById('status').innerHTML = '<span class="error">Promise error: ' + e.reason + '</span>';
+        });
+        
         // Parse URL parameters
         const urlParams = new URLSearchParams(window.location.search);
         const platform = urlParams.get('platform') || 'raylib'; // Default to raylib
@@ -148,7 +159,30 @@
             print: function(text) {
                 console.log(text);
             },
+            onAbort: function(what) {
+                console.error('WASM Module aborted:', what);
+                document.getElementById('status').innerHTML = '<span class="error">Failed to load: ' + what + '</span>';
+            },
+            setStatus: function(text) {
+                if (text) {
+                    console.log('Module status:', text);
+                    document.getElementById('status').textContent = text;
+                }
+            },
+            totalDependencies: 0,
+            monitorRunDependencies: function(left) {
+                this.totalDependencies = Math.max(this.totalDependencies, left);
+                console.log('Dependencies:', left, '/', this.totalDependencies);
+                if (left) {
+                    document.getElementById('status').textContent = 'Loading... (' + (this.totalDependencies - left) + '/' + this.totalDependencies + ')';
+                }
+            },
             onRuntimeInitialized: function() {
+                console.log('=== Runtime Initialized ===');
+                console.log('Module object:', typeof Module);
+                console.log('Module._main exists:', typeof Module._main);
+                console.log('Module.calledRun:', Module.calledRun);
+                
                 moduleReady = true;
                 
                 // Set waiting flag if gist is present
@@ -165,6 +199,7 @@
                 if (gistId) {
                     tryLoadGist();
                 } else {
+                    console.log('No gist - app should be running');
                     document.getElementById('status').innerHTML = 
                         `<span class="${platformColor}">Running - ${platformName} - Press ESC to quit</span>`;
                 }
@@ -214,7 +249,11 @@
         // Dynamically load the selected backend script
         const script = document.createElement('script');
         script.src = scriptSrc;
-        script.onerror = function() {
+        script.onload = function() {
+            console.log('Script loaded successfully:', scriptSrc);
+        };
+        script.onerror = function(e) {
+            console.error('Failed to load script:', scriptSrc, e);
             document.getElementById('status').innerHTML = 
                 `<span class="error">Failed to load ${platformName} backend. Have you built it?</span>`;
             document.getElementById('platform-info').innerHTML = 

@@ -143,7 +143,7 @@ export EMCC_CFLAGS="-s ALLOW_MEMORY_GROWTH=1 \
   -s ASSERTIONS=1 \
   --preload-file docs/assets@/assets \
   -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','UTF8ToString','FS','stringToUTF8'] \
-  -s EXPORTED_FUNCTIONS=['_malloc','_free'] \
+  -s EXPORTED_FUNCTIONS=['_malloc','_free','_main'] \
   -s USE_WEBGL2=1 \
   -s FULL_ES3=1 \
   -s USE_SDL=3 \
