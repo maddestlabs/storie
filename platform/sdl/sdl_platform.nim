@@ -44,9 +44,17 @@ method init*(p: SdlPlatform, enable3D: bool = false): bool =
   ## Initialize SDL3 and create window/renderer
   ## Set enable3D = true to create OpenGL context for 3D rendering
   
+  echo "=== SDL3 Platform Init Starting ==="
+  when defined(sdl3Full):
+    echo "Build type: SDL3 FULL (with TTF support)"
+  else:
+    echo "Build type: SDL3 MINIMAL (no TTF)"
+  
   if SDL_Init(SDL_INIT_VIDEO or SDL_INIT_EVENTS) < 0:
     echo "SDL_Init failed: ", SDL_GetError()
     return false
+  
+  echo "SDL_Init succeeded"
   
   # Set OpenGL attributes if 3D is enabled
   if enable3D:
@@ -131,6 +139,7 @@ method init*(p: SdlPlatform, enable3D: bool = false): bool =
   # Initialize SDL_ttf (optional - only if fonts available)
   when defined(sdl3Full):
     # Full build - TTF required
+    echo "Initializing SDL_ttf..."
     if not TTF_Init():
       echo "TTF_Init failed: ", SDL_GetError()
       if not p.renderer.isNil:
@@ -140,6 +149,7 @@ method init*(p: SdlPlatform, enable3D: bool = false): bool =
       SDL_DestroyWindow(p.window)
       SDL_Quit()
       return false
+    echo "SDL_ttf initialized successfully"
     
     # Load font - try multiple paths
     const fontSize = 16.0

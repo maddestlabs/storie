@@ -5675,6 +5675,36 @@ LA6_: ;
 	(*(*xu_1).p).data[oldLen_1] = y_p1;
 	}BeforeRet_: ;
 }
+N_LIB_PRIVATE N_NIMCALL(void, echoBinSafe)(NimStringV2* args_p0, NI args_p0Len_0) {
+	size_t T5_;
+	int T6_;
+{	{
+		NimStringV2* s_1;
+		NI i_1;
+		s_1 = (NimStringV2*)0;
+		i_1 = ((NI)0);
+		{
+			while (1) {
+				size_t T4_;
+				if (!(i_1 < args_p0Len_0)) goto LA3;
+				if (i_1 < 0 || i_1 >= args_p0Len_0){ raiseIndexError2(i_1,args_p0Len_0-1); goto BeforeRet_;
+				}
+				s_1 = (&args_p0[i_1]);
+				T4_ = (size_t)0;
+				T4_ = fwrite(((void*) (nimToCStringConv((*s_1)))), ((size_t) ((*s_1).len)), ((size_t)1), stdout);
+				(void)(T4_);
+				i_1 += ((NI)1);
+			} LA3: ;
+		}
+	}
+	T5_ = (size_t)0;
+	T5_ = fwrite(((void*) ("\012")), ((size_t)1), ((size_t)1), stdout);
+	(void)(T5_);
+	T6_ = (int)0;
+	T6_ = fflush(stdout);
+	(void)(T6_);
+	}BeforeRet_: ;
+}
 N_LIB_PRIVATE N_NIMCALL(NimStringV2, toNimStr)(NCSTRING str_p0, NI len_p1) {
 	NimStringV2 result;
 {	nimZeroMem((void*)(&result), sizeof(NimStringV2));
@@ -5751,36 +5781,6 @@ LA3_: ;
 	}
 LA1_: ;
 	return result;
-}
-N_LIB_PRIVATE N_NIMCALL(void, echoBinSafe)(NimStringV2* args_p0, NI args_p0Len_0) {
-	size_t T5_;
-	int T6_;
-{	{
-		NimStringV2* s_1;
-		NI i_1;
-		s_1 = (NimStringV2*)0;
-		i_1 = ((NI)0);
-		{
-			while (1) {
-				size_t T4_;
-				if (!(i_1 < args_p0Len_0)) goto LA3;
-				if (i_1 < 0 || i_1 >= args_p0Len_0){ raiseIndexError2(i_1,args_p0Len_0-1); goto BeforeRet_;
-				}
-				s_1 = (&args_p0[i_1]);
-				T4_ = (size_t)0;
-				T4_ = fwrite(((void*) (nimToCStringConv((*s_1)))), ((size_t) ((*s_1).len)), ((size_t)1), stdout);
-				(void)(T4_);
-				i_1 += ((NI)1);
-			} LA3: ;
-		}
-	}
-	T5_ = (size_t)0;
-	T5_ = fwrite(((void*) ("\012")), ((size_t)1), ((size_t)1), stdout);
-	(void)(T5_);
-	T6_ = (int)0;
-	T6_ = fflush(stdout);
-	(void)(T6_);
-	}BeforeRet_: ;
 }
 static N_INLINE(void, nimAddCharV1)(NimStringV2* s_p0, NIM_CHAR c_p1) {
 	NI TM__Q5wkpxktOdTGvlSRo9bzt9aw_136;
