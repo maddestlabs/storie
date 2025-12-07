@@ -81,15 +81,21 @@ method pollEvents*(p: RaylibPlatform): seq[InputEvent] =
   if WindowShouldClose():
     p.running = false
   
-  # Check for window resize
+  # Check for window resize - verify dimensions actually changed
+  # (workaround for GLFW bug where resize callback triggers on window move)
   if IsWindowResized():
-    p.windowWidth = GetScreenWidth().int
-    p.windowHeight = GetScreenHeight().int
-    events.add(InputEvent(
-      kind: ResizeEvent,
-      newWidth: p.windowWidth,
-      newHeight: p.windowHeight
-    ))
+    let newWidth = GetScreenWidth().int
+    let newHeight = GetScreenHeight().int
+    
+    # Only emit resize event if dimensions actually changed
+    if newWidth != p.windowWidth or newHeight != p.windowHeight:
+      p.windowWidth = newWidth
+      p.windowHeight = newHeight
+      events.add(InputEvent(
+        kind: ResizeEvent,
+        newWidth: p.windowWidth,
+        newHeight: p.windowHeight
+      ))
   
   # Poll all keyboard keys for press/release
   # Common keys that users might want to check

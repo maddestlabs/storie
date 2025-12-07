@@ -1,0 +1,3 @@
+/usr/bin/cmake -E rm -f CMakeFiles/showfps.dir/objects.a
+/usr/bin/x86_64-w64-mingw32-ar qc CMakeFiles/showfps.dir/objects.a @CMakeFiles/showfps.dir/objects1.rsp
+/usr/bin/x86_64-w64-mingw32-g++ -O3 -DNDEBUG -Wl,--no-undefined -Wl,--whole-archive CMakeFiles/showfps.dir/objects.a -Wl,--no-whole-archive -o showfps.exe -Wl,--out-implib,libshowfps.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles/showfps.dir/linkLibs.rsp

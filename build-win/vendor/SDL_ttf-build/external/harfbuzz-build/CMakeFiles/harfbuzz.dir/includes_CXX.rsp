@@ -1,0 +1,1 @@
+-I"/workspaces/Storie/vendor/SDL_ttf-src/external/harfbuzz/src" -I"/workspaces/Storie/build-win/vendor/SDL_ttf-build/external/harfbuzz-build/src" -I"/workspaces/Storie/build-win/vendor/SDL_ttf-build/external/freetype-build/include" -I"/workspaces/Storie/vendor/SDL_ttf-src/external/freetype/include"

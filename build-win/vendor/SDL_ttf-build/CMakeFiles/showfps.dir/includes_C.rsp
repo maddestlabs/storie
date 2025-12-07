@@ -1,0 +1,1 @@
+-I"/workspaces/Storie/vendor/SDL_ttf-src/include" -I"/workspaces/Storie/build-win/vendor/SDL3-build/include-revision" -I"/workspaces/Storie/vendor/SDL3-src/include"

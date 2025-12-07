@@ -154,57 +154,79 @@ when defined(windows) and not defined(emscripten):
     glBufferData*: PFNGLBUFFERDATAPROC
     glBufferSubData*: PFNGLBUFFERSUBDATAPROC 
 
-# Vertex array functions
-proc glGenVertexArrays*(n: GLsizei, arrays: ptr GLuint) 
-proc glDeleteVertexArrays*(n: GLsizei, arrays: ptr GLuint) 
-proc glBindVertexArray*(arr: GLuint) 
-proc glEnableVertexAttribArray*(index: GLuint) 
-proc glDisableVertexAttribArray*(index: GLuint) 
-proc glVertexAttribPointer*(index: GLuint, size: GLint, typ: GLenum, normalized: GLboolean, stride: GLsizei, pointer: pointer) 
-
-# Shader functions
-proc glCreateShader*(shaderType: GLenum): GLuint 
-proc glDeleteShader*(shader: GLuint) 
-proc glShaderSource*(shader: GLuint, count: GLsizei, str: ptr cstring, length: ptr GLint) 
-proc glCompileShader*(shader: GLuint) 
-proc glGetShaderiv*(shader: GLuint, pname: GLenum, params: ptr GLint) 
-proc glGetShaderInfoLog*(shader: GLuint, maxLength: GLsizei, length: ptr GLsizei, infoLog: ptr GLchar) 
-
-# Program functions
-proc glCreateProgram*(): GLuint 
-proc glDeleteProgram*(program: GLuint) 
-proc glAttachShader*(program, shader: GLuint) 
-proc glLinkProgram*(program: GLuint) 
-proc glUseProgram*(program: GLuint) 
-proc glGetProgramiv*(program: GLuint, pname: GLenum, params: ptr GLint) 
-proc glGetProgramInfoLog*(program: GLuint, maxLength: GLsizei, length: ptr GLsizei, infoLog: ptr GLchar) 
-
-# Uniform functions
-proc glGetUniformLocation*(program: GLuint, name: cstring): GLint 
-proc glUniform1f*(location: GLint, v0: GLfloat) 
-proc glUniform2f*(location: GLint, v0, v1: GLfloat) 
-proc glUniform3f*(location: GLint, v0, v1, v2: GLfloat) 
-proc glUniform4f*(location: GLint, v0, v1, v2, v3: GLfloat) 
-proc glUniform1i*(location: GLint, v0: GLint) 
-proc glUniformMatrix4fv*(location: GLint, count: GLsizei, transpose: GLboolean, value: ptr GLfloat) 
-
-# Drawing functions
-proc glDrawArrays*(mode: GLenum, first: GLint, count: GLsizei) 
-proc glDrawElements*(mode: GLenum, count: GLsizei, typ: GLenum, indices: pointer) 
-
-# Attribute binding
-proc glBindAttribLocation*(program: GLuint, index: GLuint, name: cstring) 
-
-# Texture functions
-proc glGenTextures*(n: GLsizei, textures: ptr GLuint) 
-proc glDeleteTextures*(n: GLsizei, textures: ptr GLuint) 
-proc glBindTexture*(target: GLenum, texture: GLuint) 
-proc glTexImage2D*(target: GLenum, level: GLint, internalFormat: GLint, width, height: GLsizei, 
-                   border: GLint, format: GLenum, typ: GLenum, pixels: pointer) 
-proc glTexSubImage2D*(target: GLenum, level: GLint, xoffset, yoffset: GLint, width, height: GLsizei,
-                      format: GLenum, typ: GLenum, pixels: pointer) 
-proc glTexParameteri*(target: GLenum, pname: GLenum, param: GLint) 
-proc glActiveTexture*(texture: GLenum) 
-proc glGenerateMipmap*(target: GLenum) 
+else:
+  # Non-Windows (Linux, macOS, Emscripten): Standard OpenGL linking
+  
+  # Basic OpenGL functions
+  proc glEnable*(cap: GLenum) {.importc.}
+  proc glDisable*(cap: GLenum) {.importc.}
+  proc glClear*(mask: GLbitfield) {.importc.}
+  proc glClearColor*(red, green, blue, alpha: GLclampf) {.importc.}
+  proc glClearDepth*(depth: GLclampd) {.importc.}
+  proc glViewport*(x, y: GLint, width, height: GLsizei) {.importc.}
+  proc glDepthFunc*(fun: GLenum) {.importc.}
+  proc glBlendFunc*(sfactor, dfactor: GLenum) {.importc.}
+  proc glCullFace*(mode: GLenum) {.importc.}
+  proc glFrontFace*(mode: GLenum) {.importc.}
+  
+  # Buffer functions
+  proc glGenBuffers*(n: GLsizei, buffers: ptr GLuint) {.importc.}
+  proc glDeleteBuffers*(n: GLsizei, buffers: ptr GLuint) {.importc.}
+  proc glBindBuffer*(target: GLenum, buffer: GLuint) {.importc.}
+  proc glBufferData*(target: GLenum, size: GLsizei, data: pointer, usage: GLenum) {.importc.}
+  proc glBufferSubData*(target: GLenum, offset: GLint, size: GLsizei, data: pointer) {.importc.}
+  
+  # Vertex array functions
+  proc glGenVertexArrays*(n: GLsizei, arrays: ptr GLuint) {.importc.}
+  proc glDeleteVertexArrays*(n: GLsizei, arrays: ptr GLuint) {.importc.}
+  proc glBindVertexArray*(arr: GLuint) {.importc.}
+  proc glEnableVertexAttribArray*(index: GLuint) {.importc.}
+  proc glDisableVertexAttribArray*(index: GLuint) {.importc.}
+  proc glVertexAttribPointer*(index: GLuint, size: GLint, typ: GLenum, normalized: GLboolean, stride: GLsizei, pointer: pointer) {.importc.}
+  
+  # Shader functions
+  proc glCreateShader*(shaderType: GLenum): GLuint {.importc.}
+  proc glDeleteShader*(shader: GLuint) {.importc.}
+  proc glShaderSource*(shader: GLuint, count: GLsizei, str: ptr cstring, length: ptr GLint) {.importc.}
+  proc glCompileShader*(shader: GLuint) {.importc.}
+  proc glGetShaderiv*(shader: GLuint, pname: GLenum, params: ptr GLint) {.importc.}
+  proc glGetShaderInfoLog*(shader: GLuint, maxLength: GLsizei, length: ptr GLsizei, infoLog: ptr GLchar) {.importc.}
+  
+  # Program functions
+  proc glCreateProgram*(): GLuint {.importc.}
+  proc glDeleteProgram*(program: GLuint) {.importc.}
+  proc glAttachShader*(program, shader: GLuint) {.importc.}
+  proc glLinkProgram*(program: GLuint) {.importc.}
+  proc glUseProgram*(program: GLuint) {.importc.}
+  proc glGetProgramiv*(program: GLuint, pname: GLenum, params: ptr GLint) {.importc.}
+  proc glGetProgramInfoLog*(program: GLuint, maxLength: GLsizei, length: ptr GLsizei, infoLog: ptr GLchar) {.importc.}
+  
+  # Uniform functions
+  proc glGetUniformLocation*(program: GLuint, name: cstring): GLint {.importc.}
+  proc glUniform1f*(location: GLint, v0: GLfloat) {.importc.}
+  proc glUniform2f*(location: GLint, v0, v1: GLfloat) {.importc.}
+  proc glUniform3f*(location: GLint, v0, v1, v2: GLfloat) {.importc.}
+  proc glUniform4f*(location: GLint, v0, v1, v2, v3: GLfloat) {.importc.}
+  proc glUniform1i*(location: GLint, v0: GLint) {.importc.}
+  proc glUniformMatrix4fv*(location: GLint, count: GLsizei, transpose: GLboolean, value: ptr GLfloat) {.importc.}
+  
+  # Drawing functions
+  proc glDrawArrays*(mode: GLenum, first: GLint, count: GLsizei) {.importc.}
+  proc glDrawElements*(mode: GLenum, count: GLsizei, typ: GLenum, indices: pointer) {.importc.}
+  
+  # Attribute binding
+  proc glBindAttribLocation*(program: GLuint, index: GLuint, name: cstring) {.importc.}
+  
+  # Texture functions
+  proc glGenTextures*(n: GLsizei, textures: ptr GLuint) {.importc.}
+  proc glDeleteTextures*(n: GLsizei, textures: ptr GLuint) {.importc.}
+  proc glBindTexture*(target: GLenum, texture: GLuint) {.importc.}
+  proc glTexImage2D*(target: GLenum, level: GLint, internalFormat: GLint, width, height: GLsizei, 
+                     border: GLint, format: GLenum, typ: GLenum, pixels: pointer) {.importc.}
+  proc glTexSubImage2D*(target: GLenum, level: GLint, xoffset, yoffset: GLint, width, height: GLsizei,
+                        format: GLenum, typ: GLenum, pixels: pointer) {.importc.}
+  proc glTexParameteri*(target: GLenum, pname: GLenum, param: GLint) {.importc.}
+  proc glActiveTexture*(texture: GLenum) {.importc.}
+  proc glGenerateMipmap*(target: GLenum) {.importc.} 
 
 {.pop.}  # End styleChecks off

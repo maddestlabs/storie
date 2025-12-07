@@ -43,12 +43,37 @@ make -j$(nproc)
 echo "✓ SDL3 built for Windows"
 cd ../../..
 
+# Build SDL_ttf for Windows
 echo ""
-echo "Note: Skipping SDL3_ttf (not required for basic graphics)"
-echo "      Text rendering uses SDL3's basic text functions"
+echo "Building SDL_ttf for Windows x64..."
+mkdir -p "$BUILD_DIR/SDL_ttf-build"
+cd "$BUILD_DIR/SDL_ttf-build"
+
+# Use SDL3's build directory directly
+SDL3_BUILD_DIR="$(pwd)/../SDL3-build"
+
+# Create initial cache to force vendored options
+cat > init-cache.cmake << 'CACHE_EOF'
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
+set(SDLTTF_FREETYPE_VENDORED ON CACHE BOOL "" FORCE)
+set(SDLTTF_HARFBUZZ_VENDORED ON CACHE BOOL "" FORCE)
+CACHE_EOF
+
+cmake ../../../"$VENDOR_DIR/SDL_ttf-src" \
+    -C init-cache.cmake \
+    -DCMAKE_TOOLCHAIN_FILE=../../../"$SDL3_SRC"/build-scripts/cmake-toolchain-mingw64-x86_64.cmake \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DSDL3_DIR="$SDL3_BUILD_DIR"
+
+make -j$(nproc)
+echo "✓ SDL_ttf built for Windows"
+cd ../../..
 
 echo ""
 echo "=== Setup Complete ==="
-echo "SDL3 libraries built for Windows x64 in $BUILD_DIR"
+echo "SDL3 and SDL_ttf libraries built for Windows x64 in $BUILD_DIR"
+echo "  - SDL3:     $BUILD_DIR/SDL3-build/libSDL3.a"
+echo "  - SDL_ttf:  $BUILD_DIR/SDL_ttf-build/libSDL3_ttf.a"
 echo ""
-echo "Now run: ./build-windows-sdl3.sh to build your application"
+echo "Now run: ./build-windows.sh to build your application"
