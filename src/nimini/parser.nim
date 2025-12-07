@@ -226,11 +226,11 @@ proc parseVarStmt(p: var Parser; isLet: bool; isConst: bool = false): Stmt =
   else:
     newVar(nameTok.lexeme, val, typeAnnotation, kw.line, kw.col)
 
-proc parseAssign(p: var Parser; nameTok: Token): Stmt =
-  discard p.advance()  # Skip the identifier (already captured in nameTok)
+proc parseAssign(p: var Parser; targetExpr: Expr; line, col: int): Stmt =
+  # targetExpr is already parsed (e.g., identifier or array index)
   discard expect(p, tkOp, "Expected '='")
   let val = parseExpr(p)
-  newAssign(nameTok.lexeme, val, nameTok.line, nameTok.col)
+  newAssignExpr(targetExpr, val, line, col)
 
 proc parseIf(p: var Parser): Stmt =
   let tok = advance(p)
@@ -382,10 +382,11 @@ proc parseStmt(p: var Parser): Stmt =
     of "return": return parseReturn(p)
     of "block": return parseBlockStmt(p)
     else:
-      # Check for assignment (lookahead for '=')
-      if p.pos+1 < p.tokens.len and p.tokens[p.pos+1].kind == tkOp and p.tokens[p.pos+1].lexeme == "=":
-        return parseAssign(p, t)
+      # Parse as expression first (could be assignment target or just expression)
       let e = parseExpr(p)
+      # Check if this is an assignment
+      if p.cur().kind == tkOp and p.cur().lexeme == "=":
+        return parseAssign(p, e, t.line, t.col)
       return newExprStmt(e, t.line, t.col)
 
   let e = parseExpr(p)

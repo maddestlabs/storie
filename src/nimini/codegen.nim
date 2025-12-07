@@ -228,7 +228,8 @@ proc genStmt*(s: Stmt; ctx: CodegenContext): string =
 
   of skAssign:
     let value = genExpr(s.assignValue, ctx)
-    result = ctx.backend.generateAssignment(s.target, value, ctx.getIndent())
+    let target = genExpr(s.assignTarget, ctx)
+    result = ctx.backend.generateAssignment(target, value, ctx.getIndent())
 
   of skIf:
     var lines: seq[string] = @[]

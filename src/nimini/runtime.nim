@@ -455,7 +455,26 @@ proc execStmt*(s: Stmt; env: ref Env): ExecResult =
     noReturn()
 
   of skAssign:
-    setVar(env, s.target, evalExpr(s.assignValue, env))
+    # Handle assignment to variable or indexed expression
+    let value = evalExpr(s.assignValue, env)
+    case s.assignTarget.kind
+    of ekIdent:
+      # Simple variable assignment
+      setVar(env, s.assignTarget.ident, value)
+    of ekIndex:
+      # Array/sequence index assignment
+      let target = evalExpr(s.assignTarget.indexTarget, env)
+      let indexVal = evalExpr(s.assignTarget.indexExpr, env)
+      case target.kind
+      of vkArray:
+        let idx = toInt(indexVal)
+        if idx < 0 or idx >= target.arr.len:
+          quit "Index out of bounds: " & $idx
+        target.arr[idx] = value
+      else:
+        quit "Cannot index into non-array value"
+    else:
+      quit "Invalid assignment target"
     noReturn()
 
   of skIf:

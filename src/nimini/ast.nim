@@ -125,7 +125,7 @@ type
       constValue*: Expr
 
     of skAssign:
-      target*: string
+      assignTarget*: Expr  # Can be an identifier or indexed expression
       assignValue*: Expr
 
     of skIf:
@@ -243,8 +243,14 @@ proc newLet*(name: string; val: Expr; typ: TypeNode = nil; line=0; col=0): Stmt 
 proc newConst*(name: string; val: Expr; typ: TypeNode = nil; line=0; col=0): Stmt =
   Stmt(kind: skConst, constName: name, constType: typ, constValue: val, line: line, col: col)
 
-proc newAssign*(target: string; val: Expr; line=0; col=0): Stmt =
-  Stmt(kind: skAssign, target: target, assignValue: val, line: line, col: col)
+proc newAssign*(targetName: string; val: Expr; line=0; col=0): Stmt =
+  # Legacy function for simple variable assignment
+  let targetExpr = newIdent(targetName, line, col)
+  Stmt(kind: skAssign, assignTarget: targetExpr, assignValue: val, line: line, col: col)
+
+proc newAssignExpr*(target: Expr; val: Expr; line=0; col=0): Stmt =
+  # New function for assigning to any expression (variable, array index, etc.)
+  Stmt(kind: skAssign, assignTarget: target, assignValue: val, line: line, col: col)
 
 proc newIf*(cond: Expr; body: seq[Stmt]; line=0; col=0): Stmt =
   Stmt(kind: skIf,

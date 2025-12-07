@@ -1,27 +1,9 @@
-# Audio Sine Wave with Volume Slider
+import src/nimini/tokenizer
+import src/nimini/parser
+import strutils
 
-Interactive audio demo with volume control.
-
-```nim on:init
-print("=== Audio Sine Wave Demo ===")
-print("Initializing audio system...")
-
-# Audio parameters
-var sampleRate = 48000
-var frequency = 440.0  # A4 note
-var amplitude = 0.3
-var volume = 0.5
-var phase = 0.0
-
-# Initialize audio
-if initAudio(sampleRate, 2, 4096):
-  print("Audio initialized at " & $sampleRate & " Hz")
-  playAudio()
-else:
-  print("Failed to initialize audio")
-```
-
-```nim on:render
+# Extract just the second code block from audio_slider.md
+let fullRenderBlock = """
 # Clear screen
 clear()
 clearFg()
@@ -108,7 +90,7 @@ fillRect(200, meterY, meterWidth, 30)
 # Generate and queue audio samples
 var samplesToGenerate = 2048
 var samplesTimesTwo = samplesToGenerate * 2
-var audioBuffer = newSeq[float](samplesTimesTwo)  # Stereo
+var audioBuffer = newSeq[float](samplesTimesTwo)
 
 for i in 0..<samplesToGenerate:
   # Generate sine wave sample
@@ -176,4 +158,27 @@ var quitTextX = width - 180
 drawText(10, infoY1, "Frame: " & $frameCount, 12)
 drawText(10, infoY2, "Audio Buffer: " & $samplesToGenerate & " samples", 12)
 drawText(quitTextX, infoY2, "Press ESC to quit", 12)
-```
+"""
+
+echo "Testing full render block..."
+
+let lines = fullRenderBlock.split('\n')
+echo "Code at lines 94-98:"
+for i in 94..98:
+  echo "Line ", i, ": ", lines[i-1]
+
+echo ""
+let tokens = tokenizeDsl(fullRenderBlock)
+echo "Tokens: ", tokens.len
+echo ""
+
+# Find tokens around line 96
+echo "Tokens at line 96:"
+for i, tok in tokens:
+  if tok.line == 96:
+    echo "  ", i, ": ", tok
+
+echo ""
+echo "Now attempting to parse..."
+let program = parseDsl(tokens)
+echo "SUCCESS! Parsed correctly"
