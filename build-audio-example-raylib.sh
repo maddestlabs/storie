@@ -13,7 +13,6 @@ fi
 
 nim c \
   -d:useRaylib \
-  -d:release \
   --path:. \
   --passL:"build/vendor/raylib-build/raylib/libraylib.a" \
   --outdir:build \

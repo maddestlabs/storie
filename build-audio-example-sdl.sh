@@ -7,7 +7,6 @@ echo "Building audio example (SDL3 backend)..."
 
 nim c \
   -d:useSdl \
-  -d:release \
   --path:. \
   --passL:"-lSDL3" \
   --outdir:build \

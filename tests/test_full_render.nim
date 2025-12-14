@@ -1,5 +1,5 @@
-import src/nimini/tokenizer
-import src/nimini/parser
+import nimini/tokenizer
+import nimini/parser
 import strutils
 
 # Extract just the second code block from audio_slider.md

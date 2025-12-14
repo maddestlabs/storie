@@ -11,7 +11,7 @@ import platform/pixel_types
 import platform/render3d_interface
 import platform/audio
 import storie_core
-import src/nimini
+import nimini
 export platform_interface, pixel_types, render3d_interface, audio, storie_core, nimini
 
 # Backend selection: raylib by default, SDL3 with -d:sdl3

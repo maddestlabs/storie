@@ -56,7 +56,8 @@ Output: ${REPO_NAME}.exe (Windows x64 executable with D3D12 and text support)
 EOF
 }
 
-RELEASE_MODE="-d:release --opt:size"
+# nim.cfg handles optimizations; set to -d:debug to disable
+RELEASE_MODE=""
 BUILD_DIR="build-win/vendor"
 
 # Parse arguments
@@ -71,11 +72,12 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -r|--release)
-            RELEASE_MODE="-d:release --opt:size"
+            # nim.cfg handles optimization by default
+            RELEASE_MODE=""
             shift
             ;;
         --debug)
-            RELEASE_MODE=""
+            RELEASE_MODE="-d:debug"
             shift
             ;;
         -*)

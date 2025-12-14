@@ -2,7 +2,7 @@
 ## Usage: nim c -r test_markdown.nim examples/audio_slider.md
 
 import os, strutils, tables
-import src/nimini
+import nimini
 
 type
   CodeBlock = object

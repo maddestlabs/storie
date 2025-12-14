@@ -1,7 +1,7 @@
 ## Nimini Audio Example - Naylib-style
 ## Demonstrates audio programming similar to naylib examples
 
-import ../src/nimini
+import ../nimini
 
 const audioCode = """
 # Audio configuration constants

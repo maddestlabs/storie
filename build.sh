@@ -34,13 +34,13 @@ Usage: ./build.sh [OPTIONS]
 Options:
   -h, --help            Show this help message
   -v, --version         Show version information
-  -r, --release         Compile in release mode (optimized)
+  -d, --debug           Compile in debug mode (default is optimized for size)
   -c, --compile-only    Compile without running
   --sdl3                Use SDL3 backend instead of Raylib (default)
 
 Examples:
-  ./build.sh                           # Compile and run (Raylib)
-  ./build.sh -r                        # Compile optimized and run (Raylib)
+  ./build.sh                           # Compile and run (Raylib, optimized)
+  ./build.sh -d                        # Compile in debug mode (larger binary)
   ./build.sh --sdl3                    # Use SDL3 backend
   ./build.sh -c                        # Compile only, don't run
 
@@ -49,6 +49,7 @@ Note: Content is loaded from index.md at runtime.
 EOF
 }
 
+# nim.cfg handles optimizations by default; use -d:debug to disable
 RELEASE_MODE=""
 COMPILE_ONLY=false
 BACKEND_FLAG=""
@@ -64,8 +65,8 @@ while [[ $# -gt 0 ]]; do
             echo "$REPO_NAME version $VERSION"
             exit 0
             ;;
-        -r|--release)
-            RELEASE_MODE="-d:release"
+        -d|--debug)
+            RELEASE_MODE="-d:debug"
             shift
             ;;
         --sdl3)

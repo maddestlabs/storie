@@ -1,7 +1,7 @@
 ## Comprehensive Nimini Feature Demonstration
 ## This example showcases all major language features
 
-import ../src/nimini
+import ../nimini
 
 const exampleCode = """
 # ============================================================================

@@ -74,7 +74,8 @@ Setup Emscripten:
 EOF
 }
 
-RELEASE_MODE="-d:release --opt:size"
+# nim.cfg handles optimizations; set to -d:debug to disable
+RELEASE_MODE=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -88,7 +89,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -d|--debug)
-            RELEASE_MODE=""
+            RELEASE_MODE="-d:debug"
             shift
             ;;
         -o|--output)
@@ -133,17 +134,7 @@ echo ""
 
 # Nim compiler options for Emscripten
 NIM_OPTS="c
-  --cpu:wasm32
-  --os:linux
-  --cc:clang
-  --clang.exe:emcc
-  --clang.linkerexe:emcc
-  --clang.cpp.exe:emcc
-  --clang.cpp.linkerexe:emcc
   -d:emscripten
-  -d:noSignalHandler
-  --threads:off
-  --exceptions:goto
   $RELEASE_MODE
   --nimcache:nimcache/wasm_raylib_full
   -o:$OUTPUT_DIR/${FILE_BASE}.js
@@ -167,17 +158,9 @@ else
 fi
 
 export EMCC_CFLAGS="-s USE_GLFW=3 \
-  -s ALLOW_MEMORY_GROWTH=1 \
   -s TOTAL_MEMORY=134217728 \
   -s ASYNCIFY \
-  -s ASSERTIONS=1 \
-  -s WASM=1 \
-  -s ENVIRONMENT=web \
-  -s MODULARIZE=0 \
-  -s EXPORT_NAME='Module' \
   $PRELOAD_ARGS \
-  -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','UTF8ToString','FS','HEAPF32','HEAP16','HEAP8'] \
-  -s EXPORTED_FUNCTIONS=['_main','_malloc','_free','_setWaitingForGist','_loadMarkdownFromJS'] \
   -DPLATFORM_WEB \
   -DGRAPHICS_API_OPENGL_ES2 \
   -DSUPPORT_FILEFORMAT_PNG=1 \
@@ -194,12 +177,8 @@ export EMCC_CFLAGS="-s USE_GLFW=3 \
   -DSUPPORT_MODULE_RMODELS=1 \
   $RAYLIB_LIB"
 
-# Additional optimization flags for release mode
-if [ ! -z "$RELEASE_MODE" ]; then
-    export EMCC_CFLAGS="$EMCC_CFLAGS -Oz"
-    # Keep some assertions for debugging in release
-else
-    # Debug mode - more assertions and error checking
+# Additional debug-specific flags
+if [ "$RELEASE_MODE" = "-d:debug" ]; then
     export EMCC_CFLAGS="$EMCC_CFLAGS -s SAFE_HEAP=1"
 fi
 

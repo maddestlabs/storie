@@ -74,7 +74,8 @@ Setup Emscripten:
 EOF
 }
 
-RELEASE_MODE="-d:release --opt:size"
+# nim.cfg handles optimizations; set to -d:debug to disable
+RELEASE_MODE=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -88,7 +89,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -d|--debug)
-            RELEASE_MODE=""
+            RELEASE_MODE="-d:debug"
             shift
             ;;
         -o|--output)
@@ -132,17 +133,7 @@ echo ""
 
 # Nim compiler options for Emscripten
 NIM_OPTS="c
-  --cpu:wasm32
-  --os:linux
-  --cc:clang
-  --clang.exe:emcc
-  --clang.linkerexe:emcc
-  --clang.cpp.exe:emcc
-  --clang.cpp.linkerexe:emcc
   -d:emscripten
-  -d:noSignalHandler
-  --threads:off
-  --exceptions:goto
   $RELEASE_MODE
   --nimcache:nimcache/wasm_raylib
   -o:$OUTPUT_DIR/${FILE_BASE}.js

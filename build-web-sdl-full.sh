@@ -69,7 +69,8 @@ Requirements:
 EOF
 }
 
-RELEASE_MODE="-d:release --opt:size"
+# nim.cfg handles optimizations; set to -d:debug to disable
+RELEASE_MODE=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -83,7 +84,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -d|--debug)
-            RELEASE_MODE=""
+            RELEASE_MODE="-d:debug"
             shift
             ;;
         -o|--output)
@@ -127,19 +128,9 @@ echo ""
 
 # Nim compiler options for Emscripten
 NIM_OPTS="c
-  --cpu:wasm32
-  --os:linux
-  --cc:clang
-  --clang.exe:emcc
-  --clang.linkerexe:emcc
-  --clang.cpp.exe:emcc
-  --clang.cpp.linkerexe:emcc
   -d:emscripten
   -d:sdl3
   -d:sdl3Full
-  -d:noSignalHandler
-  --threads:off
-  --exceptions:goto
   $RELEASE_MODE
   --nimcache:nimcache/wasm_sdl_full
   -o:$OUTPUT_DIR/${FILE_BASE}.js
@@ -154,19 +145,10 @@ SDL3_TTF_DIR="build-wasm/vendor/SDL_ttf-build"
 SDL3_IMAGE_DIR="build-wasm/vendor/SDL_image-build"
 SDL3_MIXER_DIR="build-wasm/vendor/SDL_mixer-build"
 
-export EMCC_CFLAGS="-s ALLOW_MEMORY_GROWTH=1 \
-  -s INITIAL_MEMORY=134217728 \
+export EMCC_CFLAGS="-s INITIAL_MEMORY=134217728 \
   -s STACK_SIZE=16777216 \
-  -s ENVIRONMENT=web \
-  -s MODULARIZE=0 \
-  -s EXPORT_NAME='Module' \
-  -s ASSERTIONS=1 \
   --preload-file docs/assets@/assets \
-  -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','UTF8ToString','FS','stringToUTF8','HEAPF32','HEAP16','HEAP8'] \
-  -s EXPORTED_FUNCTIONS=['_main','_malloc','_free','_setWaitingForGist','_loadMarkdownFromJS'] \
   -s EXPORTED_FUNCTIONS=['_malloc','_free','_main','_loadMarkdownFromJS','_setWaitingForGist'] \
-  -s USE_WEBGL2=1 \
-  -s FULL_ES3=1 \
   -s USE_SDL=3 \
   -s USE_SDL_TTF=3 \
   -s USE_SDL_IMAGE=3 \
@@ -175,12 +157,8 @@ export EMCC_CFLAGS="-s ALLOW_MEMORY_GROWTH=1 \
   -s USE_FREETYPE=1 \
   -s USE_HARFBUZZ=1"
 
-# Additional optimization flags for release mode
-if [ ! -z "$RELEASE_MODE" ]; then
-    export EMCC_CFLAGS="$EMCC_CFLAGS -Oz"
-    # Keep some assertions for debugging in release
-else
-    # Debug mode - more assertions and error checking
+# Additional debug-specific flags
+if [ "$RELEASE_MODE" = "-d:debug" ]; then
     export EMCC_CFLAGS="$EMCC_CFLAGS -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2"
 fi
 

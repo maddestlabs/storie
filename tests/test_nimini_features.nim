@@ -1,6 +1,6 @@
 ## Test file for new Nimini language features
 
-import ../src/nimini
+import ../nimini
 
 const testCode = """
 # Test const declarations

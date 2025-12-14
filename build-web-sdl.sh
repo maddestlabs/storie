@@ -59,7 +59,8 @@ For TTF font support, use build-web-sdl-full.sh instead
 EOF
 }
 
-RELEASE_MODE="-d:release --opt:size"
+# nim.cfg handles optimizations; set to -d:debug to disable
+RELEASE_MODE=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -73,7 +74,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -d|--debug)
-            RELEASE_MODE=""
+            RELEASE_MODE="-d:debug"
             shift
             ;;
         -o|--output)
@@ -117,18 +118,8 @@ echo ""
 
 # Nim compiler options for Emscripten
 NIM_OPTS="c
-  --cpu:wasm32
-  --os:linux
-  --cc:clang
-  --clang.exe:emcc
-  --clang.linkerexe:emcc
-  --clang.cpp.exe:emcc
-  --clang.cpp.linkerexe:emcc
   -d:emscripten
   -d:sdl3
-  -d:noSignalHandler
-  --threads:off
-  --exceptions:goto
   $RELEASE_MODE
   --nimcache:nimcache/wasm_sdl
   -o:$OUTPUT_DIR/${FILE_BASE}.js
@@ -136,22 +127,7 @@ NIM_OPTS="c
 
 # SDL3 backend Emscripten flags
 echo "Using SDL3 backend for WASM..."
-export EMCC_CFLAGS="-s ALLOW_MEMORY_GROWTH=1 \
-  -s INITIAL_MEMORY=67108864 \
-  -s STACK_SIZE=8388608 \
-  -s ENVIRONMENT=web \
-  -s MODULARIZE=0 \
-  -s EXPORT_NAME='Module' \
-  -s ASSERTIONS=1 \
-  --preload-file docs/assets@/assets \
-  -s EXPORTED_RUNTIME_METHODS=['ccall','cwrap','UTF8ToString','FS'] \
-  -s USE_WEBGL2=1 \
-  -s FULL_ES3=1"
-
-# Additional optimization flags for release mode
-if [ ! -z "$RELEASE_MODE" ]; then
-    export EMCC_CFLAGS="$EMCC_CFLAGS -Oz -s ASSERTIONS=0"
-fi
+export EMCC_CFLAGS="--preload-file docs/assets@/assets"
 
 # Compile
 echo "Running Nim compiler with Emscripten..."

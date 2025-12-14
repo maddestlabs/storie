@@ -1,5 +1,5 @@
-import src/nimini/tokenizer
-import src/nimini/parser
+import nimini/tokenizer
+import nimini/parser
 
 let code1 = """
 var audioBuffer = newSeq[float](10)
