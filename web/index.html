@@ -32,6 +32,7 @@
             image-rendering: -moz-crisp-edges;
         }
         #status {
+            display: none;
             position: absolute;
             bottom: 10px;
             left: 50%;
@@ -40,6 +41,9 @@
             color: #888;
             z-index: 10;
             pointer-events: none;
+        }
+        #platform-info {
+            display: none;
         }
         .error {
             color: #f44;
@@ -81,7 +85,7 @@
                             { async: false }
                         );
                         console.log('=== Successfully loaded gist content via ccall ===');
-                        document.getElementById('status').textContent = 'Running from gist - Press ESC to quit';
+                        document.getElementById('status').textContent = '';//'Running from gist - Press ESC to quit';
                     } else if (typeof Module._loadMarkdownFromJS === 'function') {
                         // Fallback: manually allocate string in WASM memory
                         console.log('Using manual string allocation');
@@ -91,7 +95,7 @@
                         Module._loadMarkdownFromJS(strPtr);
                         Module._free(strPtr);
                         console.log('=== Successfully loaded gist content via manual allocation ===');
-                        document.getElementById('status').textContent = 'Running from gist - Press ESC to quit';
+                        document.getElementById('status').textContent = '';//Running from gist - Press ESC to quit';
                     } else {
                         console.error('Module.ccall and Module._loadMarkdownFromJS not available');
                         document.getElementById('status').innerHTML = '<span class="error">Gist load failed</span>';
