@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>S|torie URL Parameter Tests</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+      background: #001111;
+      color: #00ff88;
+    }
+    h1 {
+      color: #00ff88;
+    }
+    h2 {
+      color: #00ddff;
+      margin-top: 30px;
+    }
+    a {
+      color: #00ddff;
+      text-decoration: none;
+      padding: 8px 16px;
+      background: #003333;
+      border: 1px solid #00ddff;
+      border-radius: 4px;
+      display: inline-block;
+      margin: 5px;
+    }
+    a:hover {
+      background: #005555;
+    }
+    .section {
+      margin: 20px 0;
+      padding: 15px;
+      background: #002222;
+      border-left: 3px solid #00ddff;
+    }
+    code {
+      background: #003333;
+      padding: 2px 6px;
+      border-radius: 3px;
+      color: #00ff88;
+    }
+  </style>
+</head>
+<body>
+  <h1>S|torie URL Parameter Tests</h1>
+  
+  <div class="section">
+    <h2>📄 Demo Files</h2>
+    <p>Load local demo files using <code>?content=demo:name</code></p>
+    <a href="/?content=demo:simple" target="_blank">demo:simple</a>
+    <a href="/?content=demo:hooks" target="_blank">demo:hooks</a>
+    <a href="/?content=demo:frontmatter" target="_blank">demo:frontmatter</a>
+  </div>
+  
+  <div class="section">
+    <h2>🌐 GitHub Gists</h2>
+    <p>Load content from GitHub gists using <code>?content=gist:ID</code></p>
+    <p><em>Try creating your own gist with a .md file and add the gist ID here!</em></p>
+    <p>Example pattern:</p>
+    <a href="/?content=gist:YOUR_GIST_ID_HERE" target="_blank">?content=gist:ID</a>
+  </div>
+  
+  <div class="section">
+    <h2>🔗 Full GitHub URLs</h2>
+    <p>Also works with full gist URLs:</p>
+    <a href="/?content=https://gist.github.com/username/YOUR_GIST_ID" target="_blank">?content=https://gist...</a>
+  </div>
+  
+  <div class="section">
+    <h2>💾 LocalStorage</h2>
+    <p>Load from browser storage using <code>?content=browser:key</code></p>
+    <p>First save something to localStorage (open console):</p>
+    <code>localStorage.setItem('storie_test', '# Test\n\n```javascript on:render\nterm.text(5, 5, "From localStorage!", "#ff00ff");\n```');</code>
+    <br><br>
+    <a href="/?content=browser:test" target="_blank">?content=browser:test</a>
+  </div>
+  
+  <div class="section">
+    <h2>🏠 Default Behavior</h2>
+    <p>No parameter loads <code>index.md</code> or embedded demo:</p>
+    <a href="/" target="_blank">Default (index.md)</a>
+  </div>
+  
+  <h2>📝 How to Create a Test Gist</h2>
+  <ol style="line-height: 1.8;">
+    <li>Go to <a href="https://gist.github.com/" target="_blank">gist.github.com</a></li>
+    <li>Create a new gist with a <code>.md</code> file</li>
+    <li>Add some S|torie content with lifecycle hooks:
+      <pre style="background: #003333; padding: 15px; border-radius: 5px;">```javascript on:render
+term.clear();
+term.text(5, 5, "Hello from Gist!", "#00ff00");
+```</pre>
+    </li>
+    <li>Copy the gist ID from the URL</li>
+    <li>Use it: <code>?content=gist:YOUR_ID</code></li>
+  </ol>
+</body>
+</html>

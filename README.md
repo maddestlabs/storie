@@ -1,72 +1,55 @@
-# t|Storie
+# S|torie
 
-Terminal engine in [Nim](https://nim-lang.org/). Build stuff using Markdown with executable Nim-like code blocks. Fast prototyping on the web or native that exports to Nim for fully native compilation across platforms. It's the abominable tech stack no one asked for!
+The abominal little engine that probably shouldn't. Build stuff using Markdown with executable JS code blocks. Fast prototyping on the web with easy export to native with Tauri.
 
-Check it out: [Intro](https://maddestlabs.github.io/tstorie/)
+Check it out: [Intro](https://maddestlabs.github.io/storie/)
 
 Demos:
-- [stonegarden.md](https://maddestlabs.github.io/tstorie/?content=stonegarden) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/stonegarden.md)
-- [slides.md](https://maddestlabs.github.io/tstorie/?content=slides) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/slides.md)
-- [her.md](https://maddestlabs.github.io/tstorie/?content=her) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/her.md)
-- [depths.md](https://maddestlabs.github.io/tstorie/?content=depths&font=Courier+Prime) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/depths.md)
-- [kanjifx.md](https://maddestlabs.github.io/tstorie?content=kanjifx) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/kanjifx.md)
-- [minesweeper.md](https://maddestlabs.github.io/tstorie?content=minesweeper) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/minesweeper.md)
-- [toxiclock.md](https://maddestlabs.github.io/tstorie?content=toxiclock) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/toxiclock.md)
-- [magiclock.md](https://maddestlabs.github.io/tstorie?content=magiclock) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/magiclock.md)
+- [stonegarden.md](https://maddestlabs.github.io/storie/?content=stonegarden) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/stonegarden.md)
+- [slides.md](https://maddestlabs.github.io/storie/?content=slides) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/slides.md)
+- [her.md](https://maddestlabs.github.io/storie/?content=her) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/her.md)
+- [depths.md](https://maddestlabs.github.io/storie/?content=depths&font=Courier+Prime) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/depths.md)
+- [kanjifx.md](https://maddestlabs.github.io/storie?content=kanjifx) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/kanjifx.md)
+- [minesweeper.md](https://maddestlabs.github.io/storie?content=minesweeper) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/minesweeper.md)
+- [toxiclock.md](https://maddestlabs.github.io/storie?content=toxiclock) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/toxiclock.md)
+- [magiclock.md](https://maddestlabs.github.io/storie?content=magiclock) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/magiclock.md)
 
 Core examples:
-- [figletclock.md](https://maddestlabs.github.io/tstorie?content=figletclock) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/figletclock.md)
-- [dungen.md](https://maddestlabs.github.io/tstorie/?content=dungen) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/dungen.md)
-- [edit.md](https://maddestlabs.github.io/tstorie?content=edit) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/edit.md)
-- [hexview.md](https://maddestlabs.github.io/tstorie?content=hexview) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/hexview.md)
-- [events.md](https://maddestlabs.github.io/tstorie?content=events) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/events.md)
-- [drawing.md](https://maddestlabs.github.io/tstorie?content=drawing) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/drawing.md)
-- [tui.md](https://maddestlabs.github.io/tstorie?content=tui) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/tui.md)
-- [tui3.md](https://maddestlabs.github.io/tstorie?content=tui3) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/tui3.md)
-- [termshaders.md](https://maddestlabs.github.io/tstorie?content=termshaders) | [Source](https://github.com/maddestlabs/tstorie/blob/main/docs/demos/termshaders.md)
+- [figletclock.md](https://maddestlabs.github.io/storie?content=figletclock) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/figletclock.md)
+- [dungen.md](https://maddestlabs.github.io/storie/?content=dungen) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/dungen.md)
+- [edit.md](https://maddestlabs.github.io/storie?content=edit) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/edit.md)
+- [hexview.md](https://maddestlabs.github.io/storie?content=hexview) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/hexview.md)
+- [events.md](https://maddestlabs.github.io/storie?content=events) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/events.md)
+- [drawing.md](https://maddestlabs.github.io/storie?content=drawing) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/drawing.md)
+- [tui.md](https://maddestlabs.github.io/storie?content=tui) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/tui.md)
+- [tui3.md](https://maddestlabs.github.io/storie?content=tui3) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/tui3.md)
+- [termshaders.md](https://maddestlabs.github.io/storie?content=termshaders) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/termshaders.md)
 
 Gist Example:
-- [tstorie_rainclock.md](https://maddestlabs.github.io/tstorie/?content=863a4175989370857ccd67cb5492ac11&shader=crt&font=Zeyada) | [Source Gist](https://gist.github.com/R3V1Z3/863a4175989370857ccd67cb5492ac11)
+- [storie_rainclock.md](https://maddestlabs.github.io/storie/?content=863a4175989370857ccd67cb5492ac11&shader=crt&font=Zeyada) | [Source Gist](https://gist.github.com/R3V1Z3/863a4175989370857ccd67cb5492ac11)
 
-The engine is built around GitHub features. No need to actually install Nim, or anything for that matter. Just create a new repo from the t|Storie template, update index.md with your own content and it'll auto-compile for the web. Enable GitHub Pages and you'll see that content served live within moments. GitHub Actions take care of the full compilation process.
-
-## Features
-
-Features inherited from Nim:
-- **Cross-Platform** - Runs natively in terminals and in web browsers via WebAssembly.
-- **Minimal Filesize** - Compiled games/apps average from maybe 200KB to 1MB.
-- **Single-file Executable** - Bundle everything into one, compact binary.
-
-Engine features:
-- **Input Handling** - Comprehensive keyboard, mouse, and special key support.
-- **Full Unicode Support** - CJK characters (Japanese, Chinese, Korean) and all Unicode ranges.
-- **Optimized Rendering** - Double-buffered rendering of only recent changes for optimal FPS.
-- **Color Support** - True color (24-bit), 256-color, and 8-color terminal support.
-- **Layer System** - Z-ordered layers with transparency support.
-- **Terminal Resizing** - All layers automatically resize when terminal or browser window changes size.
-- **Nim-based scripting** - Code with executable code blocks. Powered by [Nimini](https://github.com/maddestlabs/nimini).
-- **Reusable Libraries** - [Helper modules](https://github.com/maddestlabs/tstorie/tree/main/lib) for advanced events, animations, TUI, transitions and more.
+The engine is built around GitHub features. No installation needed. Just create a new repo from the S|torie template, update index.md with your own content and it'll auto-compile for the web. Enable GitHub Pages and you'll see that content served live within moments. GitHub Actions take care of the full compilation process.
 
 ## Getting Started
 
 Quick Start:
 - Create a gist using Markdown and Nim code blocks
-- See your gist running live: `https://maddestlabs.github.io/tstorie?content=gist:gistid`
+- See your gist running live: `https://maddestlabs.github.io/storie?content=gist:gistid`
 
 Create your own project:
-- Create a project from t|Storie template and enable GitHub Pages
+- Create a project from S|torie template and enable GitHub Pages
 - Update index.md with your content and commit the change
 - See your content running live in moments
 
 Native compilation:
-- Export via CLI: `./tstorie export filename.md`
+- Export via CLI: `./storie export filename.md`
 - Compile with nim: `nim c fildename.nim`
 
 You'll get a native compiled binary in just moments, Nim compiles super fast. This is still early in development but supports small projects currently. The export is standalone with zero dependencies.
 
 ### Desktop App
 
-**t|Stauri** is a desktop runner that lets you drag and drop `.md` files to run them locally:
+**S|tauri** is a desktop runner that lets you drag and drop `.md` files to run them locally:
 - Native desktop app for Linux, macOS, and Windows
 - Drag & drop `.md` files to run instantly
 - Uses the same WASM engine as the web version
@@ -77,145 +60,19 @@ You'll get a native compiled binary in just moments, Nim compiles super fast. Th
 **Quick Start with Content Parameter:**
 ```
 # Load from GitHub Gist
-https://maddestlabs.github.io/tstorie?content=gist:abc123
+https://maddestlabs.github.io/storie?content=gist:abc123
 
 # Load a local demo
-https://maddestlabs.github.io/tstorie?content=demo:clock
+https://maddestlabs.github.io/storie?content=demo:clock
 
 # Load from browser localStorage (drafts, offline work)
-https://maddestlabs.github.io/tstorie?content=browser:my-draft
-```
-
-### Command-Line Usage
-
-**Install and run locally:**
-```bash
-# Install Nim if you haven't already
-curl https://nim-lang.org/choosenim/init.sh -sSf | sh
-
-# Clone and build
-git clone https://github.com/maddestlabs/tstorie.git
-cd tstorie
-./build.sh
-
-# Run with content parameter
-./tstorie --content demo:clock
-./tstorie --content gist:abc123
-
-# Or run a local file
-./tstorie myfile.md
+https://maddestlabs.github.io/storie?content=browser:my-draft
 ```
 
 **Content Sources:**
 - `gist:<ID>` - Load from GitHub Gist
 - `demo:<name>` - Load from local demos folder
 - `file:<path>` - Load from file path
-
-## API Reference
-
-### Event Handling
-
-TStorie provides SDL3-compatible event constants for clean, readable code:
-
-#### Key Constants
-
-```nim
-# Control keys
-KEY_ESCAPE, KEY_ESC       # Escape key
-KEY_RETURN, KEY_ENTER     # Enter/Return
-KEY_BACKSPACE             # Backspace
-KEY_TAB                   # Tab
-KEY_DELETE                # Delete
-KEY_SPACE                 # Spacebar
-
-# Arrow keys
-KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT
-KEY_HOME, KEY_END
-KEY_PAGEUP, KEY_PAGEDOWN
-KEY_INSERT
-
-# Function keys
-KEY_F1, KEY_F2, ... KEY_F12
-
-# Numbers
-KEY_0, KEY_1, ... KEY_9
-
-# Letters
-KEY_A, KEY_B, ... KEY_Z  # Works for both upper and lowercase
-```
-
-### Time & Animation
-
-TStorie provides precise timing for smooth, frame-independent animations:
-
-#### Time Queries
-
-```nim
-getTime()         # Monotonic time in seconds since app start
-getTimeMs()       # Monotonic time in milliseconds
-getDeltaTime()    # ACTUAL seconds since last frame (varies!)
-getTotalTime()    # Total elapsed time (same as getTime)
-getFrameCount()   # Total frames rendered
-```
-
-#### Timer Callbacks
-
-```nim
-# Call function once after delay
-setTimeout(callback, seconds) -> timerId
-
-# Call function repeatedly
-setInterval(callback, seconds) -> timerId
-
-# Cancel a timer
-clearTimeout(timerId)
-clearInterval(timerId)  # Alias for clearTimeout
-```
-
-**Note:** Timer callbacks have limitations in WASM builds. For simple time-based events, use manual time tracking with `getTime()` instead:
-
-```nim on:init
-# WORKS IN WASM - Manual time tracking
-var startTime = 0.0
-var timerActive = false
-```
-
-```nim on:input
-startTime = getTime()
-timerActive = true
-```
-
-```nim on:update
-if timerActive and (getTime() - startTime) >= 0.5:
-  # Trigger after 500ms
-  timerActive = false
-```
-
-### Best Practices
-
-**Frame-Independent Movement:**
-```nim on:update
-position.x += velocity.x * deltaTime
-position.y += velocity.y * deltaTime
-```
-
-**Long-Press Detection (WASM-compatible):**
-```nim on:init
-var longPressStartTime = 0.0
-var longPressActive = false
-var longPressThreshold = 0.5  # 500ms
-```
-
-```nim on:input
-if event.type == "mouse" and event.action == "press":
-  # Start tracking long press
-  longPressStartTime = getTime()
-  longPressActive = true
-
-if event.type == "mouse" and event.action == "release":
-  # Cancel if released early
-  longPressActive = false
-```
 
 ## History
 
@@ -225,7 +82,7 @@ if event.type == "mouse" and event.action == "release":
 
 ## Development & AI Disclosure
 
-AI assistance has been used extensively throughout every part of this project's development, including the separate repositories that paved way to the engine's current state. However, the core concepts behind t|Storie have been in development for over 9 years, with foundational precedents established in prior projects such as [Treverse](https://github.com/R3V1Z3/treverse) from before the advent of modern AI tooling.
+AI assistance has been used extensively throughout every part of this project's development, including the separate repositories that paved way to the engine's current state. However, the core concepts behind S|torie have been in development for over 9 years, with foundational precedents established in prior projects such as [Treverse](https://github.com/R3V1Z3/treverse) from before the advent of modern AI tooling.
 
 AI assistance is just that, assistance. It's a tool to quickly meet a vision that starts with the simplicity of scripting in a browser app and ends with an optimized, natively compiled binary.
 

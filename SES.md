@@ -1,4 +1,4 @@
-# SES Migration: tstorie → tstorie-js
+# SES Migration: storie → storie-js
 
 **Status:** Planning / Architecture Document  
 **Goal:** Replace Nimini (1.9 MB WASM) with SES (150 KB JS) for 78% size reduction  

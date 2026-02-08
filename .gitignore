@@ -27,3 +27,15 @@ Thumbs.db
 
 # Logs
 *.log
+
+# TypeScript / Node.js
+node_modules/
+dist/
+*.js.map
+*.d.ts.map
+*.tsbuildinfo
+
+# Note: /docs/ is auto-generated from /site/ and /src/
+# but it's committed for GitHub Pages deployment
+# Edit source in /site/ or /src/, then run: npm run build
+
