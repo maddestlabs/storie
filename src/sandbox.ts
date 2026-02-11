@@ -1,6 +1,45 @@
 /**
  * SES-based sandbox for executing user code safely
  * Uses Compartments to isolate user scripts
+ * 
+ * ============================================================================
+ * STORIE CODE STYLE GUIDE (For AI Assistants & Code Generators)
+ * ============================================================================
+ * 
+ * Use the TWO-BLOCK PATTERN for clean, readable code:
+ * 
+ * ✅ PREFERRED:
+ * 
+ * 1. Declare persistent state in raw `js` blocks (no lifecycle annotation):
+ * ```js
+ * let score = 0;
+ * let playerX = 10;
+ * let enemies = [];
+ * ```
+ * 
+ * 2. Use in lifecycle blocks - persistent vars auto-import, locals work normally:
+ * ```js on:update
+ * // score and playerX are automatically accessible (persistent)
+ * score++;
+ * playerX += 5;
+ * 
+ * // velocity is local - doesn't persist (normal JavaScript)
+ * const velocity = calculateSpeed();
+ * ```
+ * 
+ * ❌ AVOID (unnecessary boilerplate):
+ * ```js
+ * scope.state = scope.state || { score: 0 };
+ * scope.state.score++;
+ * ```
+ * 
+ * HOW IT WORKS:
+ * - Raw `js` blocks: Top-level declarations → persistent scope
+ * - Lifecycle blocks (on:*): Auto-wrapped with import/export
+ * - Result: Persistent vars accessible, local vars stay local, zero boilerplate
+ * 
+ * See docs/CODE_STYLE_GUIDE.md for complete guide.
+ * ============================================================================
  */
 
 // Import SES shims (side-effects only - adds to globalThis)
@@ -66,6 +105,18 @@ export interface SandboxAPI {
   getStyle: (name: string) => NamedStyle;
   theme: ThemeColors;
   
+  // Module API
+  modules: {
+    load: (name: string, options?: any) => Promise<any>;
+    loadAll: (names: string[], options?: any) => Promise<any[]>;
+    isLoaded: (name: string) => boolean;
+    isLoading: (name: string) => boolean;
+    get: (name: string) => any;
+    unload: (name: string) => Promise<void>;
+    getMetadata: (name: string) => any;
+    on: (event: string, callback: Function) => void;
+  };
+  
   // Global accessors (for convenience)
   mouseX: number;
   mouseY: number;
@@ -76,6 +127,112 @@ export interface SandboxAPI {
   getFrame: () => number;
   getTime: () => number;
   getDelta: () => number;
+  
+  // Native Browser APIs
+  audio: {
+    // Shared AudioContext instance
+    context: AudioContext;
+    // Helpers
+    playTone: (frequency: number, duration: number, volume?: number) => { osc: OscillatorNode; gain: GainNode };
+    loadSound: (url: string) => Promise<AudioBuffer>;
+    playBuffer: (buffer: AudioBuffer, options?: { loop?: boolean; volume?: number; playbackRate?: number }) => AudioBufferSourceNode;
+    // Raw API shortcuts
+    createOscillator: () => OscillatorNode;
+    createGain: () => GainNode;
+    createBiquadFilter: () => BiquadFilterNode;
+    createDelay: () => DelayNode;
+    createConvolver: () => ConvolverNode;
+    createDynamicsCompressor: () => DynamicsCompressorNode;
+    createAnalyser: () => AnalyserNode;
+    createBufferSource: () => AudioBufferSourceNode;
+    createPanner: () => PannerNode;
+    createStereoPanner: () => StereoPannerNode;
+    createWaveShaper: () => WaveShaperNode;
+    // Properties
+    currentTime: number;
+    sampleRate: number;
+    destination: AudioDestinationNode;
+    state: AudioContextState;
+  };
+  
+  canvas2d: {
+    // Shared Canvas2D context (may be OffscreenCanvasRenderingContext2D)
+    context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+    // Helpers
+    clear: (color?: string) => void;
+    drawRect: (x: number, y: number, w: number, h: number, color: string, filled?: boolean) => void;
+    drawCircle: (x: number, y: number, radius: number, color: string, filled?: boolean) => void;
+    drawLine: (x1: number, y1: number, x2: number, y2: number, color: string, lineWidth?: number) => void;
+    drawImage: (image: HTMLImageElement | ImageBitmap | HTMLCanvasElement, x: number, y: number, w?: number, h?: number) => void;
+    text: (text: string, x: number, y: number, color: string, font?: string) => void;
+    loadImage: (url: string) => Promise<HTMLImageElement>;
+    // Properties
+    width: number;
+    height: number;
+  };
+  
+  webgl: {
+    // Shared WebGL context (lazy init)
+    context: WebGLRenderingContext | null;
+    // Helpers
+    createShader: (type: 'vertex' | 'fragment', source: string) => WebGLShader | null;
+    createProgram: (vertexShader: WebGLShader, fragmentShader: WebGLShader) => WebGLProgram | null;
+    available: boolean;
+  };
+  
+  webgpu: {
+    // Controlled device access
+    device: GPUDevice | null;
+    available: boolean;
+    // Initialization
+    init: () => Promise<boolean>;
+    // WebGPU Constants
+    GPUBufferUsage: any;
+    GPUTextureUsage: any;
+    GPUShaderStage: any;
+    // Safe helpers with guardrails
+    createBuffer: (size: number, usage: GPUBufferUsageFlags) => GPUBuffer | null;
+    createShaderModule: (code: string) => GPUShaderModule | null;
+    createTexture: (width: number, height: number, format?: GPUTextureFormat) => GPUTexture | null;
+  };
+  
+  compositor: {
+    // Current mode
+    mode: 'auto' | 'manual';
+    // Set compositing mode
+    setMode: (mode: 'auto' | 'manual') => void;
+    // Layer configuration
+    layers: any;
+    // Manual compositing methods
+    clear: (color?: string) => void;
+    blit: (layerName: string, options?: any) => void;
+    present: () => void;
+    // Phase 3: Custom contexts
+    createContext: (name: string, options: {
+      type: 'canvas2d' | 'webgl' | 'webgl2';
+      width: number;
+      height: number;
+      alpha?: boolean;
+      antialias?: boolean;
+      zIndex?: number;
+    }) => any | null;
+    removeLayer: (name: string) => boolean;
+    // Phase 5: Shader Pipeline
+    loadEffect: (name: string, url: string) => Promise<void>;
+    buildPipeline: (effects: string[]) => Promise<void>;
+    setPipelineEnabled: (enabled: boolean) => void;
+    setEffectUniform: (effectName: string, uniformName: string, value: number | number[]) => void;
+    getEffects: () => string[];
+    hasEffect: (name: string) => boolean;
+    // Availability
+    available: boolean;
+  };
+
+  // Retained-mode terminal UI (TUI)
+  tui: any;
+
+  // WebGPU UI (rendered to GPU texture + composited)
+  ui: any;
   
   // Input event (available in on:input blocks)
   event?: InputEvent;
@@ -115,6 +272,29 @@ export class ScriptSandbox {
 
   /**
    * Create a new isolated compartment for a document with persistent shared scope
+   * 
+   * Frontmatter variables are automatically exposed as globals in the compartment,
+   * matching tstorie's exposeFrontMatterVariables() behavior. This allows scripts
+   * to access frontmatter values directly (e.g., `title`, `version`, `debugMode`)
+   * without needing to reference a parent object.
+   * 
+   * Example frontmatter:
+   * ```yaml
+   * ---
+   * title: "My Game"
+   * version: 1.5
+   * debugMode: true
+   * colors: red, green, blue
+   * ---
+   * ```
+   * 
+   * These become directly accessible in JavaScript:
+   * ```javascript
+   * console.log(title);      // "My Game"
+   * console.log(version);    // 1.5 (number)
+   * console.log(debugMode);  // true (boolean)
+   * console.log(colors);     // ["red", "green", "blue"] (array)
+   * ```
    */
   createCompartment(documentId: string, frontmatter: Record<string, any> = {}): any {
     try {
@@ -127,7 +307,9 @@ export class ScriptSandbox {
       // Capture API for closures
       const api = this.api;
       
-      const compartment = new Compartment({
+      // Build compartment globals - start with frontmatter variables exposed directly
+      // This matches tstorie's exposeFrontMatterVariables() behavior
+      const compartmentGlobals: Record<string, any> = {
         // Console for debugging
         console,
         
@@ -137,6 +319,9 @@ export class ScriptSandbox {
         
         // Persistent shared scope (writable)
         scope,
+        
+        // Expose frontmatter variables as direct globals (for convenient access)
+        ...frontmatter,
         
         // Engine API (capability-based)
         term: this.api.term,
@@ -148,6 +333,24 @@ export class ScriptSandbox {
         // Theme API
         getStyle: this.api.getStyle,
         theme: this.api.theme,
+        
+        // Module API
+        modules: this.api.modules,
+        
+        // Native Browser APIs
+        audio: this.api.audio,
+        canvas2d: this.api.canvas2d,
+        webgl: this.api.webgl,
+        webgpu: this.api.webgpu,
+        
+        // Compositor API (Phase 1-5)
+        compositor: this.api.compositor,
+
+        // Retained-mode TUI API
+        tui: this.api.tui,
+
+        // WebGPU UI API
+        ui: this.api.ui,
         
         // Global accessors (as functions, not getters, for SES compatibility)
         getMouseX: () => api.mouseX,
@@ -174,7 +377,9 @@ export class ScriptSandbox {
         // - eval (code injection)
         // - Function constructor
         // - XMLHttpRequest
-      });
+      };
+      
+      const compartment = new Compartment(compartmentGlobals);
 
       this.compartments.set(documentId, compartment);
       return compartment;
@@ -186,9 +391,18 @@ export class ScriptSandbox {
 
   /**
    * Execute a code block in the document's persistent scope
-   * Makes scope variables available as top-level variables
-   * Captures newly defined variables back into scope
-   * Returns function result or undefined
+   * 
+   * Auto-binding (only for initialization blocks - raw `js` blocks):
+   * - Top-level `let/const/var` declarations → stored in scope
+   * - Top-level `function` declarations → stored in scope
+   * 
+   * Lifecycle blocks (on:init, on:update, etc.) are wrapped by the engine
+   * with automatic import/export of scope variables, so local declarations
+   * remain local while persistent vars are accessible.
+   * 
+   * @param documentId - Document identifier
+   * @param code - JavaScript code to execute
+   * @param skipTransform - Skip auto-binding transformation (for pre-wrapped code)
    */
   executeCodeBlock(documentId: string, code: string, skipTransform: boolean = false): any {
     const compartment = this.compartments.get(documentId);
@@ -200,16 +414,10 @@ export class ScriptSandbox {
     }
 
     try {
-      // Transform variable declarations to scope assignments (unless skipped)
-      let transformedCode = skipTransform ? code : this.transformCodeForScope(code);
+      // Apply auto-binding transformation (unless skipped)
+      let transformedCode = skipTransform ? code : this.autoBindVariables(code);
       
-      // IMPORTANT: We don't add imports here at the top level anymore
-      // Instead, we make scope available and let user code access scope.varName
-      // This is simpler and more reliable than trying to import everything
-      
-      const wrappedCode = transformedCode;
-
-      const result = compartment.evaluate(wrappedCode);
+      const result = compartment.evaluate(transformedCode);
       return result;
     } catch (error: any) {
       console.error(`Error executing code block in ${documentId}:`, error);
@@ -219,38 +427,53 @@ export class ScriptSandbox {
   }
   
   /**
-   * Transform variable declarations to scope assignments
-   * Examples:
-   *   let x = 10; -> scope.x = 10;
-   *   const y = 20; -> scope.y = 20;
-   *   function update(delta) { } -> scope.update = function update(delta) { }
+   * Auto-binding for initialization blocks (raw `js` blocks only)
+   * 
+   * Transforms top-level variable declarations to scope assignments:
+   * - `let x = 10;` → `scope.x = scope.x ?? 10;`
+   * - `function foo() {}` → `scope.foo = function foo() {}`
+   * 
+   * This ONLY applies to raw `js` blocks (no lifecycle annotation).
+   * Lifecycle blocks (on:*) are wrapped by the engine with proper
+   * import/export, so local vars stay local.
+   * 
+   * Variables inside functions, loops, etc. remain untouched (only flush-left).
    */
-  private transformCodeForScope(code: string): string {
-    let transformed = code;
+  private autoBindVariables(code: string): string {
+    let transformedCode = code;
     
-    console.log('🔧 Transforming code, original length:', code.length);
+    // Transform ONLY top-level (flush-left) variable declarations
+    // Note: The ^ anchor ensures we only match at the start of lines
     
-    // Transform simple variable declarations: let x = value;
-    transformed = transformed.replace(/^(\s*)(let|const|var)\s+(\w+)\s*=\s*([^;]+);/gm, (_m, indent, _kw, varName, value) => {
-      console.log(`  📝 Transforming: ${_kw} ${varName} = ${value.substring(0, 50)}...`);
-      // Skip if value is a function expression
-      if (value.trim().startsWith('function')) {
-        return `${indent}scope.${varName} = ${value};`;
+    // Transform: let x = value; -> scope.x = scope.x ?? (value);
+    transformedCode = transformedCode.replace(
+      /^(let|const|var)\s+(\w+)\s*=\s*([^;]+);/gm,
+      (_m, _kw, varName, value) => {
+        console.log(`  📝 Persisting variable: ${varName}`);
+        // Use ?? to preserve existing scope values (allows re-initialization)
+        return `scope.${varName} = scope.${varName} ?? (${value});`;
       }
-      return `${indent}scope.${varName} = ${value};`;
-    });
+    );
     
-    // Transform variable declarations without initialization: let x;
-    transformed = transformed.replace(/^(\s*)(let|const|var)\s+(\w+)\s*;/gm, '$1scope.$3 = undefined;');
+    // Transform: let x; -> scope.x = scope.x ?? undefined;
+    transformedCode = transformedCode.replace(
+      /^(let|const|var)\s+(\w+)\s*;/gm,
+      (_m, _kw, varName) => {
+        console.log(`  📝 Persisting variable: ${varName}`);
+        return `scope.${varName} = scope.${varName} ?? undefined;`;
+      }
+    );
     
-    // Transform function declarations: function name(...) { -> scope.name = function name(...) {
-    // This simple replacement works because we don't need to modify the function body
-    // The variables will be accessible via the imports added by executeCodeBlock
-    transformed = transformed.replace(/^(\s*)function\s+(\w+)\s*\(/gm, '$1scope.$2 = function $2(');
+    // Transform: function foo(...) { -> scope.foo = function foo(...) {
+    transformedCode = transformedCode.replace(
+      /^function\s+(\w+)\s*\(/gm,
+      (_m, funcName) => {
+        console.log(`  📝 Persisting function: ${funcName}`);
+        return `scope.${funcName} = function ${funcName}(`;
+      }
+    );
     
-    console.log('✅ Transformed code, new length:', transformed.length);
-    
-    return transformed;
+    return transformedCode;
   }
   
   /**

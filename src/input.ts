@@ -40,17 +40,32 @@ export class InputManager {
     // Mouse events
     this.canvas.addEventListener('mousemove', (e) => {
       const rect = this.canvas.getBoundingClientRect();
-      this.state.mouseX = e.clientX - rect.left;
-      this.state.mouseY = e.clientY - rect.top;
+      // Convert from CSS pixels (clientX/clientY) into canvas pixel coordinates.
+      // This keeps input aligned when the canvas is scaled (DPR, CSS sizing).
+      const scaleX = rect.width > 0 ? (this.canvas.width / rect.width) : 1;
+      const scaleY = rect.height > 0 ? (this.canvas.height / rect.height) : 1;
+      this.state.mouseX = (e.clientX - rect.left) * scaleX;
+      this.state.mouseY = (e.clientY - rect.top) * scaleY;
     });
 
     this.canvas.addEventListener('mousedown', (e) => {
+      // Ensure click uses current coordinates even if mousemove didn't fire.
+      const rect = this.canvas.getBoundingClientRect();
+      const scaleX = rect.width > 0 ? (this.canvas.width / rect.width) : 1;
+      const scaleY = rect.height > 0 ? (this.canvas.height / rect.height) : 1;
+      this.state.mouseX = (e.clientX - rect.left) * scaleX;
+      this.state.mouseY = (e.clientY - rect.top) * scaleY;
       this.state.mouseButtons.set(e.button, true);
       this.state.mouseButtonsClicked.add(e.button);
       e.preventDefault();
     });
 
     this.canvas.addEventListener('mouseup', (e) => {
+      const rect = this.canvas.getBoundingClientRect();
+      const scaleX = rect.width > 0 ? (this.canvas.width / rect.width) : 1;
+      const scaleY = rect.height > 0 ? (this.canvas.height / rect.height) : 1;
+      this.state.mouseX = (e.clientX - rect.left) * scaleX;
+      this.state.mouseY = (e.clientY - rect.top) * scaleY;
       this.state.mouseButtons.set(e.button, false);
       e.preventDefault();
     });
@@ -93,10 +108,8 @@ export class InputManager {
    * Update mouse position (used by event handlers)
    */
   updateMousePosition(x: number, y: number): void {
-    console.log(`📍 InputManager.updateMousePosition(${x}, ${y})`);
     this.state.mouseX = x;
     this.state.mouseY = y;
-    console.log(`   State now: mouseX=${this.state.mouseX}, mouseY=${this.state.mouseY}`);
   }
 
   /**

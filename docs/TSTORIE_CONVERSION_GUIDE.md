@@ -133,8 +133,8 @@ Both tstorie and Storie support these themes:
 | **Key** | `event.key` | `event.key` | Key string (for keyboard) |
 | **Key Code** | `event.keyCode` | `event.keyCode` | Numeric key code |
 | **Button** | `event.button` | `event.button` | Mouse button: `"left"`, `"middle"`, `"right"` |
-| **X Position** | `event.x` | `event.x` | Character X coordinate |
-| **Y Position** | `event.y` | `event.y` | Character Y coordinate |
+| **X Position** | `event.x` | `event.x` | 0-based terminal cell X coordinate (not pixels; same space as `term.write` / `termCanvas.plot`) |
+| **Y Position** | `event.y` | `event.y` | 0-based terminal cell Y coordinate (not pixels; same space as `term.write` / `termCanvas.plot`) |
 | **Modifiers** | `event.mods` | `event.mods` | Array: `['shift', 'ctrl', 'alt', 'meta']` |
 
 ## Style Properties

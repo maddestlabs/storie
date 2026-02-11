@@ -4,6 +4,7 @@
  */
 
 import type { Cell, Color } from './types.js';
+import { ColorUtils, COLORS } from './types.js';
 
 export interface RendererConfig {
   fontFamily?: string;
@@ -39,7 +40,7 @@ export class Canvas2DRenderer {
     this.ctx = ctx;
     
     // Configure font
-    this.fontFamily = config.fontFamily || 'Monaco, Consolas, "Courier New", monospace';
+    this.fontFamily = config.fontFamily || '\'3270-regular\', \'Consolas\', \'Monaco\', monospace';
     this.fontSize = config.fontSize || 16;
     this.cellWidth = config.cellWidth || 10;
     this.cellHeight = config.cellHeight || 20;
@@ -113,28 +114,21 @@ export class Canvas2DRenderer {
     const py = y * this.cellHeight;
 
     // Draw background
-    this.ctx.fillStyle = this.colorToString(cell.bg);
+    this.ctx.fillStyle = ColorUtils.toCss(cell.bg);
     this.ctx.fillRect(px, py, this.cellWidth, this.cellHeight);
 
     // Draw character if not space
     if (cell.char && cell.char !== ' ') {
-      this.ctx.fillStyle = this.colorToString(cell.fg);
+      this.ctx.fillStyle = ColorUtils.toCss(cell.fg);
       this.ctx.fillText(cell.char, px + 1, py + 2);
     }
-  }
-
-  private colorToString(color: Color): string {
-    if (color.a !== undefined && color.a < 1) {
-      return `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a})`;
-    }
-    return `rgb(${color.r}, ${color.g}, ${color.b})`;
   }
 
   /**
    * Clear the canvas
    */
-  clear(color: Color = { r: 0, g: 0, b: 0 }): void {
-    this.ctx.fillStyle = this.colorToString(color);
+  clear(color: Color = COLORS.BLACK): void {
+    this.ctx.fillStyle = ColorUtils.toCss(color);
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
   }
 }

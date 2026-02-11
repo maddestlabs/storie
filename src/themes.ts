@@ -1,6 +1,7 @@
 /**
  * Theme system for S|torie
  * Provides semantic color palettes compatible with tstorie
+ * Colors are stored as packed 32-bit integers (0xRRGGBBAA) for optimal WASM performance
  */
 
 import type { ThemeColors, ThemeStyleSheet } from './types.js';
@@ -8,126 +9,127 @@ import type { ThemeColors, ThemeStyleSheet } from './types.js';
 /**
  * Built-in theme registry
  * Themes are designed to work well in terminals and UIs
+ * Format: 0xRRGGBBAA (Red, Green, Blue, Alpha as hex bytes)
  */
 export const THEMES: Record<string, ThemeColors> = {
   neotopia: {
-    bg:      { r: 0x00, g: 0x11, b: 0x11 },   // Deep teal
-    bgAlt:   { r: 0x09, g: 0x34, b: 0x3a },   // Lighter teal
-    fg:      { r: 0xe0, g: 0xe0, b: 0xe0 },   // Bright gray
-    fgAlt:   { r: 0x90, g: 0x90, b: 0x90 },   // Medium gray
-    accent1: { r: 0x00, g: 0xd9, b: 0x8e },   // Aquamarine
-    accent2: { r: 0xff, g: 0xff, b: 0x00 },   // Yellow
-    accent3: { r: 0xff, g: 0x00, b: 0x6e }    // Pink
+    bg:      0x001111FF,   // Deep teal
+    bgAlt:   0x09343AFF,   // Lighter teal
+    fg:      0xE0E0E0FF,   // Bright gray
+    fgAlt:   0x909090FF,   // Medium gray
+    accent1: 0x00D98EFF,   // Aquamarine
+    accent2: 0xFFFF00FF,   // Yellow
+    accent3: 0xFF006EFF,   // Pink
   },
   
   neonopia: {
-    bg:      { r: 0x05, g: 0x00, b: 0x00 },   // Deep burgundy
-    bgAlt:   { r: 0x34, g: 0x09, b: 0x05 },   // Dark coral
-    fg:      { r: 0xa0, g: 0xa0, b: 0xa0 },   // Dark gray
-    fgAlt:   { r: 0x6f, g: 0x6f, b: 0x6f },   // Lighter gray
-    accent1: { r: 0xff, g: 0x26, b: 0x71 },   // Hot pink
-    accent2: { r: 0x00, g: 0x00, b: 0xff },   // Pure blue
-    accent3: { r: 0x00, g: 0xff, b: 0x91 }    // Bright mint
+    bg:      0x050000FF,   // Deep burgundy
+    bgAlt:   0x340905FF,   // Dark coral
+    fg:      0xA0A0A0FF,   // Dark gray
+    fgAlt:   0x6F6F6FFF,   // Lighter gray
+    accent1: 0xFF2671FF,   // Hot pink
+    accent2: 0x0000FFFF,   // Pure blue
+    accent3: 0x00FF91FF,   // Bright mint
   },
   
   catppuccin: {
-    bg:      { r: 0x1e, g: 0x1e, b: 0x2e },
-    bgAlt:   { r: 0x31, g: 0x32, b: 0x44 },
-    fg:      { r: 0xcd, g: 0xd6, b: 0xf4 },
-    fgAlt:   { r: 0x6c, g: 0x70, b: 0x86 },
-    accent1: { r: 0xf5, g: 0xc2, b: 0xe7 },   // Pink
-    accent2: { r: 0x89, g: 0xb4, b: 0xfa },   // Blue
-    accent3: { r: 0xa6, g: 0xe3, b: 0xa1 }    // Green
+    bg:      0x1E1E2EFF,
+    bgAlt:   0x313244FF,
+    fg:      0xCDD6F4FF,
+    fgAlt:   0x6C7086FF,
+    accent1: 0xF5C2E7FF,   // Pink
+    accent2: 0x89B4FAFF,   // Blue
+    accent3: 0xA6E3A1FF,   // Green
   },
   
   nord: {
-    bg:      { r: 0x2e, g: 0x34, b: 0x40 },
-    bgAlt:   { r: 0x3b, g: 0x42, b: 0x52 },
-    fg:      { r: 0xec, g: 0xef, b: 0xf4 },
-    fgAlt:   { r: 0xd8, g: 0xde, b: 0xe9 },
-    accent1: { r: 0x88, g: 0xc0, b: 0xd0 },   // Frost cyan
-    accent2: { r: 0x81, g: 0xa1, b: 0xc1 },   // Frost teal
-    accent3: { r: 0xa3, g: 0xbe, b: 0x8c }    // Aurora green
+    bg:      0x2E3440FF,
+    bgAlt:   0x3B4252FF,
+    fg:      0xECEFF4FF,
+    fgAlt:   0xD8DEE9FF,
+    accent1: 0x88C0D0FF,   // Frost cyan
+    accent2: 0x81A1C1FF,   // Frost teal
+    accent3: 0xA3BE8CFF,   // Aurora green
   },
   
   dracula: {
-    bg:      { r: 0x28, g: 0x2a, b: 0x36 },
-    bgAlt:   { r: 0x44, g: 0x47, b: 0x5a },
-    fg:      { r: 0xf8, g: 0xf8, b: 0xf2 },
-    fgAlt:   { r: 0x62, g: 0x72, b: 0xa4 },
-    accent1: { r: 0xff, g: 0x79, b: 0xc6 },   // Pink
-    accent2: { r: 0x8b, g: 0xe9, b: 0xfd },   // Cyan
-    accent3: { r: 0x50, g: 0xfa, b: 0x7b }    // Green
+    bg:      0x282A36FF,
+    bgAlt:   0x44475AFF,
+    fg:      0xF8F8F2FF,
+    fgAlt:   0x6272A4FF,
+    accent1: 0xFF79C6FF,   // Pink
+    accent2: 0x8BE9FDFF,   // Cyan
+    accent3: 0x50FA7BFF,   // Green
   },
   
   outrun: {
-    bg:      { r: 0x1a, g: 0x00, b: 0x33 },
-    bgAlt:   { r: 0x2d, g: 0x00, b: 0x55 },
-    fg:      { r: 0xf0, g: 0xf0, b: 0xff },
-    fgAlt:   { r: 0x8b, g: 0x5c, b: 0xf6 },
-    accent1: { r: 0xff, g: 0x00, b: 0x6e },   // Neon pink
-    accent2: { r: 0x00, g: 0xf5, b: 0xff },   // Electric cyan
-    accent3: { r: 0xff, g: 0xbe, b: 0x0b }    // Golden yellow
+    bg:      0x1A0033FF,
+    bgAlt:   0x2D0055FF,
+    fg:      0xF0F0FFFF,
+    fgAlt:   0x8B5CF6FF,
+    accent1: 0xFF006EFF,   // Neon pink
+    accent2: 0x00F5FFFF,   // Electric cyan
+    accent3: 0xFFBE0BFF,   // Golden yellow
   },
   
   alleycat: {
-    bg:      { r: 0x0a, g: 0x0a, b: 0x0f },
-    bgAlt:   { r: 0x1a, g: 0x1a, b: 0x2e },
-    fg:      { r: 0xe0, g: 0xe0, b: 0xff },
-    fgAlt:   { r: 0x6b, g: 0x7f, b: 0xd7 },
-    accent1: { r: 0x00, g: 0xff, b: 0xff },   // Electric cyan
-    accent2: { r: 0xff, g: 0x00, b: 0xff },   // Magenta
-    accent3: { r: 0x00, g: 0xff, b: 0x00 }    // Matrix green
+    bg:      0x0A0A0FFF,
+    bgAlt:   0x1A1A2EFF,
+    fg:      0xE0E0FFFF,
+    fgAlt:   0x6B7FD7FF,
+    accent1: 0x00FFFFFF,   // Electric cyan
+    accent2: 0xFF00FFFF,   // Magenta
+    accent3: 0x00FF00FF,   // Matrix green
   },
   
   terminal: {
-    bg:      { r: 0x0a, g: 0x0a, b: 0x0a },
-    bgAlt:   { r: 0x1a, g: 0x1a, b: 0x1a },
-    fg:      { r: 0x00, g: 0xff, b: 0x00 },
-    fgAlt:   { r: 0x00, g: 0x88, b: 0x00 },
-    accent1: { r: 0x00, g: 0xff, b: 0x00 },   // Bright green
-    accent2: { r: 0x00, g: 0xcc, b: 0x00 },   // Medium green
-    accent3: { r: 0x00, g: 0xaa, b: 0x00 }    // Dark green
+    bg:      0x0A0A0AFF,
+    bgAlt:   0x1A1A1AFF,
+    fg:      0x00FF00FF,
+    fgAlt:   0x008800FF,
+    accent1: 0x00FF00FF,   // Bright green
+    accent2: 0x00CC00FF,   // Medium green
+    accent3: 0x00AA00FF,   // Dark green
   },
   
   solardark: {
-    bg:      { r: 0x00, g: 0x2b, b: 0x36 },
-    bgAlt:   { r: 0x07, g: 0x36, b: 0x42 },
-    fg:      { r: 0x83, g: 0x94, b: 0x96 },
-    fgAlt:   { r: 0x58, g: 0x6e, b: 0x75 },
-    accent1: { r: 0x26, g: 0x8b, b: 0xd2 },   // Blue
-    accent2: { r: 0x2a, g: 0xa1, b: 0x98 },   // Cyan
-    accent3: { r: 0x85, g: 0x99, b: 0x00 }    // Green
+    bg:      0x002B36FF,
+    bgAlt:   0x073642FF,
+    fg:      0x839496FF,
+    fgAlt:   0x586E75FF,
+    accent1: 0x268BD2FF,   // Blue
+    accent2: 0x2AA198FF,   // Cyan
+    accent3: 0x859900FF,   // Green
   },
   
   solarlight: {
-    bg:      { r: 0xfd, g: 0xf6, b: 0xe3 },
-    bgAlt:   { r: 0xee, g: 0xe8, b: 0xd5 },
-    fg:      { r: 0x65, g: 0x7b, b: 0x83 },
-    fgAlt:   { r: 0x93, g: 0xa1, b: 0xa1 },
-    accent1: { r: 0x26, g: 0x8b, b: 0xd2 },   // Blue
-    accent2: { r: 0x2a, g: 0xa1, b: 0x98 },   // Cyan
-    accent3: { r: 0x85, g: 0x99, b: 0x00 }    // Green
+    bg:      0xFDF6E3FF,
+    bgAlt:   0xEEE8D5FF,
+    fg:      0x657B83FF,
+    fgAlt:   0x93A1A1FF,
+    accent1: 0x268BD2FF,   // Blue
+    accent2: 0x2AA198FF,   // Cyan
+    accent3: 0x859900FF,   // Green
   },
   
   coffee: {
-    bg:      { r: 0xf2, g: 0xd3, b: 0xac },   // Cream
-    bgAlt:   { r: 0x73, g: 0x14, b: 0x25 },   // Dark burgundy
-    fg:      { r: 0x26, g: 0x03, b: 0x24 },   // Deep purple-brown
-    fgAlt:   { r: 0xbf, g: 0x8c, b: 0x6f },   // Tan
-    accent1: { r: 0xbf, g: 0x34, b: 0x34 },   // Rich red
-    accent2: { r: 0xbf, g: 0x8c, b: 0x6f },   // Tan
-    accent3: { r: 0xf2, g: 0xd3, b: 0xac }    // Cream accent
+    bg:      0xF2D3ACFF,   // Cream
+    bgAlt:   0x731425FF,   // Dark burgundy
+    fg:      0x260324FF,   // Deep purple-brown
+    fgAlt:   0xBF8C6FFF,   // Tan
+    accent1: 0xBF3434FF,   // Rich red
+    accent2: 0xBF8C6FFF,   // Tan
+    accent3: 0xF2D3ACFF,   // Cream accent
   },
   
   stonegarden: {
-    bg:      { r: 0x1a, g: 0x1d, b: 0x1e },   // Darker stone
-    bgAlt:   { r: 0x2d, g: 0x30, b: 0x32 },   // Elevated surfaces
-    fg:      { r: 0xe8, g: 0xe6, b: 0xe3 },   // Soft cream
-    fgAlt:   { r: 0x98, g: 0x96, b: 0x93 },   // Muted stone
-    accent1: { r: 0x8d, g: 0xb8, b: 0x8d },   // Moss green
-    accent2: { r: 0xc4, g: 0xa7, b: 0x77 },   // Warm sand
-    accent3: { r: 0x5a, g: 0x7a, b: 0x8e }    // Blue-gray
+    bg:      0x1A1D1EFF,   // Darker stone
+    bgAlt:   0x2D3032FF,   // Elevated surfaces
+    fg:      0xE8E6E3FF,   // Soft cream
+    fgAlt:   0x989693FF,   // Muted stone
+    accent1: 0x8DB88DFF,   // Moss green
+    accent2: 0xC4A777FF,   // Warm sand
+    accent3: 0x5A7A8EFF,   // Blue-gray
   }
 };
 

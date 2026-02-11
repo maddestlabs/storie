@@ -10,6 +10,8 @@ export { Canvas2DRenderer } from './renderer.js';
 export { WebGPURenderer } from './webgpu-renderer.js';
 export { parseMarkdown, findSection, flattenSections } from './markdown.js';
 export { getTheme, applyTheme, getAvailableThemes, THEMES } from './themes.js';
+export { ModuleLoader } from './modules/loader.js';
+export { BuiltInModules } from './modules/types.js';
 
 export type {
   Color,
@@ -26,6 +28,16 @@ export type {
   ThemeStyleSheet,
   NamedStyle
 } from './types.js';
+
+export type {
+  StorieModule,
+  ModuleMetadata,
+  ModuleLoadOptions,
+  ModuleResolver,
+  ModuleLoaderEvents,
+  ModuleResolverConfig,
+  BuiltInModuleName
+} from './modules/types.js';
 
 export { KEY, COLORS } from './types.js';
 

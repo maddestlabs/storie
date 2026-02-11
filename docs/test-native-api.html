@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Native API Test - S|torie</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      background: #0a0a0a;
+      color: #00ff88;
+      font-family: monospace;
+    }
+    #canvas {
+      border: 1px solid #00ff88;
+      background: #000;
+    }
+    .info {
+      margin-top: 20px;
+      padding: 10px;
+      background: #1a1a1a;
+      border: 1px solid #00ff88;
+    }
+    button {
+      background: #00ff88;
+      color: #000;
+      border: none;
+      padding: 10px 20px;
+      margin: 5px;
+      cursor: pointer;
+      font-family: monospace;
+      font-weight: bold;
+    }
+    button:hover {
+      background: #00ffaa;
+    }
+    .status {
+      margin-top: 10px;
+      padding: 10px;
+      background: #2a2a2a;
+    }
+    .success { color: #00ff88; }
+    .error { color: #ff0088; }
+  </style>
+</head>
+<body>
+  <h1>🧪 Native API Test</h1>
+  
+  <div class="info">
+    <h2>Test Controls</h2>
+    <button onclick="testAudio()">🎵 Test Audio API</button>
+    <button onclick="testCanvas2D()">🎨 Test Canvas 2D</button>
+    <button onclick="testWebGL()">🌐 Test WebGL</button>
+    <button onclick="testWebGPU()">⚡ Test WebGPU</button>
+  </div>
+  
+  <div id="status" class="status">
+    Ready to test...
+  </div>
+  
+  <canvas id="canvas" width="800" height="600"></canvas>
+  
+  <script type="module">
+    import { StorieEngine } from './storie.es.js';
+    
+    const canvas = document.getElementById('canvas');
+    const engine = new StorieEngine(canvas, { width: 80, height: 24 });
+    
+    const status = document.getElementById('status');
+    
+    function log(message, isError = false) {
+      const line = document.createElement('div');
+      line.className = isError ? 'error' : 'success';
+      line.textContent = message;
+      status.appendChild(line);
+      console.log(message);
+    }
+    
+    // Make test functions global
+    window.testAudio = async function() {
+      try {
+        log('🎵 Testing Web Audio API...');
+        
+        const testMd = `
+# Audio Test
+
+\`\`\`js on:init
+console.log('Audio context state:', audio.state);
+console.log('Sample rate:', audio.sampleRate);
+
+// Test helper
+audio.playTone(440, 0.3, 0.2);
+
+// Test raw API
+const osc = audio.createOscillator();
+const gain = audio.createGain();
+osc.frequency.value = 880;
+gain.gain.value = 0.1;
+osc.connect(gain);
+gain.connect(audio.destination);
+osc.start();
+osc.stop(audio.currentTime + 0.2);
+
+console.log('✓ Audio test passed!');
+\`\`\`
+        `;
+        
+        await engine.loadMarkdown('audio-test', testMd);
+        engine.start();
+        
+        log('✓ Web Audio API test completed!');
+        log(`  - Context state: ${engine['audioContext'].state}`);
+        log(`  - Sample rate: ${engine['audioContext'].sampleRate} Hz`);
+        
+      } catch (error) {
+        log('✗ Audio test failed: ' + error.message, true);
+      }
+    };
+    
+    window.testCanvas2D = async function() {
+      try {
+        log('🎨 Testing Canvas 2D API...');
+        
+        const testMd = `
+# Canvas 2D Test
+
+\`\`\`js on:render
+canvas2d.clear('#1a1a2e');
+canvas2d.drawCircle(400, 300, 50, '#ff0088', true);
+canvas2d.drawRect(200, 200, 100, 100, '#00ff88', false);
+canvas2d.text('Canvas 2D Works!', 20, 30, '#ffffff', '24px monospace');
+
+// Test direct context
+const ctx = canvas2d.context;
+if (ctx) {
+  const gradient = ctx.createLinearGradient(0, 0, canvas2d.width, 0);
+  gradient.addColorStop(0, '#ff0088');
+  gradient.addColorStop(1, '#00ff88');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, canvas2d.height - 50, canvas2d.width, 50);
+}
+
+console.log('✓ Canvas 2D test passed!');
+\`\`\`
+        `;
+        
+        await engine.loadMarkdown('canvas-test', testMd);
+        engine.start();
+        
+        log('✓ Canvas 2D API test completed!');
+        log(`  - Canvas size: ${engine['canvas2DContext']?.canvas.width}x${engine['canvas2DContext']?.canvas.height}`);
+        
+      } catch (error) {
+        log('✗ Canvas 2D test failed: ' + error.message, true);
+      }
+    };
+    
+    window.testWebGL = async function() {
+      try {
+        log('🌐 Testing WebGL API...');
+        
+        const testMd = `
+# WebGL Test
+
+\`\`\`js on:init
+if (webgl.available) {
+  const gl = webgl.context;
+  console.log('WebGL Version:', gl.getParameter(gl.VERSION));
+  console.log('WebGL Vendor:', gl.getParameter(gl.VENDOR));
+  console.log('✓ WebGL test passed!');
+} else {
+  console.warn('WebGL not available');
+}
+\`\`\`
+        `;
+        
+        await engine.loadMarkdown('webgl-test', testMd);
+        engine.start();
+        
+        const gl = engine['getWebGLContext']();
+        if (gl) {
+          log('✓ WebGL API test completed!');
+          log(`  - Version: ${gl.getParameter(gl.VERSION)}`);
+          log(`  - Vendor: ${gl.getParameter(gl.VENDOR)}`);
+        } else {
+          log('⚠ WebGL not available on this system');
+        }
+        
+      } catch (error) {
+        log('✗ WebGL test failed: ' + error.message, true);
+      }
+    };
+    
+    window.testWebGPU = async function() {
+      try {
+        log('⚡ Testing WebGPU API...');
+        
+        const testMd = `
+# WebGPU Test
+
+\`\`\`js on:init
+async function testGPU() {
+  if (await webgpu.init()) {
+    console.log('WebGPU available:', webgpu.available);
+    console.log('Device:', webgpu.device);
+    
+    // Test buffer creation with limits
+    const buffer = webgpu.createBuffer(1024, GPUBufferUsage.UNIFORM);
+    if (buffer) {
+      console.log('✓ Created 1KB buffer');
+    }
+    
+    console.log('✓ WebGPU test passed!');
+  } else {
+    console.warn('WebGPU not available');
+  }
+}
+
+testGPU();
+\`\`\`
+        `;
+        
+        await engine.loadMarkdown('webgpu-test', testMd);
+        engine.start();
+        
+        // Give async initialization time to complete
+        setTimeout(async () => {
+          await engine['initWebGPU']();
+          if (engine['webgpuDevice']) {
+            log('✓ WebGPU API test completed!');
+            log(`  - Device: ${engine['webgpuDevice']}`);
+          } else {
+            log('⚠ WebGPU not available on this system');
+          }
+        }, 100);
+        
+      } catch (error) {
+        log('✗ WebGPU test failed: ' + error.message, true);
+      }
+    };
+    
+    log('Native API test page ready. Click buttons to test!');
+    log('Open console to see detailed logs.');
+  </script>
+</body>
+</html>

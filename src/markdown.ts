@@ -170,6 +170,7 @@ function extractCodeBlocks(source: string): CodeBlock[] {
 
 /**
  * Extract YAML frontmatter if present
+ * Supports: strings, numbers, booleans, arrays (comma-separated or JSON)
  */
 function extractFrontmatter(source: string): Record<string, any> {
   const lines = source.split('\n');
@@ -187,21 +188,70 @@ function extractFrontmatter(source: string): Record<string, any> {
     if (endIndex > 0) {
       const yamlLines = lines.slice(1, endIndex);
       for (const line of yamlLines) {
-        const match = line.match(/^(\w+):\s*(.+)$/);
+        // Match key: value pairs (support hyphens and underscores in keys)
+        const match = line.match(/^([\w-]+):\s*(.*)$/);
         if (match) {
           const key = match[1];
           let value: any = match[2].trim();
+          
+          // Handle empty/null values
+          if (value.length === 0 || ['null', 'nil', 'none', '~'].includes(value.toLowerCase())) {
+            metadata[key] = null;
+            continue;
+          }
+          
+          // Check for boolean FIRST (before trying to parse as number)
+          const lowerValue = value.toLowerCase();
+          if (lowerValue === 'true' || lowerValue === 'false') {
+            metadata[key] = lowerValue === 'true';
+            continue;
+          }
           
           // Remove surrounding quotes from strings
           if ((value.startsWith('"') && value.endsWith('"')) ||
               (value.startsWith("'") && value.endsWith("'"))) {
             value = value.slice(1, -1);
+            metadata[key] = value;
+            continue;
           }
-          // Try to parse as JSON
-          else if (value === 'true') value = true;
-          else if (value === 'false') value = false;
-          else if (!isNaN(Number(value))) value = Number(value);
           
+          // Try to parse as JSON array/object first (handles [1,2,3] or {"x": 1})
+          if ((value.startsWith('[') && value.endsWith(']')) ||
+              (value.startsWith('{') && value.endsWith('}'))) {
+            try {
+              metadata[key] = JSON.parse(value);
+              continue;
+            } catch {
+              // Not valid JSON, treat as string
+            }
+          }
+          
+          // Handle comma-separated arrays (e.g., "tags: one, two, three")
+          if (value.includes(',') && !value.startsWith('"') && !value.startsWith("'")) {
+            const items = value.split(',').map((item: string) => {
+              const trimmed = item.trim();
+              // Try to parse each item as number/boolean
+              if (trimmed === 'true') return true;
+              if (trimmed === 'false') return false;
+              if (!isNaN(Number(trimmed)) && trimmed !== '') return Number(trimmed);
+              // Remove quotes if present
+              if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+                  (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+                return trimmed.slice(1, -1);
+              }
+              return trimmed;
+            });
+            metadata[key] = items;
+            continue;
+          }
+          
+          // Try to parse as number (int or float)
+          if (!isNaN(Number(value)) && value !== '') {
+            metadata[key] = Number(value);
+            continue;
+          }
+          
+          // Default: store as string
           metadata[key] = value;
         }
       }

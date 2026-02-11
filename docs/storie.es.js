@@ -1,6 +1,112 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+const ColorUtils = {
+  /**
+   * Create a color from RGB components (0-255)
+   */
+  rgb(r, g, b) {
+    return (r & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | 255;
+  },
+  /**
+   * Create a color from RGBA components (0-255)
+   */
+  rgba(r, g, b, a) {
+    return (r & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | a & 255;
+  },
+  /**
+   * Extract red component (0-255)
+   */
+  r(color) {
+    return color >>> 24 & 255;
+  },
+  /**
+   * Extract green component (0-255)
+   */
+  g(color) {
+    return color >>> 16 & 255;
+  },
+  /**
+   * Extract blue component (0-255)
+   */
+  b(color) {
+    return color >>> 8 & 255;
+  },
+  /**
+   * Extract alpha component (0-255)
+   */
+  a(color) {
+    return color & 255;
+  },
+  /**
+   * Get normalized RGB components (0-1) for GPU
+   */
+  rgbNorm(color) {
+    return [
+      (color >>> 24 & 255) / 255,
+      (color >>> 16 & 255) / 255,
+      (color >>> 8 & 255) / 255
+    ];
+  },
+  /**
+   * Get normalized RGBA components (0-1) for GPU
+   */
+  rgbaNorm(color) {
+    return [
+      (color >>> 24 & 255) / 255,
+      (color >>> 16 & 255) / 255,
+      (color >>> 8 & 255) / 255,
+      (color & 255) / 255
+    ];
+  },
+  /**
+   * Convert to CSS color string
+   */
+  toCss(color) {
+    const r = color >>> 24 & 255;
+    const g = color >>> 16 & 255;
+    const b = color >>> 8 & 255;
+    const a = color & 255;
+    if (a === 255) {
+      return `rgb(${r}, ${g}, ${b})`;
+    }
+    return `rgba(${r}, ${g}, ${b}, ${a / 255})`;
+  },
+  /**
+   * Blend two colors with alpha
+   */
+  blend(src, dst, alpha) {
+    const invAlpha = 1 - alpha;
+    const sr = src >>> 24 & 255;
+    const sg = src >>> 16 & 255;
+    const sb = src >>> 8 & 255;
+    const dr = dst >>> 24 & 255;
+    const dg = dst >>> 16 & 255;
+    const db = dst >>> 8 & 255;
+    const r = Math.round(sr * alpha + dr * invAlpha);
+    const g = Math.round(sg * alpha + dg * invAlpha);
+    const b = Math.round(sb * alpha + db * invAlpha);
+    return (r & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | 255;
+  },
+  /**
+   * Convert from any color format to packed integer
+   * Supports both new packed format and legacy object format {r, g, b, a?}
+   * This provides backward compatibility for user code
+   */
+  from(color) {
+    if (typeof color === "number") {
+      return color;
+    }
+    if (color && typeof color === "object" && "r" in color && "g" in color && "b" in color) {
+      const r = Math.round(color.r) & 255;
+      const g = Math.round(color.g) & 255;
+      const b = Math.round(color.b) & 255;
+      const a = color.a !== void 0 ? Math.round(color.a * 255) & 255 : 255;
+      return r << 24 | g << 16 | b << 8 | a;
+    }
+    return 4294967295;
+  }
+};
 const KEY = {
   SPACE: " ",
   ENTER: "Enter",
@@ -18,14 +124,14 @@ const KEY = {
   PAGE_DOWN: "PageDown"
 };
 const COLORS = {
-  BLACK: { r: 0, g: 0, b: 0 },
-  WHITE: { r: 255, g: 255, b: 255 },
-  RED: { r: 255, g: 0, b: 0 },
-  GREEN: { r: 0, g: 255, b: 0 },
-  BLUE: { r: 0, g: 0, b: 255 },
-  YELLOW: { r: 255, g: 255, b: 0 },
-  CYAN: { r: 0, g: 255, b: 255 },
-  MAGENTA: { r: 255, g: 0, b: 255 }
+  BLACK: 255,
+  WHITE: 4294967295,
+  RED: 4278190335,
+  GREEN: 16711935,
+  BLUE: 65535,
+  YELLOW: 4294902015,
+  CYAN: 16777215,
+  MAGENTA: 4278255615
 };
 class Layer {
   constructor(id, width, height) {
@@ -47,8 +153,8 @@ class Layer {
       for (let x = 0; x < width; x++) {
         row.push({
           char: " ",
-          fg: { ...COLORS.WHITE },
-          bg: { ...COLORS.BLACK }
+          fg: COLORS.WHITE,
+          bg: COLORS.BLACK
         });
       }
       buffer.push(row);
@@ -62,16 +168,16 @@ class Layer {
       if (px < 0 || px >= this.width) continue;
       const cell = this.buffer[y][px];
       cell.char = text[i];
-      if (fg) cell.fg = { ...fg };
-      if (bg) cell.bg = { ...bg };
+      if (fg !== void 0) cell.fg = ColorUtils.from(fg);
+      if (bg !== void 0) cell.bg = ColorUtils.from(bg);
     }
   }
   plot(x, y, char, fg, bg) {
     if (x < 0 || x >= this.width || y < 0 || y >= this.height) return;
     const cell = this.buffer[y][x];
     cell.char = char;
-    if (fg) cell.fg = { ...fg };
-    if (bg) cell.bg = { ...bg };
+    if (fg !== void 0) cell.fg = ColorUtils.from(fg);
+    if (bg !== void 0) cell.bg = ColorUtils.from(bg);
   }
   clear(bgColor) {
     const bg = bgColor || COLORS.BLACK;
@@ -79,8 +185,8 @@ class Layer {
       for (let x = 0; x < this.width; x++) {
         this.buffer[y][x] = {
           char: " ",
-          fg: { ...COLORS.WHITE },
-          bg: { ...bg }
+          fg: COLORS.WHITE,
+          bg
         };
       }
     }
@@ -149,8 +255,8 @@ class LayerStack {
       for (let x = 0; x < this.width; x++) {
         row.push({
           char: " ",
-          fg: { ...COLORS.WHITE },
-          bg: { ...COLORS.BLACK }
+          fg: COLORS.WHITE,
+          bg: COLORS.BLACK
         });
       }
       result.push(row);
@@ -164,24 +270,15 @@ class LayerStack {
           const dstCell = result[y][x];
           if (layer.alpha >= 1) {
             dstCell.char = srcCell.char;
-            dstCell.fg = { ...srcCell.fg };
-            dstCell.bg = { ...srcCell.bg };
+            dstCell.fg = srcCell.fg;
+            dstCell.bg = srcCell.bg;
           } else {
             const alpha = layer.alpha;
-            const invAlpha = 1 - alpha;
             if (srcCell.char !== " ") {
               dstCell.char = srcCell.char;
-              dstCell.fg = {
-                r: Math.round(srcCell.fg.r * alpha + dstCell.fg.r * invAlpha),
-                g: Math.round(srcCell.fg.g * alpha + dstCell.fg.g * invAlpha),
-                b: Math.round(srcCell.fg.b * alpha + dstCell.fg.b * invAlpha)
-              };
+              dstCell.fg = ColorUtils.blend(srcCell.fg, dstCell.fg, alpha);
             }
-            dstCell.bg = {
-              r: Math.round(srcCell.bg.r * alpha + dstCell.bg.r * invAlpha),
-              g: Math.round(srcCell.bg.g * alpha + dstCell.bg.g * invAlpha),
-              b: Math.round(srcCell.bg.b * alpha + dstCell.bg.b * invAlpha)
-            };
+            dstCell.bg = ColorUtils.blend(srcCell.bg, dstCell.bg, alpha);
           }
         }
       }
@@ -225,15 +322,27 @@ class InputManager {
     });
     this.canvas.addEventListener("mousemove", (e) => {
       const rect = this.canvas.getBoundingClientRect();
-      this.state.mouseX = e.clientX - rect.left;
-      this.state.mouseY = e.clientY - rect.top;
+      const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
+      const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;
+      this.state.mouseX = (e.clientX - rect.left) * scaleX;
+      this.state.mouseY = (e.clientY - rect.top) * scaleY;
     });
     this.canvas.addEventListener("mousedown", (e) => {
+      const rect = this.canvas.getBoundingClientRect();
+      const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
+      const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;
+      this.state.mouseX = (e.clientX - rect.left) * scaleX;
+      this.state.mouseY = (e.clientY - rect.top) * scaleY;
       this.state.mouseButtons.set(e.button, true);
       this.state.mouseButtonsClicked.add(e.button);
       e.preventDefault();
     });
     this.canvas.addEventListener("mouseup", (e) => {
+      const rect = this.canvas.getBoundingClientRect();
+      const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
+      const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;
+      this.state.mouseX = (e.clientX - rect.left) * scaleX;
+      this.state.mouseY = (e.clientY - rect.top) * scaleY;
       this.state.mouseButtons.set(e.button, false);
       e.preventDefault();
     });
@@ -266,10 +375,8 @@ class InputManager {
    * Update mouse position (used by event handlers)
    */
   updateMousePosition(x, y) {
-    console.log(`📍 InputManager.updateMousePosition(${x}, ${y})`);
     this.state.mouseX = x;
     this.state.mouseY = y;
-    console.log(`   State now: mouseX=${this.state.mouseX}, mouseY=${this.state.mouseY}`);
   }
   /**
    * Clear frame-specific input states
@@ -302,7 +409,7 @@ class Canvas2DRenderer {
       throw new Error("Failed to get 2D context");
     }
     this.ctx = ctx;
-    this.fontFamily = config.fontFamily || 'Monaco, Consolas, "Courier New", monospace';
+    this.fontFamily = config.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
     this.fontSize = config.fontSize || 16;
     this.cellWidth = config.cellWidth || 10;
     this.cellHeight = config.cellHeight || 20;
@@ -356,153 +463,460 @@ class Canvas2DRenderer {
   renderCell(x, y, cell) {
     const px = x * this.cellWidth;
     const py = y * this.cellHeight;
-    this.ctx.fillStyle = this.colorToString(cell.bg);
+    this.ctx.fillStyle = ColorUtils.toCss(cell.bg);
     this.ctx.fillRect(px, py, this.cellWidth, this.cellHeight);
     if (cell.char && cell.char !== " ") {
-      this.ctx.fillStyle = this.colorToString(cell.fg);
+      this.ctx.fillStyle = ColorUtils.toCss(cell.fg);
       this.ctx.fillText(cell.char, px + 1, py + 2);
     }
-  }
-  colorToString(color) {
-    if (color.a !== void 0 && color.a < 1) {
-      return `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a})`;
-    }
-    return `rgb(${color.r}, ${color.g}, ${color.b})`;
   }
   /**
    * Clear the canvas
    */
-  clear(color = { r: 0, g: 0, b: 0 }) {
-    this.ctx.fillStyle = this.colorToString(color);
+  clear(color = COLORS.BLACK) {
+    this.ctx.fillStyle = ColorUtils.toCss(color);
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
   }
 }
-class WebGPURenderer {
-  constructor(canvas, config = {}) {
-    __publicField(this, "canvas");
+class WebGPUContext {
+  constructor(config = {}) {
     __publicField(this, "device", null);
+    __publicField(this, "adapter", null);
+    __publicField(this, "canvas", null);
     __publicField(this, "context", null);
-    __publicField(this, "pipeline", null);
-    __publicField(this, "width");
-    __publicField(this, "height");
-    // Font settings
+    __publicField(this, "presentationFormat", "bgra8unorm");
+    __publicField(this, "initialized", false);
+    this.config = config;
+    this.canvas = config.canvas || null;
+  }
+  async init() {
+    if (this.initialized) return true;
+    console.log("[WebGPUContext] Initializing...");
+    if (!navigator.gpu) {
+      console.error("[WebGPUContext] WebGPU not supported in this browser");
+      return false;
+    }
+    try {
+      this.adapter = await navigator.gpu.requestAdapter({
+        powerPreference: this.config.powerPreference || "high-performance"
+      });
+      if (!this.adapter) {
+        console.error("[WebGPUContext] Failed to get GPU adapter");
+        return false;
+      }
+      this.device = await this.adapter.requestDevice();
+      this.device.lost.then((info) => {
+        console.error("[WebGPUContext] Device lost:", info.message);
+        this.initialized = false;
+      });
+      this.presentationFormat = this.config.preferredFormat || navigator.gpu.getPreferredCanvasFormat();
+      if (this.canvas) {
+        this.context = this.canvas.getContext("webgpu");
+        if (this.context) {
+          this.context.configure({
+            device: this.device,
+            format: this.presentationFormat,
+            alphaMode: "premultiplied"
+          });
+        }
+      }
+      this.initialized = true;
+      console.log("[WebGPUContext] Initialized successfully");
+      console.log("[WebGPUContext] Presentation format:", this.presentationFormat);
+      return true;
+    } catch (error) {
+      console.error("[WebGPUContext] Initialization failed:", error);
+      return false;
+    }
+  }
+  getDevice() {
+    return this.device;
+  }
+  getAdapter() {
+    return this.adapter;
+  }
+  getContext() {
+    return this.context;
+  }
+  getPresentationFormat() {
+    return this.presentationFormat;
+  }
+  isInitialized() {
+    return this.initialized;
+  }
+  /**
+   * Create a texture with common defaults
+   */
+  createTexture(descriptor) {
+    if (!this.device) throw new Error("Device not initialized");
+    return this.device.createTexture(descriptor);
+  }
+  /**
+   * Create a buffer with common defaults
+   */
+  createBuffer(descriptor) {
+    if (!this.device) throw new Error("Device not initialized");
+    return this.device.createBuffer(descriptor);
+  }
+  /**
+   * Create a sampler with common defaults
+   */
+  createSampler(descriptor = {}) {
+    if (!this.device) throw new Error("Device not initialized");
+    return this.device.createSampler(descriptor);
+  }
+  /**
+   * Create a shader module
+   */
+  createShaderModule(code) {
+    if (!this.device) throw new Error("Device not initialized");
+    return this.device.createShaderModule({ code });
+  }
+  /**
+   * Set canvas for this context
+   */
+  setCanvas(canvas) {
+    this.canvas = canvas;
+    if (this.device) {
+      this.context = canvas.getContext("webgpu");
+      if (this.context) {
+        this.context.configure({
+          device: this.device,
+          format: this.presentationFormat,
+          alphaMode: "premultiplied"
+        });
+      }
+    }
+  }
+  /**
+   * Get current canvas texture view for rendering
+   */
+  getCurrentTextureView() {
+    if (!this.context) return null;
+    return this.context.getCurrentTexture().createView();
+  }
+  /**
+   * Destroy and cleanup
+   */
+  destroy() {
+    if (this.device) {
+      this.device.destroy();
+      this.device = null;
+    }
+    this.adapter = null;
+    this.context = null;
+    this.initialized = false;
+  }
+}
+class GlyphAtlas {
+  constructor(config = {}) {
     __publicField(this, "fontFamily");
     __publicField(this, "fontSize");
-    __publicField(this, "charWidth");
-    __publicField(this, "charHeight");
-    // Glyph atlas (Canvas2D for rasterization)
+    __publicField(this, "atlasWidth");
+    __publicField(this, "atlasHeight");
+    // Canvas2D for rasterization
     __publicField(this, "atlasCanvas");
     __publicField(this, "atlasCtx");
+    // Glyph cache
     __publicField(this, "glyphCache", /* @__PURE__ */ new Map());
-    __publicField(this, "atlasTexture", null);
-    __publicField(this, "atlasSampler", null);
+    // Atlas packing state
     __publicField(this, "atlasX", 0);
     __publicField(this, "atlasY", 0);
     __publicField(this, "atlasRowHeight", 0);
+    // GPU resources
+    __publicField(this, "atlasTexture", null);
+    __publicField(this, "atlasSampler", null);
     __publicField(this, "atlasNeedsUpload", false);
-    // WebGPU resources
-    __publicField(this, "uniformBuffer", null);
-    __publicField(this, "cellBuffer", null);
-    __publicField(this, "cellData", null);
-    __publicField(this, "bindGroup", null);
-    __publicField(this, "initialized", false);
+    // Metrics
+    __publicField(this, "charWidth", 0);
+    __publicField(this, "charHeight", 0);
     __publicField(this, "fontLoggedOnce", false);
-    this.canvas = canvas;
-    this.width = 80;
-    this.height = 24;
-    this.fontFamily = config.fontFamily || 'Monaco, Consolas, "Courier New", monospace';
+    this.fontFamily = config.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
     this.fontSize = config.fontSize || 16;
-    this.charWidth = config.charWidth || 10;
-    this.charHeight = config.charHeight || 20;
+    this.atlasWidth = config.atlasWidth || 2048;
+    this.atlasHeight = config.atlasHeight || 2048;
     this.atlasCanvas = document.createElement("canvas");
-    this.atlasCanvas.width = 2048;
-    this.atlasCanvas.height = 2048;
+    this.atlasCanvas.width = this.atlasWidth;
+    this.atlasCanvas.height = this.atlasHeight;
     const ctx = this.atlasCanvas.getContext("2d", {
       alpha: true,
       willReadFrequently: true
     });
     if (!ctx) throw new Error("Failed to create atlas context");
     this.atlasCtx = ctx;
-  }
-  async init() {
-    if (this.initialized) return true;
-    console.log("[WebGPU] Initializing renderer...");
-    if (!navigator.gpu) {
-      console.error("[WebGPU] Not supported in this browser");
-      return false;
-    }
-    try {
-      const adapter = await navigator.gpu.requestAdapter({
-        powerPreference: "high-performance"
-      });
-      if (!adapter) {
-        console.error("[WebGPU] Failed to get GPU adapter");
-        return false;
-      }
-      this.device = await adapter.requestDevice();
-      this.device.lost.then((info) => {
-        console.error("[WebGPU] Device lost:", info.message);
-        this.initialized = false;
-      });
-      this.context = this.canvas.getContext("webgpu");
-      if (!this.context) {
-        console.error("[WebGPU] Failed to get canvas context");
-        return false;
-      }
-      const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
-      this.context.configure({
-        device: this.device,
-        format: presentationFormat,
-        alphaMode: "opaque"
-      });
-      if (document.fonts && document.fonts.ready) {
-        await document.fonts.ready;
-        try {
-          const fontString = this.fontFamily.includes(",") ? this.fontFamily : `'${this.fontFamily}'`;
-          await document.fonts.load(`${this.fontSize}px ${fontString}`);
-          console.log(`[WebGPU] Loaded font: ${fontString}`);
-        } catch (e) {
-          console.warn("[WebGPU] Font load failed, continuing anyway:", e);
-        }
-      }
-      this.initFont();
-      await this.initWebGPU(presentationFormat);
-      this.setupCanvas();
-      const maxCells = this.width * this.height;
-      this.cellBuffer = this.device.createBuffer({
-        size: maxCells * 60,
-        // 15 floats per cell
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
-      });
-      this.cellData = new Float32Array(maxCells * 15);
-      const uniforms = new Float32Array([
-        this.canvas.width,
-        this.canvas.height,
-        this.charWidth,
-        this.charHeight
-      ]);
-      this.device.queue.writeBuffer(this.uniformBuffer, 0, uniforms);
-      this.cacheCharRange(32, 127);
-      this.initialized = true;
-      console.log("[WebGPU] Initialized successfully");
-      return true;
-    } catch (error) {
-      console.error("[WebGPU] Initialization failed:", error);
-      return false;
-    }
+    this.initFont();
   }
   initFont() {
     const fontString = this.fontFamily.includes(",") ? this.fontFamily : `'${this.fontFamily}'`;
     this.atlasCtx.font = `${this.fontSize}px ${fontString}`;
     this.atlasCtx.textBaseline = "top";
+    this.atlasCtx.textAlign = "left";
     const metrics = this.atlasCtx.measureText("M");
     this.charWidth = Math.ceil(metrics.width);
     this.charHeight = this.fontSize;
-    console.log(`[WebGPU] Font initialized: ${this.atlasCtx.font}`);
-    console.log(`[WebGPU] Char size: ${this.charWidth}x${this.charHeight}px`);
+    console.log(`[GlyphAtlas] Font initialized: ${this.atlasCtx.font}`);
+    console.log(`[GlyphAtlas] Base char size: ${this.charWidth}x${this.charHeight}px`);
   }
-  async initWebGPU(presentationFormat) {
-    if (!this.device) return;
+  /**
+   * Initialize GPU resources
+   */
+  async initGPU(context) {
+    const device = context.getDevice();
+    if (!device) throw new Error("WebGPU device not available");
+    if (document.fonts && document.fonts.ready) {
+      await document.fonts.ready;
+      try {
+        const fontString = this.fontFamily.includes(",") ? this.fontFamily : `'${this.fontFamily}'`;
+        await document.fonts.load(`${this.fontSize}px ${fontString}`);
+        console.log(`[GlyphAtlas] Loaded font: ${fontString}`);
+      } catch (e) {
+        console.warn("[GlyphAtlas] Font load failed, continuing anyway:", e);
+      }
+    }
+    this.atlasTexture = device.createTexture({
+      size: [this.atlasWidth, this.atlasHeight],
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+    this.atlasSampler = device.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge"
+    });
+    console.log("[GlyphAtlas] GPU resources initialized");
+  }
+  /**
+   * Cache a single glyph
+   */
+  cacheGlyph(char) {
+    if (this.glyphCache.has(char)) {
+      return this.glyphCache.get(char);
+    }
+    const fontString = this.fontFamily.includes(",") ? this.fontFamily : `'${this.fontFamily}'`;
+    this.atlasCtx.font = `${this.fontSize}px ${fontString}`;
+    this.atlasCtx.textBaseline = "top";
+    if (!this.fontLoggedOnce) {
+      console.log(`[GlyphAtlas] Caching glyphs with font: ${this.atlasCtx.font}`);
+      this.fontLoggedOnce = true;
+    }
+    const metrics = this.atlasCtx.measureText(char);
+    const width = Math.ceil(metrics.width) + 2;
+    const height = this.charHeight + 2;
+    if (this.atlasX + width > this.atlasWidth) {
+      this.atlasX = 0;
+      this.atlasY += this.atlasRowHeight;
+      this.atlasRowHeight = 0;
+    }
+    if (this.atlasY + height > this.atlasHeight) {
+      console.warn("[GlyphAtlas] Atlas full! Cannot cache more glyphs.");
+      return {
+        u: 0,
+        v: 0,
+        w: 0,
+        h: 0,
+        pixelWidth: this.charWidth,
+        pixelHeight: this.charHeight
+      };
+    }
+    this.atlasCtx.clearRect(this.atlasX, this.atlasY, width, height);
+    this.atlasCtx.fillStyle = "#ffffff";
+    this.atlasCtx.fillText(char, this.atlasX + 1, this.atlasY + 1);
+    const info = {
+      u: this.atlasX / this.atlasWidth,
+      v: this.atlasY / this.atlasHeight,
+      w: width / this.atlasWidth,
+      h: height / this.atlasHeight,
+      pixelWidth: width,
+      pixelHeight: height
+    };
+    this.glyphCache.set(char, info);
+    this.atlasX += width;
+    this.atlasRowHeight = Math.max(this.atlasRowHeight, height);
+    this.atlasNeedsUpload = true;
+    return info;
+  }
+  /**
+   * Cache a range of characters (e.g., ASCII)
+   */
+  cacheCharRange(start, end) {
+    for (let i = start; i <= end; i++) {
+      this.cacheGlyph(String.fromCharCode(i));
+    }
+    if (start === 32 && end === 127) {
+      const sampleGlyph = this.glyphCache.get("M");
+      console.log(`[GlyphAtlas] ASCII range cached. Sample "M" width: ${sampleGlyph == null ? void 0 : sampleGlyph.pixelWidth}px`);
+    }
+  }
+  /**
+   * Get cached glyph info (caches if not present)
+   */
+  getGlyph(char) {
+    if (!this.glyphCache.has(char)) {
+      return this.cacheGlyph(char);
+    }
+    return this.glyphCache.get(char);
+  }
+  /**
+   * Upload atlas to GPU texture
+   */
+  uploadToGPU(device) {
+    if (!this.atlasTexture || !this.atlasNeedsUpload) return;
+    const imageData = this.atlasCtx.getImageData(
+      0,
+      0,
+      this.atlasWidth,
+      this.atlasHeight
+    );
+    device.queue.writeTexture(
+      { texture: this.atlasTexture },
+      imageData.data,
+      { bytesPerRow: this.atlasWidth * 4 },
+      { width: this.atlasWidth, height: this.atlasHeight }
+    );
+    this.atlasNeedsUpload = false;
+  }
+  /**
+   * Check if upload is needed
+   */
+  needsUpload() {
+    return this.atlasNeedsUpload;
+  }
+  /**
+   * Get atlas texture
+   */
+  getTexture() {
+    return this.atlasTexture;
+  }
+  /**
+   * Get atlas sampler
+   */
+  getSampler() {
+    return this.atlasSampler;
+  }
+  /**
+   * Get base character dimensions
+   */
+  getCharWidth() {
+    return this.charWidth;
+  }
+  getCharHeight() {
+    return this.charHeight;
+  }
+  /**
+   * Get canvas for debugging
+   */
+  getCanvas() {
+    return this.atlasCanvas;
+  }
+  /**
+   * Clear the atlas and cache
+   */
+  clear() {
+    this.glyphCache.clear();
+    this.atlasX = 0;
+    this.atlasY = 0;
+    this.atlasRowHeight = 0;
+    this.atlasCtx.clearRect(0, 0, this.atlasWidth, this.atlasHeight);
+    this.atlasNeedsUpload = true;
+  }
+  /**
+   * Destroy and cleanup
+   */
+  destroy() {
+    if (this.atlasTexture) {
+      this.atlasTexture.destroy();
+      this.atlasTexture = null;
+    }
+    this.glyphCache.clear();
+  }
+}
+class TerminalRenderer {
+  constructor(context, atlas, config = {}) {
+    __publicField(this, "context");
+    __publicField(this, "atlas");
+    __publicField(this, "width");
+    __publicField(this, "height");
+    __publicField(this, "renderToTexture");
+    // WebGPU resources
+    __publicField(this, "pipeline", null);
+    __publicField(this, "uniformBuffer", null);
+    __publicField(this, "cellBuffer", null);
+    __publicField(this, "cellData", null);
+    __publicField(this, "bindGroup", null);
+    // Offscreen render target (optional)
+    __publicField(this, "renderTexture", null);
+    __publicField(this, "renderTextureView", null);
+    __publicField(this, "initialized", false);
+    this.context = context;
+    this.atlas = atlas;
+    this.width = config.width || 80;
+    this.height = config.height || 24;
+    this.renderToTexture = config.renderToTexture ?? false;
+  }
+  async init(canvasWidth, canvasHeight) {
+    if (this.initialized) return true;
+    console.log("[TerminalRenderer] Initializing...");
+    const device = this.context.getDevice();
+    if (!device) {
+      console.error("[TerminalRenderer] WebGPU device not available");
+      return false;
+    }
+    try {
+      if (!this.atlas.getTexture()) {
+        await this.atlas.initGPU(this.context);
+      }
+      this.atlas.cacheCharRange(32, 127);
+      this.atlas.cacheCharRange(9472, 9599);
+      this.atlas.cacheCharRange(9600, 9631);
+      this.atlas.cacheGlyph("✓");
+      this.atlas.cacheGlyph("✗");
+      this.atlas.uploadToGPU(device);
+      await this.initPipeline();
+      this.uniformBuffer = device.createBuffer({
+        size: 16,
+        // 2 vec2f = 4 floats = 16 bytes
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      });
+      const charWidth = this.atlas.getCharWidth();
+      const charHeight = this.atlas.getCharHeight();
+      const uniforms = new Float32Array([
+        canvasWidth,
+        canvasHeight,
+        charWidth,
+        charHeight
+      ]);
+      device.queue.writeBuffer(this.uniformBuffer, 0, uniforms);
+      this.bindGroup = device.createBindGroup({
+        layout: this.pipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: this.uniformBuffer } },
+          { binding: 1, resource: this.atlas.getTexture().createView() },
+          { binding: 2, resource: this.atlas.getSampler() }
+        ]
+      });
+      const maxCells = this.width * this.height;
+      this.cellBuffer = device.createBuffer({
+        size: maxCells * 60,
+        // 15 floats per cell
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+      });
+      this.cellData = new Float32Array(maxCells * 15);
+      if (this.renderToTexture) {
+        this.createRenderTexture(canvasWidth, canvasHeight);
+      }
+      this.initialized = true;
+      console.log("[TerminalRenderer] Initialized successfully");
+      console.log(`[TerminalRenderer] Grid size: ${this.width}x${this.height} cells`);
+      return true;
+    } catch (error) {
+      console.error("[TerminalRenderer] Initialization failed:", error);
+      return false;
+    }
+  }
+  async initPipeline() {
+    const device = this.context.getDevice();
+    if (!device) throw new Error("Device not available");
     const shaderCode = `
       struct Uniforms {
         resolution: vec2f,
@@ -570,57 +984,9 @@ class WebGPURenderer {
         return mix(input.bgColor, input.fgColor, alpha);
       }
     `;
-    const shaderModule = this.device.createShaderModule({
-      code: shaderCode
-    });
-    this.uniformBuffer = this.device.createBuffer({
-      size: 16,
-      // 2 vec2f = 4 floats = 16 bytes
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-    });
-    this.atlasTexture = this.device.createTexture({
-      size: [this.atlasCanvas.width, this.atlasCanvas.height],
-      format: "rgba8unorm",
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
-    });
-    this.atlasSampler = this.device.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-      addressModeU: "clamp-to-edge",
-      addressModeV: "clamp-to-edge"
-    });
-    const bindGroupLayout = this.device.createBindGroupLayout({
-      entries: [
-        {
-          binding: 0,
-          visibility: GPUShaderStage.VERTEX,
-          buffer: { type: "uniform" }
-        },
-        {
-          binding: 1,
-          visibility: GPUShaderStage.FRAGMENT,
-          texture: { sampleType: "float" }
-        },
-        {
-          binding: 2,
-          visibility: GPUShaderStage.FRAGMENT,
-          sampler: { type: "filtering" }
-        }
-      ]
-    });
-    this.bindGroup = this.device.createBindGroup({
-      layout: bindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.uniformBuffer } },
-        { binding: 1, resource: this.atlasTexture.createView() },
-        { binding: 2, resource: this.atlasSampler }
-      ]
-    });
-    const pipelineLayout = this.device.createPipelineLayout({
-      bindGroupLayouts: [bindGroupLayout]
-    });
-    this.pipeline = this.device.createRenderPipeline({
-      layout: pipelineLayout,
+    const shaderModule = device.createShaderModule({ code: shaderCode });
+    this.pipeline = device.createRenderPipeline({
+      layout: "auto",
       vertex: {
         module: shaderModule,
         entryPoint: "vertexMain",
@@ -646,7 +1012,7 @@ class WebGPURenderer {
         module: shaderModule,
         entryPoint: "fragmentMain",
         targets: [{
-          format: presentationFormat,
+          format: this.context.getPresentationFormat(),
           blend: {
             color: {
               srcFactor: "src-alpha",
@@ -664,132 +1030,46 @@ class WebGPURenderer {
       }
     });
   }
-  setupCanvas() {
-    this.canvas.width = this.width * this.charWidth;
-    this.canvas.height = this.height * this.charHeight;
-  }
-  cacheCharRange(start, end) {
-    var _a;
-    for (let i = start; i <= end; i++) {
-      this.cacheGlyph(String.fromCharCode(i));
+  createRenderTexture(width, height) {
+    const device = this.context.getDevice();
+    if (!device) return;
+    if (this.renderTexture) {
+      this.renderTexture.destroy();
     }
-    this.uploadAtlas();
-    if (start === 32 && end === 127) {
-      console.log('[WebGPU] ASCII glyphs cached. Sample "M" width:', (_a = this.glyphCache.get("M")) == null ? void 0 : _a.pixelWidth);
-    }
+    this.renderTexture = device.createTexture({
+      size: { width, height },
+      format: this.context.getPresentationFormat(),
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+    });
+    this.renderTextureView = this.renderTexture.createView();
   }
-  cacheGlyph(char) {
-    if (this.glyphCache.has(char)) {
-      return this.glyphCache.get(char);
-    }
-    const fontString = this.fontFamily.includes(",") ? this.fontFamily : `'${this.fontFamily}'`;
-    this.atlasCtx.font = `${this.fontSize}px ${fontString}`;
-    this.atlasCtx.textBaseline = "top";
-    if (!this.fontLoggedOnce) {
-      console.log(`[WebGPU] Caching glyphs with font: ${this.atlasCtx.font}`);
-      this.fontLoggedOnce = true;
-    }
-    const metrics = this.atlasCtx.measureText(char);
-    const width = Math.ceil(metrics.width) + 2;
-    const height = this.charHeight + 2;
-    if (this.atlasX + width > this.atlasCanvas.width) {
-      this.atlasX = 0;
-      this.atlasY += this.atlasRowHeight;
-      this.atlasRowHeight = 0;
-    }
-    this.atlasCtx.clearRect(this.atlasX, this.atlasY, width, height);
-    this.atlasCtx.fillStyle = "#ffffff";
-    this.atlasCtx.fillText(char, this.atlasX + 1, this.atlasY + 1);
-    const atlasWidth = this.atlasCanvas.width;
-    const atlasHeight = this.atlasCanvas.height;
-    const info = {
-      u: this.atlasX / atlasWidth,
-      v: this.atlasY / atlasHeight,
-      w: width / atlasWidth,
-      h: height / atlasHeight,
-      pixelWidth: width
-    };
-    this.glyphCache.set(char, info);
-    this.atlasX += width;
-    this.atlasRowHeight = Math.max(this.atlasRowHeight, height);
-    this.atlasNeedsUpload = true;
-    return info;
-  }
-  uploadAtlas() {
-    if (!this.device || !this.atlasTexture || !this.atlasNeedsUpload) return;
-    const imageData = this.atlasCtx.getImageData(
-      0,
-      0,
-      this.atlasCanvas.width,
-      this.atlasCanvas.height
-    );
-    this.device.queue.writeTexture(
-      { texture: this.atlasTexture },
-      imageData.data,
-      { bytesPerRow: this.atlasCanvas.width * 4 },
-      { width: this.atlasCanvas.width, height: this.atlasCanvas.height }
-    );
-    this.atlasNeedsUpload = false;
-  }
-  resize(width, height) {
-    this.width = width;
-    this.height = height;
-    this.setupCanvas();
-    if (this.device && this.uniformBuffer) {
-      const uniforms = new Float32Array([
-        this.canvas.width,
-        this.canvas.height,
-        this.charWidth,
-        this.charHeight
-      ]);
-      this.device.queue.writeBuffer(this.uniformBuffer, 0, uniforms);
-    }
-    const maxCells = width * height;
-    if (this.device) {
-      this.cellBuffer = this.device.createBuffer({
-        size: maxCells * 60,
-        // 15 floats per cell
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
-      });
-      this.cellData = new Float32Array(maxCells * 15);
-    } else {
-      this.cellData = new Float32Array(maxCells * 15);
-    }
-  }
-  getWidth() {
-    return this.width;
-  }
-  getHeight() {
-    return this.height;
-  }
+  /**
+   * Render terminal cell buffer
+   */
   render(buffer) {
-    if (!this.initialized || !this.device || !this.context || !this.pipeline) {
-      return;
-    }
-    if (this.atlasNeedsUpload) {
-      this.uploadAtlas();
+    if (!this.initialized) return;
+    const device = this.context.getDevice();
+    if (!device || !this.pipeline || !this.cellBuffer || !this.cellData) return;
+    if (this.atlas.needsUpload()) {
+      this.atlas.uploadToGPU(device);
     }
     let cellIndex = 0;
     for (let y = 0; y < Math.min(buffer.length, this.height); y++) {
       const row = buffer[y];
       for (let x = 0; x < Math.min(row.length, this.width); x++) {
         const cell = row[x];
-        if (cell.char && !this.glyphCache.has(cell.char)) {
-          this.cacheGlyph(cell.char);
-          this.uploadAtlas();
-        }
-        const glyph = this.glyphCache.get(cell.char || " ") || this.cacheGlyph(" ");
+        const glyph = this.atlas.getGlyph(cell.char || " ");
         const offset = cellIndex * 15;
         this.cellData[offset + 0] = x;
         this.cellData[offset + 1] = y;
-        this.cellData[offset + 2] = cell.fg.r / 255;
-        this.cellData[offset + 3] = cell.fg.g / 255;
-        this.cellData[offset + 4] = cell.fg.b / 255;
-        this.cellData[offset + 5] = cell.fg.a !== void 0 ? cell.fg.a : 1;
-        this.cellData[offset + 6] = cell.bg.r / 255;
-        this.cellData[offset + 7] = cell.bg.g / 255;
-        this.cellData[offset + 8] = cell.bg.b / 255;
-        this.cellData[offset + 9] = cell.bg.a !== void 0 ? cell.bg.a : 1;
+        this.cellData[offset + 2] = (cell.fg >>> 24 & 255) / 255;
+        this.cellData[offset + 3] = (cell.fg >>> 16 & 255) / 255;
+        this.cellData[offset + 4] = (cell.fg >>> 8 & 255) / 255;
+        this.cellData[offset + 5] = (cell.fg & 255) / 255;
+        this.cellData[offset + 6] = (cell.bg >>> 24 & 255) / 255;
+        this.cellData[offset + 7] = (cell.bg >>> 16 & 255) / 255;
+        this.cellData[offset + 8] = (cell.bg >>> 8 & 255) / 255;
+        this.cellData[offset + 9] = (cell.bg & 255) / 255;
         this.cellData[offset + 10] = glyph.u;
         this.cellData[offset + 11] = glyph.v;
         this.cellData[offset + 12] = glyph.w;
@@ -798,14 +1078,13 @@ class WebGPURenderer {
         cellIndex++;
       }
     }
-    if (this.cellBuffer && this.cellData) {
-      this.device.queue.writeBuffer(this.cellBuffer, 0, this.cellData.buffer);
-    }
-    const commandEncoder = this.device.createCommandEncoder();
-    const textureView = this.context.getCurrentTexture().createView();
+    device.queue.writeBuffer(this.cellBuffer, 0, this.cellData.buffer);
+    const renderView = this.renderToTexture && this.renderTextureView ? this.renderTextureView : this.context.getCurrentTextureView();
+    if (!renderView) return;
+    const commandEncoder = device.createCommandEncoder();
     const renderPassDescriptor = {
       colorAttachments: [{
-        view: textureView,
+        view: renderView,
         clearValue: { r: 0, g: 0, b: 0, a: 1 },
         loadOp: "clear",
         storeOp: "store"
@@ -814,19 +1093,1222 @@ class WebGPURenderer {
     const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
     passEncoder.setPipeline(this.pipeline);
     passEncoder.setBindGroup(0, this.bindGroup);
-    if (this.cellBuffer) {
-      passEncoder.setVertexBuffer(0, this.cellBuffer);
-    }
+    passEncoder.setVertexBuffer(0, this.cellBuffer);
     passEncoder.draw(6, cellIndex);
+    passEncoder.end();
+    device.queue.submit([commandEncoder.finish()]);
+  }
+  /**
+   * Resize terminal grid
+   */
+  resize(width, height, canvasWidth, canvasHeight) {
+    this.width = width;
+    this.height = height;
+    const device = this.context.getDevice();
+    if (!device) return;
+    if (this.uniformBuffer) {
+      const charWidth = this.atlas.getCharWidth();
+      const charHeight = this.atlas.getCharHeight();
+      const uniforms = new Float32Array([
+        canvasWidth,
+        canvasHeight,
+        charWidth,
+        charHeight
+      ]);
+      device.queue.writeBuffer(this.uniformBuffer, 0, uniforms);
+    }
+    const maxCells = width * height;
+    this.cellBuffer = device.createBuffer({
+      size: maxCells * 60,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    this.cellData = new Float32Array(maxCells * 15);
+    if (this.renderToTexture) {
+      this.createRenderTexture(canvasWidth, canvasHeight);
+    }
+  }
+  /**
+   * Get terminal dimensions
+   */
+  getWidth() {
+    return this.width;
+  }
+  getHeight() {
+    return this.height;
+  }
+  /**
+   * Get offscreen render texture (if rendering to texture)
+   */
+  getRenderTexture() {
+    return this.renderTexture;
+  }
+  /**
+   * Get cell width in pixels
+   */
+  getCellWidth() {
+    return this.atlas.getCharWidth();
+  }
+  /**
+   * Get cell height in pixels
+   */
+  getCellHeight() {
+    return this.atlas.getCharHeight();
+  }
+  /**
+   * Set a single cell directly 
+   * Useful for TUI rendering
+   */
+  setCell(buffer, x, y, char, fg, bg) {
+    if (x < 0 || x >= this.width || y < 0 || y >= this.height) return;
+    if (!buffer[y]) return;
+    if (!buffer[y][x]) return;
+    buffer[y][x].char = char;
+    buffer[y][x].fg = fg;
+    buffer[y][x].bg = bg;
+  }
+  /**
+   * Clear screen
+   */
+  clear(_color = 255) {
+  }
+  /**
+   * Destroy and cleanup
+   */
+  destroy() {
+    if (this.cellBuffer) {
+      this.cellBuffer.destroy();
+      this.cellBuffer = null;
+    }
+    if (this.uniformBuffer) {
+      this.uniformBuffer.destroy();
+      this.uniformBuffer = null;
+    }
+    if (this.renderTexture) {
+      this.renderTexture.destroy();
+      this.renderTexture = null;
+    }
+    this.cellData = null;
+    this.bindGroup = null;
+    this.pipeline = null;
+    this.initialized = false;
+  }
+}
+class WebGPURenderer {
+  constructor(canvas, config = {}) {
+    __publicField(this, "canvas");
+    __publicField(this, "context");
+    __publicField(this, "atlas");
+    __publicField(this, "terminalRenderer");
+    __publicField(this, "width");
+    __publicField(this, "height");
+    __publicField(this, "renderToTexture");
+    __publicField(this, "initialized", false);
+    this.canvas = canvas;
+    this.width = 80;
+    this.height = 24;
+    this.renderToTexture = config.renderToTexture ?? false;
+    this.context = new WebGPUContext({
+      canvas,
+      powerPreference: "high-performance"
+    });
+    this.atlas = new GlyphAtlas({
+      fontFamily: config.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace",
+      fontSize: config.fontSize || 16
+    });
+    this.terminalRenderer = new TerminalRenderer(
+      this.context,
+      this.atlas,
+      {
+        width: this.width,
+        height: this.height,
+        renderToTexture: this.renderToTexture
+      }
+    );
+  }
+  async init() {
+    if (this.initialized) return true;
+    console.log("[WebGPURenderer] Initializing (facade)...");
+    try {
+      const contextOk = await this.context.init();
+      if (!contextOk) return false;
+      const rendererOk = await this.terminalRenderer.init(
+        this.canvas.width,
+        this.canvas.height
+      );
+      if (!rendererOk) return false;
+      this.initialized = true;
+      console.log("[WebGPURenderer] Initialized successfully");
+      return true;
+    } catch (error) {
+      console.error("[WebGPURenderer] Initialization failed:", error);
+      return false;
+    }
+  }
+  resize(width, height) {
+    this.width = width;
+    this.height = height;
+    const charWidth = this.atlas.getCharWidth();
+    const charHeight = this.atlas.getCharHeight();
+    this.canvas.width = width * charWidth;
+    this.canvas.height = height * charHeight;
+    this.terminalRenderer.resize(width, height, this.canvas.width, this.canvas.height);
+  }
+  getWidth() {
+    return this.width;
+  }
+  getHeight() {
+    return this.height;
+  }
+  render(buffer) {
+    if (!this.initialized) return;
+    this.terminalRenderer.render(buffer);
+  }
+  clear(color = 255) {
+    this.terminalRenderer.clear(color);
+  }
+  /**
+   * Get the render texture for compositing (not used in facade mode)
+   */
+  getRenderTexture() {
+    return this.terminalRenderer.getRenderTexture();
+  }
+  /**
+   * Access underlying components for advanced usage
+   */
+  getContext() {
+    return this.context;
+  }
+  getAtlas() {
+    return this.atlas;
+  }
+  getTerminalRenderer() {
+    return this.terminalRenderer;
+  }
+}
+class ShaderPipeline {
+  constructor(device, canvas) {
+    __publicField(this, "device");
+    __publicField(this, "canvas");
+    __publicField(this, "format");
+    // Registered effects library
+    __publicField(this, "effects", /* @__PURE__ */ new Map());
+    // Active pipeline stages
+    __publicField(this, "stages", []);
+    // Shared sampler
+    __publicField(this, "sampler", null);
+    // Timing
+    __publicField(this, "startTime", performance.now());
+    __publicField(this, "initialized", false);
+    this.device = device;
+    this.canvas = canvas;
+    this.format = navigator.gpu.getPreferredCanvasFormat();
+  }
+  async init() {
+    if (this.initialized) return;
+    console.log("[ShaderPipeline] Initializing...");
+    this.sampler = this.device.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge"
+    });
+    this.initialized = true;
+    console.log("[ShaderPipeline] Initialized");
+  }
+  /**
+   * Register a shader effect from config
+   */
+  registerEffect(name, config) {
+    const effect = {
+      name,
+      config,
+      uniforms: config.uniforms || {}
+    };
+    this.effects.set(name, effect);
+    console.log(`[ShaderPipeline] Registered effect: ${name}`);
+  }
+  /**
+   * Load shader from JS file (following tstorie convention)
+   */
+  async loadEffect(name, url) {
+    try {
+      const module = await import(url);
+      if (typeof module.getShaderConfig !== "function") {
+        throw new Error("Shader module must export getShaderConfig()");
+      }
+      const config = module.getShaderConfig();
+      this.registerEffect(name, config);
+    } catch (error) {
+      console.error(`[ShaderPipeline] Failed to load effect "${name}" from ${url}:`, error);
+      throw error;
+    }
+  }
+  /**
+   * Build the shader pipeline from a chain of effect names
+   */
+  async buildPipeline(effectNames) {
+    this.clearPipeline();
+    if (effectNames.length === 0) {
+      console.warn("[ShaderPipeline] No effects specified");
+      return;
+    }
+    console.log(`[ShaderPipeline] Building pipeline: ${effectNames.join(" → ")}`);
+    for (const effectName of effectNames) {
+      const effect = this.effects.get(effectName);
+      if (!effect) {
+        console.error(`[ShaderPipeline] Effect not found: ${effectName}`);
+        continue;
+      }
+      await this.addStage(effect);
+    }
+    console.log(`[ShaderPipeline] Pipeline built with ${this.stages.length} stages`);
+  }
+  /**
+   * Add a stage to the pipeline
+   */
+  async addStage(effect) {
+    const combinedShaderCode = effect.config.vertexShader + "\n" + effect.config.fragmentShader;
+    const shaderModule = this.device.createShaderModule({
+      code: combinedShaderCode
+    });
+    const baseUniformSize = 32;
+    const customUniformCount = Object.keys(effect.uniforms).length;
+    const uniformSize = baseUniformSize + customUniformCount * 16;
+    const uniformBuffer = this.device.createBuffer({
+      size: uniformSize,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+    const outputTexture = this.device.createTexture({
+      size: { width: this.canvas.width, height: this.canvas.height },
+      format: this.format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+    });
+    const outputTextureView = outputTexture.createView();
+    const pipeline = this.device.createRenderPipeline({
+      layout: "auto",
+      vertex: {
+        module: shaderModule,
+        entryPoint: "vertexMain",
+        buffers: [{
+          arrayStride: 8,
+          // 2 floats (position)
+          attributes: [{
+            shaderLocation: 0,
+            offset: 0,
+            format: "float32x2"
+          }]
+        }]
+      },
+      fragment: {
+        module: shaderModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format: this.format
+        }]
+      },
+      primitive: {
+        topology: "triangle-strip"
+      }
+    });
+    const stage = {
+      effect,
+      pipeline,
+      bindGroup: null,
+      // Created when rendering
+      uniformBuffer,
+      inputTexture: null,
+      // Set during render
+      outputTexture,
+      outputTextureView
+    };
+    this.stages.push(stage);
+  }
+  /**
+   * Apply the shader pipeline to an input texture
+   */
+  apply(inputTexture) {
+    if (this.stages.length === 0) {
+      return inputTexture;
+    }
+    const time = (performance.now() - this.startTime) / 1e3;
+    const quadVertices = new Float32Array([
+      -1,
+      -1,
+      1,
+      -1,
+      -1,
+      1,
+      1,
+      1
+    ]);
+    const vertexBuffer = this.device.createBuffer({
+      size: quadVertices.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true
+    });
+    new Float32Array(vertexBuffer.getMappedRange()).set(quadVertices);
+    vertexBuffer.unmap();
+    let currentInput = inputTexture;
+    for (let i = 0; i < this.stages.length; i++) {
+      const stage = this.stages[i];
+      stage.inputTexture = currentInput;
+      this.updateUniforms(stage, time);
+      stage.bindGroup = this.device.createBindGroup({
+        layout: stage.pipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: currentInput.createView() },
+          { binding: 1, resource: this.sampler },
+          { binding: 2, resource: { buffer: stage.uniformBuffer } }
+        ]
+      });
+      const commandEncoder = this.device.createCommandEncoder();
+      const renderPass = commandEncoder.beginRenderPass({
+        colorAttachments: [{
+          view: stage.outputTextureView,
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          loadOp: "clear",
+          storeOp: "store"
+        }]
+      });
+      renderPass.setPipeline(stage.pipeline);
+      renderPass.setBindGroup(0, stage.bindGroup);
+      renderPass.setVertexBuffer(0, vertexBuffer);
+      renderPass.draw(4);
+      renderPass.end();
+      this.device.queue.submit([commandEncoder.finish()]);
+      currentInput = stage.outputTexture;
+    }
+    return this.stages[this.stages.length - 1].outputTexture;
+  }
+  /**
+   * Update uniform buffer for a stage
+   */
+  updateUniforms(stage, time) {
+    const uniformData = [];
+    uniformData.push(time, 0, 0, 0);
+    uniformData.push(this.canvas.width, this.canvas.height, 0, 0);
+    for (const [_key, value] of Object.entries(stage.effect.uniforms)) {
+      if (typeof value === "number") {
+        uniformData.push(value, 0, 0, 0);
+      } else if (Array.isArray(value)) {
+        uniformData.push(...value);
+        while (uniformData.length % 4 !== 0) {
+          uniformData.push(0);
+        }
+      }
+    }
+    const uniformArray = new Float32Array(uniformData);
+    this.device.queue.writeBuffer(stage.uniformBuffer, 0, uniformArray);
+  }
+  /**
+   * Update a specific uniform value for an effect
+   */
+  setUniform(effectName, uniformName, value) {
+    const effect = this.effects.get(effectName);
+    if (!effect) {
+      console.warn(`[ShaderPipeline] Effect not found: ${effectName}`);
+      return;
+    }
+    effect.uniforms[uniformName] = value;
+  }
+  /**
+   * Clear the pipeline
+   */
+  clearPipeline() {
+    for (const stage of this.stages) {
+      if (stage.outputTexture) {
+        stage.outputTexture.destroy();
+      }
+    }
+    this.stages = [];
+  }
+  /**
+   * Get list of registered effects
+   */
+  getEffects() {
+    return Array.from(this.effects.keys());
+  }
+  /**
+   * Check if effect is registered
+   */
+  hasEffect(name) {
+    return this.effects.has(name);
+  }
+}
+class Compositor {
+  constructor(device, canvas) {
+    __publicField(this, "device");
+    __publicField(this, "canvas");
+    __publicField(this, "context");
+    // Compositor resources
+    __publicField(this, "pipelines", /* @__PURE__ */ new Map());
+    __publicField(this, "autoPipelines", /* @__PURE__ */ new Map());
+    __publicField(this, "sampler", null);
+    __publicField(this, "vertexBuffer", null);
+    __publicField(this, "uniformBuffer", null);
+    // For blit parameters
+    __publicField(this, "autoUniformBuffer", null);
+    // For autoComposite opacity
+    // Layers
+    __publicField(this, "layers", /* @__PURE__ */ new Map());
+    // Mode
+    __publicField(this, "mode", "auto");
+    // Shader pipeline for post-processing
+    __publicField(this, "shaderPipeline", null);
+    __publicField(this, "initialized", false);
+    this.device = device;
+    this.canvas = canvas;
+    const context = canvas.getContext("webgpu");
+    if (!context) throw new Error("Failed to get WebGPU context for compositor");
+    this.context = context;
+    const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+    this.context.configure({
+      device: this.device,
+      format: canvasFormat,
+      alphaMode: "premultiplied",
+      // Enable COPY_DST so we can robustly copy a rendered terminal texture
+      // directly into the swapchain when appropriate.
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST
+    });
+  }
+  async init() {
+    if (this.initialized) return;
+    console.log("[Compositor] Initializing...");
+    this.sampler = this.device.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge"
+    });
+    const vertices = new Float32Array([
+      // Position (x, y)  UV (u, v)
+      -1,
+      1,
+      0,
+      0,
+      // Top-left
+      1,
+      1,
+      1,
+      0,
+      // Top-right
+      -1,
+      -1,
+      0,
+      1,
+      // Bottom-left
+      1,
+      -1,
+      1,
+      1
+      // Bottom-right
+    ]);
+    this.vertexBuffer = this.device.createBuffer({
+      size: vertices.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true
+    });
+    new Float32Array(this.vertexBuffer.getMappedRange()).set(vertices);
+    this.vertexBuffer.unmap();
+    this.uniformBuffer = this.device.createBuffer({
+      size: 80,
+      // 20 floats * 4 bytes = 80 bytes
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+    this.autoUniformBuffer = this.device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+    const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+    const shaderModule = this.device.createShaderModule({
+      code: this.getCompositorShader()
+    });
+    const blendModes = ["normal", "additive", "multiply", "screen", "overlay"];
+    for (const blendMode of blendModes) {
+      const blendState = this.getBlendState(blendMode);
+      const pipeline = this.device.createRenderPipeline({
+        layout: "auto",
+        vertex: {
+          module: shaderModule,
+          entryPoint: "vs_main",
+          buffers: [{
+            arrayStride: 16,
+            // 4 floats * 4 bytes
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x2" },
+              // position
+              { shaderLocation: 1, offset: 8, format: "float32x2" }
+              // uv
+            ]
+          }]
+        },
+        fragment: {
+          module: shaderModule,
+          entryPoint: "fs_main",
+          targets: [{
+            format: canvasFormat,
+            blend: blendState
+          }]
+        },
+        primitive: {
+          topology: "triangle-strip",
+          stripIndexFormat: void 0
+        }
+      });
+      this.pipelines.set(blendMode, pipeline);
+    }
+    const autoShaderModule = this.device.createShaderModule({
+      code: this.getAutoCompositorShader()
+    });
+    for (const blendMode of blendModes) {
+      const blendState = this.getBlendState(blendMode);
+      const pipeline = this.device.createRenderPipeline({
+        layout: "auto",
+        vertex: {
+          module: autoShaderModule,
+          entryPoint: "vs_main"
+        },
+        fragment: {
+          module: autoShaderModule,
+          entryPoint: "fs_main",
+          targets: [{
+            format: canvasFormat,
+            blend: blendState
+          }]
+        },
+        primitive: {
+          topology: "triangle-list"
+        }
+      });
+      this.autoPipelines.set(blendMode, pipeline);
+    }
+    this.shaderPipeline = new ShaderPipeline(this.device, this.canvas);
+    await this.shaderPipeline.init();
+    this.initialized = true;
+    console.log("[Compositor] Initialized");
+  }
+  /**
+   * Register a layer
+   */
+  registerLayer(name, layer) {
+    const fullLayer = {
+      name,
+      width: layer.width || this.canvas.width,
+      height: layer.height || this.canvas.height,
+      opacity: layer.opacity ?? 1,
+      blendMode: layer.blendMode || "normal",
+      enabled: layer.enabled ?? true,
+      zIndex: layer.zIndex ?? 0,
+      texture: layer.texture,
+      canvas: layer.canvas,
+      context: layer.context
+    };
+    this.layers.set(name, fullLayer);
+    console.log(`[Compositor] Registered layer: ${name} (texture=${!!layer.texture}, canvas=${!!layer.canvas}, ${fullLayer.width}x${fullLayer.height})`);
+    return fullLayer;
+  }
+  /**
+   * Update layer texture/canvas
+   */
+  updateLayer(name, updates) {
+    const layer = this.layers.get(name);
+    if (!layer) {
+      console.warn(`[Compositor] Layer not found: ${name}`);
+      return;
+    }
+    Object.assign(layer, updates);
+  }
+  /**
+   * Create a new offscreen rendering context
+   * Phase 3: Custom Contexts
+   */
+  createContext(name, options) {
+    if (this.layers.has(name)) {
+      console.warn(`[Compositor] Layer "${name}" already exists`);
+      return this.layers.get(name);
+    }
+    const canvas = new OffscreenCanvas(options.width, options.height);
+    let context = null;
+    try {
+      if (options.type === "canvas2d") {
+        context = canvas.getContext("2d");
+      } else if (options.type === "webgl") {
+        context = canvas.getContext("webgl", {
+          alpha: options.alpha ?? true,
+          antialias: options.antialias ?? false,
+          preserveDrawingBuffer: true
+        });
+      } else if (options.type === "webgl2") {
+        context = canvas.getContext("webgl2", {
+          alpha: options.alpha ?? true,
+          antialias: options.antialias ?? false,
+          preserveDrawingBuffer: true
+        });
+      }
+    } catch (error) {
+      console.error(`[Compositor] Failed to create ${options.type} context:`, error);
+      return null;
+    }
+    if (!context) {
+      console.error(`[Compositor] ${options.type} context not available`);
+      return null;
+    }
+    const layer = this.registerLayer(name, {
+      canvas,
+      context,
+      width: options.width,
+      height: options.height,
+      zIndex: options.zIndex ?? 50,
+      // Default to middle
+      opacity: 1,
+      blendMode: "normal",
+      enabled: true
+    });
+    console.log(`[Compositor] Created ${options.type} context: ${name} (${options.width}x${options.height})`);
+    return layer;
+  }
+  /**
+   * Remove a layer
+   */
+  removeLayer(name) {
+    const layer = this.layers.get(name);
+    if (!layer) {
+      console.warn(`[Compositor] Layer not found: ${name}`);
+      return false;
+    }
+    if (name === "terminal" || name === "canvas2d") {
+      console.warn(`[Compositor] Cannot remove built-in layer: ${name}`);
+      return false;
+    }
+    this.layers.delete(name);
+    console.log(`[Compositor] Removed layer: ${name}`);
+    return true;
+  }
+  /**
+   * Auto-composite all enabled layers (sorted by zIndex)
+   */
+  autoComposite() {
+    if (!this.initialized) return;
+    if (this.mode === "manual") return;
+    const sortedLayers = Array.from(this.layers.values()).filter((layer) => layer.enabled).sort((a, b) => a.zIndex - b.zIndex);
+    const commandEncoder = this.device.createCommandEncoder();
+    const currentTexture = this.context.getCurrentTexture();
+    const textureView = currentTexture.createView();
+    for (const layer of sortedLayers) {
+      if (!layer.texture && layer.canvas) {
+        layer.texture = this.ensureCanvasLayerTexture(layer);
+      }
+      if (layer.canvas && layer.texture) {
+        this.updateTextureFromCanvas(layer.canvas, layer.texture);
+      }
+    }
+    const passEncoder = commandEncoder.beginRenderPass({
+      colorAttachments: [{
+        view: textureView,
+        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        loadOp: "clear",
+        storeOp: "store"
+      }]
+    });
+    for (const layer of sortedLayers) {
+      const texture = layer.texture;
+      if (!texture) continue;
+      const opacity = layer.opacity ?? 1;
+      const blendMode = layer.blendMode || "normal";
+      const pipeline = this.autoPipelines.get(blendMode);
+      if (!pipeline) continue;
+      this.device.queue.writeBuffer(this.autoUniformBuffer, 0, new Float32Array([opacity, 0, 0, 0]));
+      const bindGroup = this.device.createBindGroup({
+        layout: pipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: this.sampler },
+          { binding: 1, resource: texture.createView() },
+          { binding: 2, resource: { buffer: this.autoUniformBuffer } }
+        ]
+      });
+      passEncoder.setPipeline(pipeline);
+      passEncoder.setBindGroup(0, bindGroup);
+      passEncoder.draw(6);
+    }
     passEncoder.end();
     this.device.queue.submit([commandEncoder.finish()]);
   }
-  clear(_color = { r: 0, g: 0, b: 0 }) {
+  /**
+   * Clear the main canvas
+   */
+  clear(color = "#000000") {
+    const r = parseInt(color.slice(1, 3), 16) / 255;
+    const g = parseInt(color.slice(3, 5), 16) / 255;
+    const b = parseInt(color.slice(5, 7), 16) / 255;
+    const commandEncoder = this.device.createCommandEncoder();
+    const textureView = this.context.getCurrentTexture().createView();
+    const renderPassDescriptor = {
+      colorAttachments: [{
+        view: textureView,
+        clearValue: { r, g, b, a: 1 },
+        loadOp: "clear",
+        storeOp: "store"
+      }]
+    };
+    const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+    passEncoder.end();
+    this.device.queue.submit([commandEncoder.finish()]);
+  }
+  /**
+   * Blit a layer to the main canvas
+   */
+  blit(layer, options = {}) {
+    var _a, _b;
+    if (!this.initialized || this.pipelines.size === 0 || !this.vertexBuffer || !this.uniformBuffer) {
+      return;
+    }
+    const opacity = options.opacity ?? 1;
+    const blendMode = options.blendMode || "normal";
+    const x = options.x ?? 0;
+    const y = options.y ?? 0;
+    const rotation = options.rotation ?? 0;
+    let scaleX = 1, scaleY = 1;
+    if (typeof options.scale === "number") {
+      scaleX = scaleY = options.scale;
+    } else if (options.scale) {
+      scaleX = options.scale.x;
+      scaleY = options.scale.y;
+    }
+    const originX = ((_a = options.origin) == null ? void 0 : _a.x) ?? 0.5;
+    const originY = ((_b = options.origin) == null ? void 0 : _b.y) ?? 0.5;
+    const transform = this.buildTransformMatrix(
+      x,
+      y,
+      rotation,
+      scaleX,
+      scaleY,
+      originX,
+      originY
+    );
+    const blendModeMap = {
+      "normal": 0,
+      "additive": 1,
+      "multiply": 2,
+      "screen": 3,
+      "overlay": 4
+    };
+    let texture = null;
+    if (layer.texture) {
+      texture = layer.texture;
+    } else if (layer.canvas) {
+      texture = this.ensureCanvasLayerTexture(layer);
+      this.updateTextureFromCanvas(layer.canvas, texture);
+    }
+    if (!texture) return;
+    const uniforms = new Float32Array(20);
+    uniforms.set(transform, 0);
+    uniforms[16] = opacity;
+    uniforms[17] = blendModeMap[blendMode];
+    uniforms[18] = 0;
+    uniforms[19] = 0;
+    this.device.queue.writeBuffer(this.uniformBuffer, 0, uniforms);
+    const pipeline = this.pipelines.get(blendMode);
+    if (!pipeline) {
+      console.warn(`[Compositor] No pipeline for blend mode: ${blendMode}`);
+      return;
+    }
+    const bindGroup = this.device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.sampler },
+        { binding: 1, resource: texture.createView() },
+        { binding: 2, resource: { buffer: this.uniformBuffer } }
+      ]
+    });
+    const commandEncoder = this.device.createCommandEncoder();
+    const textureView = this.context.getCurrentTexture().createView();
+    const renderPassDescriptor = {
+      colorAttachments: [{
+        view: textureView,
+        clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        loadOp: "load",
+        // Preserve existing content
+        storeOp: "store"
+      }]
+    };
+    const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+    passEncoder.setPipeline(pipeline);
+    passEncoder.setBindGroup(0, bindGroup);
+    passEncoder.setVertexBuffer(0, this.vertexBuffer);
+    passEncoder.draw(4);
+    passEncoder.end();
+    this.device.queue.submit([commandEncoder.finish()]);
+  }
+  /**
+   * Build a 2D transform matrix for layer compositing
+   * Returns a 4x4 matrix in column-major order (WebGPU standard)
+   */
+  buildTransformMatrix(x, y, rotation, scaleX, scaleY, originX, originY) {
+    const ndcX = x / this.canvas.width * 2;
+    const ndcY = -(y / this.canvas.height) * 2;
+    const originOffsetX = originX - 0.5;
+    const originOffsetY = originY - 0.5;
+    const c = Math.cos(rotation);
+    const s = Math.sin(rotation);
+    const matrix = new Float32Array(16);
+    matrix[0] = c * scaleX;
+    matrix[1] = s * scaleX;
+    matrix[2] = 0;
+    matrix[3] = 0;
+    matrix[4] = -s * scaleY;
+    matrix[5] = c * scaleY;
+    matrix[6] = 0;
+    matrix[7] = 0;
+    matrix[8] = 0;
+    matrix[9] = 0;
+    matrix[10] = 1;
+    matrix[11] = 0;
+    matrix[12] = ndcX - originOffsetX * 2 * c * scaleX + originOffsetY * 2 * s * scaleY;
+    matrix[13] = ndcY - originOffsetX * 2 * s * scaleX - originOffsetY * 2 * c * scaleY;
+    matrix[14] = 0;
+    matrix[15] = 1;
+    return matrix;
+  }
+  /**
+   * Ensure a persistent GPU texture exists for a canvas-backed layer
+   */
+  ensureCanvasLayerTexture(layer) {
+    if (!layer.canvas) {
+      throw new Error("ensureCanvasLayerTexture called without layer.canvas");
+    }
+    const width = layer.canvas.width;
+    const height = layer.canvas.height;
+    if (layer.texture && layer.texture.width === width && layer.texture.height === height) {
+      return layer.texture;
+    }
+    if (layer.texture) {
+      try {
+        layer.texture.destroy();
+      } catch {
+      }
+    }
+    const texture = this.device.createTexture({
+      size: { width, height },
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+    layer.texture = texture;
+    layer.width = width;
+    layer.height = height;
+    return texture;
+  }
+  /**
+   * Update an existing GPU texture from an OffscreenCanvas
+   */
+  updateTextureFromCanvas(canvas, texture) {
+    const imageBitmap = canvas.transferToImageBitmap();
+    this.device.queue.copyExternalImageToTexture(
+      { source: imageBitmap },
+      { texture },
+      { width: canvas.width, height: canvas.height }
+    );
+    imageBitmap.close();
+  }
+  /**
+   * Get GPU blend state for a blend mode
+   */
+  getBlendState(blendMode) {
+    switch (blendMode) {
+      case "normal":
+        return {
+          color: {
+            srcFactor: "src-alpha",
+            dstFactor: "one-minus-src-alpha",
+            operation: "add"
+          },
+          alpha: {
+            srcFactor: "one",
+            dstFactor: "one-minus-src-alpha",
+            operation: "add"
+          }
+        };
+      case "additive":
+        return {
+          color: {
+            srcFactor: "src-alpha",
+            dstFactor: "one",
+            operation: "add"
+          },
+          alpha: {
+            srcFactor: "one",
+            dstFactor: "one",
+            operation: "add"
+          }
+        };
+      case "multiply":
+        return {
+          color: {
+            srcFactor: "dst",
+            dstFactor: "zero",
+            operation: "add"
+          },
+          alpha: {
+            srcFactor: "one",
+            dstFactor: "one-minus-src-alpha",
+            operation: "add"
+          }
+        };
+      case "screen":
+        return {
+          color: {
+            srcFactor: "one",
+            dstFactor: "one-minus-src",
+            operation: "add"
+          },
+          alpha: {
+            srcFactor: "one",
+            dstFactor: "one-minus-src-alpha",
+            operation: "add"
+          }
+        };
+      case "overlay":
+        return {
+          color: {
+            srcFactor: "src-alpha",
+            dstFactor: "one-minus-src-alpha",
+            operation: "add"
+          },
+          alpha: {
+            srcFactor: "one",
+            dstFactor: "one-minus-src-alpha",
+            operation: "add"
+          }
+        };
+      default:
+        return this.getBlendState("normal");
+    }
+  }
+  /**
+   * Get compositor shader (WGSL)
+   */
+  getCompositorShader() {
+    return `
+      @group(0) @binding(0) var texSampler: sampler;
+      @group(0) @binding(1) var layerTexture: texture_2d<f32>;
+      
+      struct BlitParams {
+        transform: mat4x4<f32>,  // Transform matrix (16 floats)
+        opacity: f32,
+        blendMode: f32,
+        padding1: f32,
+        padding2: f32
+      }
+      @group(0) @binding(2) var<uniform> params: BlitParams;
+      
+      struct VertexInput {
+        @location(0) position: vec2<f32>,
+        @location(1) uv: vec2<f32>
+      }
+      
+      struct VertexOutput {
+        @builtin(position) position: vec4<f32>,
+        @location(0) uv: vec2<f32>
+      }
+      
+      @vertex
+      fn vs_main(input: VertexInput) -> VertexOutput {
+        var output: VertexOutput;
+        // Apply transform matrix to position
+        let pos4 = vec4<f32>(input.position, 0.0, 1.0);
+        output.position = params.transform * pos4;
+        output.uv = input.uv;
+        return output;
+      }
+      
+      @fragment
+      fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+        var layerColor = textureSample(layerTexture, texSampler, uv);
+        
+        // Apply opacity
+        return vec4<f32>(layerColor.rgb, layerColor.a * params.opacity);
+      }
+      
+      // Blend mode functions for future use
+      fn blendNormal(base: vec4<f32>, blend: vec4<f32>) -> vec4<f32> {
+        let alpha = blend.a;
+        return base * (1.0 - alpha) + blend * alpha;
+      }
+      
+      fn blendAdditive(base: vec4<f32>, blend: vec4<f32>) -> vec4<f32> {
+        return base + blend * blend.a;
+      }
+      
+      fn blendMultiply(base: vec4<f32>, blend: vec4<f32>) -> vec4<f32> {
+        return base * mix(vec4<f32>(1.0), blend, blend.a);
+      }
+      
+      fn blendScreen(base: vec4<f32>, blend: vec4<f32>) -> vec4<f32> {
+        let invBase = vec4<f32>(1.0) - base;
+        let invBlend = vec4<f32>(1.0) - blend;
+        return vec4<f32>(1.0) - (invBase * invBlend);
+      }
+      
+      fn blendOverlay(base: vec4<f32>, blend: vec4<f32>) -> vec4<f32> {
+        var result: vec4<f32>;
+        for (var i = 0; i < 3; i++) {
+          if (base[i] < 0.5) {
+            result[i] = 2.0 * base[i] * blend[i];
+          } else {
+            result[i] = 1.0 - 2.0 * (1.0 - base[i]) * (1.0 - blend[i]);
+          }
+        }
+        result.a = base.a;
+        return result;
+      }
+    `;
+  }
+  /**
+   * Auto compositor shader: fullscreen quad per layer.
+   * Avoids transform math and vertex buffers to keep autoComposite robust.
+   */
+  getAutoCompositorShader() {
+    return `
+      @group(0) @binding(0) var texSampler: sampler;
+      @group(0) @binding(1) var layerTexture: texture_2d<f32>;
+
+      struct Params {
+        opacity: vec4<f32>,
+      }
+      @group(0) @binding(2) var<uniform> params: Params;
+
+      struct VSOut {
+        @builtin(position) position: vec4<f32>,
+        @location(0) uv: vec2<f32>,
+      }
+
+      @vertex
+      fn vs_main(@builtin(vertex_index) i: u32) -> VSOut {
+        var positions = array<vec2<f32>, 6>(
+          vec2<f32>(-1.0,  1.0),
+          vec2<f32>( 1.0,  1.0),
+          vec2<f32>(-1.0, -1.0),
+          vec2<f32>( 1.0,  1.0),
+          vec2<f32>( 1.0, -1.0),
+          vec2<f32>(-1.0, -1.0)
+        );
+        var uvs = array<vec2<f32>, 6>(
+          vec2<f32>(0.0, 0.0),
+          vec2<f32>(1.0, 0.0),
+          vec2<f32>(0.0, 1.0),
+          vec2<f32>(1.0, 0.0),
+          vec2<f32>(1.0, 1.0),
+          vec2<f32>(0.0, 1.0)
+        );
+
+        var out: VSOut;
+        out.position = vec4<f32>(positions[i], 0.0, 1.0);
+        out.uv = uvs[i];
+        return out;
+      }
+
+      @fragment
+      fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+        let c = textureSample(layerTexture, texSampler, uv);
+        return vec4<f32>(c.rgb, c.a * params.opacity.x);
+      }
+    `;
+  }
+  /**
+   * Present composed frame (for manual mode)
+   */
+  present() {
+  }
+  /**
+   * Set compositing mode
+   */
+  setMode(mode) {
+    this.mode = mode;
+    console.log(`[Compositor] Mode set to: ${mode}`);
+  }
+  /**
+   * Resize compositor and update layer dimensions
+   */
+  resize(width, height) {
+    this.canvas.width = width;
+    this.canvas.height = height;
+    const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+    this.context.configure({
+      device: this.device,
+      format: canvasFormat,
+      alphaMode: "premultiplied",
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST
+    });
+    console.log(`[Compositor] Resized to ${width}x${height}`);
+  }
+  /**
+   * Update layer texture reference (called after texture recreation)
+   */
+  updateLayerTexture(name, texture) {
+    const layer = this.layers.get(name);
+    if (layer) {
+      layer.texture = texture;
+      layer.width = texture.width;
+      layer.height = texture.height;
+    }
+  }
+  // ========== Shader Pipeline Methods ==========
+  /**
+   * Load a shader effect from a URL
+   * @param name - Name to register the effect under
+   * @param url - URL to the shader module (must export getShaderConfig())
+   */
+  async loadEffect(name, url) {
+    if (!this.shaderPipeline) {
+      throw new Error("[Compositor] Shader pipeline not initialized");
+    }
+    await this.shaderPipeline.loadEffect(name, url);
+  }
+  /**
+   * Build a shader pipeline from effect names
+   * @param effects - Array of effect names to chain
+   */
+  async buildPipeline(effects) {
+    if (!this.shaderPipeline) {
+      throw new Error("[Compositor] Shader pipeline not initialized");
+    }
+    await this.shaderPipeline.buildPipeline(effects);
+  }
+  /**
+   * Enable or disable the shader pipeline
+   */
+  setPipelineEnabled(_enabled) {
+    console.warn("[Compositor] setPipelineEnabled not yet implemented");
+  }
+  /**
+   * Update a uniform value for a specific effect
+   * @param effectName - Name of the effect
+   * @param uniformName - Name of the uniform
+   * @param value - New value (number or array)
+   */
+  setEffectUniform(effectName, uniformName, value) {
+    if (!this.shaderPipeline) {
+      throw new Error("[Compositor] Shader pipeline not initialized");
+    }
+    this.shaderPipeline.setUniform(effectName, uniformName, value);
+  }
+  /**
+   * Get list of registered effects
+   */
+  getEffects() {
+    var _a;
+    return ((_a = this.shaderPipeline) == null ? void 0 : _a.getEffects()) || [];
+  }
+  /**
+   * Check if an effect is registered
+   */
+  hasEffect(name) {
+    var _a;
+    return ((_a = this.shaderPipeline) == null ? void 0 : _a.hasEffect(name)) || false;
   }
 }
 const universalThis = globalThis;
 const {
-  Array: Array$1,
+  Array: Array$2,
   ArrayBuffer: ArrayBuffer$2,
   Date: Date$1,
   FinalizationRegistry,
@@ -911,7 +2393,7 @@ const {
   preventExtensions: reflectPreventExtensions,
   set: reflectSet
 } = Reflect$4;
-const { isArray, prototype: arrayPrototype } = Array$1;
+const { isArray, prototype: arrayPrototype } = Array$2;
 const { prototype: arrayBufferPrototype$2 } = ArrayBuffer$2;
 const { prototype: mapPrototype } = Map$1;
 const { prototype: regexpPrototype } = RegExp;
@@ -1058,12 +2540,12 @@ if (getThis()) {
   throw TypeError$3(`SES failed to initialize, sloppy mode (SES_NO_SLOPPY)`);
 }
 const localThis = globalThis;
-const { Object: Object$3, Reflect: Reflect$3, Array, String: String$1, JSON: JSON$2, Error: Error$2 } = localThis;
+const { Object: Object$3, Reflect: Reflect$3, Array: Array$1, String: String$1, JSON: JSON$2, Error: Error$2 } = localThis;
 const { freeze: freeze$3 } = Object$3;
 const { apply: apply$1 } = Reflect$3;
 const uncurryThis = (fn2) => (receiver, ...args) => apply$1(fn2, receiver, args);
-const arrayPush = uncurryThis(Array.prototype.push);
-const arrayIncludes = uncurryThis(Array.prototype.includes);
+const arrayPush = uncurryThis(Array$1.prototype.push);
+const arrayIncludes = uncurryThis(Array$1.prototype.includes);
 const stringSplit = uncurryThis(String$1.prototype.split);
 const q$6 = JSON$2.stringify;
 const Fail$7 = (literals, ...args) => {
@@ -7611,6 +9093,29 @@ class ScriptSandbox {
   }
   /**
    * Create a new isolated compartment for a document with persistent shared scope
+   * 
+   * Frontmatter variables are automatically exposed as globals in the compartment,
+   * matching tstorie's exposeFrontMatterVariables() behavior. This allows scripts
+   * to access frontmatter values directly (e.g., `title`, `version`, `debugMode`)
+   * without needing to reference a parent object.
+   * 
+   * Example frontmatter:
+   * ```yaml
+   * ---
+   * title: "My Game"
+   * version: 1.5
+   * debugMode: true
+   * colors: red, green, blue
+   * ---
+   * ```
+   * 
+   * These become directly accessible in JavaScript:
+   * ```javascript
+   * console.log(title);      // "My Game"
+   * console.log(version);    // 1.5 (number)
+   * console.log(debugMode);  // true (boolean)
+   * console.log(colors);     // ["red", "green", "blue"] (array)
+   * ```
    */
   createCompartment(documentId, frontmatter = {}) {
     try {
@@ -7620,7 +9125,7 @@ class ScriptSandbox {
       };
       this.scopes.set(documentId, scope);
       const api = this.api;
-      const compartment = new Compartment({
+      const compartmentGlobals = {
         // Console for debugging
         console,
         // Math and Date are safe
@@ -7628,6 +9133,8 @@ class ScriptSandbox {
         Date,
         // Persistent shared scope (writable)
         scope,
+        // Expose frontmatter variables as direct globals (for convenient access)
+        ...frontmatter,
         // Engine API (capability-based)
         term: this.api.term,
         termCanvas: this.api.termCanvas,
@@ -7637,6 +9144,19 @@ class ScriptSandbox {
         // Theme API
         getStyle: this.api.getStyle,
         theme: this.api.theme,
+        // Module API
+        modules: this.api.modules,
+        // Native Browser APIs
+        audio: this.api.audio,
+        canvas2d: this.api.canvas2d,
+        webgl: this.api.webgl,
+        webgpu: this.api.webgpu,
+        // Compositor API (Phase 1-5)
+        compositor: this.api.compositor,
+        // Retained-mode TUI API
+        tui: this.api.tui,
+        // WebGPU UI API
+        ui: this.api.ui,
         // Global accessors (as functions, not getters, for SES compatibility)
         getMouseX: () => api.mouseX,
         getMouseY: () => api.mouseY,
@@ -7667,7 +9187,8 @@ class ScriptSandbox {
         // - eval (code injection)
         // - Function constructor
         // - XMLHttpRequest
-      });
+      };
+      const compartment = new Compartment(compartmentGlobals);
       this.compartments.set(documentId, compartment);
       return compartment;
     } catch (error) {
@@ -7677,9 +9198,18 @@ class ScriptSandbox {
   }
   /**
    * Execute a code block in the document's persistent scope
-   * Makes scope variables available as top-level variables
-   * Captures newly defined variables back into scope
-   * Returns function result or undefined
+   * 
+   * Auto-binding (only for initialization blocks - raw `js` blocks):
+   * - Top-level `let/const/var` declarations → stored in scope
+   * - Top-level `function` declarations → stored in scope
+   * 
+   * Lifecycle blocks (on:init, on:update, etc.) are wrapped by the engine
+   * with automatic import/export of scope variables, so local declarations
+   * remain local while persistent vars are accessible.
+   * 
+   * @param documentId - Document identifier
+   * @param code - JavaScript code to execute
+   * @param skipTransform - Skip auto-binding transformation (for pre-wrapped code)
    */
   executeCodeBlock(documentId, code, skipTransform = false) {
     const compartment = this.compartments.get(documentId);
@@ -7689,9 +9219,8 @@ class ScriptSandbox {
       return null;
     }
     try {
-      let transformedCode = skipTransform ? code : this.transformCodeForScope(code);
-      const wrappedCode = transformedCode;
-      const result = compartment.evaluate(wrappedCode);
+      let transformedCode = skipTransform ? code : this.autoBindVariables(code);
+      const result = compartment.evaluate(transformedCode);
       return result;
     } catch (error) {
       console.error(`Error executing code block in ${documentId}:`, error);
@@ -7700,26 +9229,42 @@ class ScriptSandbox {
     }
   }
   /**
-   * Transform variable declarations to scope assignments
-   * Examples:
-   *   let x = 10; -> scope.x = 10;
-   *   const y = 20; -> scope.y = 20;
-   *   function update(delta) { } -> scope.update = function update(delta) { }
+   * Auto-binding for initialization blocks (raw `js` blocks only)
+   * 
+   * Transforms top-level variable declarations to scope assignments:
+   * - `let x = 10;` → `scope.x = scope.x ?? 10;`
+   * - `function foo() {}` → `scope.foo = function foo() {}`
+   * 
+   * This ONLY applies to raw `js` blocks (no lifecycle annotation).
+   * Lifecycle blocks (on:*) are wrapped by the engine with proper
+   * import/export, so local vars stay local.
+   * 
+   * Variables inside functions, loops, etc. remain untouched (only flush-left).
    */
-  transformCodeForScope(code) {
-    let transformed = code;
-    console.log("🔧 Transforming code, original length:", code.length);
-    transformed = transformed.replace(/^(\s*)(let|const|var)\s+(\w+)\s*=\s*([^;]+);/gm, (_m, indent, _kw, varName, value) => {
-      console.log(`  📝 Transforming: ${_kw} ${varName} = ${value.substring(0, 50)}...`);
-      if (value.trim().startsWith("function")) {
-        return `${indent}scope.${varName} = ${value};`;
+  autoBindVariables(code) {
+    let transformedCode = code;
+    transformedCode = transformedCode.replace(
+      /^(let|const|var)\s+(\w+)\s*=\s*([^;]+);/gm,
+      (_m, _kw, varName, value) => {
+        console.log(`  📝 Persisting variable: ${varName}`);
+        return `scope.${varName} = scope.${varName} ?? (${value});`;
       }
-      return `${indent}scope.${varName} = ${value};`;
-    });
-    transformed = transformed.replace(/^(\s*)(let|const|var)\s+(\w+)\s*;/gm, "$1scope.$3 = undefined;");
-    transformed = transformed.replace(/^(\s*)function\s+(\w+)\s*\(/gm, "$1scope.$2 = function $2(");
-    console.log("✅ Transformed code, new length:", transformed.length);
-    return transformed;
+    );
+    transformedCode = transformedCode.replace(
+      /^(let|const|var)\s+(\w+)\s*;/gm,
+      (_m, _kw, varName) => {
+        console.log(`  📝 Persisting variable: ${varName}`);
+        return `scope.${varName} = scope.${varName} ?? undefined;`;
+      }
+    );
+    transformedCode = transformedCode.replace(
+      /^function\s+(\w+)\s*\(/gm,
+      (_m, funcName) => {
+        console.log(`  📝 Persisting function: ${funcName}`);
+        return `scope.${funcName} = function ${funcName}(`;
+      }
+    );
+    return transformedCode;
   }
   /**
    * Execute user code and extract init/update/render/input handlers from scope
@@ -7902,15 +9447,49 @@ function extractFrontmatter(source) {
     if (endIndex > 0) {
       const yamlLines = lines.slice(1, endIndex);
       for (const line of yamlLines) {
-        const match = line.match(/^(\w+):\s*(.+)$/);
+        const match = line.match(/^([\w-]+):\s*(.*)$/);
         if (match) {
           const key = match[1];
           let value = match[2].trim();
+          if (value.length === 0 || ["null", "nil", "none", "~"].includes(value.toLowerCase())) {
+            metadata[key] = null;
+            continue;
+          }
+          const lowerValue = value.toLowerCase();
+          if (lowerValue === "true" || lowerValue === "false") {
+            metadata[key] = lowerValue === "true";
+            continue;
+          }
           if (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) {
             value = value.slice(1, -1);
-          } else if (value === "true") value = true;
-          else if (value === "false") value = false;
-          else if (!isNaN(Number(value))) value = Number(value);
+            metadata[key] = value;
+            continue;
+          }
+          if (value.startsWith("[") && value.endsWith("]") || value.startsWith("{") && value.endsWith("}")) {
+            try {
+              metadata[key] = JSON.parse(value);
+              continue;
+            } catch {
+            }
+          }
+          if (value.includes(",") && !value.startsWith('"') && !value.startsWith("'")) {
+            const items = value.split(",").map((item) => {
+              const trimmed = item.trim();
+              if (trimmed === "true") return true;
+              if (trimmed === "false") return false;
+              if (!isNaN(Number(trimmed)) && trimmed !== "") return Number(trimmed);
+              if (trimmed.startsWith('"') && trimmed.endsWith('"') || trimmed.startsWith("'") && trimmed.endsWith("'")) {
+                return trimmed.slice(1, -1);
+              }
+              return trimmed;
+            });
+            metadata[key] = items;
+            continue;
+          }
+          if (!isNaN(Number(value)) && value !== "") {
+            metadata[key] = Number(value);
+            continue;
+          }
           metadata[key] = value;
         }
       }
@@ -7941,163 +9520,163 @@ function flattenSections(sections) {
 }
 const THEMES = {
   neotopia: {
-    bg: { r: 0, g: 17, b: 17 },
+    bg: 1118719,
     // Deep teal
-    bgAlt: { r: 9, g: 52, b: 58 },
+    bgAlt: 154417919,
     // Lighter teal
-    fg: { r: 224, g: 224, b: 224 },
+    fg: 3772834047,
     // Bright gray
-    fgAlt: { r: 144, g: 144, b: 144 },
+    fgAlt: 2425393407,
     // Medium gray
-    accent1: { r: 0, g: 217, b: 142 },
+    accent1: 14257919,
     // Aquamarine
-    accent2: { r: 255, g: 255, b: 0 },
+    accent2: 4294902015,
     // Yellow
-    accent3: { r: 255, g: 0, b: 110 }
+    accent3: 4278218495
     // Pink
   },
   neonopia: {
-    bg: { r: 5, g: 0, b: 0 },
+    bg: 83886335,
     // Deep burgundy
-    bgAlt: { r: 52, g: 9, b: 5 },
+    bgAlt: 873006591,
     // Dark coral
-    fg: { r: 160, g: 160, b: 160 },
+    fg: 2694881535,
     // Dark gray
-    fgAlt: { r: 111, g: 111, b: 111 },
+    fgAlt: 1869574143,
     // Lighter gray
-    accent1: { r: 255, g: 38, b: 113 },
+    accent1: 4280709631,
     // Hot pink
-    accent2: { r: 0, g: 0, b: 255 },
+    accent2: 65535,
     // Pure blue
-    accent3: { r: 0, g: 255, b: 145 }
+    accent3: 16749055
     // Bright mint
   },
   catppuccin: {
-    bg: { r: 30, g: 30, b: 46 },
-    bgAlt: { r: 49, g: 50, b: 68 },
-    fg: { r: 205, g: 214, b: 244 },
-    fgAlt: { r: 108, g: 112, b: 134 },
-    accent1: { r: 245, g: 194, b: 231 },
+    bg: 505294591,
+    bgAlt: 825378047,
+    fg: 3453416703,
+    fgAlt: 1819313919,
+    accent1: 4123191295,
     // Pink
-    accent2: { r: 137, g: 180, b: 250 },
+    accent2: 2310339327,
     // Blue
-    accent3: { r: 166, g: 227, b: 161 }
+    accent3: 2799935999
     // Green
   },
   nord: {
-    bg: { r: 46, g: 52, b: 64 },
-    bgAlt: { r: 59, g: 66, b: 82 },
-    fg: { r: 236, g: 239, b: 244 },
-    fgAlt: { r: 216, g: 222, b: 233 },
-    accent1: { r: 136, g: 192, b: 208 },
+    bg: 775176447,
+    bgAlt: 994202367,
+    fg: 3975148799,
+    fgAlt: 3638487551,
+    accent1: 2294337791,
     // Frost cyan
-    accent2: { r: 129, g: 161, b: 193 },
+    accent2: 2174861823,
     // Frost teal
-    accent3: { r: 163, g: 190, b: 140 }
+    accent3: 2747174143
     // Aurora green
   },
   dracula: {
-    bg: { r: 40, g: 42, b: 54 },
-    bgAlt: { r: 68, g: 71, b: 90 },
-    fg: { r: 248, g: 248, b: 242 },
-    fgAlt: { r: 98, g: 114, b: 164 },
-    accent1: { r: 255, g: 121, b: 198 },
+    bg: 673855231,
+    bgAlt: 1145527039,
+    fg: 4177064703,
+    fgAlt: 1651680511,
+    accent1: 4286170879,
     // Pink
-    accent2: { r: 139, g: 233, b: 253 },
+    accent2: 2347367935,
     // Cyan
-    accent3: { r: 80, g: 250, b: 123 }
+    accent3: 1358593023
     // Green
   },
   outrun: {
-    bg: { r: 26, g: 0, b: 51 },
-    bgAlt: { r: 45, g: 0, b: 85 },
-    fg: { r: 240, g: 240, b: 255 },
-    fgAlt: { r: 139, g: 92, b: 246 },
-    accent1: { r: 255, g: 0, b: 110 },
+    bg: 436220927,
+    bgAlt: 754996735,
+    fg: 4042326015,
+    fgAlt: 2338125567,
+    accent1: 4278218495,
     // Neon pink
-    accent2: { r: 0, g: 245, b: 255 },
+    accent2: 16121855,
     // Electric cyan
-    accent3: { r: 255, g: 190, b: 11 }
+    accent3: 4290644991
     // Golden yellow
   },
   alleycat: {
-    bg: { r: 10, g: 10, b: 15 },
-    bgAlt: { r: 26, g: 26, b: 46 },
-    fg: { r: 224, g: 224, b: 255 },
-    fgAlt: { r: 107, g: 127, b: 215 },
-    accent1: { r: 0, g: 255, b: 255 },
+    bg: 168431615,
+    bgAlt: 437923583,
+    fg: 3772841983,
+    fgAlt: 1803540479,
+    accent1: 16777215,
     // Electric cyan
-    accent2: { r: 255, g: 0, b: 255 },
+    accent2: 4278255615,
     // Magenta
-    accent3: { r: 0, g: 255, b: 0 }
+    accent3: 16711935
     // Matrix green
   },
   terminal: {
-    bg: { r: 10, g: 10, b: 10 },
-    bgAlt: { r: 26, g: 26, b: 26 },
-    fg: { r: 0, g: 255, b: 0 },
-    fgAlt: { r: 0, g: 136, b: 0 },
-    accent1: { r: 0, g: 255, b: 0 },
+    bg: 168430335,
+    bgAlt: 437918463,
+    fg: 16711935,
+    fgAlt: 8913151,
+    accent1: 16711935,
     // Bright green
-    accent2: { r: 0, g: 204, b: 0 },
+    accent2: 13369599,
     // Medium green
-    accent3: { r: 0, g: 170, b: 0 }
+    accent3: 11141375
     // Dark green
   },
   solardark: {
-    bg: { r: 0, g: 43, b: 54 },
-    bgAlt: { r: 7, g: 54, b: 66 },
-    fg: { r: 131, g: 148, b: 150 },
-    fgAlt: { r: 88, g: 110, b: 117 },
-    accent1: { r: 38, g: 139, b: 210 },
+    bg: 2832127,
+    bgAlt: 120996607,
+    fg: 2207553279,
+    fgAlt: 1483634175,
+    accent1: 646697727,
     // Blue
-    accent2: { r: 42, g: 161, b: 152 },
+    accent2: 715233535,
     // Cyan
-    accent3: { r: 133, g: 153, b: 0 }
+    accent3: 2241396991
     // Green
   },
   solarlight: {
-    bg: { r: 253, g: 246, b: 227 },
-    bgAlt: { r: 238, g: 232, b: 213 },
-    fg: { r: 101, g: 123, b: 131 },
-    fgAlt: { r: 147, g: 161, b: 161 },
-    accent1: { r: 38, g: 139, b: 210 },
+    bg: 4260815871,
+    bgAlt: 4008236543,
+    fg: 1702593535,
+    fgAlt: 2476843519,
+    accent1: 646697727,
     // Blue
-    accent2: { r: 42, g: 161, b: 152 },
+    accent2: 715233535,
     // Cyan
-    accent3: { r: 133, g: 153, b: 0 }
+    accent3: 2241396991
     // Green
   },
   coffee: {
-    bg: { r: 242, g: 211, b: 172 },
+    bg: 4073958655,
     // Cream
-    bgAlt: { r: 115, g: 20, b: 37 },
+    bgAlt: 1930700287,
     // Dark burgundy
-    fg: { r: 38, g: 3, b: 36 },
+    fg: 637740287,
     // Deep purple-brown
-    fgAlt: { r: 191, g: 140, b: 111 },
+    fgAlt: 3213651967,
     // Tan
-    accent1: { r: 191, g: 52, b: 52 },
+    accent1: 3207869695,
     // Rich red
-    accent2: { r: 191, g: 140, b: 111 },
+    accent2: 3213651967,
     // Tan
-    accent3: { r: 242, g: 211, b: 172 }
+    accent3: 4073958655
     // Cream accent
   },
   stonegarden: {
-    bg: { r: 26, g: 29, b: 30 },
+    bg: 438116095,
     // Darker stone
-    bgAlt: { r: 45, g: 48, b: 50 },
+    bgAlt: 758133503,
     // Elevated surfaces
-    fg: { r: 232, g: 230, b: 227 },
+    fg: 3907445759,
     // Soft cream
-    fgAlt: { r: 152, g: 150, b: 147 },
+    fgAlt: 2560005119,
     // Muted stone
-    accent1: { r: 141, g: 184, b: 141 },
+    accent1: 2377682431,
     // Moss green
-    accent2: { r: 196, g: 167, b: 119 },
+    accent2: 3299309567,
     // Warm sand
-    accent3: { r: 90, g: 122, b: 142 }
+    accent3: 1517981439
     // Blue-gray
   }
 };
@@ -8208,13 +9787,1611 @@ function getTheme(name) {
 function getAvailableThemes() {
   return Object.keys(THEMES);
 }
+class EventEmitter {
+  constructor() {
+    __publicField(this, "listeners", /* @__PURE__ */ new Map());
+  }
+  on(event, callback) {
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, /* @__PURE__ */ new Set());
+    }
+    this.listeners.get(event).add(callback);
+  }
+  off(event, callback) {
+    var _a;
+    (_a = this.listeners.get(event)) == null ? void 0 : _a.delete(callback);
+  }
+  emit(event, data) {
+    var _a;
+    (_a = this.listeners.get(event)) == null ? void 0 : _a.forEach((cb) => cb(data));
+  }
+}
+class ModuleLoader extends EventEmitter {
+  constructor(engine, config = {}) {
+    super();
+    __publicField(this, "engine");
+    __publicField(this, "registry", /* @__PURE__ */ new Map());
+    __publicField(this, "loading", /* @__PURE__ */ new Map());
+    __publicField(this, "resolver");
+    __publicField(this, "resolverConfig");
+    this.engine = engine;
+    this.resolverConfig = {
+      baseUrl: config.baseUrl || "./modules",
+      versions: config.versions || {},
+      patterns: config.patterns || {}
+    };
+    this.resolver = this.createDefaultResolver();
+  }
+  /**
+   * Load a module by name
+   */
+  async load(name, options = {}) {
+    if (this.registry.has(name) && !options.reload) {
+      return this.registry.get(name).module;
+    }
+    if (this.loading.has(name)) {
+      return this.loading.get(name);
+    }
+    const loadPromise = this.loadModule(name, options);
+    this.loading.set(name, loadPromise);
+    try {
+      const module = await loadPromise;
+      this.loading.delete(name);
+      return module;
+    } catch (error) {
+      this.loading.delete(name);
+      throw error;
+    }
+  }
+  /**
+   * Load multiple modules in parallel
+   */
+  async loadAll(names, options = {}) {
+    return Promise.all(names.map((name) => this.load(name, options)));
+  }
+  /**
+   * Check if a module is loaded
+   */
+  isLoaded(name) {
+    return this.registry.has(name) && this.registry.get(name).initialized;
+  }
+  /**
+   * Check if a module is currently loading
+   */
+  isLoading(name) {
+    return this.loading.has(name);
+  }
+  /**
+   * Get a loaded module
+   */
+  get(name) {
+    var _a;
+    return (_a = this.registry.get(name)) == null ? void 0 : _a.module;
+  }
+  /**
+   * Get all loaded modules
+   */
+  getAll() {
+    return Array.from(this.registry.values()).map((entry) => entry.module);
+  }
+  /**
+   * Get module metadata
+   */
+  getMetadata(name) {
+    var _a;
+    return (_a = this.registry.get(name)) == null ? void 0 : _a.metadata;
+  }
+  /**
+   * Get all module names (loaded and loading)
+   */
+  getModuleNames() {
+    return Array.from(this.registry.keys());
+  }
+  /**
+   * Unload a module
+   */
+  async unload(name) {
+    const entry = this.registry.get(name);
+    if (!entry) {
+      console.warn(`Module not loaded: ${name}`);
+      return;
+    }
+    try {
+      entry.module.dispose();
+      this.registry.delete(name);
+      this.emit("module:disposed", { name });
+      console.log(`✓ Module unloaded: ${name}`);
+    } catch (error) {
+      console.error(`✗ Error unloading module ${name}:`, error);
+      throw error;
+    }
+  }
+  /**
+   * Unload all modules
+   */
+  async unloadAll() {
+    const names = Array.from(this.registry.keys());
+    await Promise.all(names.map((name) => this.unload(name)));
+  }
+  /**
+   * Set custom module resolver
+   */
+  setResolver(resolver) {
+    this.resolver = resolver;
+  }
+  /**
+   * Update resolver configuration
+   */
+  updateResolverConfig(config) {
+    Object.assign(this.resolverConfig, config);
+    this.resolver = this.createDefaultResolver();
+  }
+  /**
+   * Call update on all loaded modules
+   * Should be called from engine's update loop
+   */
+  update(deltaTime) {
+    for (const entry of this.registry.values()) {
+      if (entry.initialized && entry.module.update) {
+        try {
+          entry.module.update(deltaTime);
+        } catch (error) {
+          console.error(`Error updating module ${entry.metadata.name}:`, error);
+        }
+      }
+    }
+  }
+  /**
+   * Call render on all loaded modules
+   * Should be called from engine's render loop
+   */
+  render() {
+    for (const entry of this.registry.values()) {
+      if (entry.initialized && entry.module.render) {
+        try {
+          entry.module.render();
+        } catch (error) {
+          console.error(`Error rendering module ${entry.metadata.name}:`, error);
+        }
+      }
+    }
+  }
+  /**
+   * Internal: Load module implementation
+   */
+  async loadModule(name, options) {
+    const startTime = performance.now();
+    this.emit("module:loading", { name });
+    console.log(`[Modules] Loading: ${name}`);
+    try {
+      const resolver = options.resolver || this.resolver;
+      const url = await resolver(name);
+      const timeout = options.timeout || 3e4;
+      const loadPromise = this.importModule(url);
+      const timeoutPromise = new Promise(
+        (_, reject) => setTimeout(() => reject(new Error(`Module load timeout: ${name}`)), timeout)
+      );
+      const ModuleClass = await Promise.race([loadPromise, timeoutPromise]);
+      const module = new ModuleClass();
+      if (module.dependencies && !options.skipDependencies) {
+        console.log(`[Modules] Loading dependencies for ${name}:`, module.dependencies);
+        await this.loadAll(module.dependencies, options);
+      }
+      const metadata = {
+        name: module.name,
+        version: module.version,
+        url,
+        description: module.description,
+        dependencies: module.dependencies
+      };
+      await module.init(this.engine);
+      const entry = {
+        module,
+        metadata,
+        loadTime: performance.now() - startTime,
+        initialized: true
+      };
+      this.registry.set(name, entry);
+      this.emit("module:loaded", { name, version: module.version, url });
+      console.log(`✓ Module loaded: ${name} v${module.version} (${Math.round(entry.loadTime)}ms)`);
+      return module;
+    } catch (error) {
+      const err = error;
+      this.emit("module:error", { name, error: err });
+      console.error(`✗ Failed to load module: ${name}`, err);
+      throw new Error(`Module load failed: ${name} - ${err.message}`);
+    }
+  }
+  /**
+   * Import module from URL
+   */
+  async importModule(url) {
+    try {
+      const moduleExports = await import(
+        /* @vite-ignore */
+        url
+      );
+      if (moduleExports.default) {
+        return moduleExports.default;
+      } else if (moduleExports.Module) {
+        return moduleExports.Module;
+      } else {
+        throw new Error("Module does not export a default or Module class");
+      }
+    } catch (error) {
+      throw new Error(`Failed to import module from ${url}: ${error}`);
+    }
+  }
+  /**
+   * Create default module resolver
+   */
+  createDefaultResolver() {
+    return (name) => {
+      var _a;
+      const config = this.resolverConfig;
+      if (config.patterns && config.patterns[name]) {
+        return config.patterns[name];
+      }
+      const version = ((_a = config.versions) == null ? void 0 : _a[name]) || "latest";
+      const baseUrl = config.baseUrl || "./modules";
+      return `${baseUrl}/${name}.module.js${version !== "latest" ? `?v=${version}` : ""}`;
+    };
+  }
+  /**
+   * Dispose all modules and cleanup
+   */
+  dispose() {
+    for (const entry of this.registry.values()) {
+      try {
+        entry.module.dispose();
+      } catch (error) {
+        console.error(`Error disposing module ${entry.metadata.name}:`, error);
+      }
+    }
+    this.registry.clear();
+    this.loading.clear();
+  }
+}
+class WidgetManager {
+  constructor() {
+    __publicField(this, "widgets");
+    __publicField(this, "groups");
+    __publicField(this, "navigation");
+    this.widgets = /* @__PURE__ */ new Map();
+    this.groups = /* @__PURE__ */ new Map();
+    this.navigation = {
+      focusedWidget: null,
+      focusableWidgets: [],
+      tabOrder: []
+    };
+  }
+  /**
+   * Register a widget
+   */
+  register(widget) {
+    this.widgets.set(widget.id, widget);
+    if (!this.groups.has(widget.group)) {
+      this.groups.set(widget.group, {
+        id: widget.group,
+        visible: true,
+        widgets: /* @__PURE__ */ new Set()
+      });
+    }
+    this.groups.get(widget.group).widgets.add(widget.id);
+    if (widget.focusable) {
+      this.navigation.focusableWidgets.push(widget.id);
+      this.navigation.tabOrder.push(widget.id);
+    }
+  }
+  /**
+   * Unregister a widget
+   */
+  unregister(id) {
+    const widget = this.widgets.get(id);
+    if (!widget) return;
+    const group = this.groups.get(widget.group);
+    if (group) {
+      group.widgets.delete(id);
+    }
+    const focusIdx = this.navigation.focusableWidgets.indexOf(id);
+    if (focusIdx !== -1) {
+      this.navigation.focusableWidgets.splice(focusIdx, 1);
+    }
+    const tabIdx = this.navigation.tabOrder.indexOf(id);
+    if (tabIdx !== -1) {
+      this.navigation.tabOrder.splice(tabIdx, 1);
+    }
+    if (this.navigation.focusedWidget === id) {
+      this.navigation.focusedWidget = null;
+    }
+    this.widgets.delete(id);
+  }
+  /**
+   * Get widget by ID
+   */
+  get(id) {
+    return this.widgets.get(id);
+  }
+  /**
+   * Get all widgets
+   */
+  getAll() {
+    return Array.from(this.widgets.values());
+  }
+  /**
+   * Get visible widgets (respecting group visibility)
+   */
+  getVisible() {
+    return Array.from(this.widgets.values()).filter((widget) => {
+      if (!widget.state.visible) return false;
+      const group = this.groups.get(widget.group);
+      return group ? group.visible : true;
+    });
+  }
+  /**
+   * Set group visibility
+   */
+  setGroupVisible(groupId, visible) {
+    const group = this.groups.get(groupId);
+    if (group) {
+      group.visible = visible;
+    }
+  }
+  /**
+   * Check if group is visible
+   */
+  isGroupVisible(groupId) {
+    const group = this.groups.get(groupId);
+    return group ? group.visible : true;
+  }
+  /**
+   * Focus a widget
+   */
+  focus(id) {
+    if (this.navigation.focusedWidget !== null) {
+      const current = this.widgets.get(this.navigation.focusedWidget);
+      if (current) {
+        current.updateState(current.state.hovered, current.state.pressed, false);
+      }
+    }
+    this.navigation.focusedWidget = id;
+    if (id !== null) {
+      const widget = this.widgets.get(id);
+      if (widget && widget.focusable) {
+        widget.updateState(widget.state.hovered, widget.state.pressed, true);
+      }
+    }
+  }
+  /**
+   * Focus next widget in tab order
+   */
+  focusNext() {
+    if (this.navigation.tabOrder.length === 0) return;
+    let currentIdx = -1;
+    if (this.navigation.focusedWidget !== null) {
+      currentIdx = this.navigation.tabOrder.indexOf(this.navigation.focusedWidget);
+    }
+    let nextIdx = (currentIdx + 1) % this.navigation.tabOrder.length;
+    let attempts = 0;
+    while (attempts < this.navigation.tabOrder.length) {
+      const nextId = this.navigation.tabOrder[nextIdx];
+      const widget = this.widgets.get(nextId);
+      if (widget && widget.state.visible && widget.state.enabled && widget.focusable) {
+        const group = this.groups.get(widget.group);
+        if (!group || group.visible) {
+          this.focus(nextId);
+          return;
+        }
+      }
+      nextIdx = (nextIdx + 1) % this.navigation.tabOrder.length;
+      attempts++;
+    }
+  }
+  /**
+   * Focus previous widget in tab order
+   */
+  focusPrevious() {
+    if (this.navigation.tabOrder.length === 0) return;
+    let currentIdx = this.navigation.tabOrder.length - 1;
+    if (this.navigation.focusedWidget !== null) {
+      currentIdx = this.navigation.tabOrder.indexOf(this.navigation.focusedWidget);
+    }
+    let prevIdx = (currentIdx - 1 + this.navigation.tabOrder.length) % this.navigation.tabOrder.length;
+    let attempts = 0;
+    while (attempts < this.navigation.tabOrder.length) {
+      const prevId = this.navigation.tabOrder[prevIdx];
+      const widget = this.widgets.get(prevId);
+      if (widget && widget.state.visible && widget.state.enabled && widget.focusable) {
+        const group = this.groups.get(widget.group);
+        if (!group || group.visible) {
+          this.focus(prevId);
+          return;
+        }
+      }
+      prevIdx = (prevIdx - 1 + this.navigation.tabOrder.length) % this.navigation.tabOrder.length;
+      attempts++;
+    }
+  }
+  /**
+   * Get currently focused widget
+   */
+  getFocused() {
+    if (this.navigation.focusedWidget === null) return null;
+    return this.widgets.get(this.navigation.focusedWidget) || null;
+  }
+  /**
+   * Clear all widgets
+   */
+  clear() {
+    this.widgets.clear();
+    this.groups.clear();
+    this.navigation.focusedWidget = null;
+    this.navigation.focusableWidgets = [];
+    this.navigation.tabOrder = [];
+  }
+}
+class InputRouter {
+  constructor(config) {
+    __publicField(this, "widgetManager");
+    __publicField(this, "currentHoverWidget", null);
+    __publicField(this, "currentPressedWidget", null);
+    __publicField(this, "mousePressed", false);
+    this.widgetManager = config.widgetManager;
+  }
+  /**
+   * Update input routing
+   * Should be called every frame before rendering
+   */
+  update(mousePos, mouseDown) {
+    const visibleWidgets = this.widgetManager.getVisible().reverse();
+    let hoveredWidget = null;
+    for (const widget of visibleWidgets) {
+      if (widget.state.enabled && widget.containsPoint(mousePos)) {
+        hoveredWidget = widget;
+        break;
+      }
+    }
+    if (hoveredWidget !== this.currentHoverWidget) {
+      if (this.currentHoverWidget) {
+        this.currentHoverWidget.updateState(false, this.currentHoverWidget.state.pressed, this.currentHoverWidget.state.focused);
+      }
+      if (hoveredWidget) {
+        hoveredWidget.updateState(true, hoveredWidget.state.pressed, hoveredWidget.state.focused);
+      }
+      this.currentHoverWidget = hoveredWidget;
+    }
+    const mouseJustPressed = mouseDown && !this.mousePressed;
+    const mouseJustReleased = !mouseDown && this.mousePressed;
+    if (mouseJustPressed && hoveredWidget) {
+      this.currentPressedWidget = hoveredWidget;
+      hoveredWidget.updateState(hoveredWidget.state.hovered, true, hoveredWidget.state.focused);
+      hoveredWidget.emit({
+        type: "click",
+        widget: hoveredWidget.id,
+        timestamp: Date.now()
+      });
+    }
+    if (mouseJustReleased && this.currentPressedWidget) {
+      const wasHovered = this.currentPressedWidget.state.hovered;
+      this.currentPressedWidget.updateState(wasHovered, false, this.currentPressedWidget.state.focused);
+      this.currentPressedWidget = null;
+    }
+    this.mousePressed = mouseDown;
+  }
+  /**
+   * Handle keyboard input for focused widget
+   */
+  handleKey(key, modifiers) {
+    if (key === "Tab") {
+      if (modifiers == null ? void 0 : modifiers.shift) {
+        this.widgetManager.focusPrevious();
+      } else {
+        this.widgetManager.focusNext();
+      }
+      return true;
+    }
+    if (key === "ArrowDown" || key === "ArrowRight") {
+      this.widgetManager.focusNext();
+      return true;
+    }
+    if (key === "ArrowUp" || key === "ArrowLeft") {
+      this.widgetManager.focusPrevious();
+      return true;
+    }
+    this.widgetManager.getFocused();
+    return false;
+  }
+  /**
+   * Handle activation (Enter/Space on focused widget)
+   */
+  handleActivate() {
+    const focused = this.widgetManager.getFocused();
+    if (focused && focused.state.enabled) {
+      focused.emit({
+        type: "click",
+        widget: focused.id,
+        timestamp: Date.now()
+      });
+      return true;
+    }
+    return false;
+  }
+  /**
+   * Get widget currently under mouse
+   */
+  getHoveredWidget() {
+    return this.currentHoverWidget;
+  }
+  /**
+   * Get widget currently being pressed
+   */
+  getPressedWidget() {
+    return this.currentPressedWidget;
+  }
+}
+class BaseWidget {
+  constructor(config) {
+    __publicField(this, "id");
+    __publicField(this, "bounds");
+    __publicField(this, "style");
+    __publicField(this, "group");
+    __publicField(this, "state");
+    __publicField(this, "focusable");
+    __publicField(this, "eventListeners");
+    this.id = config.id;
+    this.bounds = { ...config.bounds };
+    this.style = config.style || {};
+    this.group = config.group || 0;
+    this.focusable = config.focusable ?? true;
+    this.state = {
+      visible: config.visible ?? true,
+      enabled: config.enabled ?? true,
+      hovered: false,
+      focused: false,
+      pressed: false
+    };
+    this.eventListeners = /* @__PURE__ */ new Map();
+  }
+  /**
+   * Test if a point is within widget bounds
+   */
+  containsPoint(coord) {
+    return coord.x >= this.bounds.x && coord.x < this.bounds.x + this.bounds.width && coord.y >= this.bounds.y && coord.y < this.bounds.y + this.bounds.height;
+  }
+  /**
+   * Update widget state based on input
+   * Returns true if state changed
+   */
+  updateState(hovered, pressed, focused) {
+    let changed = false;
+    if (this.state.hovered !== hovered) {
+      this.state.hovered = hovered;
+      changed = true;
+      if (hovered) {
+        this.emit({ type: "hover", widget: this.id, timestamp: Date.now() });
+      }
+    }
+    if (this.state.pressed !== pressed) {
+      this.state.pressed = pressed;
+      changed = true;
+    }
+    if (this.state.focused !== focused) {
+      const wasFocused = this.state.focused;
+      this.state.focused = focused;
+      changed = true;
+      if (focused && !wasFocused) {
+        this.emit({ type: "focus", widget: this.id, timestamp: Date.now() });
+      } else if (!focused && wasFocused) {
+        this.emit({ type: "blur", widget: this.id, timestamp: Date.now() });
+      }
+    }
+    return changed;
+  }
+  /**
+   * Get effective style based on current state
+   */
+  getEffectiveStyle() {
+    let effectiveStyle = { ...this.style };
+    if (!this.state.enabled && this.style.disabledStyle) {
+      effectiveStyle = { ...effectiveStyle, ...this.style.disabledStyle };
+    } else if (this.state.pressed && this.style.focusStyle) {
+      effectiveStyle = { ...effectiveStyle, ...this.style.focusStyle };
+    } else if (this.state.focused && this.style.focusStyle) {
+      effectiveStyle = { ...effectiveStyle, ...this.style.focusStyle };
+    } else if (this.state.hovered && this.style.hoverStyle) {
+      effectiveStyle = { ...effectiveStyle, ...this.style.hoverStyle };
+    }
+    return effectiveStyle;
+  }
+  /**
+   * Register event listener
+   */
+  on(eventType, callback) {
+    if (!this.eventListeners.has(eventType)) {
+      this.eventListeners.set(eventType, []);
+    }
+    this.eventListeners.get(eventType).push(callback);
+  }
+  /**
+   * Emit event to listeners
+   */
+  emit(event) {
+    const listeners = this.eventListeners.get(event.type);
+    if (listeners) {
+      listeners.forEach((callback) => callback(event));
+    }
+  }
+  /**
+   * Set visibility
+   */
+  setVisible(visible) {
+    this.state.visible = visible;
+  }
+  /**
+   * Set enabled state
+   */
+  setEnabled(enabled) {
+    this.state.enabled = enabled;
+  }
+  /**
+   * Update bounds
+   */
+  setBounds(bounds) {
+    this.bounds = { ...this.bounds, ...bounds };
+  }
+}
+class TUIButton extends BaseWidget {
+  constructor(config) {
+    super(config);
+    __publicField(this, "label");
+    __publicField(this, "align");
+    // Track if clicked this frame
+    __publicField(this, "clickedThisFrame", false);
+    this.label = config.label;
+    this.align = config.align || "center";
+    this.on("click", () => {
+      this.clickedThisFrame = true;
+    });
+  }
+  /**
+   * Check if button was clicked this frame
+   * This is the main API for user code
+   */
+  wasClicked() {
+    const result = this.clickedThisFrame;
+    this.clickedThisFrame = false;
+    return result;
+  }
+  /**
+   * Update label text
+   */
+  setLabel(label) {
+    this.label = label;
+  }
+  /**
+   * Render button to cell buffer
+   */
+  render(buffer, renderer) {
+    if (!this.state.visible) return;
+    const { x, y, width, height } = this.bounds;
+    const style = this.getEffectiveStyle();
+    const borderChars = this.state.focused ? { tl: "╔", tr: "╗", bl: "╚", br: "╝", h: "═", v: "║" } : { tl: "┌", tr: "┐", bl: "└", br: "┘", h: "─", v: "│" };
+    const fg = style.fg ?? ColorUtils.rgb(224, 224, 224);
+    const bg = style.bg ?? ColorUtils.rgb(0, 17, 17);
+    for (let col = 0; col < width; col++) {
+      for (let row = 0; row < height; row++) {
+        let char = " ";
+        if (row === 0 && col === 0) char = borderChars.tl;
+        else if (row === 0 && col === width - 1) char = borderChars.tr;
+        else if (row === height - 1 && col === 0) char = borderChars.bl;
+        else if (row === height - 1 && col === width - 1) char = borderChars.br;
+        else if (row === 0 || row === height - 1) char = borderChars.h;
+        else if (col === 0 || col === width - 1) char = borderChars.v;
+        renderer.setCell(buffer, x + col, y + row, char, fg, bg);
+      }
+    }
+    const centerY = Math.floor(height / 2);
+    let labelX = 1;
+    if (this.align === "center") {
+      labelX = Math.floor((width - this.label.length) / 2);
+    } else if (this.align === "right") {
+      labelX = width - this.label.length - 1;
+    }
+    labelX = Math.max(1, Math.min(labelX, width - this.label.length - 1));
+    for (let i = 0; i < this.label.length; i++) {
+      const charX = x + labelX + i;
+      if (charX >= x + 1 && charX < x + width - 1) {
+        renderer.setCell(buffer, charX, y + centerY, this.label[i], fg, bg);
+      }
+    }
+  }
+}
+class TUILabel extends BaseWidget {
+  constructor(config) {
+    super({ ...config, focusable: false });
+    __publicField(this, "text");
+    __publicField(this, "align");
+    this.text = config.text;
+    this.align = config.align || "left";
+  }
+  /**
+   * Update label text
+   */
+  setText(text) {
+    this.text = text;
+  }
+  /**
+   * Render label to cell buffer
+   */
+  render(buffer, renderer) {
+    if (!this.state.visible) return;
+    const { x, y, width, height } = this.bounds;
+    const style = this.getEffectiveStyle();
+    const fg = style.fg ?? ColorUtils.rgb(200, 200, 200);
+    const bg = style.bg ?? ColorUtils.rgb(0, 0, 0);
+    for (let col = 0; col < width; col++) {
+      for (let row = 0; row < height; row++) {
+        renderer.setCell(buffer, x + col, y + row, " ", fg, bg);
+      }
+    }
+    const centerY = Math.floor(height / 2);
+    let textX = 0;
+    if (this.align === "center") {
+      textX = Math.floor((width - this.text.length) / 2);
+    } else if (this.align === "right") {
+      textX = width - this.text.length;
+    }
+    textX = Math.max(0, Math.min(textX, width - this.text.length));
+    for (let i = 0; i < this.text.length && i < width; i++) {
+      const charX = x + textX + i;
+      if (charX >= x && charX < x + width) {
+        renderer.setCell(buffer, charX, y + centerY, this.text[i], fg, bg);
+      }
+    }
+  }
+}
+class TUICheckbox extends BaseWidget {
+  constructor(config) {
+    super(config);
+    __publicField(this, "label");
+    __publicField(this, "checked");
+    __publicField(this, "toggledThisFrame", false);
+    this.label = config.label;
+    this.checked = config.checked ?? false;
+    this.on("click", () => {
+      this.checked = !this.checked;
+      this.toggledThisFrame = true;
+      this.emit({
+        type: "change",
+        widget: this.id,
+        timestamp: Date.now(),
+        data: { checked: this.checked }
+      });
+    });
+  }
+  /**
+   * Check if checkbox was toggled this frame
+   */
+  wasToggled() {
+    const result = this.toggledThisFrame;
+    this.toggledThisFrame = false;
+    return result;
+  }
+  /**
+   * Get checked state
+   */
+  isChecked() {
+    return this.checked;
+  }
+  /**
+   * Set checked state programmatically
+   */
+  setChecked(checked) {
+    this.checked = checked;
+  }
+  /**
+   * Update label text
+   */
+  setLabel(label) {
+    this.label = label;
+  }
+  /**
+   * Render checkbox to cell buffer
+   */
+  render(buffer, renderer) {
+    if (!this.state.visible) return;
+    const { x, y } = this.bounds;
+    const style = this.getEffectiveStyle();
+    const fg = style.fg ?? ColorUtils.rgb(200, 200, 200);
+    const bg = style.bg ?? ColorUtils.rgb(0, 0, 0);
+    let symbol;
+    if (this.state.focused) {
+      symbol = this.checked ? "《X》" : "《 》";
+    } else {
+      symbol = this.checked ? "[X]" : "[ ]";
+    }
+    for (let i = 0; i < symbol.length; i++) {
+      renderer.setCell(buffer, x + i, y, symbol[i], fg, bg);
+    }
+    const labelStart = x + symbol.length + 1;
+    for (let i = 0; i < this.label.length; i++) {
+      renderer.setCell(buffer, labelStart + i, y, this.label[i], fg, bg);
+    }
+  }
+}
+class TUISlider extends BaseWidget {
+  constructor(config) {
+    super(config);
+    __publicField(this, "label");
+    __publicField(this, "min");
+    __publicField(this, "max");
+    __publicField(this, "step");
+    __publicField(this, "value");
+    __publicField(this, "dragging", false);
+    __publicField(this, "lastValue");
+    this.label = config.label;
+    this.min = config.min;
+    this.max = config.max;
+    this.step = config.step ?? 1;
+    this.value = config.value ?? this.min;
+    this.lastValue = this.value;
+    this.value = Math.max(this.min, Math.min(this.max, this.value));
+  }
+  /**
+   * Update slider state with mouse position
+   * Should be called during input update
+   */
+  updateDrag(mousePos, mouseDown) {
+    if (!this.state.visible || !this.state.enabled) return;
+    if (mouseDown && this.containsPoint(mousePos) && !this.dragging) {
+      this.dragging = true;
+    }
+    if (!mouseDown) {
+      this.dragging = false;
+    }
+    if (this.dragging) {
+      const trackWidth = this.bounds.width - 2;
+      const relX = mousePos.x - (this.bounds.x + 1);
+      if (relX >= 0 && relX <= trackWidth) {
+        const normalizedPos = relX / trackWidth;
+        const range = this.max - this.min;
+        const newValue = this.min + normalizedPos * range;
+        this.value = Math.round(newValue / this.step) * this.step;
+        this.value = Math.max(this.min, Math.min(this.max, this.value));
+        if (this.value !== this.lastValue) {
+          this.lastValue = this.value;
+          this.emit({
+            type: "change",
+            widget: this.id,
+            timestamp: Date.now(),
+            data: { value: this.value }
+          });
+        }
+      }
+    }
+  }
+  /**
+   * Get current slider value
+   */
+  getValue() {
+    return this.value;
+  }
+  /**
+   * Set slider value programmatically
+   */
+  setValue(value) {
+    this.value = Math.max(this.min, Math.min(this.max, value));
+    this.lastValue = this.value;
+  }
+  /**
+   * Render slider to cell buffer
+   */
+  render(buffer, renderer) {
+    if (!this.state.visible) return;
+    const { x, y, width } = this.bounds;
+    const style = this.getEffectiveStyle();
+    const fg = style.fg ?? ColorUtils.rgb(150, 150, 150);
+    const bg = style.bg ?? ColorUtils.rgb(0, 0, 0);
+    const accentColor = style.accentColor ?? ColorUtils.rgb(100, 200, 255);
+    for (let i = 0; i < this.label.length && i < width; i++) {
+      renderer.setCell(buffer, x + i, y, this.label[i], fg, bg);
+    }
+    const trackY = y + 1;
+    const trackWidth = width - 2;
+    const leftBracket = this.state.focused ? "《" : "[";
+    const rightBracket = this.state.focused ? "》" : "]";
+    const trackChar = this.state.focused ? "═" : "─";
+    renderer.setCell(buffer, x, trackY, leftBracket, fg, bg);
+    renderer.setCell(buffer, x + width - 1, trackY, rightBracket, fg, bg);
+    for (let i = 0; i < trackWidth; i++) {
+      renderer.setCell(buffer, x + 1 + i, trackY, trackChar, fg, bg);
+    }
+    const range = this.max - this.min;
+    const normalizedPos = range > 0 ? (this.value - this.min) / range : 0;
+    const handleX = x + 1 + Math.floor(normalizedPos * trackWidth);
+    const handleColor = this.dragging ? ColorUtils.rgb(255, 200, 0) : accentColor;
+    renderer.setCell(buffer, handleX, trackY, "█", handleColor, bg);
+    const valueStr = this.value.toFixed(0);
+    for (let i = 0; i < valueStr.length && i < width; i++) {
+      renderer.setCell(buffer, x + i, y + 2, valueStr[i], fg, bg);
+    }
+  }
+}
+class TUISystem {
+  constructor(renderer) {
+    __publicField(this, "widgetManager");
+    __publicField(this, "inputRouter");
+    __publicField(this, "renderer");
+    __publicField(this, "lastMouseX", 0);
+    __publicField(this, "lastMouseY", 0);
+    __publicField(this, "lastMouseDown", false);
+    this.renderer = renderer;
+    this.widgetManager = new WidgetManager();
+    this.inputRouter = new InputRouter({ widgetManager: this.widgetManager });
+  }
+  /**
+   * Create a button widget
+   */
+  createButton(config) {
+    const button = new TUIButton(config);
+    this.widgetManager.register(button);
+    return button;
+  }
+  /**
+   * Create a label widget
+   */
+  createLabel(config) {
+    const label = new TUILabel(config);
+    this.widgetManager.register(label);
+    return label;
+  }
+  /**
+   * Create a checkbox widget
+   */
+  createCheckbox(config) {
+    const checkbox = new TUICheckbox(config);
+    this.widgetManager.register(checkbox);
+    return checkbox;
+  }
+  /**
+   * Create a slider widget
+   */
+  createSlider(config) {
+    const slider = new TUISlider(config);
+    this.widgetManager.register(slider);
+    return slider;
+  }
+  /**
+   * Update all widgets with current input state
+   * Call this in your update loop
+   */
+  update(mouseX, mouseY, mouseDown, _gridWidth, _gridHeight) {
+    this.lastMouseX = mouseX;
+    this.lastMouseY = mouseY;
+    this.lastMouseDown = mouseDown;
+    const inputCoord = {
+      x: mouseX,
+      y: mouseY,
+      cellX: mouseX,
+      cellY: mouseY
+    };
+    this.inputRouter.update(inputCoord, mouseDown);
+    const sliders = this.widgetManager.getAll().filter((w) => w instanceof TUISlider);
+    for (const slider of sliders) {
+      slider.updateDrag(inputCoord, mouseDown);
+    }
+  }
+  /**
+   * Handle a mouse update immediately (for use in on:input)
+   * This makes quick clicks reliable even if press+release happen between frames.
+   */
+  handleMouse(mouseX, mouseY, mouseDown) {
+    this.update(mouseX, mouseY, mouseDown, 0, 0);
+  }
+  /**
+   * Get last observed mouse state (cell coordinates)
+   */
+  getMouseState() {
+    return { x: this.lastMouseX, y: this.lastMouseY, down: this.lastMouseDown };
+  }
+  /**
+   * Handle keyboard input
+   */
+  handleKey(key, modifiers) {
+    if (this.inputRouter.handleKey(key, modifiers)) {
+      return;
+    }
+    if (key === "Enter" || key === " ") {
+      this.inputRouter.handleActivate();
+    }
+  }
+  /**
+   * Render all visible widgets
+   * Call this in your render loop
+   * @param buffer - Cell buffer to render to (Cell[][])
+   */
+  render(buffer) {
+    const visibleWidgets = this.widgetManager.getVisible();
+    for (const widget of visibleWidgets) {
+      widget.render(buffer, this.renderer);
+    }
+  }
+  /**
+   * Set group visibility
+   */
+  setGroupVisible(groupId, visible) {
+    this.widgetManager.setGroupVisible(groupId, visible);
+  }
+  /**
+   * Clear all widgets
+   */
+  clear() {
+    this.widgetManager.clear();
+  }
+  /**
+   * Get widget manager (for advanced usage)
+   */
+  getWidgetManager() {
+    return this.widgetManager;
+  }
+}
+function createTUIAPI(renderer, getCellBuffer) {
+  let tuiSystem = null;
+  return {
+    /**
+     * Initialize TUI system
+     * Call this in on:init
+     */
+    init() {
+      tuiSystem = new TUISystem(renderer);
+      return tuiSystem;
+    },
+    /**
+     * Get the current TUI system instance
+     */
+    getSystem() {
+      return tuiSystem;
+    },
+    /**
+     * Create a button widget
+     * 
+     * @example
+     * ```javascript
+     * const btn = tui.createButton({
+     *   id: 'myBtn',
+     *   bounds: { x: 10, y: 5, width: 20, height: 3 },
+     *   label: 'Click Me'
+     * });
+     * ```
+     */
+    createButton(config) {
+      if (!tuiSystem) {
+        throw new Error("TUI system not initialized. Call tui.init() first.");
+      }
+      return tuiSystem.createButton(config);
+    },
+    /**
+     * Create a label widget
+     * 
+     * @example
+     * ```javascript
+     * const lbl = tui.createLabel({
+     *   id: 'title',
+     *   bounds: { x: 5, y: 2, width: 30, height: 1 },
+     *   text: 'My App',
+     *   align: 'center'
+     * });
+     * ```
+     */
+    createLabel(config) {
+      if (!tuiSystem) {
+        throw new Error("TUI system not initialized. Call tui.init() first.");
+      }
+      return tuiSystem.createLabel(config);
+    },
+    /**
+     * Create a checkbox widget
+     * 
+     * @example
+     * ```javascript
+     * const chk = tui.createCheckbox({
+     *   id: 'sound',
+     *   bounds: { x: 10, y: 10, width: 20, height: 1 },
+     *   label: 'Enable Sound',
+     *   checked: true
+     * });
+     * ```
+     */
+    createCheckbox(config) {
+      if (!tuiSystem) {
+        throw new Error("TUI system not initialized. Call tui.init() first.");
+      }
+      return tuiSystem.createCheckbox(config);
+    },
+    /**
+     * Create a slider widget
+     * 
+     * @example
+     * ```javascript
+     * const slider = tui.createSlider({
+     *   id: 'volume',
+     *   bounds: { x: 10, y: 15, width: 30, height: 3 },
+     *   label: 'Volume',
+     *   min: 0,
+     *   max: 100,
+     *   value: 50
+     * });
+     * ```
+     */
+    createSlider(config) {
+      if (!tuiSystem) {
+        throw new Error("TUI system not initialized. Call tui.init() first.");
+      }
+      return tuiSystem.createSlider(config);
+    },
+    /**
+     * Update TUI with input state
+     * Call this in on:update
+     * 
+     * @example
+     * ```javascript
+     * tui.update(mouseX, mouseY, mousePressed, width, height);
+     * ```
+     */
+    update(mouseX, mouseY, mouseDown, gridWidth, gridHeight) {
+      if (!tuiSystem) return;
+      tuiSystem.update(mouseX, mouseY, mouseDown, gridWidth, gridHeight);
+    },
+    /**
+     * Handle mouse input immediately (cell coordinates)
+     * Call this in on:input for 'mouse' / 'mouse_move' events.
+     * This avoids missing fast click transitions between frames.
+     */
+    handleMouse(mouseX, mouseY, mouseDown) {
+      if (!tuiSystem) return;
+      tuiSystem.handleMouse(mouseX, mouseY, mouseDown);
+    },
+    /**
+     * Handle keyboard input
+     * Call this in on:input when handling key events
+     * 
+     * @example
+     * ```javascript
+     * tui.handleKey('Tab', { shift: false });
+     * ```
+     */
+    handleKey(key, modifiers) {
+      if (!tuiSystem) return;
+      tuiSystem.handleKey(key, modifiers);
+    },
+    /**
+     * Render all widgets
+     * Call this in on:render
+     * 
+     * @example
+     * ```javascript
+     * tui.render();
+     * ```
+     */
+    render() {
+      if (!tuiSystem) return;
+      const buffer = getCellBuffer();
+      tuiSystem.render(buffer);
+    },
+    /**
+     * Set group visibility
+     * 
+     * @example
+     * ```javascript
+     * tui.setGroupVisible(1, false); // Hide group 1
+     * ```
+     */
+    setGroupVisible(groupId, visible) {
+      if (!tuiSystem) return;
+      tuiSystem.setGroupVisible(groupId, visible);
+    },
+    /**
+     * Clear all widgets
+     */
+    clear() {
+      if (!tuiSystem) return;
+      tuiSystem.clear();
+    },
+    /**
+     * Color utilities
+     * Helpers for creating colors
+     * 
+     * @example
+     * ```javascript
+     * const red = tui.color.rgb(255, 0, 0);
+     * const semiTransparent = tui.color.rgba(255, 0, 0, 128);
+     * ```
+     */
+    color: {
+      rgb: ColorUtils.rgb,
+      rgba: ColorUtils.rgba,
+      from: ColorUtils.from
+    }
+  };
+}
+class WebGPUUIRenderer {
+  constructor(device, atlas, width, height) {
+    __publicField(this, "device");
+    __publicField(this, "atlas");
+    __publicField(this, "textureFormat");
+    __publicField(this, "width");
+    __publicField(this, "height");
+    __publicField(this, "texture");
+    __publicField(this, "rectPipeline");
+    __publicField(this, "textPipeline");
+    __publicField(this, "uniformBuffer");
+    __publicField(this, "rectInstanceBuffer");
+    __publicField(this, "textInstanceBuffer");
+    // Per-instance data
+    // Rect: 8 floats => x,y,w,h + r,g,b,a
+    __publicField(this, "rectData");
+    __publicField(this, "rectCount", 0);
+    // Text: 12 floats => x,y,w,h + r,g,b,a + u,v,uw,uh
+    __publicField(this, "textData");
+    __publicField(this, "textCount", 0);
+    __publicField(this, "clearColor", [0, 0, 0, 0]);
+    this.device = device;
+    this.atlas = atlas;
+    this.width = Math.max(1, Math.floor(width));
+    this.height = Math.max(1, Math.floor(height));
+    this.textureFormat = navigator.gpu.getPreferredCanvasFormat();
+    this.texture = this.createRenderTexture(this.width, this.height);
+    this.uniformBuffer = this.device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+    this.rectInstanceBuffer = this.device.createBuffer({
+      size: 8 * 4 * 4096,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    this.textInstanceBuffer = this.device.createBuffer({
+      size: 12 * 4 * 4096,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    this.rectData = new Float32Array(8 * 4096);
+    this.textData = new Float32Array(12 * 4096);
+    this.rectPipeline = this.createRectPipeline();
+    this.textPipeline = this.createTextPipeline();
+    this.writeUniforms();
+  }
+  getTexture() {
+    return this.texture;
+  }
+  resize(width, height) {
+    const nextWidth = Math.max(1, Math.floor(width));
+    const nextHeight = Math.max(1, Math.floor(height));
+    if (nextWidth === this.width && nextHeight === this.height) return;
+    this.width = nextWidth;
+    this.height = nextHeight;
+    try {
+      this.texture.destroy();
+    } catch {
+    }
+    this.texture = this.createRenderTexture(this.width, this.height);
+    this.writeUniforms();
+  }
+  setClearColor(color) {
+    if (color === void 0 || color === null) {
+      this.clearColor = [0, 0, 0, 0];
+      return;
+    }
+    const [r, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color));
+    this.clearColor = [r, g, b, a];
+  }
+  clearCommands() {
+    this.rectCount = 0;
+    this.textCount = 0;
+  }
+  rect(x, y, w, h, color) {
+    if (w <= 0 || h <= 0) return;
+    if (this.rectCount >= 4096) return;
+    const [r, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color));
+    const o = this.rectCount * 8;
+    this.rectData[o + 0] = x;
+    this.rectData[o + 1] = y;
+    this.rectData[o + 2] = w;
+    this.rectData[o + 3] = h;
+    this.rectData[o + 4] = r;
+    this.rectData[o + 5] = g;
+    this.rectData[o + 6] = b;
+    this.rectData[o + 7] = a;
+    this.rectCount++;
+  }
+  text(text, x, y, color) {
+    if (!text) return;
+    const [r, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color));
+    const charW = this.atlas.getCharWidth();
+    const charH = this.atlas.getCharHeight();
+    let cursorX = x;
+    for (const ch of text) {
+      if (this.textCount >= 4096) break;
+      const glyph = this.atlas.getGlyph(ch);
+      const o = this.textCount * 12;
+      this.textData[o + 0] = cursorX;
+      this.textData[o + 1] = y;
+      this.textData[o + 2] = charW;
+      this.textData[o + 3] = charH;
+      this.textData[o + 4] = r;
+      this.textData[o + 5] = g;
+      this.textData[o + 6] = b;
+      this.textData[o + 7] = a;
+      this.textData[o + 8] = glyph.u;
+      this.textData[o + 9] = glyph.v;
+      this.textData[o + 10] = glyph.w;
+      this.textData[o + 11] = glyph.h;
+      this.textCount++;
+      cursorX += charW;
+    }
+  }
+  /**
+   * Render current UI commands into the offscreen UI texture.
+   * Clears to transparent each frame by default.
+   */
+  flush() {
+    const shouldClear = !(this.clearColor[0] === 0 && this.clearColor[1] === 0 && this.clearColor[2] === 0 && this.clearColor[3] === 0);
+    if (this.rectCount === 0 && this.textCount === 0 && !shouldClear) {
+      return;
+    }
+    if (this.atlas.needsUpload()) {
+      this.atlas.uploadToGPU(this.device);
+    }
+    if (this.rectCount > 0) {
+      const byteCount = this.rectCount * 8 * 4;
+      this.device.queue.writeBuffer(
+        this.rectInstanceBuffer,
+        0,
+        this.rectData.buffer,
+        0,
+        byteCount
+      );
+    }
+    if (this.textCount > 0) {
+      const byteCount = this.textCount * 12 * 4;
+      this.device.queue.writeBuffer(
+        this.textInstanceBuffer,
+        0,
+        this.textData.buffer,
+        0,
+        byteCount
+      );
+    }
+    const commandEncoder = this.device.createCommandEncoder();
+    const pass = commandEncoder.beginRenderPass({
+      colorAttachments: [{
+        view: this.texture.createView(),
+        clearValue: { r: this.clearColor[0], g: this.clearColor[1], b: this.clearColor[2], a: this.clearColor[3] },
+        loadOp: "clear",
+        storeOp: "store"
+      }]
+    });
+    if (this.rectCount > 0) {
+      const rectBindGroup = this.device.createBindGroup({
+        layout: this.rectPipeline.getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: { buffer: this.uniformBuffer } }]
+      });
+      pass.setPipeline(this.rectPipeline);
+      pass.setBindGroup(0, rectBindGroup);
+      pass.setVertexBuffer(0, this.rectInstanceBuffer);
+      pass.draw(6, this.rectCount);
+    }
+    if (this.textCount > 0) {
+      const atlasTexture = this.atlas.getTexture();
+      const atlasSampler = this.atlas.getSampler();
+      if (atlasTexture && atlasSampler) {
+        const textBindGroup = this.device.createBindGroup({
+          layout: this.textPipeline.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: { buffer: this.uniformBuffer } },
+            { binding: 1, resource: atlasTexture.createView() },
+            { binding: 2, resource: atlasSampler }
+          ]
+        });
+        pass.setPipeline(this.textPipeline);
+        pass.setBindGroup(0, textBindGroup);
+        pass.setVertexBuffer(0, this.textInstanceBuffer);
+        pass.draw(6, this.textCount);
+      }
+    }
+    pass.end();
+    this.device.queue.submit([commandEncoder.finish()]);
+    this.clearCommands();
+    this.clearColor = [0, 0, 0, 0];
+  }
+  writeUniforms() {
+    const data = new Float32Array([this.width, this.height, 0, 0]);
+    this.device.queue.writeBuffer(this.uniformBuffer, 0, data);
+  }
+  createRenderTexture(width, height) {
+    return this.device.createTexture({
+      size: { width, height },
+      format: this.textureFormat,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+    });
+  }
+  createRectPipeline() {
+    const shader = this.device.createShaderModule({
+      code: `
+        struct Uniforms { resolution: vec2f }
+        @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+        struct VSOut {
+          @builtin(position) position: vec4f,
+          @location(0) color: vec4f,
+        }
+
+        @vertex
+        fn vs_main(
+          @builtin(vertex_index) vertexIndex: u32,
+          @builtin(instance_index) instanceIndex: u32,
+          @location(0) posSize: vec4f,
+          @location(1) color: vec4f,
+        ) -> VSOut {
+          var quad = array<vec2f, 6>(
+            vec2f(0.0, 0.0),
+            vec2f(1.0, 0.0),
+            vec2f(0.0, 1.0),
+            vec2f(1.0, 0.0),
+            vec2f(1.0, 1.0),
+            vec2f(0.0, 1.0)
+          );
+
+          let x = posSize.x;
+          let y = posSize.y;
+          let w = posSize.z;
+          let h = posSize.w;
+
+          let p = vec2f(x, y) + quad[vertexIndex] * vec2f(w, h);
+
+          var clip = (p / uniforms.resolution) * 2.0 - 1.0;
+          clip.y = -clip.y;
+
+          var out: VSOut;
+          out.position = vec4f(clip, 0.0, 1.0);
+          out.color = color;
+          return out;
+        }
+
+        @fragment
+        fn fs_main(input: VSOut) -> @location(0) vec4f {
+          return input.color;
+        }
+      `
+    });
+    return this.device.createRenderPipeline({
+      layout: "auto",
+      vertex: {
+        module: shader,
+        entryPoint: "vs_main",
+        buffers: [{
+          arrayStride: 32,
+          stepMode: "instance",
+          attributes: [
+            { shaderLocation: 0, offset: 0, format: "float32x4" },
+            { shaderLocation: 1, offset: 16, format: "float32x4" }
+          ]
+        }]
+      },
+      fragment: {
+        module: shader,
+        entryPoint: "fs_main",
+        targets: [{
+          format: this.textureFormat,
+          blend: {
+            color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+            alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" }
+          }
+        }]
+      },
+      primitive: { topology: "triangle-list" }
+    });
+  }
+  createTextPipeline() {
+    const shader = this.device.createShaderModule({
+      code: `
+        struct Uniforms { resolution: vec2f }
+        @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+        @group(0) @binding(1) var fontAtlas: texture_2d<f32>;
+        @group(0) @binding(2) var fontSampler: sampler;
+
+        struct VSOut {
+          @builtin(position) position: vec4f,
+          @location(0) uv: vec2f,
+          @location(1) color: vec4f,
+        }
+
+        @vertex
+        fn vs_main(
+          @builtin(vertex_index) vertexIndex: u32,
+          @builtin(instance_index) instanceIndex: u32,
+          @location(0) posSize: vec4f,
+          @location(1) color: vec4f,
+          @location(2) uvRect: vec4f,
+        ) -> VSOut {
+          var quad = array<vec2f, 6>(
+            vec2f(0.0, 0.0),
+            vec2f(1.0, 0.0),
+            vec2f(0.0, 1.0),
+            vec2f(1.0, 0.0),
+            vec2f(1.0, 1.0),
+            vec2f(0.0, 1.0)
+          );
+
+          let x = posSize.x;
+          let y = posSize.y;
+          let w = posSize.z;
+          let h = posSize.w;
+
+          let p = vec2f(x, y) + quad[vertexIndex] * vec2f(w, h);
+
+          var clip = (p / uniforms.resolution) * 2.0 - 1.0;
+          clip.y = -clip.y;
+
+          var out: VSOut;
+          out.position = vec4f(clip, 0.0, 1.0);
+          out.uv = uvRect.xy + quad[vertexIndex] * uvRect.zw;
+          out.color = color;
+          return out;
+        }
+
+        @fragment
+        fn fs_main(input: VSOut) -> @location(0) vec4f {
+          let a = textureSample(fontAtlas, fontSampler, input.uv).a;
+          return vec4f(input.color.rgb, input.color.a * a);
+        }
+      `
+    });
+    return this.device.createRenderPipeline({
+      layout: "auto",
+      vertex: {
+        module: shader,
+        entryPoint: "vs_main",
+        buffers: [{
+          arrayStride: 48,
+          stepMode: "instance",
+          attributes: [
+            { shaderLocation: 0, offset: 0, format: "float32x4" },
+            { shaderLocation: 1, offset: 16, format: "float32x4" },
+            { shaderLocation: 2, offset: 32, format: "float32x4" }
+          ]
+        }]
+      },
+      fragment: {
+        module: shader,
+        entryPoint: "fs_main",
+        targets: [{
+          format: this.textureFormat,
+          blend: {
+            color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+            alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" }
+          }
+        }]
+      },
+      primitive: { topology: "triangle-list" }
+    });
+  }
+}
 class StorieEngine {
   constructor(canvas, config = {}) {
     // Core systems
     __publicField(this, "layers");
+    __publicField(this, "moduleLoader");
     __publicField(this, "input");
     __publicField(this, "renderer");
+    __publicField(this, "compositor", null);
     __publicField(this, "sandbox");
+    // Native browser APIs (shared instances)
+    __publicField(this, "audioContext");
+    __publicField(this, "canvas2DContext", null);
+    __publicField(this, "offscreenCanvas2D", null);
+    __publicField(this, "webglContext", null);
+    __publicField(this, "webgpuDevice", null);
+    // WebGPU UI (optional)
+    __publicField(this, "webgpuUIRenderer", null);
     // Theme system
     __publicField(this, "currentTheme");
     __publicField(this, "styleSheet");
@@ -8224,6 +11401,7 @@ class StorieEngine {
     __publicField(this, "deltaTime", 0);
     __publicField(this, "lastFrameTime", 0);
     __publicField(this, "running", false);
+    // (Reserved for future one-time debug/perf toggles)
     // Documents
     __publicField(this, "documents", /* @__PURE__ */ new Map());
     __publicField(this, "activeDocumentId", null);
@@ -8240,6 +11418,7 @@ class StorieEngine {
     this.height = config.height || 24;
     this.currentTheme = getTheme("neotopia");
     this.styleSheet = applyTheme(this.currentTheme);
+    this.audioContext = new AudioContext();
     this.layers = new LayerStack(this.width, this.height);
     this.input = new InputManager(canvas);
     const preferWebGPU = config.preferWebGPU !== false;
@@ -8247,7 +11426,10 @@ class StorieEngine {
       console.log("✓ WebGPU available, will attempt initialization");
       this.renderer = new WebGPURenderer(canvas, {
         fontFamily: config.fontFamily,
-        fontSize: config.fontSize
+        fontSize: config.fontSize,
+        // When WebGPU is available we initialize the compositor, which expects
+        // the terminal renderer to render into an offscreen texture.
+        renderToTexture: true
       });
     } else {
       console.log("✓ Using Canvas2D renderer");
@@ -8257,6 +11439,7 @@ class StorieEngine {
       });
     }
     this.renderer.resize(this.width, this.height);
+    this.moduleLoader = new ModuleLoader(this, config.modules);
     const api = this.createUserAPI();
     this.sandbox = new ScriptSandbox(api);
     this.setupEventListeners();
@@ -8264,6 +11447,112 @@ class StorieEngine {
     console.log(`  Grid: ${this.width}x${this.height}`);
     console.log(`  Renderer: ${this.renderer.constructor.name}`);
     console.log(`  Theme: neotopia (default)`);
+    console.log(`  Modules: ready for dynamic loading`);
+    console.log("  Audio: Web Audio API ready");
+    console.log("  Canvas2D: lazy (created on first use)");
+  }
+  /**
+   * Initialize Canvas 2D API with offscreen canvas for user drawing
+   */
+  ensureCanvas2D() {
+    if (this.canvas2DContext && this.offscreenCanvas2D) {
+      return this.canvas2DContext;
+    }
+    const offscreen = new OffscreenCanvas(800, 600);
+    const ctx = offscreen.getContext("2d");
+    if (!ctx) {
+      console.warn("Failed to create Canvas 2D offscreen context");
+      return null;
+    }
+    this.canvas2DContext = ctx;
+    this.offscreenCanvas2D = offscreen;
+    if (this.compositor) {
+      this.compositor.registerLayer("canvas2d", {
+        canvas: this.offscreenCanvas2D,
+        width: offscreen.width,
+        height: offscreen.height,
+        zIndex: 10
+      });
+    }
+    console.log("✓ Canvas 2D offscreen canvas created (800x600)");
+    return ctx;
+  }
+  /**
+   * Initialize Compositor (WebGPU only)
+   */
+  async initCompositor() {
+    if (!(this.renderer instanceof WebGPURenderer)) return;
+    const device = this.renderer.getContext().getDevice();
+    if (!device) {
+      console.warn("Failed to get WebGPU device for compositor");
+      return;
+    }
+    this.compositor = new Compositor(device, this.canvas);
+    await this.compositor.init();
+    const terminalTexture = this.renderer.getRenderTexture();
+    if (terminalTexture) {
+      this.compositor.registerLayer("terminal", {
+        texture: terminalTexture,
+        width: this.canvas.width,
+        height: this.canvas.height,
+        zIndex: 0
+        // Terminal at back
+      });
+    }
+    console.log("✓ Compositor initialized (terminal layer)");
+  }
+  ensureWebGPUUI() {
+    if (!(this.renderer instanceof WebGPURenderer)) return null;
+    if (!this.compositor) return null;
+    if (this.webgpuUIRenderer) return this.webgpuUIRenderer;
+    const device = this.renderer.getContext().getDevice();
+    if (!device) return null;
+    const atlas = this.renderer.getAtlas();
+    const ui = new WebGPUUIRenderer(device, atlas, this.canvas.width, this.canvas.height);
+    this.webgpuUIRenderer = ui;
+    this.compositor.registerLayer("ui", {
+      texture: ui.getTexture(),
+      width: this.canvas.width,
+      height: this.canvas.height,
+      zIndex: 20
+    });
+    return ui;
+  }
+  /**
+   * Get or initialize WebGL context (lazy initialization)
+   */
+  getWebGLContext() {
+    if (!this.webglContext) {
+      const tempCanvas = document.createElement("canvas");
+      this.webglContext = tempCanvas.getContext("webgl");
+      if (!this.webglContext) {
+        console.warn("WebGL not available in this browser");
+      }
+    }
+    return this.webglContext;
+  }
+  /**
+   * Initialize WebGPU (lazy initialization, async)
+   */
+  async initWebGPU() {
+    if (this.webgpuDevice) return true;
+    if (!navigator.gpu) {
+      console.warn("WebGPU not available in this browser");
+      return false;
+    }
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) {
+        console.warn("No WebGPU adapter available");
+        return false;
+      }
+      this.webgpuDevice = await adapter.requestDevice();
+      console.log("✓ WebGPU device created for user API");
+      return true;
+    } catch (error) {
+      console.error("Failed to initialize WebGPU:", error);
+      return false;
+    }
   }
   /**
    * Create the API surface exposed to user code
@@ -8345,33 +11634,75 @@ class StorieEngine {
       },
       mouse: {
         x: () => {
-          const charWidth = this.renderer.getWidth() / this.width;
+          const rect = this.canvas.getBoundingClientRect();
+          const charWidth = rect.width / this.width;
           return Math.floor(this.input.getMouseX() / charWidth);
         },
         y: () => {
-          const charHeight = this.renderer.getHeight() / this.height;
+          const rect = this.canvas.getBoundingClientRect();
+          const charHeight = rect.height / this.height;
           return Math.floor(this.input.getMouseY() / charHeight);
         },
         down: (button = 0) => this.input.isMouseDown(button),
         clicked: (button = 0) => this.input.isMouseClicked(button)
       },
+      // Retained-mode TUI API
+      tui: createTUIAPI(
+        // Use the WebGPU terminal renderer when available; otherwise provide a minimal shim
+        this.renderer instanceof WebGPURenderer ? this.renderer.getTerminalRenderer() : {
+          setCell: (buffer, x, y, char, fg, bg) => {
+            var _a;
+            if (!((_a = buffer == null ? void 0 : buffer[y]) == null ? void 0 : _a[x])) return;
+            const cell = buffer[y][x];
+            cell.char = char;
+            if (fg !== void 0) cell.fg = fg;
+            if (bg !== void 0) cell.bg = bg;
+          }
+        },
+        () => this.layers.getActive().buffer
+      ),
       // Theme API
       getStyle: (name) => this.getStyle(name),
       theme: this.currentTheme,
+      // Module API
+      modules: {
+        load: async (name, options) => {
+          return await this.moduleLoader.load(name, options);
+        },
+        loadAll: async (names, options) => {
+          return await this.moduleLoader.loadAll(names, options);
+        },
+        isLoaded: (name) => {
+          return this.moduleLoader.isLoaded(name);
+        },
+        isLoading: (name) => {
+          return this.moduleLoader.isLoading(name);
+        },
+        get: (name) => {
+          return this.moduleLoader.get(name);
+        },
+        unload: async (name) => {
+          return await this.moduleLoader.unload(name);
+        },
+        getMetadata: (name) => {
+          return this.moduleLoader.getMetadata(name);
+        },
+        on: (event, callback) => {
+          this.moduleLoader.on(event, callback);
+        }
+      },
       // Global accessors (for convenience)
       get mouseX() {
-        const charWidth = engine.renderer.getWidth() / engine.width;
+        const rect = engine.canvas.getBoundingClientRect();
+        const charWidth = rect.width / engine.width;
         const pixelX = engine.input.getMouseX();
-        const result = Math.floor(pixelX / charWidth);
-        console.log(`🔍 mouseX getter: pixelX=${pixelX}, charWidth=${charWidth}, result=${result}`);
-        return result;
+        return Math.floor(pixelX / charWidth);
       },
       get mouseY() {
-        const charHeight = engine.renderer.getHeight() / engine.height;
+        const rect = engine.canvas.getBoundingClientRect();
+        const charHeight = rect.height / engine.height;
         const pixelY = engine.input.getMouseY();
-        const result = Math.floor(pixelY / charHeight);
-        console.log(`🔍 mouseY getter: pixelY=${pixelY}, charHeight=${charHeight}, result=${result}`);
-        return result;
+        return Math.floor(pixelY / charHeight);
       },
       get termWidth() {
         return engine.width;
@@ -8382,24 +11713,480 @@ class StorieEngine {
       // Read-only state
       getFrame: () => this.frameCount,
       getTime: () => this.elapsedTime,
-      getDelta: () => this.deltaTime
+      getDelta: () => this.deltaTime,
+      // === NATIVE BROWSER APIs ===
+      // Web Audio API (Phase 1) - Full exposure with shared instance
+      audio: {
+        // === SHARED INSTANCE (Full Web Audio API) ===
+        context: this.audioContext,
+        // === HELPERS (Use same AudioContext) ===
+        playTone: (frequency, duration, volume = 0.5) => {
+          const osc = this.audioContext.createOscillator();
+          const gain = this.audioContext.createGain();
+          osc.frequency.value = frequency;
+          gain.gain.value = volume;
+          osc.connect(gain);
+          gain.connect(this.audioContext.destination);
+          osc.start();
+          osc.stop(this.audioContext.currentTime + duration);
+          return { osc, gain };
+        },
+        loadSound: async (url) => {
+          const response = await fetch(url);
+          const arrayBuffer = await response.arrayBuffer();
+          return await this.audioContext.decodeAudioData(arrayBuffer);
+        },
+        playBuffer: (buffer, options = {}) => {
+          const source = this.audioContext.createBufferSource();
+          const gain = this.audioContext.createGain();
+          source.buffer = buffer;
+          source.loop = options.loop || false;
+          source.playbackRate.value = options.playbackRate || 1;
+          gain.gain.value = options.volume !== void 0 ? options.volume : 1;
+          source.connect(gain);
+          gain.connect(this.audioContext.destination);
+          source.start();
+          return source;
+        },
+        // === RAW API SHORTCUTS (Use same AudioContext) ===
+        createOscillator: () => this.audioContext.createOscillator(),
+        createGain: () => this.audioContext.createGain(),
+        createBiquadFilter: () => this.audioContext.createBiquadFilter(),
+        createDelay: () => this.audioContext.createDelay(),
+        createConvolver: () => this.audioContext.createConvolver(),
+        createDynamicsCompressor: () => this.audioContext.createDynamicsCompressor(),
+        createAnalyser: () => this.audioContext.createAnalyser(),
+        createBufferSource: () => this.audioContext.createBufferSource(),
+        createPanner: () => this.audioContext.createPanner(),
+        createStereoPanner: () => this.audioContext.createStereoPanner(),
+        createWaveShaper: () => this.audioContext.createWaveShaper(),
+        // === PROPERTIES ===
+        get currentTime() {
+          return engine.audioContext.currentTime;
+        },
+        get sampleRate() {
+          return engine.audioContext.sampleRate;
+        },
+        get destination() {
+          return engine.audioContext.destination;
+        },
+        get state() {
+          return engine.audioContext.state;
+        }
+      },
+      // Canvas 2D API (Phase 2) - Full exposure with shared instance
+      canvas2d: {
+        // === SHARED INSTANCE ===
+        get context() {
+          return engine.ensureCanvas2D();
+        },
+        // === HELPERS ===
+        clear: (color) => {
+          const ctx = engine.ensureCanvas2D();
+          const canvas = engine.offscreenCanvas2D;
+          if (!ctx || !canvas) return;
+          if (color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+          } else {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+          }
+        },
+        drawRect: (x, y, w, h, color, filled = true) => {
+          const ctx = engine.ensureCanvas2D();
+          if (!ctx) return;
+          ctx.fillStyle = color;
+          ctx.strokeStyle = color;
+          if (filled) {
+            ctx.fillRect(x, y, w, h);
+          } else {
+            ctx.strokeRect(x, y, w, h);
+          }
+        },
+        drawCircle: (x, y, radius, color, filled = true) => {
+          const ctx = engine.ensureCanvas2D();
+          if (!ctx) return;
+          ctx.fillStyle = color;
+          ctx.strokeStyle = color;
+          ctx.beginPath();
+          ctx.arc(x, y, radius, 0, Math.PI * 2);
+          if (filled) {
+            ctx.fill();
+          } else {
+            ctx.stroke();
+          }
+        },
+        drawLine: (x1, y1, x2, y2, color, lineWidth = 1) => {
+          const ctx = engine.ensureCanvas2D();
+          if (!ctx) return;
+          ctx.strokeStyle = color;
+          ctx.lineWidth = lineWidth;
+          ctx.beginPath();
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.stroke();
+        },
+        drawImage: (image, x, y, w, h) => {
+          const ctx = engine.ensureCanvas2D();
+          if (!ctx) return;
+          if (w !== void 0 && h !== void 0) {
+            ctx.drawImage(image, x, y, w, h);
+          } else {
+            ctx.drawImage(image, x, y);
+          }
+        },
+        text: (text, x, y, color, font = "16px sans-serif") => {
+          const ctx = engine.ensureCanvas2D();
+          if (!ctx) return;
+          ctx.fillStyle = color;
+          ctx.font = font;
+          ctx.fillText(text, x, y);
+        },
+        loadImage: async (url) => {
+          return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = url;
+          });
+        },
+        // === CONVENIENCE PROPERTIES ===
+        get width() {
+          var _a;
+          engine.ensureCanvas2D();
+          return ((_a = engine.offscreenCanvas2D) == null ? void 0 : _a.width) || 0;
+        },
+        get height() {
+          var _a;
+          engine.ensureCanvas2D();
+          return ((_a = engine.offscreenCanvas2D) == null ? void 0 : _a.height) || 0;
+        }
+      },
+      // WebGPU UI API (GPU-native immediate-mode helpers)
+      ui: {
+        pointer: {
+          x: () => engine.input.getMouseX(),
+          y: () => engine.input.getMouseY(),
+          down: (button = 0) => engine.input.isMouseDown(button),
+          clicked: (button = 0) => engine.input.isMouseClicked(button)
+        },
+        metrics: {
+          get canvasWidth() {
+            return engine.canvas.width;
+          },
+          get canvasHeight() {
+            return engine.canvas.height;
+          },
+          get charWidth() {
+            return engine.renderer instanceof WebGPURenderer ? engine.renderer.getAtlas().getCharWidth() : 0;
+          },
+          get charHeight() {
+            return engine.renderer instanceof WebGPURenderer ? engine.renderer.getAtlas().getCharHeight() : 0;
+          }
+        },
+        clear: (color) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.setClearColor(color);
+        },
+        rect: (x, y, w, h, color) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.rect(x, y, w, h, color);
+        },
+        text: (text, x, y, color) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.text(text, x, y, color);
+        },
+        button: (_id, x, y, w, h, label) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return false;
+          const mx = engine.input.getMouseX();
+          const my = engine.input.getMouseY();
+          const hovered = mx >= x && mx < x + w && my >= y && my < y + h;
+          const clicked = hovered && engine.input.isMouseClicked(0);
+          const base = engine.getStyle("button");
+          const border = engine.getStyle("border");
+          const fg = base.fg;
+          const bg = hovered ? engine.currentTheme.accent1 : base.bg;
+          ui.rect(x, y, w, h, bg);
+          ui.rect(x, y, w, 1, border.fg);
+          ui.rect(x, y + h - 1, w, 1, border.fg);
+          ui.rect(x, y, 1, h, border.fg);
+          ui.rect(x + w - 1, y, 1, h, border.fg);
+          const atlas = engine.renderer instanceof WebGPURenderer ? engine.renderer.getAtlas() : null;
+          const charW = atlas ? atlas.getCharWidth() : 10;
+          const charH = atlas ? atlas.getCharHeight() : 16;
+          const labelW = label.length * charW;
+          const tx = x + Math.max(0, (w - labelW) / 2);
+          const ty = y + Math.max(0, (h - charH) / 2);
+          ui.text(label, tx, ty, fg);
+          return clicked;
+        },
+        colors: {
+          rgb: ColorUtils.rgb,
+          rgba: ColorUtils.rgba,
+          from: ColorUtils.from
+        },
+        get available() {
+          return engine.renderer instanceof WebGPURenderer;
+        }
+      },
+      // WebGL API (Phase 3) - Selective exposure with shared context
+      webgl: {
+        // === SHARED INSTANCE (lazy init) ===
+        get context() {
+          return engine.getWebGLContext();
+        },
+        // === HELPERS ===
+        createShader: (type, source) => {
+          const gl = this.getWebGLContext();
+          if (!gl) return null;
+          const shaderType = type === "vertex" ? gl.VERTEX_SHADER : gl.FRAGMENT_SHADER;
+          const shader = gl.createShader(shaderType);
+          if (!shader) return null;
+          gl.shaderSource(shader, source);
+          gl.compileShader(shader);
+          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            console.error("Shader compile error:", gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
+            return null;
+          }
+          return shader;
+        },
+        createProgram: (vertexShader, fragmentShader) => {
+          const gl = this.getWebGLContext();
+          if (!gl) return null;
+          const program = gl.createProgram();
+          if (!program) return null;
+          gl.attachShader(program, vertexShader);
+          gl.attachShader(program, fragmentShader);
+          gl.linkProgram(program);
+          if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.error("Program link error:", gl.getProgramInfoLog(program));
+            gl.deleteProgram(program);
+            return null;
+          }
+          return program;
+        },
+        get available() {
+          return engine.getWebGLContext() !== null;
+        }
+      },
+      // WebGPU API (Phase 4) - Controlled access with safety guardrails
+      webgpu: {
+        // === CONTROLLED DEVICE ACCESS ===
+        get device() {
+          return engine.webgpuDevice;
+        },
+        get available() {
+          return engine.webgpuDevice !== null;
+        },
+        // === INITIALIZATION ===
+        init: async () => {
+          return await engine.initWebGPU();
+        },
+        // === WEBGPU CONSTANTS ===
+        // Buffer usage flags
+        get GPUBufferUsage() {
+          return typeof GPUBufferUsage !== "undefined" ? GPUBufferUsage : {
+            MAP_READ: 1,
+            MAP_WRITE: 2,
+            COPY_SRC: 4,
+            COPY_DST: 8,
+            INDEX: 16,
+            VERTEX: 32,
+            UNIFORM: 64,
+            STORAGE: 128,
+            INDIRECT: 256,
+            QUERY_RESOLVE: 512
+          };
+        },
+        // Texture usage flags
+        get GPUTextureUsage() {
+          return typeof GPUTextureUsage !== "undefined" ? GPUTextureUsage : {
+            COPY_SRC: 1,
+            COPY_DST: 2,
+            TEXTURE_BINDING: 4,
+            STORAGE_BINDING: 8,
+            RENDER_ATTACHMENT: 16
+          };
+        },
+        // Shader stage flags
+        get GPUShaderStage() {
+          return typeof GPUShaderStage !== "undefined" ? GPUShaderStage : {
+            VERTEX: 1,
+            FRAGMENT: 2,
+            COMPUTE: 4
+          };
+        },
+        // === SAFE HELPERS WITH GUARDRAILS ===
+        createBuffer: (size, usage) => {
+          if (!engine.webgpuDevice) return null;
+          const MAX_BUFFER_SIZE = 256 * 1024 * 1024;
+          if (size > MAX_BUFFER_SIZE) {
+            console.error("Buffer size exceeds maximum allowed:", MAX_BUFFER_SIZE);
+            return null;
+          }
+          return engine.webgpuDevice.createBuffer({ size, usage });
+        },
+        createShaderModule: (code) => {
+          if (!engine.webgpuDevice) return null;
+          return engine.webgpuDevice.createShaderModule({ code });
+        },
+        createTexture: (width, height, format = "rgba8unorm") => {
+          if (!engine.webgpuDevice) return null;
+          const MAX_DIMENSION = 8192;
+          if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+            console.error("Texture dimensions exceed maximum:", MAX_DIMENSION);
+            return null;
+          }
+          return engine.webgpuDevice.createTexture({
+            size: { width, height },
+            format,
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+          });
+        }
+      },
+      // Compositor API (Phase 1: Auto-compositing, future: manual mode)
+      compositor: {
+        // Current mode
+        get mode() {
+          var _a;
+          return ((_a = engine.compositor) == null ? void 0 : _a.mode) || "auto";
+        },
+        // Set compositing mode
+        setMode: (mode) => {
+          if (engine.compositor) {
+            engine.compositor.setMode(mode);
+          } else {
+            console.warn("Compositor not available (WebGPU not initialized)");
+          }
+        },
+        // Get layer configuration
+        get layers() {
+          if (!engine.compositor) return {};
+          const layersObj = {};
+          engine.compositor.layers.forEach((layer, name) => {
+            layersObj[name] = {
+              opacity: layer.opacity,
+              blendMode: layer.blendMode,
+              enabled: layer.enabled,
+              zIndex: layer.zIndex
+            };
+          });
+          return layersObj;
+        },
+        // Manual compositing methods (for future Phase 2)
+        clear: (color) => {
+          if (engine.compositor && engine.compositor.mode === "manual") {
+            engine.compositor.clear(color);
+          }
+        },
+        blit: (layerName, options) => {
+          if (engine.compositor && engine.compositor.mode === "manual") {
+            const layer = engine.compositor.layers.get(layerName);
+            if (layer) {
+              engine.compositor.blit(layer, options);
+            }
+          }
+        },
+        present: () => {
+          if (engine.compositor && engine.compositor.mode === "manual") {
+            engine.compositor.present();
+          }
+        },
+        // Phase 3: Custom Contexts
+        createContext: (name, options) => {
+          if (!engine.compositor) {
+            console.warn("Compositor not available (WebGPU not initialized)");
+            return null;
+          }
+          return engine.compositor.createContext(name, options);
+        },
+        removeLayer: (name) => {
+          if (!engine.compositor) {
+            console.warn("Compositor not available (WebGPU not initialized)");
+            return false;
+          }
+          return engine.compositor.removeLayer(name);
+        },
+        // Phase 5: Shader Pipeline
+        loadEffect: async (name, url) => {
+          if (!engine.compositor) {
+            throw new Error("Compositor not available (WebGPU not initialized)");
+          }
+          await engine.compositor.loadEffect(name, url);
+        },
+        buildPipeline: async (effects) => {
+          if (!engine.compositor) {
+            throw new Error("Compositor not available (WebGPU not initialized)");
+          }
+          await engine.compositor.buildPipeline(effects);
+        },
+        setPipelineEnabled: (enabled) => {
+          if (!engine.compositor) {
+            console.warn("Compositor not available (WebGPU not initialized)");
+            return;
+          }
+          engine.compositor.setPipelineEnabled(enabled);
+        },
+        setEffectUniform: (effectName, uniformName, value) => {
+          if (!engine.compositor) {
+            console.warn("Compositor not available (WebGPU not initialized)");
+            return;
+          }
+          engine.compositor.setEffectUniform(effectName, uniformName, value);
+        },
+        getEffects: () => {
+          if (!engine.compositor) {
+            return [];
+          }
+          return engine.compositor.getEffects();
+        },
+        hasEffect: (name) => {
+          if (!engine.compositor) {
+            return false;
+          }
+          return engine.compositor.hasEffect(name);
+        },
+        // Check if compositor is available
+        get available() {
+          return engine.compositor !== null;
+        }
+      }
     };
   }
   /**
    * Load a markdown document and execute its code with lifecycle hooks
    */
-  loadMarkdown(documentId, markdown) {
+  async loadMarkdown(documentId, markdown) {
     var _a;
     try {
       console.log(`Loading document: ${documentId}`);
       const parsed = parseMarkdown(markdown);
       console.log(`  Found ${parsed.sections.length} sections`);
       console.log(`  Found ${parsed.codeBlocks.length} code blocks`);
+      if (parsed.metadata.modules) {
+        const modules = Array.isArray(parsed.metadata.modules) ? parsed.metadata.modules : [parsed.metadata.modules];
+        console.log(`  Loading ${modules.length} module(s):`, modules);
+        try {
+          await this.moduleLoader.loadAll(modules);
+          console.log(`  ✓ All modules loaded successfully`);
+        } catch (error) {
+          console.error(`  ✗ Failed to load modules:`, error);
+        }
+      }
       if (parsed.metadata.theme) {
         const themeName = String(parsed.metadata.theme).toLowerCase().replace(/['"]/g, "");
         this.currentTheme = getTheme(themeName);
         this.styleSheet = applyTheme(this.currentTheme);
         console.log(`  Theme: ${themeName}`);
+      }
+      const frontmatterKeys = Object.keys(parsed.metadata);
+      if (frontmatterKeys.length > 0) {
+        console.log(`  Exposed ${frontmatterKeys.length} frontmatter variable(s) as globals:`, frontmatterKeys.join(", "));
       }
       const jsBlocks = parsed.codeBlocks.filter(
         (block) => block.lang === "javascript" || block.lang === "js"
@@ -8436,11 +12223,11 @@ class StorieEngine {
       let scopeVarNames = Object.keys(currentScope).filter((k) => !["init", "update", "render", "input"].includes(k));
       if (scopeVarNames.length > 0 && globalBlocks.length > 0) {
         console.log(`  Re-executing global blocks to create closures for ${scopeVarNames.length} variables`);
-        const exports2 = scopeVarNames.map((k) => `  scope.${k} = ${k};`).join("\n");
+        const exports$1 = scopeVarNames.map((k) => `  try { scope.${k} = ${k}; } catch (e) {}`).join("\n");
         for (const code of globalBlocks) {
           const wrappedCode = `(function() {
 ${code}
-${exports2}
+${exports$1}
 })();`;
           this.sandbox.executeCodeBlock(documentId, wrappedCode, true);
         }
@@ -8448,46 +12235,55 @@ ${exports2}
       currentScope = this.sandbox.getScope(documentId) || {};
       scopeVarNames = Object.keys(currentScope).filter((k) => !["init", "update", "render", "input"].includes(k));
       console.log(`  Scope variables:`, scopeVarNames);
+      console.log(`  Scope values:`, scopeVarNames.map((k) => `${k}=${JSON.stringify(currentScope[k])}`).join(", "));
       const hasInit = typeof currentScope.init === "function";
       const hasUpdate = typeof currentScope.update === "function";
       const hasRender = typeof currentScope.render === "function";
       const hasInput = typeof currentScope.input === "function";
-      const imports = scopeVarNames.length > 0 ? scopeVarNames.map((k) => `  let ${k} = scope.${k};`).join("\n") : "";
-      const exports$1 = scopeVarNames.length > 0 ? scopeVarNames.map((k) => `  scope.${k} = ${k};`).join("\n") : "";
+      const importVars = scopeVarNames.length > 0 ? `  let {${scopeVarNames.join(", ")}} = scope;` : "";
+      const captureVars = scopeVarNames.length > 0 ? `  const __scopeBefore = {${scopeVarNames.map((k) => `${k}: scope.${k}`).join(", ")}};` : "";
+      const exportVars = scopeVarNames.length > 0 ? scopeVarNames.map((k) => `  if (scope.${k} === __scopeBefore.${k}) { scope.${k} = ${k}; }`).join("\n") : "";
       if (!hasInit && initBlocks.length > 0) {
-        console.log(`  Creating init handler from ${initBlocks.length} blocks`);
+        console.log(`  Creating init handler from ${initBlocks.length} blocks with ${scopeVarNames.length} imports`);
         const initCode = `scope.init = function() {
-${imports}
+${importVars}
+${captureVars}
 ${initBlocks.join("\n\n")}
-${exports$1}
+${exportVars}
 };`;
-        console.log("🔍 Generated init handler (first 500 chars):", initCode.substring(0, 500));
         this.sandbox.executeCodeBlock(documentId, initCode, true);
       }
       if (!hasUpdate && updateBlocks.length > 0) {
-        console.log(`  Creating update handler from ${updateBlocks.length} blocks`);
+        console.log(`  Creating update handler from ${updateBlocks.length} blocks with ${scopeVarNames.length} imports`);
         const updateCode = `scope.update = function(delta) {
-${imports}
+${importVars}
+${captureVars}
 ${updateBlocks.join("\n\n")}
-${exports$1}
+${exportVars}
 };`;
+        console.log(`  Generated update wrapper (first 500 chars):`, updateCode.substring(0, 500));
         this.sandbox.executeCodeBlock(documentId, updateCode, true);
       }
       if (!hasRender && renderBlocks.length > 0) {
-        console.log(`  Creating render handler from ${renderBlocks.length} blocks`);
+        console.log(`  Creating render handler from ${renderBlocks.length} blocks with ${scopeVarNames.length} imports`);
         const renderCode = `scope.render = function() {
-${imports}
+${importVars}
+${captureVars}
 ${renderBlocks.join("\n\n")}
-${exports$1}
+${exportVars}
 };`;
+        console.log("🔍 Generated render handler (first 300 chars):", renderCode.substring(0, 300));
         this.sandbox.executeCodeBlock(documentId, renderCode, true);
+        const verifyScope = this.sandbox.getScope(documentId);
+        console.log("🔍 After execution, scope.render type:", typeof (verifyScope == null ? void 0 : verifyScope.render));
       }
       if (!hasInput && inputBlocks.length > 0) {
-        console.log(`  Creating input handler from ${inputBlocks.length} blocks`);
+        console.log(`  Creating input handler from ${inputBlocks.length} blocks with ${scopeVarNames.length} imports`);
         const inputCode = `scope.input = function(event) {
-${imports}
+${importVars}
+${captureVars}
 ${inputBlocks.join("\n\n")}
-${exports$1}
+${exportVars}
 };`;
         this.sandbox.executeCodeBlock(documentId, inputCode, true);
       }
@@ -8504,6 +12300,12 @@ ${exports$1}
       if (!this.activeDocumentId) {
         this.activeDocumentId = documentId;
       }
+      console.log("🔍 Extracted handlers:", {
+        init: typeof (handlers == null ? void 0 : handlers.init),
+        update: typeof (handlers == null ? void 0 : handlers.update),
+        render: typeof (handlers == null ? void 0 : handlers.render),
+        input: typeof (handlers == null ? void 0 : handlers.input)
+      });
       if (handlers.init) {
         console.log("  Calling init handler");
         try {
@@ -8548,6 +12350,9 @@ ${exports$1}
         const fontSize = this.renderer.fontSize;
         this.renderer = new Canvas2DRenderer(canvas, { fontFamily, fontSize });
         this.renderer.resize(this.width, this.height);
+      } else if (this.renderer instanceof WebGPURenderer) {
+        await this.initCompositor();
+        this.ensureWebGPUUI();
       }
     }
     this.running = true;
@@ -8567,13 +12372,28 @@ ${exports$1}
    */
   mainLoop(timestamp) {
     if (!this.running) return;
-    this.deltaTime = (timestamp - this.lastFrameTime) / 1e3;
-    this.lastFrameTime = timestamp;
-    this.elapsedTime += this.deltaTime;
-    this.update();
-    this.render();
-    const composited = this.layers.composite();
-    this.renderer.render(composited);
+    try {
+      this.deltaTime = (timestamp - this.lastFrameTime) / 1e3;
+      this.lastFrameTime = timestamp;
+      this.elapsedTime += this.deltaTime;
+      this.update();
+      this.render();
+      if (this.compositor) {
+        const composited = this.layers.composite();
+        this.renderer.render(composited);
+        if (this.webgpuUIRenderer) {
+          this.webgpuUIRenderer.flush();
+        }
+        if (this.compositor.mode === "auto") {
+          this.compositor.autoComposite();
+        }
+      } else {
+        const composited = this.layers.composite();
+        this.renderer.render(composited);
+      }
+    } catch (error) {
+      console.error("[Engine] Uncaught error in mainLoop:", error);
+    }
     this.input.endFrame();
     this.frameCount++;
     requestAnimationFrame((ts) => this.mainLoop(ts));
@@ -8583,6 +12403,7 @@ ${exports$1}
    */
   update() {
     var _a;
+    this.moduleLoader.update(this.deltaTime);
     const doc = this.getActiveDocument();
     if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.update) {
       try {
@@ -8596,15 +12417,25 @@ ${exports$1}
    * Render phase - call user's render handler
    */
   render() {
-    var _a;
     const doc = this.getActiveDocument();
-    if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.render) {
-      try {
-        doc.handlers.render();
-      } catch (error) {
-        console.error("Error in render handler:", error);
-      }
+    if (!doc) {
+      if (this.frameCount < 3) console.log("🎨 No active document");
+      return;
     }
+    if (!doc.handlers) {
+      if (this.frameCount < 3) console.log("🎨 No handlers object");
+      return;
+    }
+    if (!doc.handlers.render) {
+      if (this.frameCount < 3) console.log("🎨 No render handler");
+      return;
+    }
+    try {
+      doc.handlers.render();
+    } catch (error) {
+      console.error("Error in render handler:", error);
+    }
+    this.moduleLoader.render();
   }
   /**
    * Helper: Draw a line using Bresenham's algorithm
@@ -8661,6 +12492,17 @@ ${exports$1}
     this.height = height;
     this.layers.resize(width, height);
     this.renderer.resize(width, height);
+    if (this.compositor && this.renderer instanceof WebGPURenderer) {
+      this.compositor.resize(this.canvas.width, this.canvas.height);
+      const terminalTexture = this.renderer.getRenderTexture();
+      if (terminalTexture) {
+        this.compositor.updateLayerTexture("terminal", terminalTexture);
+      }
+      if (this.webgpuUIRenderer) {
+        this.webgpuUIRenderer.resize(this.canvas.width, this.canvas.height);
+        this.compositor.updateLayerTexture("ui", this.webgpuUIRenderer.getTexture());
+      }
+    }
   }
   /**
    * Get a named style from the current theme
@@ -8669,8 +12511,8 @@ ${exports$1}
     if (!this.styleSheet) {
       console.warn("StyleSheet not initialized, using default colors");
       return {
-        fg: { r: 255, g: 255, b: 255 },
-        bg: { r: 0, g: 0, b: 0 }
+        fg: 4294967295,
+        bg: 255
       };
     }
     const style = this.styleSheet[name];
@@ -8701,32 +12543,26 @@ ${exports$1}
    */
   handleKeyEvent(e, action) {
     var _a;
+    console.log("⌨️ Key event:", action, e.key, `(code: ${e.keyCode})`);
     const doc = this.getActiveDocument();
-    if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) return;
+    if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) {
+      console.log("   No input handler defined");
+      return;
+    }
     const mods = [];
     if (e.shiftKey) mods.push("shift");
     if (e.ctrlKey) mods.push("ctrl");
     if (e.altKey) mods.push("alt");
     if (e.metaKey) mods.push("meta");
-    let event;
-    if (action === "press" && e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-      event = {
-        type: "text",
-        text: e.key,
-        mods
-      };
-    } else {
-      event = {
-        type: "key",
-        action,
-        key: e.key,
-        keyCode: e.keyCode,
-        mods
-      };
-    }
+    const event = {
+      type: action === "press" ? "keydown" : "keyup",
+      key: e.key,
+      keyCode: e.keyCode,
+      mods
+    };
     try {
       const shouldContinue = doc.handlers.input(event);
-      if (!shouldContinue) {
+      if (shouldContinue === false) {
         this.stop();
       }
       e.preventDefault();
@@ -8771,7 +12607,7 @@ ${exports$1}
     try {
       const shouldContinue = doc.handlers.input(event);
       console.log("   Input handler returned:", shouldContinue);
-      if (!shouldContinue) {
+      if (shouldContinue === false) {
         this.stop();
       }
       e.preventDefault();
@@ -8787,8 +12623,8 @@ ${exports$1}
     const doc = this.getActiveDocument();
     if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) return;
     const rect = this.canvas.getBoundingClientRect();
-    const charWidth = this.renderer.getWidth() / this.width;
-    const charHeight = this.renderer.getHeight() / this.height;
+    const charWidth = rect.width / this.width;
+    const charHeight = rect.height / this.height;
     const x = Math.floor((e.clientX - rect.left) / charWidth);
     const y = Math.floor((e.clientY - rect.top) / charHeight);
     const event = {
@@ -8798,21 +12634,75 @@ ${exports$1}
       mods: []
     };
     try {
-      doc.handlers.input(event);
+      const shouldContinue = doc.handlers.input(event);
+      if (shouldContinue === false) {
+        this.stop();
+      }
     } catch (error) {
       console.error("Error in input handler:", error);
     }
   }
+  /**
+   * Dispose of engine resources
+   */
+  dispose() {
+    console.log("Disposing engine resources");
+    this.stop();
+    this.moduleLoader.dispose();
+    this.documents.clear();
+    this.activeDocumentId = null;
+    if (this.audioContext.state !== "closed") {
+      this.audioContext.close().catch((err) => {
+        console.warn("Error closing AudioContext:", err);
+      });
+    }
+    if (this.offscreenCanvas2D && this.offscreenCanvas2D.parentElement) {
+      this.offscreenCanvas2D.parentElement.removeChild(this.offscreenCanvas2D);
+    }
+  }
+  /**
+   * Get the canvas element
+   */
+  getCanvas() {
+    return this.canvas;
+  }
+  /**
+   * Get the WebGPU device (if using WebGPU renderer)
+   * For module sharing
+   */
+  getWebGPUDevice() {
+    if (this.renderer instanceof WebGPURenderer && "getDevice" in this.renderer) {
+      return this.renderer.getDevice() || null;
+    }
+    return null;
+  }
+  /**
+   * Get module loader for advanced use
+   */
+  getModuleLoader() {
+    return this.moduleLoader;
+  }
 }
+var BuiltInModules = /* @__PURE__ */ ((BuiltInModules2) => {
+  BuiltInModules2["Babylon"] = "babylon";
+  BuiltInModules2["Physics"] = "physics";
+  BuiltInModules2["Particles"] = "particles";
+  BuiltInModules2["Terminal"] = "terminal";
+  BuiltInModules2["Audio"] = "audio";
+  BuiltInModules2["Networking"] = "networking";
+  return BuiltInModules2;
+})(BuiltInModules || {});
 const VERSION = "2.0.0-alpha.1";
 console.log(`S|torie v${VERSION}`);
 export {
+  BuiltInModules,
   COLORS,
   Canvas2DRenderer,
   InputManager,
   KEY,
   Layer,
   LayerStack,
+  ModuleLoader,
   StorieEngine,
   THEMES,
   VERSION,

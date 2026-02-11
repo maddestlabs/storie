@@ -11,7 +11,7 @@
   <link rel="icon" type="image/png" sizes="512x512" href="./assets/favicons/android-chrome-512x512.png">
   <link rel="manifest" href="./assets/favicons/site.webmanifest">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>S|torie ꭲꭼꭱꮇꮖꮑꭺꮮ ꭼꮑᏽꮖꮑꭼ</title>
+  <title>S|torie ꭼꮑᏽꮖꮑꭼ</title>
   <style>
     @font-face {
       font-family: '3270-regular';
@@ -424,7 +424,7 @@ This demo showcases:
         }
         
         // Load markdown
-        const loaded = engine.loadMarkdown('demo', markdown);
+        const loaded = await engine.loadMarkdown('demo', markdown);
         
         if (!loaded) {
           console.error('✗ Failed to load demo');

@@ -3,7 +3,7 @@
  */
 
 import type { Cell, Color } from './types.js';
-import { COLORS } from './types.js';
+import { COLORS, ColorUtils } from './types.js';
 
 export class Layer {
   id: string;
@@ -27,8 +27,8 @@ export class Layer {
       for (let x = 0; x < width; x++) {
         row.push({
           char: ' ',
-          fg: { ...COLORS.WHITE },
-          bg: { ...COLORS.BLACK }
+          fg: COLORS.WHITE,
+          bg: COLORS.BLACK
         });
       }
       buffer.push(row);
@@ -36,7 +36,7 @@ export class Layer {
     return buffer;
   }
 
-  write(x: number, y: number, text: string, fg?: Color, bg?: Color): void {
+  write(x: number, y: number, text: string, fg?: Color | any, bg?: Color | any): void {
     if (y < 0 || y >= this.height) return;
     
     for (let i = 0; i < text.length; i++) {
@@ -45,18 +45,18 @@ export class Layer {
       
       const cell = this.buffer[y][px];
       cell.char = text[i];
-      if (fg) cell.fg = { ...fg };
-      if (bg) cell.bg = { ...bg };
+      if (fg !== undefined) cell.fg = ColorUtils.from(fg);
+      if (bg !== undefined) cell.bg = ColorUtils.from(bg);
     }
   }
 
-  plot(x: number, y: number, char: string, fg?: Color, bg?: Color): void {
+  plot(x: number, y: number, char: string, fg?: Color | any, bg?: Color | any): void {
     if (x < 0 || x >= this.width || y < 0 || y >= this.height) return;
     
     const cell = this.buffer[y][x];
     cell.char = char;
-    if (fg) cell.fg = { ...fg };
-    if (bg) cell.bg = { ...bg };
+    if (fg !== undefined) cell.fg = ColorUtils.from(fg);
+    if (bg !== undefined) cell.bg = ColorUtils.from(bg);
   }
 
   clear(bgColor?: Color): void {
@@ -65,8 +65,8 @@ export class Layer {
       for (let x = 0; x < this.width; x++) {
         this.buffer[y][x] = {
           char: ' ',
-          fg: { ...COLORS.WHITE },
-          bg: { ...bg }
+          fg: COLORS.WHITE,
+          bg: bg
         };
       }
     }
@@ -149,8 +149,8 @@ export class LayerStack {
       for (let x = 0; x < this.width; x++) {
         row.push({
           char: ' ',
-          fg: { ...COLORS.WHITE },
-          bg: { ...COLORS.BLACK }
+          fg: COLORS.WHITE,
+          bg: COLORS.BLACK
         });
       }
       result.push(row);
@@ -169,28 +169,19 @@ export class LayerStack {
           if (layer.alpha >= 1.0) {
             // Fully opaque - direct copy
             dstCell.char = srcCell.char;
-            dstCell.fg = { ...srcCell.fg };
-            dstCell.bg = { ...srcCell.bg };
+            dstCell.fg = srcCell.fg;
+            dstCell.bg = srcCell.bg;
           } else {
             // Alpha blend
             const alpha = layer.alpha;
-            const invAlpha = 1.0 - alpha;
             
             // Only blend if not space
             if (srcCell.char !== ' ') {
               dstCell.char = srcCell.char;
-              dstCell.fg = {
-                r: Math.round(srcCell.fg.r * alpha + dstCell.fg.r * invAlpha),
-                g: Math.round(srcCell.fg.g * alpha + dstCell.fg.g * invAlpha),
-                b: Math.round(srcCell.fg.b * alpha + dstCell.fg.b * invAlpha)
-              };
+              dstCell.fg = ColorUtils.blend(srcCell.fg, dstCell.fg, alpha);
             }
             
-            dstCell.bg = {
-              r: Math.round(srcCell.bg.r * alpha + dstCell.bg.r * invAlpha),
-              g: Math.round(srcCell.bg.g * alpha + dstCell.bg.g * invAlpha),
-              b: Math.round(srcCell.bg.b * alpha + dstCell.bg.b * invAlpha)
-            };
+            dstCell.bg = ColorUtils.blend(srcCell.bg, dstCell.bg, alpha);
           }
         }
       }

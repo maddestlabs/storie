@@ -16,6 +16,7 @@ A lightweight, sandboxed engine for creating interactive terminal-style stories 
 - **🎨 Layer System**: Multi-layer compositing with alpha blending
 - **⌨️ Input Handling**: Keyboard and mouse support
 - **🖥️ Canvas Rendering**: Canvas 2D (WebGPU support planned)
+- **🎵 Native Browser APIs**: Direct access to Web Audio, Canvas 2D, WebGL, WebGPU with shared instances
 
 ## 🧭 API Architecture
 
@@ -191,6 +192,94 @@ getFrame()   // Current frame number
 getTime()    // Elapsed time in seconds
 getDelta()   // Delta time in seconds (time since last frame)
 ```
+
+#### Native Browser APIs
+
+S|torie provides direct access to native browser APIs with **zero overhead** using the **shared instance pattern**. Helpers and raw API access use the same underlying objects.
+
+##### Web Audio API
+
+```javascript
+// === Simple Helpers ===
+audio.playTone(440, 1.0, 0.5);  // frequency, duration, volume
+const buffer = await audio.loadSound('sound.mp3');
+audio.playBuffer(buffer, { loop: true, volume: 0.8 });
+
+// === Raw API (same AudioContext!) ===
+const osc = audio.createOscillator();
+const gain = audio.createGain();
+osc.connect(gain);
+gain.connect(audio.destination);
+osc.start();
+
+// === Direct Context Access ===
+audio.context.currentTime;
+audio.context.sampleRate;
+audio.state;  // 'running', 'suspended', etc.
+```
+
+##### Canvas 2D API
+
+```javascript
+// === Simple Helpers ===
+canvas2d.clear('#000000');
+canvas2d.drawCircle(100, 100, 50, '#ff0000', true);
+canvas2d.drawRect(0, 0, 200, 100, '#00ff00', false);
+canvas2d.text('Hello!', 10, 30, '#ffffff', '24px monospace');
+
+// === Raw API (same Canvas2D context!) ===
+const ctx = canvas2d.context;
+ctx.globalAlpha = 0.5;
+ctx.filter = 'blur(5px)';
+canvas2d.drawRect(100, 100, 50, 50, '#0000ff');
+
+// === Load Images ===
+const img = await canvas2d.loadImage('sprite.png');
+canvas2d.drawImage(img, 0, 0, 64, 64);
+```
+
+##### WebGL API
+
+```javascript
+// Check availability
+if (webgl.available) {
+  const gl = webgl.context;
+  
+  // Create shaders
+  const vs = webgl.createShader('vertex', vertexSource);
+  const fs = webgl.createShader('fragment', fragmentSource);
+  const program = webgl.createProgram(vs, fs);
+  
+  // Use full WebGL API
+  gl.useProgram(program);
+  // ... rest of WebGL code
+}
+```
+
+##### WebGPU API
+
+```javascript
+// Initialize (async, lazy)
+if (await webgpu.init()) {
+  const device = webgpu.device;
+  
+  // Safe helpers with guardrails
+  const buffer = webgpu.createBuffer(1024, GPUBufferUsage.UNIFORM);
+  const shader = webgpu.createShaderModule(wgslCode);
+  const texture = webgpu.createTexture(512, 512, 'rgba8unorm');
+  
+  // Direct device access for advanced use
+  const pipeline = device.createComputePipeline({ ... });
+}
+```
+
+**Key Benefits:**
+- ✅ **Shared Instances** - One AudioContext, one device, helpers use same objects
+- ✅ **Zero Overhead** - Helpers are thin wrappers, no duplication
+- ✅ **Mix API Levels** - Use helpers for simplicity, raw API for power
+- ✅ **Safety Guardrails** - WebGPU has memory limits, WebGL has shader validation
+
+See [SES_NATIVE_APIS.md](SES_NATIVE_APIS.md) for detailed architecture and examples.
 
 ### Colors
 

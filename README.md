@@ -30,22 +30,73 @@ Gist Example:
 
 The engine is built around GitHub features. No installation needed. Just create a new repo from the S|torie template, update index.md with your own content and it'll auto-compile for the web. Enable GitHub Pages and you'll see that content served live within moments. GitHub Actions take care of the full compilation process.
 
+## Why S|torie?
+
+It's just something the author always wanted and it's now being shared freely.
+
+Necessities:
+- Able to empower a robust audio/node graph (WebAudio)
+- Supports fragment shaders for GPU-powered visual FX (WebGPU)
+- Supports compute shaders for GPU-powered calculations (WebGPU)
+- Cross-platform (WASM + Tauri/WGPU for native)
+- Under 1MB file size on the web (WASM + WebGPU + WebAudio)
+
+We want to provide for creation of apps and games that require nothing external. So the engine needs to provide primitives for drawing, creating sound, generating procedural content, etc.
+
+## Code Example: Clean Variable Persistence
+
+Storie uses **automatic variable persistence** with a clean two-block pattern:
+
+```markdown
+---
+name: "My Game"
+---
+
+\```js
+// Raw js block: Variables declared here persist automatically
+let score = 0;
+let playerX = 10;
+let playerY = 5;
+\```
+
+\```js on:update
+// Persistent vars are automatically accessible
+if (key.pressed('ArrowRight')) playerX++;
+if (key.pressed('ArrowLeft')) playerX--;
+
+// Local variables work normally and don't persist
+const velocity = key.pressed('Shift') ? 2 : 1;
+const bonus = Math.floor(delta * 10);
+score += bonus;
+\```
+
+\```js on:render  
+// Persistent vars still available
+term.write(playerX, playerY, '🚀');
+term.write(0, 0, `Score: ${Math.floor(score)}`);
+
+// Local rendering calculations
+const color = score > 100 ? 'gold' : 'white';
+\```
+```
+
+**Key benefits:**
+- **Persistent vars**: Declare once in `js` blocks, use everywhere
+- **Local vars**: Work normally in lifecycle blocks (on:*)  
+- **No boilerplate**: No `scope.state` or manual tracking needed
+
+See [CODE_STYLE_GUIDE.md](docs/CODE_STYLE_GUIDE.md) for best practices.
+
 ## Getting Started
 
 Quick Start:
-- Create a gist using Markdown and Nim code blocks
+- Create a gist using Markdown and JS code blocks
 - See your gist running live: `https://maddestlabs.github.io/storie?content=gist:gistid`
 
 Create your own project:
 - Create a project from S|torie template and enable GitHub Pages
 - Update index.md with your content and commit the change
 - See your content running live in moments
-
-Native compilation:
-- Export via CLI: `./storie export filename.md`
-- Compile with nim: `nim c fildename.nim`
-
-You'll get a native compiled binary in just moments, Nim compiles super fast. This is still early in development but supports small projects currently. The export is standalone with zero dependencies.
 
 ### Desktop App
 
