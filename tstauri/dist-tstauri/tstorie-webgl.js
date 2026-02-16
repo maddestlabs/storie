@@ -74,7 +74,13 @@ class TStorieTerminal {
         
         const metrics = this.atlasCtx.measureText('M');
         this.charWidth = Math.ceil(metrics.width);
-        this.charHeight = this.fontSize;
+        
+        // Use actual font bounding box height to prevent artifacts
+        if (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent) {
+            this.charHeight = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent);
+        } else {
+            this.charHeight = Math.ceil(this.fontSize * 1.25);
+        }
     }
     
     initWebGL() {
@@ -204,8 +210,9 @@ class TStorieTerminal {
         // Create atlas texture
         this.atlasTexture = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, this.atlasTexture);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        // Use NEAREST filtering for crisp monospace text (not LINEAR which causes artifacts)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         
@@ -314,13 +321,14 @@ class TStorieTerminal {
         ctx.clearRect(this.atlasX, this.atlasY, paddedWidth, paddedHeight);
         
         // Render glyph with white color (alpha will be preserved)
+        // Use integer positions to prevent sub-pixel rendering artifacts
         ctx.fillStyle = 'white';
-        ctx.fillText(char, this.atlasX + padding, this.atlasY + padding);
+        ctx.fillText(char, Math.floor(this.atlasX + padding), Math.floor(this.atlasY + padding));
         
-        // Calculate UV coordinates (normalized 0-1)
+        // Calculate UV coordinates (normalized 0-1) with pixel-perfect boundaries
         const uv = {
-            u: (this.atlasX + padding) / this.atlasCanvas.width,
-            v: (this.atlasY + padding) / this.atlasCanvas.height,
+            u: Math.floor(this.atlasX + padding) / this.atlasCanvas.width,
+            v: Math.floor(this.atlasY + padding) / this.atlasCanvas.height,
             w: pixelWidth / this.atlasCanvas.width,
             h: pixelHeight / this.atlasCanvas.height,
             width: cellWidth,

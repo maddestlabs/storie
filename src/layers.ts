@@ -12,11 +12,13 @@ export class Layer {
   alpha: number = 1.0;
   width: number;
   height: number;
+  private defaultBg: Color;
 
   constructor(id: string, width: number, height: number) {
     this.id = id;
     this.width = width;
     this.height = height;
+    this.defaultBg = COLORS.BLACK;
     this.buffer = this.createBuffer(width, height);
   }
 
@@ -28,7 +30,7 @@ export class Layer {
         row.push({
           char: ' ',
           fg: COLORS.WHITE,
-          bg: COLORS.BLACK
+          bg: this.defaultBg
         });
       }
       buffer.push(row);
@@ -61,6 +63,7 @@ export class Layer {
 
   clear(bgColor?: Color): void {
     const bg = bgColor || COLORS.BLACK;
+    this.defaultBg = bg;
     for (let y = 0; y < this.height; y++) {
       for (let x = 0; x < this.width; x++) {
         this.buffer[y][x] = {
@@ -73,9 +76,24 @@ export class Layer {
   }
 
   resize(width: number, height: number): void {
+    const oldBuffer = this.buffer;
+    const oldW = this.width;
+    const oldH = this.height;
+
     this.width = width;
     this.height = height;
-    this.buffer = this.createBuffer(width, height);
+
+    const next = this.createBuffer(width, height);
+
+    const copyW = Math.min(oldW, width);
+    const copyH = Math.min(oldH, height);
+    for (let y = 0; y < copyH; y++) {
+      for (let x = 0; x < copyW; x++) {
+        next[y][x] = oldBuffer[y][x];
+      }
+    }
+
+    this.buffer = next;
   }
 }
 
@@ -195,6 +213,12 @@ export class LayerStack {
     this.height = height;
     for (const layer of this.layers.values()) {
       layer.resize(width, height);
+    }
+  }
+
+  clearAll(bgColor?: Color): void {
+    for (const layer of this.layers.values()) {
+      layer.clear(bgColor);
     }
   }
 }

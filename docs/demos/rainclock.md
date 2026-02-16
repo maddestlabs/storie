@@ -136,7 +136,7 @@ else:
   draw(0, 2, 8, "No lines to render!")
 ```
 
-```figlet:jazmine
+```figlet name:jazmine
 flf2a$ 8 4 14 0 21 0 16256
 Cricket by Leslie Bates        Jan. 1, 1996
 cricket9@aros.net       http://www.aros.net/~cricket9

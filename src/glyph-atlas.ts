@@ -86,7 +86,15 @@ export class GlyphAtlas {
     // Measure character dimensions
     const metrics = this.atlasCtx.measureText('M');
     this.charWidth = Math.ceil(metrics.width);
-    this.charHeight = this.fontSize;
+    
+    // Use actual font bounding box height to prevent artifacts
+    // Characters can extend beyond fontSize, especially with line spacing
+    if (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent) {
+      this.charHeight = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent);
+    } else {
+      // Fallback: add 25% padding for safety
+      this.charHeight = Math.ceil(this.fontSize * 1.25);
+    }
     
     console.log(`[GlyphAtlas] Font initialized: ${this.atlasCtx.font}`);
     console.log(`[GlyphAtlas] Base char size: ${this.charWidth}x${this.charHeight}px`);
@@ -157,8 +165,12 @@ export class GlyphAtlas {
     
     // Measure glyph
     const metrics = this.atlasCtx.measureText(char);
-    const width = Math.ceil(metrics.width) + 2;  // padding
-    const height = this.charHeight + 2;
+    const glyphWidth = Math.ceil(metrics.width);
+    
+    // Add extra padding to prevent bleeding from adjacent rows
+    const padding = 4;  // 4px padding to catch all artifacts
+    const width = glyphWidth + padding * 2;
+    const height = this.charHeight + padding * 2;
     
     // Check if we need a new row
     if (this.atlasX + width > this.atlasWidth) {
@@ -179,18 +191,21 @@ export class GlyphAtlas {
     }
     
     // Render glyph to atlas
+    // Clear area with extra space to ensure no stray pixels remain
     this.atlasCtx.clearRect(this.atlasX, this.atlasY, width, height);
     this.atlasCtx.fillStyle = '#ffffff';
-    this.atlasCtx.fillText(char, this.atlasX + 1, this.atlasY + 1);
+    // Draw at integer position with padding offset to center glyph
+    this.atlasCtx.fillText(char, Math.floor(this.atlasX + padding), Math.floor(this.atlasY + padding));
     
     // Calculate normalized UV coordinates
+    // Use inner rect (skip padding) for actual glyph sampling
     const info: GlyphInfo = {
-      u: this.atlasX / this.atlasWidth,
-      v: this.atlasY / this.atlasHeight,
-      w: width / this.atlasWidth,
-      h: height / this.atlasHeight,
-      pixelWidth: width,
-      pixelHeight: height
+      u: (this.atlasX + padding) / this.atlasWidth,
+      v: (this.atlasY + padding) / this.atlasHeight,
+      w: glyphWidth / this.atlasWidth,
+      h: this.charHeight / this.atlasHeight,
+      pixelWidth: glyphWidth,
+      pixelHeight: this.charHeight
     };
     
     this.glyphCache.set(char, info);

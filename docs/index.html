@@ -53,16 +53,13 @@
       position: absolute;
       top: 0;
       left: 0;
-      width: 100% !important;
-      height: 100% !important;
       display: block;
-      margin: 0 !important;
-      padding: 0 !important;
+      margin: 0;
+      padding: 0;
       border: 0;
       background: #001111;
       outline: none;
       font-family: '3270-regular', 'Consolas', 'Monaco', monospace;
-      object-fit: fill;
     }
     
     #canvas:focus,
@@ -352,24 +349,87 @@ This demo showcases:
       return decompressed;
     }
 
+    /**
+     * Parse shader chain from URL parameters
+     * Supports: ?shaders=invert+paper+scanlines
+     */
+    function parseShaderChain() {
+      // Parse raw query string to preserve '+' as separator (not space)
+      // URLSearchParams would decode '+' as space, breaking "invert+paper"
+      const queryString = window.location.search;
+      
+      // Check for common typo: ?shaders+value instead of ?shaders=value
+      if (queryString.match(/[?&]shaders\+/)) {
+        console.error('⚠️ Shader chain parameter malformed!');
+        console.error('   Found: ?shaders+something');
+        console.error('   Should be: ?shaders=something');
+        console.error('   Example: ?content=demo&shaders=invert+paper');
+        console.error('   The + should separate shader names AFTER the = sign');
+        return null;
+      }
+      
+      // Extract shaders parameter from raw query string
+      const match = queryString.match(/[?&]shaders=([^&]*)/);
+      if (!match || !match[1]) {
+        return null;
+      }
+      
+      // Decode %20 and other URL encoding, but preserve '+'
+      const shadersParam = decodeURIComponent(match[1]);
+      
+      if (shadersParam.trim().length === 0) {
+        return null;
+      }
+      
+      console.log('✓ Shader chain parameter detected:', shadersParam);
+      return shadersParam.trim();
+    }
+
     async function main() {
       try {
         // Get canvas
         const canvas = document.getElementById('canvas');
         
-        // Calculate grid size based on window dimensions
-        // Assume ~10px char width and ~20px char height for reasonable cell sizes
-        const charWidth = 10;
-        const charHeight = 20;
-        const gridWidth = Math.floor(window.innerWidth / charWidth);
-        const gridHeight = Math.floor(window.innerHeight / charHeight);
+        // Measure actual font dimensions
+        const fontFamily = '3270-regular';
+        const fontSize = 16;
+        const tempCanvas = document.createElement('canvas');
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.font = `${fontSize}px '${fontFamily}', 'Consolas', 'Monaco', monospace`;
+        tempCtx.textBaseline = 'top';
         
-        // Create engine with dynamic grid size
+        const metrics = tempCtx.measureText('M');
+        const charWidth = Math.ceil(metrics.width);
+
+        // Match GlyphAtlas / terminal renderer behavior: use actual font bbox height
+        // (or a padded fallback) so grid math matches the renderer.
+        const charHeight = (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent)
+          ? Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent)
+          : Math.ceil(fontSize * 1.25);
+        
+        console.log(`✓ Measured font: ${charWidth}x${charHeight}px per character`);
+        
+        // Calculate grid size based on actual measured font dimensions
+        // Use ceil so the canvas fully covers the container without leaving a
+        // remainder strip on the right/bottom when the viewport isn't an exact
+        // multiple of the cell size.
+        const gridWidth = Math.ceil(window.innerWidth / charWidth);
+        const gridHeight = Math.ceil(window.innerHeight / charHeight);
+        
+        // Set canvas size to fill viewport (internal resolution)
+        canvas.width = gridWidth * charWidth;
+        canvas.height = gridHeight * charHeight;
+        
+        // Set canvas element size to match buffer (prevents stretch)
+        canvas.style.width = (gridWidth * charWidth) + 'px';
+        canvas.style.height = (gridHeight * charHeight) + 'px';
+        
+        // Create engine with measured grid size
         const engine = new StorieEngine(canvas, {
           width: gridWidth,
           height: gridHeight,
-          fontFamily: '3270-regular',
-          fontSize: 16
+          fontFamily: fontFamily,
+          fontSize: fontSize
         });
         
         console.log(`✓ S|torie engine initialized (${gridWidth}x${gridHeight})`);
@@ -379,8 +439,17 @@ This demo showcases:
         const handleResize = () => {
           clearTimeout(resizeTimeout);
           resizeTimeout = setTimeout(() => {
-            const newGridWidth = Math.floor(window.innerWidth / charWidth);
-            const newGridHeight = Math.floor(window.innerHeight / charHeight);
+            const newGridWidth = Math.ceil(window.innerWidth / charWidth);
+            const newGridHeight = Math.ceil(window.innerHeight / charHeight);
+            
+            // Update canvas size
+            canvas.width = newGridWidth * charWidth;
+            canvas.height = newGridHeight * charHeight;
+            
+            // Update canvas element size to match buffer (prevents stretch)
+            canvas.style.width = (newGridWidth * charWidth) + 'px';
+            canvas.style.height = (newGridHeight * charHeight) + 'px';
+            
             engine.resize(newGridWidth, newGridHeight);
             console.log(`✓ Resized to ${newGridWidth}x${newGridHeight}`);
           }, 250);
@@ -442,14 +511,23 @@ This demo showcases:
         }
         
         // Start the engine (now async for WebGPU init)
+        // This initializes WebGPU, ShaderManager, and ShaderChainManager
         await engine.start();
         console.log('✓ Engine started');
+        
+        // Apply shader chain from URL parameter (overrides frontmatter)
+        // Must be done AFTER engine.start() so ShaderChainManager exists
+        const shaderChain = parseShaderChain();
+        if (shaderChain) {
+          console.log('✓ Applying shader chain from URL:', shaderChain);
+          await engine.applyShaderChain(shaderChain, 'url');
+        }
         
         // Ensure proper sizing after layout and font are complete
         // Use a short delay to ensure layout is fully settled
         setTimeout(() => {
-          const finalGridWidth = Math.floor(window.innerWidth / charWidth);
-          const finalGridHeight = Math.floor(window.innerHeight / charHeight);
+          const finalGridWidth = Math.ceil(window.innerWidth / charWidth);
+          const finalGridHeight = Math.ceil(window.innerHeight / charHeight);
           if (finalGridWidth !== gridWidth || finalGridHeight !== gridHeight) {
             engine.resize(finalGridWidth, finalGridHeight);
             console.log(`✓ Initial resize to ${finalGridWidth}x${finalGridHeight}`);

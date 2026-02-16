@@ -5,25 +5,18 @@ The abominal little engine that probably shouldn't. Build stuff using Markdown w
 Check it out: [Intro](https://maddestlabs.github.io/storie/)
 
 Demos:
-- [stonegarden.md](https://maddestlabs.github.io/storie/?content=stonegarden) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/stonegarden.md)
 - [slides.md](https://maddestlabs.github.io/storie/?content=slides) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/slides.md)
 - [her.md](https://maddestlabs.github.io/storie/?content=her) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/her.md)
 - [depths.md](https://maddestlabs.github.io/storie/?content=depths&font=Courier+Prime) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/depths.md)
-- [kanjifx.md](https://maddestlabs.github.io/storie?content=kanjifx) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/kanjifx.md)
 - [minesweeper.md](https://maddestlabs.github.io/storie?content=minesweeper) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/minesweeper.md)
 - [toxiclock.md](https://maddestlabs.github.io/storie?content=toxiclock) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/toxiclock.md)
-- [magiclock.md](https://maddestlabs.github.io/storie?content=magiclock) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/magiclock.md)
 
 Core examples:
-- [figletclock.md](https://maddestlabs.github.io/storie?content=figletclock) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/figletclock.md)
 - [dungen.md](https://maddestlabs.github.io/storie/?content=dungen) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/dungen.md)
 - [edit.md](https://maddestlabs.github.io/storie?content=edit) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/edit.md)
 - [hexview.md](https://maddestlabs.github.io/storie?content=hexview) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/hexview.md)
 - [events.md](https://maddestlabs.github.io/storie?content=events) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/events.md)
-- [drawing.md](https://maddestlabs.github.io/storie?content=drawing) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/drawing.md)
 - [tui.md](https://maddestlabs.github.io/storie?content=tui) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/tui.md)
-- [tui3.md](https://maddestlabs.github.io/storie?content=tui3) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/tui3.md)
-- [termshaders.md](https://maddestlabs.github.io/storie?content=termshaders) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/termshaders.md)
 
 Gist Example:
 - [storie_rainclock.md](https://maddestlabs.github.io/storie/?content=863a4175989370857ccd67cb5492ac11&shader=crt&font=Zeyada) | [Source Gist](https://gist.github.com/R3V1Z3/863a4175989370857ccd67cb5492ac11)
@@ -42,50 +35,6 @@ Necessities:
 - Under 1MB file size on the web (WASM + WebGPU + WebAudio)
 
 We want to provide for creation of apps and games that require nothing external. So the engine needs to provide primitives for drawing, creating sound, generating procedural content, etc.
-
-## Code Example: Clean Variable Persistence
-
-Storie uses **automatic variable persistence** with a clean two-block pattern:
-
-```markdown
----
-name: "My Game"
----
-
-\```js
-// Raw js block: Variables declared here persist automatically
-let score = 0;
-let playerX = 10;
-let playerY = 5;
-\```
-
-\```js on:update
-// Persistent vars are automatically accessible
-if (key.pressed('ArrowRight')) playerX++;
-if (key.pressed('ArrowLeft')) playerX--;
-
-// Local variables work normally and don't persist
-const velocity = key.pressed('Shift') ? 2 : 1;
-const bonus = Math.floor(delta * 10);
-score += bonus;
-\```
-
-\```js on:render  
-// Persistent vars still available
-term.write(playerX, playerY, '🚀');
-term.write(0, 0, `Score: ${Math.floor(score)}`);
-
-// Local rendering calculations
-const color = score > 100 ? 'gold' : 'white';
-\```
-```
-
-**Key benefits:**
-- **Persistent vars**: Declare once in `js` blocks, use everywhere
-- **Local vars**: Work normally in lifecycle blocks (on:*)  
-- **No boilerplate**: No `scope.state` or manual tracking needed
-
-See [CODE_STYLE_GUIDE.md](docs/CODE_STYLE_GUIDE.md) for best practices.
 
 ## Getting Started
 
@@ -135,6 +84,4 @@ https://maddestlabs.github.io/storie?content=browser:my-draft
 
 AI assistance has been used extensively throughout every part of this project's development, including the separate repositories that paved way to the engine's current state. However, the core concepts behind S|torie have been in development for over 9 years, with foundational precedents established in prior projects such as [Treverse](https://github.com/R3V1Z3/treverse) from before the advent of modern AI tooling.
 
-AI assistance is just that, assistance. It's a tool to quickly meet a vision that starts with the simplicity of scripting in a browser app and ends with an optimized, natively compiled binary.
-
-This project represents a blend of long-term creative vision with modern AI-assisted development.
+AI assistance is just that, assistance. It's a tool to quickly meet a vision that starts with the simplicity of scripting in the browser that can eventually be ported down to native.

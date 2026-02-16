@@ -908,8 +908,13 @@ proc parseMarkdownDocument*(content: string): MarkdownDocument =
           codeLines.add(lines[i])
           inc i
         
-        # Check if this is a bare code block (no language) or ```ascii block (preformatted text)
-        if language == "" or language == "ascii":
+        # Check if this is a bare code block (no language) or an ```ascii block.
+        #
+        # Behavior:
+        # - ``` (no language): render as preformatted text
+        # - ```ascii (no name): render as preformatted text (raw ASCII block)
+        # - ```ascii name:art: store as a named ASCII asset (hidden) under language "ascii:art"
+        if language == "":
           # Create preformatted text block (renders without backticks)
           let content = codeLines.join("\n")
           
@@ -940,6 +945,77 @@ proc parseMarkdownDocument*(content: string): MarkdownDocument =
               content: content
             ))
             hasCurrentSection = true
+        elif language == "ascii":
+          var asciiName = ""
+          if headerParts.len > 1:
+            for part in headerParts[1..^1]:
+              if part.startsWith("name:"):
+                asciiName = part.split(":", maxsplit = 1)[1].strip()
+                break
+
+          if asciiName.len > 0:
+            # Named ASCII asset: store as a hidden code block under language "ascii:NAME"
+            let codeBlock = CodeBlock(
+              code: codeLines.join("\n"),
+              lifecycle: "",
+              language: "ascii:" & asciiName
+            )
+            result.codeBlocks.add(codeBlock)
+
+            if hasCurrentSection:
+              currentSection.blocks.add(ContentBlock(
+                kind: CodeBlock_Content,
+                codeBlock: codeBlock
+              ))
+            else:
+              inc sectionCounter
+              let sectionId = "section_" & $sectionCounter
+              currentSection = Section(
+                id: sectionId,
+                title: "",
+                level: 1,
+                blocks: @[],
+                metadata: initTable[string, string]()
+              )
+              currentSection.blocks.add(ContentBlock(
+                kind: HeadingBlock,
+                level: 1,
+                title: ""
+              ))
+              currentSection.blocks.add(ContentBlock(
+                kind: CodeBlock_Content,
+                codeBlock: codeBlock
+              ))
+              hasCurrentSection = true
+          else:
+            # Raw ASCII: render inline
+            let content = codeLines.join("\n")
+
+            if hasCurrentSection:
+              currentSection.blocks.add(ContentBlock(
+                kind: PreformattedBlock,
+                content: content
+              ))
+            else:
+              inc sectionCounter
+              let sectionId = "section_" & $sectionCounter
+              currentSection = Section(
+                id: sectionId,
+                title: "",
+                level: 1,
+                blocks: @[],
+                metadata: initTable[string, string]()
+              )
+              currentSection.blocks.add(ContentBlock(
+                kind: HeadingBlock,
+                level: 1,
+                title: ""
+              ))
+              currentSection.blocks.add(ContentBlock(
+                kind: PreformattedBlock,
+                content: content
+              ))
+              hasCurrentSection = true
         # Check if this is a ```ansi block (ANSI art with colors)
         elif language == "ansi":
           # Store raw ANSI content (will be parsed at render time)

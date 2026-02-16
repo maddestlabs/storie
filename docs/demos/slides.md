@@ -30,7 +30,8 @@ if event.type == "key":
 
 elif event.type == "mouse":
   if event.action == "release":
-    var handled = canvasHandleMouse(event.x, event.y, event.button, false)
+    # Pass mouse events to canvas system (cell coordinates for navigation)
+    var handled = canvasHandleMouse(event.cellX, event.cellY, event.button, false)
     if handled:
       return true
   return false

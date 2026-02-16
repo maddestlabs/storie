@@ -12,6 +12,20 @@ export { parseMarkdown, findSection, flattenSections } from './markdown.js';
 export { getTheme, applyTheme, getAvailableThemes, THEMES } from './themes.js';
 export { ModuleLoader } from './modules/loader.js';
 export { BuiltInModules } from './modules/types.js';
+export { Canvas3DRenderer } from './canvas3d-renderer.js';
+export {
+  createCamera3D,
+  updateCamera3D,
+  createSection3DLayouts,
+  getDefaultCanvas3DConfig,
+  focusOnSection,
+  vec3,
+  lerp,
+  lerpAngle,
+  lerpVec3,
+  lerpRotation,
+  distance
+} from './canvas3d.js';
 
 export type {
   Color,
@@ -38,6 +52,14 @@ export type {
   ModuleResolverConfig,
   BuiltInModuleName
 } from './modules/types.js';
+
+export type {
+  Vec3,
+  Transform3D,
+  Camera3D,
+  Section3DLayout,
+  Canvas3DConfig
+} from './canvas3d-types.js';
 
 export { KEY, COLORS } from './types.js';
 

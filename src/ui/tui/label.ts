@@ -5,7 +5,7 @@
 
 import { BaseWidget, type WidgetConfig } from '../core/base-widget.js';
 import type { TerminalRenderer } from '../../terminal-renderer.js';
-import { ColorUtils } from '../../types.js';
+import { getTUIThemeDefaults } from './theme.js';
 
 export interface TUILabelConfig extends WidgetConfig {
   text: string;
@@ -40,10 +40,12 @@ export class TUILabel extends BaseWidget {
     
     const { x, y, width, height } = this.bounds;
     const style = this.getEffectiveStyle();
+
+    const defaults = getTUIThemeDefaults();
     
     // Get colors (with defaults)
-    const fg = style.fg ?? ColorUtils.rgb(200, 200, 200);
-    const bg = style.bg ?? ColorUtils.rgb(0, 0, 0);
+    const fg = style.fg ?? defaults.label.fg;
+    const bg = style.bg ?? defaults.label.bg;
     
     // Clear background
     for (let col = 0; col < width; col++) {

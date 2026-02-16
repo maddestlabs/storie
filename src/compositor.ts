@@ -9,6 +9,10 @@
  */
 
 import { ShaderPipeline } from './shader-pipeline.js';
+import type { ShaderManager } from './shader-manager.js';
+import type { ShaderChainManager } from './shader-chain.js';
+import { ColorUtils } from './types.js';
+import type { Color } from './types.js';
 
 export type BlendMode = 'normal' | 'additive' | 'multiply' | 'screen' | 'overlay';
 
@@ -62,8 +66,20 @@ export class Compositor {
   
   // Shader pipeline for post-processing
   private shaderPipeline: ShaderPipeline | null = null;
+
+  // External WGSL shader manager (markdown wgsl blocks)
+  private shaderManager: ShaderManager | null = null;
+  
+  // External shader chain manager (for multi-pass effects)
+  private shaderChainManager: ShaderChainManager | null = null;
+
+  // Offscreen render target used when applying a post-process shader
+  private postProcessTexture: GPUTexture | null = null;
   
   private initialized: boolean = false;
+
+  // Clear color used by autoComposite (swapchain/post-process target).
+  private autoClearValue: { r: number; g: number; b: number; a: number } = { r: 0, g: 0, b: 0, a: 1 };
 
   constructor(device: GPUDevice, canvas: HTMLCanvasElement) {
     this.device = device;
@@ -83,6 +99,57 @@ export class Compositor {
       // directly into the swapchain when appropriate.
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST
     });
+  }
+
+  /**
+   * Set the background clear color used by autoComposite().
+   * This affects the “overall background” behind all layers.
+   */
+  setAutoClearColor(color: Color): void {
+    const [r, g, b, a] = ColorUtils.rgbaNorm(color);
+    this.autoClearValue = { r, g, b, a };
+  }
+
+  /**
+   * Provide an external ShaderManager for applying a single active WGSL shader
+   * as a post-process step during autoComposite().
+   */
+  setShaderManager(manager: ShaderManager | null): void {
+    this.shaderManager = manager;
+  }
+
+  /**
+   * Provide an external ShaderChainManager for applying shader chains
+   * as a post-process step during autoComposite().
+   */
+  setShaderChainManager(manager: ShaderChainManager | null): void {
+    this.shaderChainManager = manager;
+  }
+
+  private ensurePostProcessTexture(): GPUTexture {
+    const width = this.canvas.width;
+    const height = this.canvas.height;
+    const format = navigator.gpu.getPreferredCanvasFormat();
+
+    if (this.postProcessTexture && this.postProcessTexture.width === width && this.postProcessTexture.height === height) {
+      return this.postProcessTexture;
+    }
+
+    if (this.postProcessTexture) {
+      try {
+        this.postProcessTexture.destroy();
+      } catch {
+        // Ignore
+      }
+    }
+
+    this.postProcessTexture = this.device.createTexture({
+      size: { width, height },
+      format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+    });
+
+    return this.postProcessTexture;
   }
 
   async init(): Promise<void> {
@@ -224,7 +291,6 @@ export class Compositor {
     };
     
     this.layers.set(name, fullLayer);
-    console.log(`[Compositor] Registered layer: ${name} (texture=${!!layer.texture}, canvas=${!!layer.canvas}, ${fullLayer.width}x${fullLayer.height})`);
     return fullLayer;
   }
 
@@ -348,7 +414,18 @@ export class Compositor {
     // render into undefined contents (appearing blank).
     const commandEncoder = this.device.createCommandEncoder();
     const currentTexture = this.context.getCurrentTexture();
-    const textureView = currentTexture.createView();
+
+    const activeShaderName =
+      (this.shaderManager && 'getActiveShaderName' in this.shaderManager && typeof (this.shaderManager as any).getActiveShaderName === 'function')
+        ? (this.shaderManager as any).getActiveShaderName()
+        : (this.shaderManager && 'getActiveShader' in this.shaderManager && typeof (this.shaderManager as any).getActiveShader === 'function')
+          ? (this.shaderManager as any).getActiveShader()
+          : null;
+
+    const shouldPostProcess = !!activeShaderName || (this.shaderChainManager && this.shaderChainManager.hasActiveChain());
+
+    const compositeTargetTexture = shouldPostProcess ? this.ensurePostProcessTexture() : currentTexture;
+    const textureView = compositeTargetTexture.createView();
 
     // Update any canvas-backed layers into their textures before rendering.
     for (const layer of sortedLayers) {
@@ -363,7 +440,7 @@ export class Compositor {
     const passEncoder = commandEncoder.beginRenderPass({
       colorAttachments: [{
         view: textureView,
-        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        clearValue: this.autoClearValue,
         loadOp: 'clear',
         storeOp: 'store'
       }]
@@ -371,12 +448,22 @@ export class Compositor {
 
     for (const layer of sortedLayers) {
       const texture = layer.texture;
-      if (!texture) continue;
+      if (!texture) {
+        if (Math.random() < 0.01) {
+          console.warn(`[Compositor] Layer ${layer.name} has no texture!`);
+        }
+        continue;
+      }
 
       const opacity = layer.opacity ?? 1.0;
       const blendMode = layer.blendMode || 'normal';
       const pipeline = this.autoPipelines.get(blendMode);
-      if (!pipeline) continue;
+      if (!pipeline) {
+        if (Math.random() < 0.01) {
+          console.warn(`[Compositor] No pipeline for blend mode: ${blendMode}`);
+        }
+        continue;
+      }
 
       // Write opacity for this layer.
       // Pack into vec4 for alignment; shader reads .x.
@@ -397,6 +484,70 @@ export class Compositor {
     }
 
     passEncoder.end();
+
+    // If an external ShaderChainManager has an active chain, or ShaderManager has an active shader,
+    // apply it as a post-process from the composited offscreen texture to the swapchain texture.
+    if (shouldPostProcess) {
+      let applied = false;
+      
+      // Try shader chain first (takes priority)
+      if (this.shaderChainManager && this.shaderChainManager.hasActiveChain()) {
+        try {
+          applied = this.shaderChainManager.applyChain(
+            compositeTargetTexture,
+            currentTexture,
+            commandEncoder
+          );
+        } catch (error) {
+          console.error('[Compositor] Failed to apply shader chain:', error);
+          applied = false;
+        }
+      }
+      // Fall back to single shader if no chain
+      else if (this.shaderManager) {
+        try {
+          applied = (this.shaderManager as any).applyShader(
+            compositeTargetTexture,
+            currentTexture,
+            commandEncoder
+          );
+        } catch (error) {
+          console.error('[Compositor] Failed to apply ShaderManager post-process:', error);
+          applied = false;
+        }
+      }
+
+      // Fallback: if shader application failed, at least blit the composited
+      // texture to the swapchain so the frame is visible.
+      if (!applied) {
+        const pipeline = this.autoPipelines.get('normal');
+        if (pipeline) {
+          this.device.queue.writeBuffer(this.autoUniformBuffer!, 0, new Float32Array([1.0, 0, 0, 0]));
+          const bindGroup = this.device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: this.sampler! },
+              { binding: 1, resource: compositeTargetTexture.createView() },
+              { binding: 2, resource: { buffer: this.autoUniformBuffer! } }
+            ]
+          });
+
+          const finalPass = commandEncoder.beginRenderPass({
+            colorAttachments: [{
+              view: currentTexture.createView(),
+              clearValue: this.autoClearValue,
+              loadOp: 'clear',
+              storeOp: 'store'
+            }]
+          });
+          finalPass.setPipeline(pipeline);
+          finalPass.setBindGroup(0, bindGroup);
+          finalPass.draw(6);
+          finalPass.end();
+        }
+      }
+    }
+
     this.device.queue.submit([commandEncoder.finish()]);
   }
 
@@ -893,6 +1044,16 @@ export class Compositor {
       alphaMode: 'premultiplied',
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST
     });
+
+    // Force recreation on next use
+    if (this.postProcessTexture) {
+      try {
+        this.postProcessTexture.destroy();
+      } catch {
+        // Ignore
+      }
+      this.postProcessTexture = null;
+    }
     
     console.log(`[Compositor] Resized to ${width}x${height}`);
   }

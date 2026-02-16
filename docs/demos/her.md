@@ -1,120 +1,28 @@
 ---
 title: "t|HΞR Voice"
 author: "Maddest Labs"
-theme: "neotopia"
+theme: "neonopia"
 hideHeadings: "true"
 hideSections: "true"
-# Border/Frame styles
-styles.lines.fg: "#ffff00"
-styles.lines.bold: "true"
 fontsize: 20
+crewMorale: 50
+rainLevel: 0.0
 ---
 
-```nim on:init
-var frameStyle = getStyle("lines")
-var statusStyle = getStyle("fgPrimary")
-
-var crewMorale = 50
-var discovered_laundromat = false
-var met_elder = false
-var station_breached = false
-var aria_awakened = false
-
-initCanvas(1)
-
-var rainLevel = 0.0
-
-# Initialize rain particle system
-particleInit("bgRain", 200)
-particleInit("fgRain", 200)
-particleConfigureRain("bgRain", rainLevel)
-particleSetBackgroundFromStyle("bgRain", defaultStyle)
-particleSetEmitterPos("bgRain", 0.0, 0.0)
-particleSetEmitterSize("bgRain", float(termWidth), 1.0)
-particleSetColorRange("bgRain", 10, 10, 10, 30, 30, 30)
-particleSetChars("bgRain", " ")
-particleSetVelocityRange("bgRain", 0.0, 90.0, 0.0, 200.0)
-particleSetLifeRange("bgRain", 2.0, 4.0)
-particleSetGravity("bgRain", 40.0)
-
-# Foreground rain
-
-particleConfigureRain("fgRain", rainLevel)
-particleSetBackgroundFromStyle("fgRain", defaultStyle)
-particleSetEmitterPos("fgRain", 0.0, 0.0)
-particleSetEmitterSize("fgRain", float(termWidth), 1.0)
-particleSetColorRange("fgRain", 20, 20, 20, 60, 60, 60)
-particleSetChars("fgRain", "....:|")
-particleSetVelocityRange("fgRain", 0.0, 90.0, 0.0, 200.0)
-particleSetLifeRange("fgRain", 2.0, 4.0)
-particleSetGravity("fgRain", 40.0)
-```
-
-```nim on:input
-# Handle keyboard and mouse input for canvas navigation
-
-if event.type == "key":
-  if event.action == "press":
-    # Pass key events to canvas system
-    var handled = canvasHandleKey(event.keyCode, 0)
-    if handled:
-      return true
-  return false
-
-elif event.type == "mouse":
-  if event.action == "release":
-    var handled = canvasHandleMouse(event.x, event.y, event.button, false)
-    if handled:
-      return true
-  return false
-
-return false
-```
-
-```nim on:render
-clear()
-canvasRender()
-
-# ═══ ASCII ART FRAME OVERLAY ═══
-# Title - Get current section name dynamically
-var section = getCurrentSection()
-var sectionTitle = section["title"]
-
-var titleDecorated = "-=| " & sectionTitle & " |=-"
-var titleLen = len(titleDecorated)
-draw(0, (termWidth / 2) - titleLen/2, 1, titleDecorated, frameStyle)
-
-draw(0, (termWidth / 2) - len(sectionTitle)/2, 1, sectionTitle, statusStyle)
-
-# Draw left and right borders
-var y = 0
-
-var metrics = getSectionMetrics()
-
-var linx = metrics.x - 3
-
-draw(0, linx, metrics.y - 1, "○-|       |", frameStyle)
-draw(0, linx + 3, metrics.y - 1, "///////", statusStyle)
-draw(0, linx, metrics.y, "|", frameStyle)
-draw(0, linx, metrics.y + 1, "|", frameStyle)
-draw(0, linx, metrics.y + 2, "|", frameStyle)
-draw(0, linx, metrics.y + 3, "|", frameStyle)
-draw(0, linx, metrics.y + 4, "●", frameStyle)
-
-# Draw status info inside frame
-draw(0, 3, termHeight - 2, "> Morale: " & str(crewMorale) & "%", statusStyle)
-
-# Render rain particle system as background color changes
-particleRender("bgRain", 0)
-particleRender("fgRain", 0)
-```
-
-```nim on:update
-# Calculate time delta (assuming ~60 FPS)
-var deltaTime = 0.016
-particleUpdate("bgRain", deltaTime)
-particleUpdate("fgRain", deltaTime)
-canvasUpdate()
+```javascript on:init
+canvas3D.enable();
+console.log('✓ 3D Canvas enabled!');
+canvas3D.config.setDefaults({
+  defaultSectionWidth: 100,        // Default width
+  defaultSectionHeight: 24,       // Default height
+  autoLayoutSpacing: 150,         // Spacing between auto-laid-out sections (world units)
+  sectionBorderEnabled: false,     // Draw a border around each section card
+  sectionBackground: 'bg',   // Section card background: 'surface' | 'bg' | 'bgAlt' | 'accent1' | '#RRGGBB' | 0xRRGGBBAA
+});
+canvas3D.camera.setPosition(0, 0, 250);
+canvas3D.camera.setRotation(0, 10, 0.5);
+canvas3D.camera.setEaseSpeed(0.08, 0.12);
+canvas3D.camera.focusOnSection(0, 50);
 ```
 
 # Awake
@@ -130,8 +38,8 @@ The dream lingers. The voice lingers.
 - [What's our status?](#assess-damage)
 - [Where are we?](#question-location)
 
-```nim on:enter
-crewMorale = 45
+```js on:enter
+crewMorale = 45;
 ```
 
 # Assess Damage
@@ -144,9 +52,9 @@ The engines are scrap. Fuel cells ruptured. No beacon. No rescue signal. The *Me
 ⠀
 You move to the navigation console. One file survives the corruption: coordinates labeled simply **"HER."**
 ⠀
-- [Plan with Kess](#plan-with_kess)
+- [Plan with Kess](#plan-with-kess)
 
-```nim on:enter
+```js on:enter
 crewMorale = 40
 ```
 
@@ -171,7 +79,7 @@ You pull Kess aside. Her expression darkens.
 ⠀
 She meets your eyes. "We need to be very careful."
 ⠀
-- [Prepare to move](#plan-with_kess)
+- [Prepare to move](#plan-with-kess)
 
 # Day One
 ⠀
@@ -185,10 +93,9 @@ Dax struggles to keep pace. His fever is rising.
 ⠀
 - [Continue walking](#day-two)
 
-```nim on:enter
+```js on:enter
 crewMorale = 35
 rainLevel = 5.0
-particleSetEmitRate("bgRain", rainLevel)
 ```
 
 # Day Two
@@ -205,10 +112,8 @@ She's right. The rain feels permanent. Almost intentional.
 ⠀
 - [Press on](#day-three)
 
-```nim on:enter
+```js on:enter
 rainLevel = 30.0
-particleSetEmitRate("bgRain", rainLevel)
-particleSetEmitRate("fgRain", rainLevel - 20.0)
 ```
 
 # Day Three
@@ -234,10 +139,6 @@ Kess stops the group. Her hand moves to her weapon. "No structure should have in
 - [Approach cautiously](#cautious-approach)
 - [Camp here instead](#camp-distance)
 
-```nim on:enter
-discovered_laundromat = true
-```
-
 # Cautious Approach
 ⠀
 A neon sign flickers pink. "Laundromat". Warm light spills through glass doors. Inside: rows of machines with clothes strewn about. The mundane infrastructure of ordinary life in a dead world.
@@ -261,7 +162,7 @@ Behind the machines, you notice a door marked "Maintenance."
 - [Check the back room](#maintenance-room)
 - [Rest here with the others](#rest-here)
 
-```nim on:enter
+```js on:enter
 crewMorale += 10
 ```
 
@@ -289,7 +190,7 @@ For a moment, you believe it absolutely. Then Kess grabs your shoulder, snapping
 ⠀
 - [Head toward the city](#city-approach)
 
-```nim on:enter
+```js on:enter
 crewMorale = 25
 ```
 
@@ -308,7 +209,7 @@ Beneath it all, that voice again. Louder now. Broadcast outward but also seeming
 - [Find shelter before entering](#find-shelter)
 - [Enter the city](#city-entrance)
 
-```nim on:enter
+```js on:enter
 crewMorale = 20
 ```
 
@@ -342,8 +243,7 @@ He ushers you inside quickly.
 ⠀
 - [Listen to Marcus](#marcus-begins)
 
-```nim on:enter
-met_elder = true
+```js on:enter
 crewMorale = 35
 ```
 
@@ -459,10 +359,6 @@ The face is scarred. Badly. Burned. Healed wrong. But the eyes are human. Intell
 - [Trust this figure](#trust-figure)
 - [Demand answers](#demand-answers)
 
-```nim on:enter
-station_breached = true
-```
-
 # Trust Figure
 ⠀
 "I'm Del," the figure says. "Former city engineer. Before the government. Before the Voice. I built this place when it was supposed to be a city of innovation. A free city in a controlled world."
@@ -527,7 +423,7 @@ The doors open onto Station V.
 ⠀
 - [Enter Station V](#station-v_enter)
 
-```nim on:enter
+```js on:enter
 crewMorale = 15
 ```
 
@@ -569,8 +465,7 @@ She *screams*.
 ⠀
 - [What happens next?](#aria-awakens)
 
-```nim on:enter
-aria_awakened = true
+```js on:enter
 crewMorale = 5
 ```
 

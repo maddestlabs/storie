@@ -5,7 +5,7 @@
 
 import { BaseWidget, type WidgetConfig } from '../core/base-widget.js';
 import type { TerminalRenderer } from '../../terminal-renderer.js';
-import { ColorUtils } from '../../types.js';
+import { getTUIThemeDefaults } from './theme.js';
 
 export interface TUIButtonConfig extends WidgetConfig {
   label: string;
@@ -58,6 +58,8 @@ export class TUIButton extends BaseWidget {
     
     const { x, y, width, height } = this.bounds;
     const style = this.getEffectiveStyle();
+
+    const defaults = getTUIThemeDefaults();
     
     // Choose border style based on focus state
     const borderChars = this.state.focused
@@ -65,8 +67,8 @@ export class TUIButton extends BaseWidget {
       : { tl: '┌', tr: '┐', bl: '└', br: '┘', h: '─', v: '│' };
     
     // Get colors (with defaults)
-    const fg = style.fg ?? ColorUtils.rgb(224, 224, 224);
-    const bg = style.bg ?? ColorUtils.rgb(0, 17, 17);
+    const fg = style.fg ?? defaults.button.fg;
+    const bg = style.bg ?? defaults.button.bg;
     
     // Draw border
     for (let col = 0; col < width; col++) {

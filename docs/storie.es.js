@@ -141,9 +141,11 @@ class Layer {
     __publicField(this, "alpha", 1);
     __publicField(this, "width");
     __publicField(this, "height");
+    __publicField(this, "defaultBg");
     this.id = id;
     this.width = width;
     this.height = height;
+    this.defaultBg = COLORS.BLACK;
     this.buffer = this.createBuffer(width, height);
   }
   createBuffer(width, height) {
@@ -154,7 +156,7 @@ class Layer {
         row.push({
           char: " ",
           fg: COLORS.WHITE,
-          bg: COLORS.BLACK
+          bg: this.defaultBg
         });
       }
       buffer.push(row);
@@ -181,6 +183,7 @@ class Layer {
   }
   clear(bgColor) {
     const bg = bgColor || COLORS.BLACK;
+    this.defaultBg = bg;
     for (let y = 0; y < this.height; y++) {
       for (let x = 0; x < this.width; x++) {
         this.buffer[y][x] = {
@@ -192,9 +195,20 @@ class Layer {
     }
   }
   resize(width, height) {
+    const oldBuffer = this.buffer;
+    const oldW = this.width;
+    const oldH = this.height;
     this.width = width;
     this.height = height;
-    this.buffer = this.createBuffer(width, height);
+    const next = this.createBuffer(width, height);
+    const copyW = Math.min(oldW, width);
+    const copyH = Math.min(oldH, height);
+    for (let y = 0; y < copyH; y++) {
+      for (let x = 0; x < copyW; x++) {
+        next[y][x] = oldBuffer[y][x];
+      }
+    }
+    this.buffer = next;
   }
 }
 class LayerStack {
@@ -290,6 +304,11 @@ class LayerStack {
     this.height = height;
     for (const layer of this.layers.values()) {
       layer.resize(width, height);
+    }
+  }
+  clearAll(bgColor) {
+    for (const layer of this.layers.values()) {
+      layer.clear(bgColor);
     }
   }
 }
@@ -411,8 +430,14 @@ class Canvas2DRenderer {
     this.ctx = ctx;
     this.fontFamily = config.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
     this.fontSize = config.fontSize || 16;
-    this.cellWidth = config.cellWidth || 10;
-    this.cellHeight = config.cellHeight || 20;
+    this.ctx.font = `${this.fontSize}px ${this.fontFamily}`;
+    const metrics = this.ctx.measureText("M");
+    if (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent) {
+      this.cellHeight = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent);
+    } else {
+      this.cellHeight = config.cellHeight || Math.ceil(this.fontSize * 1.25);
+    }
+    this.cellWidth = config.cellWidth || Math.ceil(metrics.width);
     this.setupCanvas();
     this.waitForFont();
   }
@@ -464,7 +489,7 @@ class Canvas2DRenderer {
     const px = x * this.cellWidth;
     const py = y * this.cellHeight;
     this.ctx.fillStyle = ColorUtils.toCss(cell.bg);
-    this.ctx.fillRect(px, py, this.cellWidth, this.cellHeight);
+    this.ctx.fillRect(px, py - 2, this.cellWidth, this.cellHeight + 4);
     if (cell.char && cell.char !== " ") {
       this.ctx.fillStyle = ColorUtils.toCss(cell.fg);
       this.ctx.fillText(cell.char, px + 1, py + 2);
@@ -653,7 +678,11 @@ class GlyphAtlas {
     this.atlasCtx.textAlign = "left";
     const metrics = this.atlasCtx.measureText("M");
     this.charWidth = Math.ceil(metrics.width);
-    this.charHeight = this.fontSize;
+    if (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent) {
+      this.charHeight = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent);
+    } else {
+      this.charHeight = Math.ceil(this.fontSize * 1.25);
+    }
     console.log(`[GlyphAtlas] Font initialized: ${this.atlasCtx.font}`);
     console.log(`[GlyphAtlas] Base char size: ${this.charWidth}x${this.charHeight}px`);
   }
@@ -701,8 +730,10 @@ class GlyphAtlas {
       this.fontLoggedOnce = true;
     }
     const metrics = this.atlasCtx.measureText(char);
-    const width = Math.ceil(metrics.width) + 2;
-    const height = this.charHeight + 2;
+    const glyphWidth = Math.ceil(metrics.width);
+    const padding = 4;
+    const width = glyphWidth + padding * 2;
+    const height = this.charHeight + padding * 2;
     if (this.atlasX + width > this.atlasWidth) {
       this.atlasX = 0;
       this.atlasY += this.atlasRowHeight;
@@ -721,14 +752,14 @@ class GlyphAtlas {
     }
     this.atlasCtx.clearRect(this.atlasX, this.atlasY, width, height);
     this.atlasCtx.fillStyle = "#ffffff";
-    this.atlasCtx.fillText(char, this.atlasX + 1, this.atlasY + 1);
+    this.atlasCtx.fillText(char, Math.floor(this.atlasX + padding), Math.floor(this.atlasY + padding));
     const info = {
-      u: this.atlasX / this.atlasWidth,
-      v: this.atlasY / this.atlasHeight,
-      w: width / this.atlasWidth,
-      h: height / this.atlasHeight,
-      pixelWidth: width,
-      pixelHeight: height
+      u: (this.atlasX + padding) / this.atlasWidth,
+      v: (this.atlasY + padding) / this.atlasHeight,
+      w: glyphWidth / this.atlasWidth,
+      h: this.charHeight / this.atlasHeight,
+      pixelWidth: glyphWidth,
+      pixelHeight: this.charHeight
     };
     this.glyphCache.set(char, info);
     this.atlasX += width;
@@ -1555,7 +1586,15 @@ class Compositor {
     __publicField(this, "mode", "auto");
     // Shader pipeline for post-processing
     __publicField(this, "shaderPipeline", null);
+    // External WGSL shader manager (markdown wgsl blocks)
+    __publicField(this, "shaderManager", null);
+    // External shader chain manager (for multi-pass effects)
+    __publicField(this, "shaderChainManager", null);
+    // Offscreen render target used when applying a post-process shader
+    __publicField(this, "postProcessTexture", null);
     __publicField(this, "initialized", false);
+    // Clear color used by autoComposite (swapchain/post-process target).
+    __publicField(this, "autoClearValue", { r: 0, g: 0, b: 0, a: 1 });
     this.device = device;
     this.canvas = canvas;
     const context = canvas.getContext("webgpu");
@@ -1570,6 +1609,48 @@ class Compositor {
       // directly into the swapchain when appropriate.
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST
     });
+  }
+  /**
+   * Set the background clear color used by autoComposite().
+   * This affects the “overall background” behind all layers.
+   */
+  setAutoClearColor(color) {
+    const [r, g, b, a] = ColorUtils.rgbaNorm(color);
+    this.autoClearValue = { r, g, b, a };
+  }
+  /**
+   * Provide an external ShaderManager for applying a single active WGSL shader
+   * as a post-process step during autoComposite().
+   */
+  setShaderManager(manager) {
+    this.shaderManager = manager;
+  }
+  /**
+   * Provide an external ShaderChainManager for applying shader chains
+   * as a post-process step during autoComposite().
+   */
+  setShaderChainManager(manager) {
+    this.shaderChainManager = manager;
+  }
+  ensurePostProcessTexture() {
+    const width = this.canvas.width;
+    const height = this.canvas.height;
+    const format = navigator.gpu.getPreferredCanvasFormat();
+    if (this.postProcessTexture && this.postProcessTexture.width === width && this.postProcessTexture.height === height) {
+      return this.postProcessTexture;
+    }
+    if (this.postProcessTexture) {
+      try {
+        this.postProcessTexture.destroy();
+      } catch {
+      }
+    }
+    this.postProcessTexture = this.device.createTexture({
+      size: { width, height },
+      format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+    });
+    return this.postProcessTexture;
   }
   async init() {
     if (this.initialized) return;
@@ -1704,7 +1785,6 @@ class Compositor {
       context: layer.context
     };
     this.layers.set(name, fullLayer);
-    console.log(`[Compositor] Registered layer: ${name} (texture=${!!layer.texture}, canvas=${!!layer.canvas}, ${fullLayer.width}x${fullLayer.height})`);
     return fullLayer;
   }
   /**
@@ -1793,7 +1873,10 @@ class Compositor {
     const sortedLayers = Array.from(this.layers.values()).filter((layer) => layer.enabled).sort((a, b) => a.zIndex - b.zIndex);
     const commandEncoder = this.device.createCommandEncoder();
     const currentTexture = this.context.getCurrentTexture();
-    const textureView = currentTexture.createView();
+    const activeShaderName = this.shaderManager && "getActiveShaderName" in this.shaderManager && typeof this.shaderManager.getActiveShaderName === "function" ? this.shaderManager.getActiveShaderName() : this.shaderManager && "getActiveShader" in this.shaderManager && typeof this.shaderManager.getActiveShader === "function" ? this.shaderManager.getActiveShader() : null;
+    const shouldPostProcess = !!activeShaderName || this.shaderChainManager && this.shaderChainManager.hasActiveChain();
+    const compositeTargetTexture = shouldPostProcess ? this.ensurePostProcessTexture() : currentTexture;
+    const textureView = compositeTargetTexture.createView();
     for (const layer of sortedLayers) {
       if (!layer.texture && layer.canvas) {
         layer.texture = this.ensureCanvasLayerTexture(layer);
@@ -1805,18 +1888,28 @@ class Compositor {
     const passEncoder = commandEncoder.beginRenderPass({
       colorAttachments: [{
         view: textureView,
-        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        clearValue: this.autoClearValue,
         loadOp: "clear",
         storeOp: "store"
       }]
     });
     for (const layer of sortedLayers) {
       const texture = layer.texture;
-      if (!texture) continue;
+      if (!texture) {
+        if (Math.random() < 0.01) {
+          console.warn(`[Compositor] Layer ${layer.name} has no texture!`);
+        }
+        continue;
+      }
       const opacity = layer.opacity ?? 1;
       const blendMode = layer.blendMode || "normal";
       const pipeline = this.autoPipelines.get(blendMode);
-      if (!pipeline) continue;
+      if (!pipeline) {
+        if (Math.random() < 0.01) {
+          console.warn(`[Compositor] No pipeline for blend mode: ${blendMode}`);
+        }
+        continue;
+      }
       this.device.queue.writeBuffer(this.autoUniformBuffer, 0, new Float32Array([opacity, 0, 0, 0]));
       const bindGroup = this.device.createBindGroup({
         layout: pipeline.getBindGroupLayout(0),
@@ -1831,6 +1924,58 @@ class Compositor {
       passEncoder.draw(6);
     }
     passEncoder.end();
+    if (shouldPostProcess) {
+      let applied = false;
+      if (this.shaderChainManager && this.shaderChainManager.hasActiveChain()) {
+        try {
+          applied = this.shaderChainManager.applyChain(
+            compositeTargetTexture,
+            currentTexture,
+            commandEncoder
+          );
+        } catch (error) {
+          console.error("[Compositor] Failed to apply shader chain:", error);
+          applied = false;
+        }
+      } else if (this.shaderManager) {
+        try {
+          applied = this.shaderManager.applyShader(
+            compositeTargetTexture,
+            currentTexture,
+            commandEncoder
+          );
+        } catch (error) {
+          console.error("[Compositor] Failed to apply ShaderManager post-process:", error);
+          applied = false;
+        }
+      }
+      if (!applied) {
+        const pipeline = this.autoPipelines.get("normal");
+        if (pipeline) {
+          this.device.queue.writeBuffer(this.autoUniformBuffer, 0, new Float32Array([1, 0, 0, 0]));
+          const bindGroup = this.device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+              { binding: 0, resource: this.sampler },
+              { binding: 1, resource: compositeTargetTexture.createView() },
+              { binding: 2, resource: { buffer: this.autoUniformBuffer } }
+            ]
+          });
+          const finalPass = commandEncoder.beginRenderPass({
+            colorAttachments: [{
+              view: currentTexture.createView(),
+              clearValue: this.autoClearValue,
+              loadOp: "clear",
+              storeOp: "store"
+            }]
+          });
+          finalPass.setPipeline(pipeline);
+          finalPass.setBindGroup(0, bindGroup);
+          finalPass.draw(6);
+          finalPass.end();
+        }
+      }
+    }
     this.device.queue.submit([commandEncoder.finish()]);
   }
   /**
@@ -2238,6 +2383,13 @@ class Compositor {
       alphaMode: "premultiplied",
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST
     });
+    if (this.postProcessTexture) {
+      try {
+        this.postProcessTexture.destroy();
+      } catch {
+      }
+      this.postProcessTexture = null;
+    }
     console.log(`[Compositor] Resized to ${width}x${height}`);
   }
   /**
@@ -2325,7 +2477,7 @@ const {
   Set: Set$1,
   String: String$2,
   Symbol: Symbol$2,
-  Uint8Array: Uint8Array$1,
+  Uint8Array: Uint8Array$2,
   WeakMap: WeakMap$2,
   WeakSet: WeakSet2
 } = globalThis;
@@ -2412,7 +2564,7 @@ const iteratorPrototype = getPrototypeOf$1(
   // eslint-disable-next-line @endo/no-polymorphic-call
   getPrototypeOf$1(arrayPrototype.values())
 );
-const typedArrayPrototype$1 = getPrototypeOf$1(Uint8Array$1.prototype);
+const typedArrayPrototype$1 = getPrototypeOf$1(Uint8Array$2.prototype);
 const { bind } = functionPrototype;
 const uncurryThis$1 = bind.bind(bind.call);
 const arrayFilter = uncurryThis$1(arrayPrototype.filter);
@@ -2614,7 +2766,7 @@ const {
   Reflect: Reflect$2,
   Symbol: Symbol$1,
   TypeError: TypeError$2,
-  Uint8Array: Uint8Array2,
+  Uint8Array: Uint8Array$1,
   WeakMap: WeakMap$1,
   // Capture structuredClone before it can be scuttled.
   structuredClone: optStructuredClone
@@ -2629,7 +2781,7 @@ const { get: arrayBufferByteLength } = getOwnPropertyDescriptor(
   arrayBufferPrototype$1,
   "byteLength"
 );
-const typedArrayPrototype = getPrototypeOf(Uint8Array2.prototype);
+const typedArrayPrototype = getPrototypeOf(Uint8Array$1.prototype);
 const { set: uint8ArraySet } = typedArrayPrototype;
 const { get: uint8ArrayBuffer } = getOwnPropertyDescriptor(
   typedArrayPrototype,
@@ -2747,8 +2899,8 @@ if (optArrayBufferTransfer) {
       if (newLength <= oldLength) {
         buffer = arrayBufferSlice(buffer, 0, newLength);
       } else {
-        const oldTA = new Uint8Array2(buffer);
-        const newTA = new Uint8Array2(newLength);
+        const oldTA = new Uint8Array$1(buffer);
+        const newTA = new Uint8Array$1(newLength);
         apply(uint8ArraySet, newTA, [oldTA]);
         buffer = apply(uint8ArrayBuffer, newTA, []);
       }
@@ -8659,8 +8811,8 @@ const shimArrayBufferTransfer = () => {
       }
       if (newLength > oldLength) {
         const result = new ArrayBuffer$2(newLength);
-        const taOld = new Uint8Array$1(this);
-        const taNew = new Uint8Array$1(result);
+        const taOld = new Uint8Array$2(this);
+        const taNew = new Uint8Array$2(result);
         typedArraySet(taNew, taOld);
         clone(this, { transfer: [this] });
         return result;
@@ -9118,13 +9270,14 @@ class ScriptSandbox {
    * ```
    */
   createCompartment(documentId, frontmatter = {}) {
+    var _a, _b, _c, _d;
     try {
       const scope = {
         ...frontmatter
         // Include frontmatter variables
       };
       this.scopes.set(documentId, scope);
-      const api = this.api;
+      const apiRef = this.api;
       const compartmentGlobals = {
         // Console for debugging
         console,
@@ -9151,30 +9304,135 @@ class ScriptSandbox {
         canvas2d: this.api.canvas2d,
         webgl: this.api.webgl,
         webgpu: this.api.webgpu,
+        // WGSL Shader API (high-level shader management)
+        shader: this.api.shader,
         // Compositor API (Phase 1-5)
         compositor: this.api.compositor,
         // Retained-mode TUI API
         tui: this.api.tui,
-        // WebGPU UI API
-        ui: this.api.ui,
-        // Global accessors (as functions, not getters, for SES compatibility)
-        getMouseX: () => api.mouseX,
-        getMouseY: () => api.mouseY,
-        getTermWidth: () => api.termWidth,
-        getTermHeight: () => api.termHeight,
-        // Also expose as properties for convenience (but these might not work in strict SES)
+        // Retained-mode GUI API
+        gui: this.api.gui,
+        // Embedded blobs (document-scoped)
+        blob: ((_a = this.api.blob) == null ? void 0 : _a.forDocument) ? this.api.blob.forDocument(documentId) : this.api.blob,
+        // Embedded ASCII blocks (document-scoped)
+        ascii: ((_b = this.api.ascii) == null ? void 0 : _b.forDocument) ? this.api.ascii.forDocument(documentId) : this.api.ascii,
+        // Convenience drawing helper (document-aware)
+        drawAscii: (x, y, name, fg, bg) => {
+          const asciiRef = this.api.ascii;
+          const ascii = (asciiRef == null ? void 0 : asciiRef.forDocument) ? asciiRef.forDocument(documentId) : asciiRef;
+          if (!ascii || typeof ascii.lines !== "function") return;
+          const lines = ascii.lines(name);
+          if (!lines || !Array.isArray(lines)) return;
+          for (let i = 0; i < lines.length; i++) {
+            this.api.term.write(x, y + i, lines[i] ?? "", fg, bg);
+          }
+        },
+        // Embedded FIGlet fonts (document-scoped)
+        figlet: ((_c = this.api.figlet) == null ? void 0 : _c.forDocument) ? this.api.figlet.forDocument(documentId) : this.api.figlet,
+        // Convenience drawing helper (document-aware)
+        drawFiglet: (x, y, fontName, text, fg, bg, options) => {
+          const figletRef = this.api.figlet;
+          const figlet = (figletRef == null ? void 0 : figletRef.forDocument) ? figletRef.forDocument(documentId) : figletRef;
+          if (!figlet) return;
+          const vertical = !!(options == null ? void 0 : options.vertical);
+          const letterSpacing = Math.max(0, (options == null ? void 0 : options.letterSpacing) ?? 0);
+          if (vertical) {
+            let currentY = y;
+            for (const ch of Array.from(String(text ?? ""))) {
+              const lines2 = typeof figlet.renderChar === "function" ? figlet.renderChar(fontName, ch) : [];
+              for (let i = 0; i < ((lines2 == null ? void 0 : lines2.length) ?? 0); i++) {
+                this.api.term.write(x, currentY + i, lines2[i] ?? "", fg, bg);
+              }
+              currentY += (typeof figlet.height === "function" ? figlet.height(fontName) : (lines2 == null ? void 0 : lines2.length) ?? 0) + letterSpacing;
+            }
+            return;
+          }
+          if (letterSpacing > 0 && typeof figlet.renderChar === "function") {
+            let currentX = x;
+            const height = typeof figlet.height === "function" ? figlet.height(fontName) : 0;
+            for (const ch of Array.from(String(text ?? ""))) {
+              const lines2 = figlet.renderChar(fontName, ch);
+              for (let i = 0; i < ((lines2 == null ? void 0 : lines2.length) ?? height); i++) {
+                this.api.term.write(currentX, y + i, (lines2 == null ? void 0 : lines2[i]) ?? "", fg, bg);
+              }
+              const w = Math.max(0, ...(lines2 ?? []).map((l) => (l ?? "").length));
+              currentX += w + letterSpacing;
+            }
+            return;
+          }
+          const lines = typeof figlet.render === "function" ? figlet.render(fontName, text) : [];
+          if (!lines || !Array.isArray(lines)) return;
+          for (let i = 0; i < lines.length; i++) {
+            this.api.term.write(x, y + i, lines[i] ?? "", fg, bg);
+          }
+        },
+        // Embedded ANSI art (document-scoped)
+        ansi: ((_d = this.api.ansi) == null ? void 0 : _d.forDocument) ? this.api.ansi.forDocument(documentId) : this.api.ansi,
+        // Convenience drawing helper (document-aware)
+        drawAnsi: (x, y, name) => {
+          const ansiRef = this.api.ansi;
+          const ansi = (ansiRef == null ? void 0 : ansiRef.forDocument) ? ansiRef.forDocument(documentId) : ansiRef;
+          if (!ansi || typeof ansi.runs !== "function") return;
+          const lines = ansi.runs(name);
+          if (!lines || !Array.isArray(lines)) return;
+          for (let row = 0; row < lines.length; row++) {
+            const runs = lines[row];
+            if (!runs || !Array.isArray(runs)) continue;
+            let cx = x;
+            for (const run of runs) {
+              const text = String((run == null ? void 0 : run.text) ?? "");
+              if (!text) continue;
+              this.api.term.write(cx, y + row, text, run == null ? void 0 : run.fg, run == null ? void 0 : run.bg);
+              cx += text.length;
+            }
+          }
+        },
+        // WebGPU UI API (document-aware wrapper for helpers that need doc context)
+        ui: (() => {
+          const uiRef = this.api.ui;
+          if (!uiRef || typeof uiRef !== "object") return uiRef;
+          if (typeof uiRef.loadImageFromBlob !== "function") return uiRef;
+          const ui = Object.create(uiRef);
+          ui.loadImageFromBlob = (name) => uiRef.loadImageFromBlob(name, documentId);
+          return ui;
+        })(),
+        // 3D Canvas API
+        canvas3D: this.api.canvas3D,
+        // Mouse/terminal accessors - provide BOTH properties (getters) and functions
+        // Use captured apiRef to avoid this binding issues in SES
         get mouseX() {
-          return api.mouseX;
+          return apiRef.mouseX;
         },
         get mouseY() {
-          return api.mouseY;
+          return apiRef.mouseY;
+        },
+        get mouseCellX() {
+          return apiRef.mouseCellX;
+        },
+        get mouseCellY() {
+          return apiRef.mouseCellY;
+        },
+        get mousePixelX() {
+          return apiRef.mousePixelX;
+        },
+        get mousePixelY() {
+          return apiRef.mousePixelY;
         },
         get termWidth() {
-          return api.termWidth;
+          return apiRef.termWidth;
         },
         get termHeight() {
-          return api.termHeight;
+          return apiRef.termHeight;
         },
+        // Function versions - same as getters but explicit
+        getMouseX: () => apiRef.mouseX,
+        getMouseY: () => apiRef.mouseY,
+        getMouseCellX: () => apiRef.mouseCellX,
+        getMouseCellY: () => apiRef.mouseCellY,
+        getMousePixelX: () => apiRef.mousePixelX,
+        getMousePixelY: () => apiRef.mousePixelY,
+        getTermWidth: () => apiRef.termWidth,
+        getTermHeight: () => apiRef.termHeight,
         // Read-only state accessors
         getFrame: this.api.getFrame,
         getTime: this.api.getTime,
@@ -9316,21 +9574,326 @@ class ScriptSandbox {
     this.scopes.clear();
   }
 }
-function parseMarkdown(source) {
-  const sections = extractSections(source);
-  const codeBlocks = extractCodeBlocks(source);
-  const metadata = extractFrontmatter(source);
+async function decompressString(base64Input) {
+  try {
+    const binaryString = atob(base64Input);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    const stream = new Response(bytes).body.pipeThrough(new DecompressionStream("deflate-raw"));
+    const decompressed = await new Response(stream).arrayBuffer();
+    const decoder = new TextDecoder();
+    return decoder.decode(decompressed);
+  } catch (error) {
+    console.error("[Magic] Decompression error:", error);
+    return "";
+  }
+}
+function parseMagicParams(paramString) {
+  const result = {};
+  let i = 0;
+  while (i < paramString.length) {
+    while (i < paramString.length && /\s/.test(paramString[i])) {
+      i++;
+    }
+    if (i >= paramString.length) break;
+    let key = "";
+    while (i < paramString.length && !/[\s=]/.test(paramString[i])) {
+      key += paramString[i];
+      i++;
+    }
+    while (i < paramString.length && /[\s=]/.test(paramString[i])) {
+      i++;
+    }
+    if (i >= paramString.length || key.length === 0) break;
+    let value = "";
+    if (paramString[i] === '"' || paramString[i] === "'") {
+      const quote2 = paramString[i];
+      i++;
+      while (i < paramString.length && paramString[i] !== quote2) {
+        value += paramString[i];
+        i++;
+      }
+      if (i < paramString.length) {
+        i++;
+      }
+    } else {
+      while (i < paramString.length && !/\s/.test(paramString[i])) {
+        value += paramString[i];
+        i++;
+      }
+    }
+    if (key.length > 0) {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+function extractDeclaredParams(content) {
+  const result = [];
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("<!--") && trimmed.includes("MAGIC_PARAMS:")) {
+      const startPos = trimmed.indexOf("MAGIC_PARAMS:") + 13;
+      const endPos = trimmed.indexOf("-->", startPos);
+      if (endPos > startPos) {
+        const paramList = trimmed.substring(startPos, endPos).trim();
+        for (const param of paramList.split(",")) {
+          const cleaned = param.trim();
+          if (cleaned.length > 0) {
+            result.push(cleaned);
+          }
+        }
+      }
+      break;
+    }
+  }
+  return result;
+}
+function substituteMagicParams(content, params, syntax = "{{PARAM}}") {
+  let result = content;
+  const declaredParams = extractDeclaredParams(content);
+  const useOnlyDeclared = declaredParams.length > 0;
+  for (const [key, value] of Object.entries(params)) {
+    if (useOnlyDeclared && !declaredParams.includes(key)) {
+      continue;
+    }
+    let placeholder = "";
+    switch (syntax) {
+      case "{{PARAM}}":
+        placeholder = `{{${key}}}`;
+        break;
+      case "@PARAM@":
+        placeholder = `@${key}@`;
+        break;
+      case "$PARAM$":
+        placeholder = `$${key}$`;
+        break;
+      case "<!--PARAM-->":
+        placeholder = `<!--${key}-->`;
+        break;
+      default:
+        placeholder = `{{${key}}}`;
+    }
+    result = result.replaceAll(placeholder, value);
+  }
+  return result;
+}
+async function expandMagicBlocks(source) {
+  const lines = source.split("\n");
+  const result = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```magic")) {
+      const markerLine = trimmed.substring(8).trim();
+      const params = parseMagicParams(markerLine);
+      const compressedLines = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith("```")) {
+        compressedLines.push(lines[i].trim());
+        i++;
+      }
+      if (i < lines.length) {
+        i++;
+      }
+      const compressedContent = compressedLines.join("");
+      if (compressedContent.length > 0) {
+        try {
+          const decompressed = await decompressString(compressedContent);
+          if (decompressed.length > 0) {
+            const expanded = substituteMagicParams(decompressed, params);
+            result.push(expanded);
+            console.log(`[Magic] Expanded block with params:`, params);
+          } else {
+            console.warn("[Magic] Decompression resulted in empty content");
+          }
+        } catch (error) {
+          console.error("[Magic] Failed to expand magic block:", error);
+        }
+      }
+    } else {
+      result.push(line);
+      i++;
+    }
+  }
+  return result.join("\n");
+}
+function parseWGSLShader(name, code) {
+  const result = {
+    name,
+    code,
+    kind: "compute",
+    // Default
+    uniforms: [],
+    bindings: [],
+    workgroupSize: [64, 1, 1]
+    // Default
+  };
+  const lines = code.split("\n");
+  let inUniformStruct = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.includes("@compute")) {
+      result.kind = "compute";
+      if (trimmed.includes("@workgroup_size")) {
+        const match = trimmed.match(/@workgroup_size\(([^)]+)\)/);
+        if (match) {
+          const sizeStr = match[1];
+          const parts = sizeStr.split(",");
+          if (parts.length >= 1) {
+            try {
+              result.workgroupSize[0] = parseInt(parts[0].trim());
+              if (parts.length >= 2) {
+                result.workgroupSize[1] = parseInt(parts[1].trim());
+              }
+              if (parts.length >= 3) {
+                result.workgroupSize[2] = parseInt(parts[2].trim());
+              }
+            } catch {
+            }
+          }
+        }
+      }
+    } else if (trimmed.includes("@fragment")) {
+      result.kind = "fragment";
+    } else if (trimmed.includes("@vertex")) {
+      if (result.kind !== "fragment") {
+        result.kind = "vertex";
+      }
+    }
+    if (trimmed.startsWith("struct")) {
+      inUniformStruct = false;
+      const parts = trimmed.split(/\s+/);
+      if (parts.length >= 2) {
+        const structName = parts[1].replace("{", "").trim();
+        if (structName.toLowerCase().includes("uniform") || structName === "Uniforms") {
+          inUniformStruct = trimmed.endsWith("{") || parts.length > 2 && parts[2] === "{";
+          continue;
+        }
+      }
+    }
+    if (inUniformStruct) {
+      if (trimmed.includes("}")) {
+        inUniformStruct = false;
+        continue;
+      } else if (trimmed.includes(":")) {
+        const parts = trimmed.split(":");
+        if (parts.length >= 1) {
+          const fieldName = parts[0].trim();
+          if (fieldName.length > 0 && !fieldName.startsWith("//") && !fieldName.startsWith("@") && !fieldName.includes("fn ") && !fieldName.startsWith("_pad") && !["time", "resolution"].includes(fieldName)) {
+            result.uniforms.push(fieldName);
+          }
+        }
+      }
+    }
+    if (trimmed.includes("@binding(")) {
+      const match = trimmed.match(/@binding\((\d+)\)/);
+      if (match) {
+        const bindingNum = parseInt(match[1]);
+        if (!result.bindings.includes(bindingNum)) {
+          result.bindings.push(bindingNum);
+        }
+      }
+    }
+  }
+  return result;
+}
+function extractWGSLBlocks(source) {
+  const lines = source.split("\n");
+  const shaders = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```wgsl")) {
+      const markerParts = trimmed.substring(7).trim().split(":");
+      if (markerParts.length >= 2) {
+        const shaderType = markerParts[0].trim();
+        const shaderName = markerParts[1].trim();
+        const codeLines = [];
+        i++;
+        while (i < lines.length && !lines[i].trim().startsWith("```")) {
+          codeLines.push(lines[i]);
+          i++;
+        }
+        const code = codeLines.join("\n");
+        const shader = parseWGSLShader(shaderName, code);
+        if (["compute", "vertex", "fragment"].includes(shaderType)) {
+          shader.kind = shaderType;
+        }
+        shaders.push(shader);
+        console.log(`[WGSL] Parsed ${shader.kind} shader: ${shaderName}`);
+      }
+    }
+    i++;
+  }
+  return shaders;
+}
+async function parseMarkdown(source) {
+  const expandedSource = await expandMagicBlocks(source);
+  const wgslShaders = extractWGSLBlocks(expandedSource);
+  const sections = extractSections(expandedSource);
+  const codeBlocks = extractCodeBlocks(expandedSource);
+  const blobBlocks = extractBlobBlocks(codeBlocks);
+  const metadata = extractFrontmatter(expandedSource);
   return {
     sections,
     codeBlocks,
-    metadata
+    metadata,
+    wgslShaders,
+    blobBlocks
   };
 }
+function extractBlobBlocks(codeBlocks) {
+  var _a, _b, _c;
+  const out = [];
+  for (const block of codeBlocks) {
+    if (block.lang !== "blob") continue;
+    const name = String(((_a = block.metadata) == null ? void 0 : _a.name) ?? "").trim();
+    if (!name) {
+      continue;
+    }
+    const mime = String(((_b = block.metadata) == null ? void 0 : _b.mime) ?? "application/octet-stream").trim() || "application/octet-stream";
+    const encoding = String(((_c = block.metadata) == null ? void 0 : _c.enc) ?? "base64").trim().toLowerCase();
+    if (encoding !== "base64" && encoding !== "hex") {
+      continue;
+    }
+    out.push({
+      name,
+      mime,
+      encoding,
+      data: block.code,
+      startLine: block.startLine,
+      endLine: block.endLine
+    });
+  }
+  return out;
+}
 function extractSections(source) {
+  var _a;
   const lines = source.split("\n");
   const headings = [];
+  let frontmatterEnd = -1;
+  if (((_a = lines[0]) == null ? void 0 : _a.trim()) === "---") {
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i].trim() === "---") {
+        frontmatterEnd = i;
+        break;
+      }
+    }
+  }
+  let inFence = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (line.trim().startsWith("```")) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    if (frontmatterEnd >= 0 && i <= frontmatterEnd) continue;
     const atxMatch = line.match(/^(#{1,6})\s+(.+)$/);
     if (atxMatch) {
       headings.push({
@@ -9341,6 +9904,9 @@ function extractSections(source) {
       continue;
     }
     if (i > 0 && lines[i - 1].trim().length > 0) {
+      if (frontmatterEnd >= 0 && i - 1 <= frontmatterEnd) {
+        continue;
+      }
       if (/^=+$/.test(line.trim())) {
         headings.push({
           level: 1,
@@ -9429,6 +9995,18 @@ function extractCodeBlocks(source) {
     } else if (inCodeBlock && currentBlock) {
       currentBlock.lines.push(line);
     }
+  }
+  if (inCodeBlock && currentBlock) {
+    const block = {
+      lang: currentBlock.lang,
+      code: currentBlock.lines.join("\n"),
+      startLine: currentBlock.startLine,
+      endLine: lines.length - 1
+    };
+    if (Object.keys(currentBlock.metadata).length > 0) {
+      block.metadata = currentBlock.metadata;
+    }
+    codeBlocks.push(block);
   }
   return codeBlocks;
 }
@@ -10268,7 +10846,8 @@ class InputRouter {
       hoveredWidget.emit({
         type: "click",
         widget: hoveredWidget.id,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        data: { x: mousePos.x, y: mousePos.y }
       });
     }
     if (mouseJustReleased && this.currentPressedWidget) {
@@ -10329,6 +10908,7 @@ class InputRouter {
     return this.currentPressedWidget;
   }
 }
+let nextAutoId = 1;
 class BaseWidget {
   constructor(config) {
     __publicField(this, "id");
@@ -10338,7 +10918,7 @@ class BaseWidget {
     __publicField(this, "state");
     __publicField(this, "focusable");
     __publicField(this, "eventListeners");
-    this.id = config.id;
+    this.id = config.id ?? `widget_${nextAutoId++}`;
     this.bounds = { ...config.bounds };
     this.style = config.style || {};
     this.group = config.group || 0;
@@ -10440,6 +11020,69 @@ class BaseWidget {
     this.bounds = { ...this.bounds, ...bounds };
   }
 }
+const FALLBACKS = {
+  label: {
+    fg: ColorUtils.rgb(200, 200, 200),
+    bg: ColorUtils.rgb(0, 0, 0)
+  },
+  checkbox: {
+    fg: ColorUtils.rgb(200, 200, 200),
+    bg: ColorUtils.rgb(0, 0, 0)
+  },
+  button: {
+    fg: ColorUtils.rgb(224, 224, 224),
+    bg: ColorUtils.rgb(0, 17, 17),
+    borderFg: ColorUtils.rgb(224, 224, 224)
+  },
+  slider: {
+    fg: ColorUtils.rgb(150, 150, 150),
+    bg: ColorUtils.rgb(0, 0, 0),
+    accent: ColorUtils.rgb(100, 200, 255),
+    dragAccent: ColorUtils.rgb(255, 200, 0)
+  }
+};
+let defaults = { ...FALLBACKS };
+function getTUIThemeDefaults() {
+  return defaults;
+}
+function setTUIThemeDefaults(next) {
+  defaults = {
+    label: { ...defaults.label, ...next.label },
+    checkbox: { ...defaults.checkbox, ...next.checkbox },
+    button: { ...defaults.button, ...next.button },
+    slider: { ...defaults.slider, ...next.slider }
+  };
+}
+function setTUIThemeFromStyles(getStyle) {
+  const base = getStyle("default") ?? {};
+  const surface = getStyle("surface") ?? {};
+  const button = getStyle("button") ?? surface;
+  const dim = getStyle("dim") ?? base;
+  const accent = getStyle("accent2") ?? getStyle("accent1") ?? base;
+  const warning = getStyle("warning") ?? accent;
+  const border = getStyle("border") ?? base;
+  setTUIThemeDefaults({
+    label: {
+      fg: base.fg ?? FALLBACKS.label.fg,
+      bg: base.bg ?? FALLBACKS.label.bg
+    },
+    checkbox: {
+      fg: base.fg ?? FALLBACKS.checkbox.fg,
+      bg: base.bg ?? FALLBACKS.checkbox.bg
+    },
+    button: {
+      fg: button.fg ?? FALLBACKS.button.fg,
+      bg: button.bg ?? FALLBACKS.button.bg,
+      borderFg: border.fg ?? (button.fg ?? FALLBACKS.button.borderFg)
+    },
+    slider: {
+      fg: dim.fg ?? FALLBACKS.slider.fg,
+      bg: base.bg ?? FALLBACKS.slider.bg,
+      accent: accent.fg ?? FALLBACKS.slider.accent,
+      dragAccent: warning.fg ?? FALLBACKS.slider.dragAccent
+    }
+  });
+}
 class TUIButton extends BaseWidget {
   constructor(config) {
     super(config);
@@ -10475,9 +11118,10 @@ class TUIButton extends BaseWidget {
     if (!this.state.visible) return;
     const { x, y, width, height } = this.bounds;
     const style = this.getEffectiveStyle();
+    const defaults2 = getTUIThemeDefaults();
     const borderChars = this.state.focused ? { tl: "╔", tr: "╗", bl: "╚", br: "╝", h: "═", v: "║" } : { tl: "┌", tr: "┐", bl: "└", br: "┘", h: "─", v: "│" };
-    const fg = style.fg ?? ColorUtils.rgb(224, 224, 224);
-    const bg = style.bg ?? ColorUtils.rgb(0, 17, 17);
+    const fg = style.fg ?? defaults2.button.fg;
+    const bg = style.bg ?? defaults2.button.bg;
     for (let col = 0; col < width; col++) {
       for (let row = 0; row < height; row++) {
         let char = " ";
@@ -10527,8 +11171,9 @@ class TUILabel extends BaseWidget {
     if (!this.state.visible) return;
     const { x, y, width, height } = this.bounds;
     const style = this.getEffectiveStyle();
-    const fg = style.fg ?? ColorUtils.rgb(200, 200, 200);
-    const bg = style.bg ?? ColorUtils.rgb(0, 0, 0);
+    const defaults2 = getTUIThemeDefaults();
+    const fg = style.fg ?? defaults2.label.fg;
+    const bg = style.bg ?? defaults2.label.bg;
     for (let col = 0; col < width; col++) {
       for (let row = 0; row < height; row++) {
         renderer.setCell(buffer, x + col, y + row, " ", fg, bg);
@@ -10602,8 +11247,9 @@ class TUICheckbox extends BaseWidget {
     if (!this.state.visible) return;
     const { x, y } = this.bounds;
     const style = this.getEffectiveStyle();
-    const fg = style.fg ?? ColorUtils.rgb(200, 200, 200);
-    const bg = style.bg ?? ColorUtils.rgb(0, 0, 0);
+    const defaults2 = getTUIThemeDefaults();
+    const fg = style.fg ?? defaults2.checkbox.fg;
+    const bg = style.bg ?? defaults2.checkbox.bg;
     let symbol;
     if (this.state.focused) {
       symbol = this.checked ? "《X》" : "《 》";
@@ -10690,9 +11336,10 @@ class TUISlider extends BaseWidget {
     if (!this.state.visible) return;
     const { x, y, width } = this.bounds;
     const style = this.getEffectiveStyle();
-    const fg = style.fg ?? ColorUtils.rgb(150, 150, 150);
-    const bg = style.bg ?? ColorUtils.rgb(0, 0, 0);
-    const accentColor = style.accentColor ?? ColorUtils.rgb(100, 200, 255);
+    const defaults2 = getTUIThemeDefaults();
+    const fg = style.fg ?? defaults2.slider.fg;
+    const bg = style.bg ?? defaults2.slider.bg;
+    const accentColor = style.accentColor ?? defaults2.slider.accent;
     for (let i = 0; i < this.label.length && i < width; i++) {
       renderer.setCell(buffer, x + i, y, this.label[i], fg, bg);
     }
@@ -10709,7 +11356,7 @@ class TUISlider extends BaseWidget {
     const range = this.max - this.min;
     const normalizedPos = range > 0 ? (this.value - this.min) / range : 0;
     const handleX = x + 1 + Math.floor(normalizedPos * trackWidth);
-    const handleColor = this.dragging ? ColorUtils.rgb(255, 200, 0) : accentColor;
+    const handleColor = this.dragging ? defaults2.slider.dragAccent : accentColor;
     renderer.setCell(buffer, handleX, trackY, "█", handleColor, bg);
     const valueStr = this.value.toFixed(0);
     for (let i = 0; i < valueStr.length && i < width; i++) {
@@ -10835,7 +11482,7 @@ class TUISystem {
     return this.widgetManager;
   }
 }
-function createTUIAPI(renderer, getCellBuffer) {
+function createTUIAPI(renderer, getCellBuffer, getStyle) {
   let tuiSystem = null;
   return {
     /**
@@ -10843,6 +11490,12 @@ function createTUIAPI(renderer, getCellBuffer) {
      * Call this in on:init
      */
     init() {
+      if (getStyle) {
+        try {
+          setTUIThemeFromStyles(getStyle);
+        } catch {
+        }
+      }
       tuiSystem = new TUISystem(renderer);
       return tuiSystem;
     },
@@ -10858,7 +11511,6 @@ function createTUIAPI(renderer, getCellBuffer) {
      * @example
      * ```javascript
      * const btn = tui.createButton({
-     *   id: 'myBtn',
      *   bounds: { x: 10, y: 5, width: 20, height: 3 },
      *   label: 'Click Me'
      * });
@@ -10876,7 +11528,6 @@ function createTUIAPI(renderer, getCellBuffer) {
      * @example
      * ```javascript
      * const lbl = tui.createLabel({
-     *   id: 'title',
      *   bounds: { x: 5, y: 2, width: 30, height: 1 },
      *   text: 'My App',
      *   align: 'center'
@@ -10895,7 +11546,6 @@ function createTUIAPI(renderer, getCellBuffer) {
      * @example
      * ```javascript
      * const chk = tui.createCheckbox({
-     *   id: 'sound',
      *   bounds: { x: 10, y: 10, width: 20, height: 1 },
      *   label: 'Enable Sound',
      *   checked: true
@@ -10914,7 +11564,6 @@ function createTUIAPI(renderer, getCellBuffer) {
      * @example
      * ```javascript
      * const slider = tui.createSlider({
-     *   id: 'volume',
      *   bounds: { x: 10, y: 15, width: 30, height: 3 },
      *   label: 'Volume',
      *   min: 0,
@@ -11014,6 +11663,1164 @@ function createTUIAPI(renderer, getCellBuffer) {
     }
   };
 }
+class GUIButton extends BaseWidget {
+  constructor(config) {
+    var _a, _b, _c, _d, _e;
+    super(config);
+    __publicField(this, "label");
+    __publicField(this, "buttonStyle");
+    __publicField(this, "clickedThisFrame", false);
+    this.label = config.label;
+    this.buttonStyle = {
+      fg: ((_a = config.buttonStyle) == null ? void 0 : _a.fg) ?? { r: 240, g: 240, b: 240 },
+      bg: ((_b = config.buttonStyle) == null ? void 0 : _b.bg) ?? { r: 60, g: 60, b: 60 },
+      borderColor: ((_c = config.buttonStyle) == null ? void 0 : _c.borderColor) ?? { r: 100, g: 100, b: 100 },
+      hoverBg: ((_d = config.buttonStyle) == null ? void 0 : _d.hoverBg) ?? { r: 80, g: 80, b: 80 },
+      activeBg: ((_e = config.buttonStyle) == null ? void 0 : _e.activeBg) ?? { r: 40, g: 120, b: 180 }
+    };
+    this.on("click", () => {
+      this.clickedThisFrame = true;
+    });
+  }
+  setLabel(label) {
+    this.label = label;
+  }
+  /**
+   * Check if button was clicked this frame
+   */
+  wasClicked() {
+    const result = this.clickedThisFrame;
+    this.clickedThisFrame = false;
+    return result;
+  }
+  /**
+   * Render method (rendering is handled by GUISystem)
+   */
+  render() {
+  }
+}
+class GUILabel extends BaseWidget {
+  constructor(config) {
+    var _a, _b;
+    super(config);
+    __publicField(this, "text");
+    __publicField(this, "align");
+    __publicField(this, "labelStyle");
+    this.text = config.text;
+    this.align = config.align ?? "left";
+    this.labelStyle = {
+      fg: ((_a = config.labelStyle) == null ? void 0 : _a.fg) ?? { r: 220, g: 220, b: 220 },
+      bg: ((_b = config.labelStyle) == null ? void 0 : _b.bg) ?? { r: 0, g: 0, b: 0, a: 0 }
+      // Transparent by default
+    };
+  }
+  setText(text) {
+    this.text = text;
+  }
+  /**
+   * Render method (rendering is handled by GUISystem)
+   */
+  render() {
+  }
+}
+class GUICheckbox extends BaseWidget {
+  constructor(config) {
+    var _a, _b, _c, _d;
+    super(config);
+    __publicField(this, "label");
+    __publicField(this, "checked");
+    __publicField(this, "wasToggledThisFrame", false);
+    __publicField(this, "checkboxStyle");
+    this.label = config.label;
+    this.checked = config.checked ?? false;
+    this.checkboxStyle = {
+      fg: ((_a = config.checkboxStyle) == null ? void 0 : _a.fg) ?? { r: 220, g: 220, b: 220 },
+      bg: ((_b = config.checkboxStyle) == null ? void 0 : _b.bg) ?? { r: 40, g: 40, b: 40 },
+      checkColor: ((_c = config.checkboxStyle) == null ? void 0 : _c.checkColor) ?? { r: 0, g: 200, b: 100 },
+      hoverBg: ((_d = config.checkboxStyle) == null ? void 0 : _d.hoverBg) ?? { r: 60, g: 60, b: 60 }
+    };
+    this.on("click", () => {
+      this.checked = !this.checked;
+      this.wasToggledThisFrame = true;
+    });
+  }
+  wasToggled() {
+    const result = this.wasToggledThisFrame;
+    this.wasToggledThisFrame = false;
+    return result;
+  }
+  isChecked() {
+    return this.checked;
+  }
+  setChecked(checked) {
+    this.checked = checked;
+  }
+  /**
+   * Render method (rendering is handled by GUISystem)
+   */
+  render() {
+  }
+}
+class GUISlider extends BaseWidget {
+  constructor(config) {
+    var _a, _b, _c, _d;
+    super(config);
+    __publicField(this, "label");
+    __publicField(this, "min");
+    __publicField(this, "max");
+    __publicField(this, "value");
+    __publicField(this, "step");
+    __publicField(this, "dragging", false);
+    __publicField(this, "sliderStyle");
+    this.label = config.label ?? "";
+    this.min = config.min ?? 0;
+    this.max = config.max ?? 100;
+    this.value = config.value ?? 50;
+    this.step = config.step ?? 1;
+    this.sliderStyle = {
+      fg: ((_a = config.sliderStyle) == null ? void 0 : _a.fg) ?? { r: 220, g: 220, b: 220 },
+      trackColor: ((_b = config.sliderStyle) == null ? void 0 : _b.trackColor) ?? { r: 60, g: 60, b: 60 },
+      knobColor: ((_c = config.sliderStyle) == null ? void 0 : _c.knobColor) ?? { r: 100, g: 150, b: 200 },
+      knobHoverColor: ((_d = config.sliderStyle) == null ? void 0 : _d.knobHoverColor) ?? { r: 120, g: 170, b: 220 }
+    };
+  }
+  handleDrag(mouseX, mouseY, mouseDown) {
+    if (!this.state.visible) return;
+    const { x, y, width, height } = this.bounds;
+    const knobWidth = 16;
+    const range = this.max - this.min;
+    const ratio = range > 0 ? (this.value - this.min) / range : 0;
+    const knobX = x + ratio * (width - knobWidth);
+    const knobY = y;
+    const knobHeight = height;
+    const overKnob = mouseX >= knobX && mouseX < knobX + knobWidth && mouseY >= knobY && mouseY < knobY + knobHeight;
+    if (mouseDown && overKnob && !this.dragging) {
+      this.dragging = true;
+    }
+    if (!mouseDown) {
+      this.dragging = false;
+    }
+    if (this.dragging) {
+      const relativeX = Math.max(0, Math.min(width - knobWidth, mouseX - x));
+      const newRatio = width - knobWidth > 0 ? relativeX / (width - knobWidth) : 0;
+      const rawValue = this.min + newRatio * (this.max - this.min);
+      this.value = Math.round(rawValue / this.step) * this.step;
+      this.value = Math.max(this.min, Math.min(this.max, this.value));
+    }
+  }
+  getValue() {
+    return this.value;
+  }
+  setValue(value) {
+    this.value = Math.max(this.min, Math.min(this.max, value));
+  }
+  isDragging() {
+    return this.dragging;
+  }
+  /**
+   * Render method (rendering is handled by GUISystem)
+   */
+  render() {
+  }
+}
+function isBrailleBlankLine(text) {
+  const t = (text ?? "").trim();
+  return t.length > 0 && /^[\u2800]+$/.test(t);
+}
+function parseInlines(text) {
+  const inlines = [];
+  let i = 0;
+  const pushText = (t) => {
+    if (!t) return;
+    inlines.push({ kind: "text", text: t });
+  };
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "`") {
+      const end = text.indexOf("`", i + 1);
+      if (end !== -1) {
+        text.slice(0, i);
+      }
+    }
+    if (ch === "[") {
+      const closeBracket = text.indexOf("]", i + 1);
+      const openParen = closeBracket !== -1 ? text.indexOf("(", closeBracket + 1) : -1;
+      const closeParen = openParen !== -1 ? text.indexOf(")", openParen + 1) : -1;
+      if (closeBracket !== -1 && openParen === closeBracket + 1 && closeParen !== -1) {
+        const label = text.slice(i + 1, closeBracket);
+        const url = text.slice(openParen + 1, closeParen);
+        if (label) inlines.push({ kind: "link", text: label, url });
+        i = closeParen + 1;
+        continue;
+      }
+    }
+    if (ch === "`") {
+      const end = text.indexOf("`", i + 1);
+      if (end !== -1) {
+        const code = text.slice(i + 1, end);
+        inlines.push({ kind: "code", text: code });
+        i = end + 1;
+        continue;
+      }
+    }
+    let next = text.length;
+    const nextLink = text.indexOf("[", i + 1);
+    const nextCode = text.indexOf("`", i + 1);
+    if (nextLink !== -1) next = Math.min(next, nextLink);
+    if (nextCode !== -1) next = Math.min(next, nextCode);
+    pushText(text.slice(i, next));
+    i = next;
+  }
+  return inlines;
+}
+function parseMarkdownLite(source) {
+  const lines = (source || "").replace(/\r\n/g, "\n").split("\n");
+  const nodes = [];
+  let i = 0;
+  let inFence = false;
+  let fenceLines = [];
+  let fenceLang = void 0;
+  let fenceMetadata = void 0;
+  const flushParagraph = (paraLines) => {
+    if (paraLines.length === 0) return;
+    const inlines = [];
+    for (let li = 0; li < paraLines.length; li++) {
+      const rawLine = (paraLines[li] ?? "").trimEnd();
+      if (!isBrailleBlankLine(rawLine)) {
+        const trimmed = rawLine.trim();
+        if (trimmed.length > 0) {
+          inlines.push(...parseInlines(trimmed));
+        }
+      }
+      if (li < paraLines.length - 1) {
+        inlines.push({ kind: "newline" });
+      }
+    }
+    if (inlines.length === 0) return;
+    nodes.push({ kind: "paragraph", inlines });
+  };
+  while (i < lines.length) {
+    const raw = lines[i];
+    const line = raw ?? "";
+    if (line.trim().startsWith("```")) {
+      if (!inFence) {
+        inFence = true;
+        fenceLines = [];
+        fenceLang = void 0;
+        fenceMetadata = void 0;
+        const decl = line.trim().substring(3).trim();
+        const parts = decl.length > 0 ? decl.split(/\s+/) : [];
+        if (parts.length > 0) {
+          fenceLang = parts[0] || void 0;
+          const md = {};
+          for (let p = 1; p < parts.length; p++) {
+            const seg = parts[p] ?? "";
+            const idx = seg.indexOf(":");
+            if (idx > 0 && idx < seg.length - 1) {
+              const k = seg.slice(0, idx);
+              const v = seg.slice(idx + 1);
+              md[k] = v;
+            }
+          }
+          if (Object.keys(md).length > 0) fenceMetadata = md;
+        }
+      } else {
+        inFence = false;
+        const node = { kind: "codeblock", code: fenceLines.join("\n") };
+        if (fenceLang) node.lang = fenceLang;
+        if (fenceMetadata) node.metadata = fenceMetadata;
+        nodes.push(node);
+        fenceLines = [];
+        fenceLang = void 0;
+        fenceMetadata = void 0;
+      }
+      i++;
+      continue;
+    }
+    if (inFence) {
+      fenceLines.push(line);
+      i++;
+      continue;
+    }
+    if (line.trim().length === 0) {
+      i++;
+      continue;
+    }
+    const h = line.match(/^(#{1,6})\s+(.+)$/);
+    if (h) {
+      nodes.push({ kind: "heading", level: h[1].length, inlines: parseInlines(h[2].trim()) });
+      i++;
+      continue;
+    }
+    if (/^\s*[-*]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+        const itemText = lines[i].replace(/^\s*[-*]\s+/, "").trimEnd();
+        items.push(parseInlines(itemText));
+        i++;
+      }
+      nodes.push({ kind: "list", items });
+      continue;
+    }
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        const itemText = lines[i].replace(/^\s*\d+\.\s+/, "").trimEnd();
+        items.push(parseInlines(itemText));
+        i++;
+      }
+      nodes.push({ kind: "list", items });
+      continue;
+    }
+    const para = [];
+    while (i < lines.length) {
+      const l = lines[i] ?? "";
+      if (l.trim().length === 0) break;
+      if (l.trim().startsWith("```")) break;
+      if (/^(#{1,6})\s+/.test(l)) break;
+      if (/^\s*[-*]\s+/.test(l)) break;
+      if (/^\s*\d+\.\s+/.test(l)) break;
+      para.push(l);
+      i++;
+    }
+    flushParagraph(para);
+  }
+  if (inFence && fenceLines.length > 0) {
+    const node = { kind: "codeblock", code: fenceLines.join("\n") };
+    if (fenceLang) node.lang = fenceLang;
+    if (fenceMetadata) node.metadata = fenceMetadata;
+    nodes.push(node);
+  }
+  return nodes;
+}
+function tokenizeInlines(inlines) {
+  const runs = [];
+  for (const inline of inlines) {
+    if (inline.kind === "text") {
+      const parts = inline.text.split(/(\s+)/);
+      for (const p of parts) {
+        if (!p) continue;
+        runs.push({ kind: "text", text: p });
+      }
+    } else if (inline.kind === "newline") {
+      runs.push({ kind: "newline" });
+    } else if (inline.kind === "link") {
+      runs.push({ kind: "link", text: inline.text, url: inline.url });
+    } else {
+      runs.push({ kind: "code", text: inline.text });
+    }
+  }
+  return runs;
+}
+function wrapRuns(runs, maxChars) {
+  const lines = [];
+  let current = [];
+  let used = 0;
+  const pushLine = () => {
+    while (current.length > 0 && current[0].kind !== "newline" && /^\s+$/.test(current[0].text)) current.shift();
+    while (current.length > 0 && current[current.length - 1].kind !== "newline" && /^\s+$/.test(current[current.length - 1].text)) current.pop();
+    lines.push(current);
+    current = [];
+    used = 0;
+  };
+  for (const run of runs) {
+    if (run.kind === "newline") {
+      pushLine();
+      continue;
+    }
+    const len = run.text.length;
+    if (len > maxChars && !/^\s+$/.test(run.text)) {
+      if (current.length > 0) pushLine();
+      let start = 0;
+      while (start < run.text.length) {
+        const chunk = run.text.slice(start, start + maxChars);
+        lines.push([{ ...run, text: chunk }]);
+        start += maxChars;
+      }
+      continue;
+    }
+    if (used + len > maxChars && current.length > 0) {
+      pushLine();
+    }
+    if (current.length === 0 && /^\s+$/.test(run.text)) {
+      continue;
+    }
+    current.push(run);
+    used += len;
+  }
+  if (current.length > 0) pushLine();
+  if (lines.length === 0) lines.push([]);
+  return lines;
+}
+function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding = 10) {
+  const ops = [];
+  const linkRegions = [];
+  const charW = Math.max(1, metrics.charW);
+  const charH = Math.max(1, metrics.charH);
+  const x0 = box.x;
+  const y0 = box.y;
+  const innerW = Math.max(1, box.width - padding * 2);
+  const maxChars = Math.max(1, Math.floor(innerW / charW));
+  const baseLineHeight = Math.round(charH * 1.25);
+  const paragraphGap = Math.round(charH * 0.75);
+  ops.push({ kind: "rect", x: x0, y: y0, w: box.width, h: box.height, color: style.bg });
+  let cursorY = y0 + padding - scrollY;
+  const emitTextLine = (line, lineX, lineY, fgOverride) => {
+    let cx = lineX;
+    for (const run of line) {
+      if (run.kind === "newline") continue;
+      const color = fgOverride ?? (run.kind === "link" ? style.linkFg : run.kind === "code" ? style.codeFg : style.fg);
+      if (run.kind === "code" && run.text.trim().length > 0) {
+        const w = run.text.length * charW;
+        ops.push({ kind: "rect", x: cx, y: lineY - Math.round(charH * 0.15), w, h: Math.round(charH * 1.15), color: style.codeBg });
+      }
+      ops.push({ kind: "text", text: run.text, x: cx, y: lineY, color });
+      if (run.kind === "link" && run.url && run.text.trim().length > 0) {
+        linkRegions.push({ x: cx, y: lineY, w: run.text.length * charW, h: charH, url: run.url, text: run.text });
+        ops.push({ kind: "rect", x: cx, y: lineY + charH - 2, w: run.text.length * charW, h: 2, color: style.linkFg });
+      }
+      cx += run.text.length * charW;
+    }
+  };
+  for (const node of nodes) {
+    if (node.kind === "codeblock") {
+      const lang = node.lang;
+      const meta = node.metadata;
+      const isRawAscii = typeof lang === "string" && lang === "ascii" && !String((meta == null ? void 0 : meta.name) ?? "").trim();
+      if (!isRawAscii) {
+        continue;
+      }
+      cursorY += Math.round(charH * 0.15);
+      const fg = style.codeFg;
+      const codeLines = (node.code || "").replace(/\r\n/g, "\n").split("\n");
+      for (const rawLine of codeLines) {
+        if (cursorY > y0 + box.height) break;
+        const line = (rawLine ?? "").trimEnd();
+        ops.push({ kind: "text", text: line, x: x0 + padding, y: cursorY, color: fg });
+        cursorY += baseLineHeight;
+      }
+      cursorY += paragraphGap;
+      continue;
+    }
+    if (node.kind === "heading") {
+      cursorY += Math.round(charH * 0.25);
+      const runs = tokenizeInlines(node.inlines);
+      const lines = wrapRuns(runs, maxChars);
+      const fg = style.headingFg;
+      for (const ln of lines) {
+        emitTextLine(ln, x0 + padding, cursorY, fg);
+        cursorY += baseLineHeight;
+      }
+      cursorY += Math.round(charH * 0.2);
+      continue;
+    }
+    if (node.kind === "paragraph") {
+      const runs = tokenizeInlines(node.inlines);
+      const lines = wrapRuns(runs, maxChars);
+      for (const ln of lines) {
+        emitTextLine(ln, x0 + padding, cursorY);
+        cursorY += baseLineHeight;
+      }
+      cursorY += paragraphGap;
+      continue;
+    }
+    if (node.kind === "list") {
+      const indentChars = 2;
+      const bullet = "- ";
+      for (const item of node.items) {
+        const itemRuns = [{ kind: "text", text: bullet }, ...tokenizeInlines(item)];
+        const lines = wrapRuns(itemRuns, Math.max(1, maxChars - indentChars));
+        let first = true;
+        for (const ln of lines) {
+          const x = x0 + padding + (first ? 0 : bullet.length * charW);
+          emitTextLine(ln, x, cursorY);
+          cursorY += baseLineHeight;
+          first = false;
+        }
+      }
+      cursorY += paragraphGap;
+      continue;
+    }
+  }
+  const contentHeight = Math.max(0, cursorY - (y0 + padding - scrollY));
+  return { ops, linkRegions, contentHeight };
+}
+class GUIMarkdownView extends BaseWidget {
+  constructor(config) {
+    super({ ...config, focusable: config.focusable ?? true });
+    __publicField(this, "markdown");
+    __publicField(this, "nodes");
+    __publicField(this, "padding");
+    __publicField(this, "scrollY");
+    // Max scroll computed from the last render/layout pass (in pixels).
+    // Null means unknown (e.g., before first render), so we avoid clamping.
+    __publicField(this, "lastMaxScrollY", null);
+    __publicField(this, "cachedLayout", null);
+    __publicField(this, "cachedKey", "");
+    __publicField(this, "clickedLink", null);
+    __publicField(this, "mdStyle");
+    this.markdown = config.markdown ?? "";
+    this.nodes = parseMarkdownLite(this.markdown);
+    this.padding = config.padding ?? 10;
+    this.scrollY = config.scrollY ?? 0;
+    const defaultStyle = {
+      fg: { r: 230, g: 230, b: 230 },
+      mutedFg: { r: 160, g: 160, b: 160 },
+      headingFg: { r: 255, g: 255, b: 255 },
+      linkFg: { r: 80, g: 180, b: 255 },
+      codeFg: { r: 240, g: 240, b: 240 },
+      codeBg: { r: 35, g: 35, b: 35, a: 0.9 },
+      bg: { r: 0, g: 0, b: 0, a: 0 }
+    };
+    this.mdStyle = { ...defaultStyle, ...config.style ?? {} };
+    this.on("click", (ev) => {
+      const pos = ev.data;
+      const x = pos == null ? void 0 : pos.x;
+      const y = pos == null ? void 0 : pos.y;
+      if (typeof x !== "number" || typeof y !== "number") return;
+      const url = this.hitTestLink(x, y);
+      if (url) this.clickedLink = url;
+    });
+  }
+  setMarkdown(markdown) {
+    this.markdown = markdown ?? "";
+    this.nodes = parseMarkdownLite(this.markdown);
+    this.cachedLayout = null;
+  }
+  getMarkdown() {
+    return this.markdown;
+  }
+  setScrollY(scrollY) {
+    const next = Math.max(0, scrollY);
+    const max = this.lastMaxScrollY;
+    this.scrollY = typeof max === "number" ? Math.min(next, max) : next;
+    this.cachedLayout = null;
+  }
+  scrollBy(deltaY) {
+    this.setScrollY(this.scrollY + deltaY);
+  }
+  popClickedLink() {
+    const v = this.clickedLink;
+    this.clickedLink = null;
+    return v;
+  }
+  computeLayout(metrics) {
+    const key = `${this.bounds.x},${this.bounds.y},${this.bounds.width},${this.bounds.height}|${metrics.charW},${metrics.charH}|${this.scrollY}|${this.markdown.length}`;
+    if (this.cachedLayout && this.cachedKey === key) return this.cachedLayout;
+    const layout = layoutMarkdownDocument(
+      this.nodes,
+      {
+        x: this.bounds.x,
+        y: this.bounds.y,
+        width: this.bounds.width,
+        height: this.bounds.height
+      },
+      metrics,
+      this.mdStyle,
+      this.scrollY,
+      this.padding
+    );
+    this.cachedLayout = layout;
+    this.cachedKey = key;
+    return layout;
+  }
+  hitTestLink(x, y) {
+    if (!this.cachedLayout) return null;
+    for (const r of this.cachedLayout.linkRegions) {
+      if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) {
+        return r.url;
+      }
+    }
+    return null;
+  }
+  renderToUI(ui, charW, charH) {
+    if (!this.state.visible) return;
+    const metrics = { charW, charH };
+    let layout = this.computeLayout(metrics);
+    const innerH = Math.max(0, this.bounds.height - this.padding * 2);
+    const maxScroll = Math.max(0, layout.contentHeight - innerH);
+    this.lastMaxScrollY = maxScroll;
+    if (this.scrollY > maxScroll) {
+      this.scrollY = maxScroll;
+      this.cachedLayout = null;
+      layout = this.computeLayout(metrics);
+    }
+    const pushClip = ui.pushClipRect;
+    const popClip = ui.popClipRect;
+    const canClip = typeof pushClip === "function" && typeof popClip === "function";
+    if (canClip) {
+      pushClip(this.bounds.x, this.bounds.y, this.bounds.width, this.bounds.height);
+    }
+    for (const op of layout.ops) {
+      if (op.kind === "rect") {
+        ui.rect(op.x, op.y, op.w, op.h, op.color);
+      } else {
+        ui.text(op.text, op.x, op.y, op.color);
+      }
+    }
+    if (canClip) {
+      popClip();
+    }
+  }
+  render() {
+  }
+}
+class GUILayoutContainer {
+  constructor(config) {
+    __publicField(this, "bounds");
+    __publicField(this, "padding");
+    __publicField(this, "gap");
+    __publicField(this, "alignX");
+    __publicField(this, "includeHidden");
+    __publicField(this, "children", []);
+    this.bounds = { ...config.bounds };
+    this.padding = config.padding ?? 0;
+    this.gap = config.gap ?? 0;
+    this.alignX = config.alignX ?? "start";
+    this.includeHidden = config.includeHidden ?? false;
+  }
+  add(child) {
+    if (!this.children.includes(child)) {
+      this.children.push(child);
+    }
+    return this;
+  }
+  addMany(children) {
+    for (const child of children) this.add(child);
+    return this;
+  }
+  remove(child) {
+    const idx = this.children.indexOf(child);
+    if (idx !== -1) this.children.splice(idx, 1);
+    return this;
+  }
+  clear() {
+    this.children.length = 0;
+    return this;
+  }
+  getChildren() {
+    return [...this.children];
+  }
+  setBounds(bounds, relayout = true) {
+    this.bounds = { ...bounds };
+    if (relayout) this.layout();
+  }
+  /**
+   * Apply a vertical stack layout to children.
+   * Uses each child's current `bounds.height` (and `bounds.width` unless alignX='stretch').
+   */
+  layout() {
+    const innerX = this.bounds.x + this.padding;
+    const innerY = this.bounds.y + this.padding;
+    const innerW = Math.max(0, this.bounds.width - this.padding * 2);
+    let cursorY = innerY;
+    for (const child of this.children) {
+      if (!this.includeHidden && !child.state.visible) continue;
+      const childHeight = child.bounds.height;
+      const childWidth = this.alignX === "stretch" ? innerW : child.bounds.width;
+      let childX = innerX;
+      if (this.alignX === "center") {
+        childX = innerX + (innerW - childWidth) / 2;
+      } else if (this.alignX === "end") {
+        childX = innerX + (innerW - childWidth);
+      }
+      child.bounds.x = childX;
+      child.bounds.y = cursorY;
+      child.bounds.width = childWidth;
+      child.bounds.height = childHeight;
+      cursorY += childHeight + this.gap;
+    }
+  }
+}
+class GUISystem {
+  constructor() {
+    __publicField(this, "widgetManager");
+    __publicField(this, "inputRouter");
+    __publicField(this, "lastMouseX", 0);
+    __publicField(this, "lastMouseY", 0);
+    __publicField(this, "lastMouseDown", false);
+    // Optional draw override hook. If it returns true, default drawing is skipped.
+    __publicField(this, "widgetRenderer", null);
+    this.widgetManager = new WidgetManager();
+    this.inputRouter = new InputRouter({ widgetManager: this.widgetManager });
+  }
+  /**
+   * Set a custom renderer hook for widgets.
+   * The callback receives a plain widgetInfo object (safe snapshot), plus the uiAPI.
+   * If the callback returns true, GUISystem will skip its default renderer for that widget.
+   */
+  setWidgetRenderer(renderer) {
+    this.widgetRenderer = renderer;
+  }
+  buildWidgetInfo(widget, charWidth, charHeight) {
+    const base = {
+      id: String(widget.id),
+      bounds: { ...widget.bounds },
+      state: { ...widget.state },
+      group: widget.group,
+      metrics: { charWidth, charHeight }
+    };
+    if (widget instanceof GUIButton) {
+      return { ...base, kind: "button", label: widget.label };
+    }
+    if (widget instanceof GUILabel) {
+      return { ...base, kind: "label", text: widget.text, align: widget.align };
+    }
+    if (widget instanceof GUICheckbox) {
+      return { ...base, kind: "checkbox", label: widget.label, checked: widget.checked };
+    }
+    if (widget instanceof GUISlider) {
+      return { ...base, kind: "slider", label: widget.label, min: widget.min, max: widget.max, value: widget.value };
+    }
+    if (widget instanceof GUIMarkdownView) {
+      return { ...base, kind: "markdownView" };
+    }
+    return { ...base, kind: "unknown" };
+  }
+  /**
+   * Create a button widget
+   */
+  createButton(config) {
+    const button = new GUIButton(config);
+    this.widgetManager.register(button);
+    return button;
+  }
+  /**
+   * Create a label widget
+   */
+  createLabel(config) {
+    const label = new GUILabel(config);
+    this.widgetManager.register(label);
+    return label;
+  }
+  /**
+   * Create a checkbox widget
+   */
+  createCheckbox(config) {
+    const checkbox = new GUICheckbox(config);
+    this.widgetManager.register(checkbox);
+    return checkbox;
+  }
+  /**
+   * Create a slider widget
+   */
+  createSlider(config) {
+    const slider = new GUISlider(config);
+    this.widgetManager.register(slider);
+    return slider;
+  }
+  /**
+   * Create a markdown view widget (flow layout inside bounds)
+   */
+  createMarkdownView(config) {
+    const view = new GUIMarkdownView(config);
+    this.widgetManager.register(view);
+    return view;
+  }
+  /**
+   * Create a layout helper container.
+   * Note: this does not register with the widget manager; it only updates child widget bounds.
+   */
+  createContainer(config) {
+    return new GUILayoutContainer(config);
+  }
+  /**
+   * Update all widgets with current input state (pixel coordinates)
+   * Call this in your update loop
+   */
+  update(mouseX, mouseY, mouseDown, charWidth, charHeight) {
+    this.lastMouseX = mouseX;
+    this.lastMouseY = mouseY;
+    this.lastMouseDown = mouseDown;
+    const cellX = Math.floor(mouseX / charWidth);
+    const cellY = Math.floor(mouseY / charHeight);
+    const inputCoord = {
+      x: mouseX,
+      y: mouseY,
+      cellX,
+      cellY
+    };
+    this.inputRouter.update(inputCoord, mouseDown);
+    const sliders = this.widgetManager.getAll().filter((w) => w instanceof GUISlider);
+    for (const slider of sliders) {
+      slider.handleDrag(mouseX, mouseY, mouseDown);
+    }
+  }
+  /**
+   * Handle a mouse update immediately (for use in on:input)
+   */
+  handleMouse(mouseX, mouseY, mouseDown, charWidth, charHeight) {
+    this.update(mouseX, mouseY, mouseDown, charWidth, charHeight);
+  }
+  /**
+   * Get last observed mouse state (pixel coordinates)
+   */
+  getMouseState() {
+    return { x: this.lastMouseX, y: this.lastMouseY, down: this.lastMouseDown };
+  }
+  /**
+   * Handle keyboard input
+   */
+  handleKey(key, modifiers) {
+    if (this.inputRouter.handleKey(key, modifiers)) {
+      return;
+    }
+    const focused = this.widgetManager.getFocused();
+    if (focused) {
+      if ((key === " " || key === "Enter") && focused instanceof GUIButton) {
+        focused.emit({ type: "click", widget: focused.id, timestamp: Date.now() });
+      }
+      if ((key === " " || key === "Enter") && focused instanceof GUICheckbox) {
+        focused.emit({ type: "click", widget: focused.id, timestamp: Date.now() });
+      }
+    }
+  }
+  /**
+   * Render all visible widgets
+   * Call this in your render loop
+   */
+  render(uiAPI, charWidth, charHeight) {
+    if (!uiAPI) return;
+    const widgets = this.widgetManager.getAll();
+    for (const widget of widgets) {
+      if (!widget.state.visible) continue;
+      if (this.widgetRenderer) {
+        try {
+          const info = this.buildWidgetInfo(widget, charWidth, charHeight);
+          const handled = this.widgetRenderer(info, uiAPI);
+          if (handled === true) {
+            continue;
+          }
+        } catch (err) {
+          console.warn("gui.setWidgetRenderer callback threw; falling back to default widget rendering.", err);
+        }
+      }
+      if (widget instanceof GUIButton) {
+        this.renderButton(widget, uiAPI);
+      } else if (widget instanceof GUILabel) {
+        this.renderLabel(widget, uiAPI, charWidth, charHeight);
+      } else if (widget instanceof GUICheckbox) {
+        this.renderCheckbox(widget, uiAPI, charWidth, charHeight);
+      } else if (widget instanceof GUISlider) {
+        this.renderSlider(widget, uiAPI, charWidth, charHeight);
+      } else if (widget instanceof GUIMarkdownView) {
+        this.renderMarkdownView(widget, uiAPI, charWidth, charHeight);
+      }
+    }
+  }
+  renderMarkdownView(view, ui, charW, charH) {
+    view.renderToUI(ui, charW, charH);
+  }
+  renderButton(button, ui) {
+    const { x, y, width, height } = button.bounds;
+    const { fg, bg, borderColor, hoverBg, activeBg } = button.buttonStyle;
+    const bgColor = button.state.pressed ? activeBg : button.state.hovered ? hoverBg : bg;
+    ui.rect(x, y, width, height, bgColor);
+    ui.rect(x, y, width, 2, borderColor);
+    ui.rect(x, y + height - 2, width, 2, borderColor);
+    ui.rect(x, y, 2, height, borderColor);
+    ui.rect(x + width - 2, y, 2, height, borderColor);
+    const charW = 10;
+    const labelWidth = button.label.length * charW;
+    const labelX = x + (width - labelWidth) / 2;
+    const labelY = y + height / 2;
+    ui.text(button.label, labelX, labelY, fg);
+  }
+  renderLabel(label, ui, charW, _charH) {
+    const { x, y, width, height } = label.bounds;
+    const { fg, bg } = label.labelStyle;
+    const bgColor = bg;
+    if (bgColor.a !== void 0 && bgColor.a !== 0) {
+      ui.rect(x, y, width, height, bg);
+    }
+    let textX = x;
+    if (label.align === "center") {
+      const textWidth = label.text.length * charW;
+      textX = x + (width - textWidth) / 2;
+    } else if (label.align === "right") {
+      const textWidth = label.text.length * charW;
+      textX = x + width - textWidth;
+    }
+    ui.text(label.text, textX, y + height / 2, fg);
+  }
+  renderCheckbox(checkbox, ui, charW, _charH) {
+    const { x, y, height } = checkbox.bounds;
+    const { fg, bg, checkColor, hoverBg } = checkbox.checkboxStyle;
+    const boxSize = Math.min(height, charW * 2);
+    const boxY = y + (height - boxSize) / 2;
+    const bgColor = checkbox.state.hovered ? hoverBg : bg;
+    ui.rect(x, boxY, boxSize, boxSize, bgColor);
+    ui.rect(x, boxY, boxSize, 1, fg);
+    ui.rect(x, boxY + boxSize - 1, boxSize, 1, fg);
+    ui.rect(x, boxY, 1, boxSize, fg);
+    ui.rect(x + boxSize - 1, boxY, 1, boxSize, fg);
+    if (checkbox.checked) {
+      const checkPadding = boxSize * 0.25;
+      ui.rect(
+        x + checkPadding,
+        boxY + checkPadding,
+        boxSize - checkPadding * 2,
+        boxSize - checkPadding * 2,
+        checkColor
+      );
+    }
+    ui.text(checkbox.label, x + boxSize + 8, y + height / 2, fg);
+  }
+  renderSlider(slider, ui, _charW, charH) {
+    const { x, y, width, height } = slider.bounds;
+    const { fg, trackColor, knobColor, knobHoverColor } = slider.sliderStyle;
+    let trackY = y;
+    if (slider.label) {
+      ui.text(slider.label, x, y, fg);
+      trackY += charH;
+    }
+    const trackHeight = 8;
+    const trackYPos = trackY + (height - trackHeight) / 2;
+    ui.rect(x, trackYPos, width, trackHeight, trackColor);
+    const knobWidth = 16;
+    const knobHeight = Math.min(height - (slider.label ? charH : 0), 24);
+    const range = slider.max - slider.min;
+    const ratio = range > 0 ? (slider.value - slider.min) / range : 0;
+    const knobX = x + ratio * (width - knobWidth);
+    const knobY = trackY + (height - knobHeight) / 2;
+    const knobCol = slider.state.hovered || slider.isDragging() ? knobHoverColor : knobColor;
+    ui.rect(knobX, knobY, knobWidth, knobHeight, knobCol);
+    const valueText = `${Math.round(slider.value)}`;
+    ui.text(valueText, x + width + 8, y + height / 2, fg);
+  }
+  /**
+   * Set visibility for all widgets in a group
+   */
+  setGroupVisible(group, visible) {
+    this.widgetManager.setGroupVisible(group, visible);
+  }
+  /**
+   * Get all widgets
+   */
+  getWidgets() {
+    return this.widgetManager.getAll();
+  }
+}
+function createGUIAPI(getMetrics) {
+  const api = {
+    _system: null,
+    /**
+     * Initialize GUI system
+     * Call this in on:init
+     */
+    init() {
+      this._system = new GUISystem();
+      return this._system;
+    },
+    /**
+     * Get the current GUI system instance
+     */
+    getSystem() {
+      return this._system;
+    },
+    /**
+     * Create a button widget
+     * 
+     * @example
+     * ```javascript
+     * const btn = gui.createButton({
+     *   bounds: { x: 100, y: 50, width: 200, height: 40 },
+     *   label: 'Click Me'
+     * });
+     * ```
+     */
+    createButton(config) {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      return this._system.createButton(config);
+    },
+    /**
+     * Create a label widget
+     * 
+     * @example
+     * ```javascript
+     * const lbl = gui.createLabel({
+     *   bounds: { x: 100, y: 20, width: 300, height: 30 },
+     *   text: 'My Application',
+     *   align: 'center'
+     * });
+     * ```
+     */
+    createLabel(config) {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      return this._system.createLabel(config);
+    },
+    /**
+     * Create a checkbox widget
+     * 
+     * @example
+     * ```javascript
+     * const chk = gui.createCheckbox({
+     *   bounds: { x: 100, y: 100, width: 200, height: 30 },
+     *   label: 'Enable Sound Effects',
+     *   checked: true
+     * });
+     * ```
+     */
+    createCheckbox(config) {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      return this._system.createCheckbox(config);
+    },
+    /**
+     * Create a slider widget
+     * 
+     * @example
+     * ```javascript
+     * const slider = gui.createSlider({
+     *   bounds: { x: 100, y: 150, width: 300, height: 40 },
+     *   label: 'Volume',
+     *   min: 0,
+     *   max: 100,
+     *   value: 50
+     * });
+     * ```
+     */
+    createSlider(config) {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      return this._system.createSlider(config);
+    },
+    /**
+     * Create a markdown view widget (flow layout inside bounds)
+     */
+    createMarkdownView(config) {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      return this._system.createMarkdownView(config);
+    },
+    /**
+     * Create a simple layout helper container for stacking widgets.
+     * This does not create a widget; it mutates child widget bounds when layout() is called.
+     *
+     * @example
+     * ```javascript
+     * const container = gui.createContainer({
+     *   bounds: { x: 20, y: 20, width: 300, height: 400 },
+     *   padding: 10,
+     *   gap: 8,
+     *   alignX: 'stretch'
+     * });
+     *
+     * container.add(btn).add(chk).add(slider);
+     * container.layout();
+     * ```
+     */
+    createContainer(config) {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      return this._system.createContainer(config);
+    },
+    /**
+     * Update GUI with input state (pixel coordinates)
+     * Call this in on:update
+     * 
+     * @example
+     * ```javascript
+     * gui.update(mouseX, mouseY, mousePressed);
+     * ```
+     */
+    update(mouseX, mouseY, mouseDown) {
+      if (!this._system) return;
+      const { charWidth, charHeight } = getMetrics();
+      this._system.update(mouseX, mouseY, mouseDown, charWidth, charHeight);
+    },
+    /**
+     * Handle mouse input immediately (pixel coordinates)
+     * Call this in on:input for 'mouse' / 'mouse_move' events.
+     * This avoids missing fast click transitions between frames.
+     */
+    handleMouse(mouseX, mouseY, mouseDown) {
+      if (!this._system) return;
+      const { charWidth, charHeight } = getMetrics();
+      this._system.handleMouse(mouseX, mouseY, mouseDown, charWidth, charHeight);
+    },
+    /**
+     * Handle keyboard input
+     * Call this in on:input when handling key events
+     * 
+     * @example
+     * ```javascript
+     * gui.handleKey('Tab', { shift: false });
+     * ```
+     */
+    handleKey(key, modifiers) {
+      if (!this._system) return;
+      this._system.handleKey(key, modifiers);
+    },
+    /**
+     * Render all widgets
+     * Automatically called by the engine if the system is initialized
+     */
+    render(uiAPI) {
+      if (!this._system) return;
+      const { charWidth, charHeight } = getMetrics();
+      this._system.render(uiAPI, charWidth, charHeight);
+    },
+    /**
+     * Override widget drawing.
+     *
+     * If set, the callback is invoked for each visible widget during render.
+     * Return true to indicate the widget was drawn and default rendering should be skipped.
+     * Return false/undefined to fall back to built-in widget rendering.
+     *
+     * @example
+     * ```js
+    * gui.setWidgetRenderer((w, ui) => {
+     *   if (w.kind === 'button') {
+     *     ui.rect(w.bounds.x, w.bounds.y, w.bounds.width, w.bounds.height, ui.colors.rgb(255, 80, 140));
+     *     ui.text(w.label, w.bounds.x + 10, w.bounds.y + 18, ui.colors.rgb(10, 10, 10));
+     *     return true;
+     *   }
+     *   return false;
+     * });
+     * ```
+     */
+    setWidgetRenderer(renderer) {
+      if (!this._system) return;
+      if (renderer === null || renderer === void 0) {
+        this._system.setWidgetRenderer(null);
+        return;
+      }
+      if (typeof renderer !== "function") {
+        throw new Error("gui.setWidgetRenderer(renderer): renderer must be a function, null, or undefined");
+      }
+      this._system.setWidgetRenderer(renderer);
+    },
+    /**
+     * Set visibility for all widgets in a group
+     * 
+     * @example
+     * ```javascript
+     * gui.setGroupVisible(1, false); // Hide group 1
+     * ```
+     */
+    setGroupVisible(group, visible) {
+      if (!this._system) return;
+      this._system.setGroupVisible(group, visible);
+    },
+    /**
+     * Color utilities
+     */
+    colors: {
+      rgb: (r, g, b) => ({ r, g, b }),
+      rgba: (r, g, b, a) => ({ r, g, b, a })
+    }
+  };
+  return api;
+}
 class WebGPUUIRenderer {
   constructor(device, atlas, width, height) {
     __publicField(this, "device");
@@ -11022,19 +12829,68 @@ class WebGPUUIRenderer {
     __publicField(this, "width");
     __publicField(this, "height");
     __publicField(this, "texture");
+    __publicField(this, "depthStencilTexture", null);
+    __publicField(this, "depthStencilW", 0);
+    __publicField(this, "depthStencilH", 0);
     __publicField(this, "rectPipeline");
     __publicField(this, "textPipeline");
+    __publicField(this, "maskPushPipeline");
+    __publicField(this, "maskPopPipeline");
+    __publicField(this, "polyMaskPushPipeline");
+    __publicField(this, "polyMaskPopPipeline");
+    // Shared layout for pipelines that bind uniforms + a sampled texture + sampler (text + images).
+    __publicField(this, "texturedBindGroupLayout");
+    __publicField(this, "texturedPipelineLayout");
+    // Shared layout for pipelines that only bind the uniform buffer at @group(0) @binding(0).
+    // Using an explicit pipeline layout avoids WebGPU validation errors when switching between
+    // multiple pipelines created with `layout: 'auto'`.
+    __publicField(this, "uniformBindGroupLayout");
+    __publicField(this, "uniformPipelineLayout");
     __publicField(this, "uniformBuffer");
     __publicField(this, "rectInstanceBuffer");
     __publicField(this, "textInstanceBuffer");
+    __publicField(this, "imageInstanceBuffer");
+    __publicField(this, "polyVertexBuffer");
+    __publicField(this, "polyData");
+    __publicField(this, "polyVertexCount", 0);
     // Per-instance data
     // Rect: 8 floats => x,y,w,h + r,g,b,a
     __publicField(this, "rectData");
     __publicField(this, "rectCount", 0);
+    // Per-instance clip rect (x,y,w,h) in pixels; -1 means no clip
+    __publicField(this, "rectClipData");
+    // Per-instance stencil reference (mask depth)
+    __publicField(this, "rectStencilRef");
     // Text: 12 floats => x,y,w,h + r,g,b,a + u,v,uw,uh
     __publicField(this, "textData");
     __publicField(this, "textCount", 0);
+    // Per-instance clip rect (x,y,w,h) in pixels; -1 means no clip
+    __publicField(this, "textClipData");
+    // Per-instance stencil reference (mask depth)
+    __publicField(this, "textStencilRef");
+    // Image: 12 floats => x,y,w,h + r,g,b,a + u,v,uw,uh
+    __publicField(this, "imageData");
+    __publicField(this, "imageCount", 0);
+    __publicField(this, "imageClipData");
+    __publicField(this, "imageStencilRef");
+    __publicField(this, "imageBindGroups", /* @__PURE__ */ new Map());
+    __publicField(this, "imageSizes", /* @__PURE__ */ new Map());
+    __publicField(this, "drawCommands", []);
+    // Mask depth + stack (stores clip override for symmetric push/pop)
+    __publicField(this, "maskDepth", 0);
+    __publicField(this, "maskStack", []);
+    // Clip stack (rectangular). Stored in UI pixel coordinates.
+    __publicField(this, "clipStack", []);
+    __publicField(this, "currentClip", null);
     __publicField(this, "clearColor", [0, 0, 0, 0]);
+    // Cached bind groups (avoid per-flush allocations)
+    __publicField(this, "rectBindGroup", null);
+    __publicField(this, "textBindGroup", null);
+    __publicField(this, "lastAtlasTexture", null);
+    __publicField(this, "lastAtlasSampler", null);
+    // Cache last uniform resolution written
+    __publicField(this, "lastUniformW", -1);
+    __publicField(this, "lastUniformH", -1);
     this.device = device;
     this.atlas = atlas;
     this.width = Math.max(1, Math.floor(width));
@@ -11045,6 +12901,38 @@ class WebGPUUIRenderer {
       size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
+    this.uniformBindGroupLayout = this.device.createBindGroupLayout({
+      entries: [{
+        binding: 0,
+        visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+        buffer: { type: "uniform" }
+      }]
+    });
+    this.uniformPipelineLayout = this.device.createPipelineLayout({
+      bindGroupLayouts: [this.uniformBindGroupLayout]
+    });
+    this.texturedBindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+          buffer: { type: "uniform" }
+        },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: "float" }
+        },
+        {
+          binding: 2,
+          visibility: GPUShaderStage.FRAGMENT,
+          sampler: { type: "filtering" }
+        }
+      ]
+    });
+    this.texturedPipelineLayout = this.device.createPipelineLayout({
+      bindGroupLayouts: [this.texturedBindGroupLayout]
+    });
     this.rectInstanceBuffer = this.device.createBuffer({
       size: 8 * 4 * 4096,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
@@ -11053,14 +12941,41 @@ class WebGPUUIRenderer {
       size: 12 * 4 * 4096,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
+    this.imageInstanceBuffer = this.device.createBuffer({
+      size: 12 * 4 * 4096,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    this.polyVertexBuffer = this.device.createBuffer({
+      size: 2 * 4 * 8192,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    this.polyData = new Float32Array(2 * 8192);
     this.rectData = new Float32Array(8 * 4096);
     this.textData = new Float32Array(12 * 4096);
+    this.imageData = new Float32Array(12 * 4096);
+    this.rectClipData = new Int32Array(4 * 4096);
+    this.textClipData = new Int32Array(4 * 4096);
+    this.imageClipData = new Int32Array(4 * 4096);
+    this.rectStencilRef = new Int32Array(4096);
+    this.textStencilRef = new Int32Array(4096);
+    this.imageStencilRef = new Int32Array(4096);
     this.rectPipeline = this.createRectPipeline();
     this.textPipeline = this.createTextPipeline();
-    this.writeUniforms();
+    this.maskPushPipeline = this.createMaskPipeline("increment");
+    this.maskPopPipeline = this.createMaskPipeline("decrement");
+    this.polyMaskPushPipeline = this.createPolyMaskPipeline("increment");
+    this.polyMaskPopPipeline = this.createPolyMaskPipeline("decrement");
+    this.writeUniforms(this.width, this.height);
   }
   getTexture() {
     return this.texture;
+  }
+  /**
+   * Format used for this renderer's pipelines/targets.
+   * Any external target passed to flushTo() must use this format.
+   */
+  getTextureFormat() {
+    return this.textureFormat;
   }
   resize(width, height) {
     const nextWidth = Math.max(1, Math.floor(width));
@@ -11073,7 +12988,7 @@ class WebGPUUIRenderer {
     } catch {
     }
     this.texture = this.createRenderTexture(this.width, this.height);
-    this.writeUniforms();
+    this.writeUniforms(this.width, this.height);
   }
   setClearColor(color) {
     if (color === void 0 || color === null) {
@@ -11086,6 +13001,283 @@ class WebGPUUIRenderer {
   clearCommands() {
     this.rectCount = 0;
     this.textCount = 0;
+    this.imageCount = 0;
+    this.drawCommands.length = 0;
+    this.polyVertexCount = 0;
+    this.clipStack.length = 0;
+    this.currentClip = null;
+    this.maskDepth = 0;
+    this.maskStack.length = 0;
+  }
+  ensureDepthStencil(width, height) {
+    var _a;
+    const w = Math.max(1, Math.floor(width));
+    const h = Math.max(1, Math.floor(height));
+    if (this.depthStencilTexture && this.depthStencilW === w && this.depthStencilH === h) {
+      return this.depthStencilTexture;
+    }
+    try {
+      (_a = this.depthStencilTexture) == null ? void 0 : _a.destroy();
+    } catch {
+    }
+    this.depthStencilW = w;
+    this.depthStencilH = h;
+    this.depthStencilTexture = this.device.createTexture({
+      size: { width: w, height: h },
+      format: "depth24plus-stencil8",
+      usage: GPUTextureUsage.RENDER_ATTACHMENT
+    });
+    return this.depthStencilTexture;
+  }
+  writeRectClip(index, clipOverride) {
+    const co = index * 4;
+    const clip = clipOverride !== void 0 ? clipOverride : this.currentClip;
+    if (clip) {
+      this.rectClipData[co + 0] = Math.floor(clip.x);
+      this.rectClipData[co + 1] = Math.floor(clip.y);
+      this.rectClipData[co + 2] = Math.ceil(clip.w);
+      this.rectClipData[co + 3] = Math.ceil(clip.h);
+    } else {
+      this.rectClipData[co + 0] = -1;
+      this.rectClipData[co + 1] = -1;
+      this.rectClipData[co + 2] = -1;
+      this.rectClipData[co + 3] = -1;
+    }
+  }
+  writeTextClip(index, clipOverride) {
+    const co = index * 4;
+    const clip = clipOverride !== void 0 ? clipOverride : this.currentClip;
+    if (clip) {
+      this.textClipData[co + 0] = Math.floor(clip.x);
+      this.textClipData[co + 1] = Math.floor(clip.y);
+      this.textClipData[co + 2] = Math.ceil(clip.w);
+      this.textClipData[co + 3] = Math.ceil(clip.h);
+    } else {
+      this.textClipData[co + 0] = -1;
+      this.textClipData[co + 1] = -1;
+      this.textClipData[co + 2] = -1;
+      this.textClipData[co + 3] = -1;
+    }
+  }
+  writeImageClip(index, clipOverride) {
+    const co = index * 4;
+    const clip = clipOverride !== void 0 ? clipOverride : this.currentClip;
+    if (clip) {
+      this.imageClipData[co + 0] = Math.floor(clip.x);
+      this.imageClipData[co + 1] = Math.floor(clip.y);
+      this.imageClipData[co + 2] = Math.ceil(clip.w);
+      this.imageClipData[co + 3] = Math.ceil(clip.h);
+    } else {
+      this.imageClipData[co + 0] = -1;
+      this.imageClipData[co + 1] = -1;
+      this.imageClipData[co + 2] = -1;
+      this.imageClipData[co + 3] = -1;
+    }
+  }
+  /**
+   * Push a stencil mask rect. Subsequent draws are masked until popMask().
+   */
+  pushMaskRect(x, y, w, h) {
+    if (this.rectCount >= 4096) return;
+    const depthBefore = this.maskDepth;
+    const clip = this.currentClip ? { x: this.currentClip.x, y: this.currentClip.y, w: this.currentClip.w, h: this.currentClip.h } : null;
+    this.maskStack.push({ kind: "rect", x, y, w, h, radius: 0, clip, depthBeforePush: depthBefore });
+    const [r, g, b] = [0, 0, 0];
+    const o = this.rectCount * 8;
+    this.rectData[o + 0] = x;
+    this.rectData[o + 1] = y;
+    this.rectData[o + 2] = w;
+    this.rectData[o + 3] = h;
+    this.rectData[o + 4] = r;
+    this.rectData[o + 5] = g;
+    this.rectData[o + 6] = b;
+    this.rectData[o + 7] = 0;
+    this.writeRectClip(this.rectCount, clip);
+    this.rectStencilRef[this.rectCount] = depthBefore;
+    this.drawCommands.push({ kind: "rect", mode: "maskPush", start: this.rectCount, count: 1 });
+    this.rectCount++;
+    this.maskDepth = Math.min(255, this.maskDepth + 1);
+  }
+  /**
+   * Push a rounded-rect stencil mask. Radius is in pixels.
+   */
+  pushMaskRoundedRect(x, y, w, h, radius) {
+    const radIn = Number.isFinite(radius) ? Math.max(0, radius) : 0;
+    const maxRad = Math.max(0, Math.min(Math.abs(w), Math.abs(h)) * 0.5);
+    const rad = Math.min(radIn, maxRad);
+    if (rad <= 0) {
+      this.pushMaskRect(x, y, w, h);
+      return;
+    }
+    const seg = Math.max(3, Math.min(12, Math.round(rad / 4)));
+    const pts = [];
+    const addArc = (cx, cy, a0, a1, includeFirst) => {
+      const start = includeFirst ? 0 : 1;
+      for (let i = start; i <= seg; i++) {
+        const t = i / seg;
+        const a = a0 + (a1 - a0) * t;
+        pts.push({ x: cx + Math.cos(a) * rad, y: cy + Math.sin(a) * rad });
+      }
+    };
+    const x0 = x;
+    const y0 = y;
+    const x1 = x + w;
+    const y1 = y + h;
+    addArc(x1 - rad, y0 + rad, -Math.PI / 2, 0, true);
+    addArc(x1 - rad, y1 - rad, 0, Math.PI / 2, false);
+    addArc(x0 + rad, y1 - rad, Math.PI / 2, Math.PI, false);
+    addArc(x0 + rad, y0 + rad, Math.PI, 3 * Math.PI / 2, false);
+    this.pushMaskPolygon(pts);
+  }
+  /**
+   * Pop the most recent stencil mask.
+   */
+  popMask() {
+    if (this.maskDepth <= 0) {
+      this.maskDepth = 0;
+      this.maskStack.length = 0;
+      return;
+    }
+    if (this.rectCount >= 4096) return;
+    const top = this.maskStack.pop();
+    const depthAtPop = this.maskDepth;
+    if (!top || top.kind === "rect") {
+      const rect = top ?? { x: 0, y: 0, w: 0, h: 0, radius: 0, clip: null, depthBeforePush: this.maskDepth - 1 };
+      const [r, g, b] = [0, 0, 0, 0];
+      const o = this.rectCount * 8;
+      this.rectData[o + 0] = rect.x;
+      this.rectData[o + 1] = rect.y;
+      this.rectData[o + 2] = rect.w;
+      this.rectData[o + 3] = rect.h;
+      this.rectData[o + 4] = r;
+      this.rectData[o + 5] = g;
+      this.rectData[o + 6] = b;
+      this.rectData[o + 7] = rect.radius;
+      this.writeRectClip(this.rectCount, rect.clip);
+      this.rectStencilRef[this.rectCount] = depthAtPop;
+      this.drawCommands.push({ kind: "rect", mode: "maskPop", start: this.rectCount, count: 1 });
+      this.rectCount++;
+    } else {
+      const clip = top.clip;
+      const cx = clip ? Math.floor(clip.x) : -1;
+      const cy = clip ? Math.floor(clip.y) : -1;
+      const cw = clip ? Math.ceil(clip.w) : -1;
+      const ch = clip ? Math.ceil(clip.h) : -1;
+      this.drawCommands.push({
+        kind: "poly",
+        mode: "maskPop",
+        firstVertex: top.firstVertex,
+        vertexCount: top.vertexCount,
+        clipX: cx,
+        clipY: cy,
+        clipW: cw,
+        clipH: ch,
+        stencilRef: depthAtPop
+      });
+    }
+    this.maskDepth = Math.max(0, this.maskDepth - 1);
+  }
+  /**
+   * Push a polygon/path stencil mask.
+   * Points are interpreted as a triangle fan, so the polygon should be convex.
+   */
+  pushMaskPolygon(points) {
+    if (!points || points.length < 3) return;
+    const triVertexCount = (points.length - 2) * 3;
+    if (triVertexCount <= 0) return;
+    if (this.polyVertexCount + triVertexCount > 8192) return;
+    const depthBefore = this.maskDepth;
+    const clip = this.currentClip ? { x: this.currentClip.x, y: this.currentClip.y, w: this.currentClip.w, h: this.currentClip.h } : null;
+    const firstVertex = this.polyVertexCount;
+    const p0 = points[0];
+    for (let i = 1; i < points.length - 1; i++) {
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      let o = this.polyVertexCount * 2;
+      this.polyData[o + 0] = p0.x;
+      this.polyData[o + 1] = p0.y;
+      this.polyVertexCount++;
+      o = this.polyVertexCount * 2;
+      this.polyData[o + 0] = p1.x;
+      this.polyData[o + 1] = p1.y;
+      this.polyVertexCount++;
+      o = this.polyVertexCount * 2;
+      this.polyData[o + 0] = p2.x;
+      this.polyData[o + 1] = p2.y;
+      this.polyVertexCount++;
+    }
+    this.maskStack.push({ kind: "poly", firstVertex, vertexCount: triVertexCount, clip, depthBeforePush: depthBefore });
+    const cx = clip ? Math.floor(clip.x) : -1;
+    const cy = clip ? Math.floor(clip.y) : -1;
+    const cw = clip ? Math.ceil(clip.w) : -1;
+    const ch = clip ? Math.ceil(clip.h) : -1;
+    this.drawCommands.push({
+      kind: "poly",
+      mode: "maskPush",
+      firstVertex,
+      vertexCount: triVertexCount,
+      clipX: cx,
+      clipY: cy,
+      clipW: cw,
+      clipH: ch,
+      stencilRef: depthBefore
+    });
+    this.maskDepth = Math.min(255, this.maskDepth + 1);
+  }
+  /**
+   * Push a rectangular clip region.
+   * Clip regions are intersected (nested clipping).
+   */
+  pushClipRect(x, y, w, h) {
+    const next = {
+      x: Number.isFinite(x) ? x : 0,
+      y: Number.isFinite(y) ? y : 0,
+      w: Number.isFinite(w) ? w : 0,
+      h: Number.isFinite(h) ? h : 0
+    };
+    if (next.w <= 0 || next.h <= 0) {
+      this.clipStack.push(next);
+      this.currentClip = { x: next.x, y: next.y, w: 0, h: 0 };
+      return;
+    }
+    if (!this.currentClip) {
+      this.clipStack.push(next);
+      this.currentClip = next;
+      return;
+    }
+    const a = this.currentClip;
+    const x1 = Math.max(a.x, next.x);
+    const y1 = Math.max(a.y, next.y);
+    const x2 = Math.min(a.x + a.w, next.x + next.w);
+    const y2 = Math.min(a.y + a.h, next.y + next.h);
+    const iw = Math.max(0, x2 - x1);
+    const ih = Math.max(0, y2 - y1);
+    const inter = { x: x1, y: y1, w: iw, h: ih };
+    this.clipStack.push(next);
+    this.currentClip = inter;
+  }
+  /**
+   * Pop the most recent clip region.
+   */
+  popClipRect() {
+    if (this.clipStack.length === 0) {
+      this.currentClip = null;
+      return;
+    }
+    this.clipStack.pop();
+    let clip = null;
+    for (const r of this.clipStack) {
+      if (!clip) {
+        clip = { x: r.x, y: r.y, w: r.w, h: r.h };
+        continue;
+      }
+      const x1 = Math.max(clip.x, r.x);
+      const y1 = Math.max(clip.y, r.y);
+      const x2 = Math.min(clip.x + clip.w, r.x + r.w);
+      const y2 = Math.min(clip.y + clip.h, r.y + r.h);
+      clip = { x: x1, y: y1, w: Math.max(0, x2 - x1), h: Math.max(0, y2 - y1) };
+    }
+    this.currentClip = clip;
   }
   rect(x, y, w, h, color) {
     if (w <= 0 || h <= 0) return;
@@ -11100,6 +13292,9 @@ class WebGPUUIRenderer {
     this.rectData[o + 5] = g;
     this.rectData[o + 6] = b;
     this.rectData[o + 7] = a;
+    this.writeRectClip(this.rectCount);
+    this.rectStencilRef[this.rectCount] = this.maskDepth;
+    this.drawCommands.push({ kind: "rect", mode: "fill", start: this.rectCount, count: 1 });
     this.rectCount++;
   }
   text(text, x, y, color) {
@@ -11107,6 +13302,7 @@ class WebGPUUIRenderer {
     const [r, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color));
     const charW = this.atlas.getCharWidth();
     const charH = this.atlas.getCharHeight();
+    const start = this.textCount;
     let cursorX = x;
     for (const ch of text) {
       if (this.textCount >= 4096) break;
@@ -11124,21 +13320,112 @@ class WebGPUUIRenderer {
       this.textData[o + 9] = glyph.v;
       this.textData[o + 10] = glyph.w;
       this.textData[o + 11] = glyph.h;
+      this.writeTextClip(this.textCount);
+      this.textStencilRef[this.textCount] = this.maskDepth;
       this.textCount++;
       cursorX += charW;
     }
+    const count = this.textCount - start;
+    if (count > 0) {
+      this.drawCommands.push({ kind: "text", start, count });
+    }
+  }
+  /**
+   * Register an image under an id for subsequent image() draws.
+   * Caller owns the ImageBitmap lifetime; this method copies it to GPU.
+   */
+  registerImage(imageId, bitmap) {
+    if (!imageId || !bitmap) return null;
+    const width = Math.max(1, bitmap.width | 0);
+    const height = Math.max(1, bitmap.height | 0);
+    const texture = this.device.createTexture({
+      size: { width, height },
+      format: "rgba8unorm",
+      // Dawn may require RENDER_ATTACHMENT for copyExternalImageToTexture internally.
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+    this.device.queue.copyExternalImageToTexture(
+      { source: bitmap },
+      { texture },
+      { width, height }
+    );
+    const sampler = this.device.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge"
+    });
+    const bindGroup = this.device.createBindGroup({
+      layout: this.texturedBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.uniformBuffer } },
+        { binding: 1, resource: texture.createView() },
+        { binding: 2, resource: sampler }
+      ]
+    });
+    this.imageBindGroups.set(imageId, bindGroup);
+    this.imageSizes.set(imageId, { width, height });
+    return { width, height };
+  }
+  getImageSize(imageId) {
+    return this.imageSizes.get(imageId) ?? null;
+  }
+  image(imageId, x, y, w, h, options) {
+    if (!imageId) return;
+    if (w <= 0 || h <= 0) return;
+    if (this.imageCount >= 4096) return;
+    if (!this.imageBindGroups.has(imageId)) return;
+    const tint = (options == null ? void 0 : options.tint) ?? { r: 255, g: 255, b: 255, a: 1 };
+    const [r, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(tint));
+    const uv = (options == null ? void 0 : options.uv) ?? { u: 0, v: 0, w: 1, h: 1 };
+    const o = this.imageCount * 12;
+    this.imageData[o + 0] = x;
+    this.imageData[o + 1] = y;
+    this.imageData[o + 2] = w;
+    this.imageData[o + 3] = h;
+    this.imageData[o + 4] = r;
+    this.imageData[o + 5] = g;
+    this.imageData[o + 6] = b;
+    this.imageData[o + 7] = a;
+    this.imageData[o + 8] = uv.u;
+    this.imageData[o + 9] = uv.v;
+    this.imageData[o + 10] = uv.w;
+    this.imageData[o + 11] = uv.h;
+    this.writeImageClip(this.imageCount);
+    this.imageStencilRef[this.imageCount] = this.maskDepth;
+    this.drawCommands.push({ kind: "image", imageId, start: this.imageCount, count: 1 });
+    this.imageCount++;
   }
   /**
    * Render current UI commands into the offscreen UI texture.
    * Clears to transparent each frame by default.
    */
   flush() {
-    const shouldClear = !(this.clearColor[0] === 0 && this.clearColor[1] === 0 && this.clearColor[2] === 0 && this.clearColor[3] === 0);
-    if (this.rectCount === 0 && this.textCount === 0 && !shouldClear) {
+    this.flushTo(this.texture, this.width, this.height, {
+      clear: { r: this.clearColor[0], g: this.clearColor[1], b: this.clearColor[2], a: this.clearColor[3] },
+      resetClearColor: true
+    });
+  }
+  /**
+   * Render current UI commands into an external target texture.
+   * Target texture must be created with format getTextureFormat() and include RENDER_ATTACHMENT usage.
+   */
+  flushTo(targetTexture, targetWidth, targetHeight, options = {}) {
+    const tw = Math.max(1, Math.floor(targetWidth));
+    const th = Math.max(1, Math.floor(targetHeight));
+    const clear = options.clear ?? { r: 0, g: 0, b: 0, a: 0 };
+    const callerRequestedClear = options.clear !== void 0;
+    const shouldClear = callerRequestedClear || !(clear.r === 0 && clear.g === 0 && clear.b === 0 && clear.a === 0);
+    if (this.rectCount === 0 && this.textCount === 0 && this.imageCount === 0 && !shouldClear) {
       return;
     }
+    this.writeUniforms(tw, th);
+    const depthStencil = this.ensureDepthStencil(tw, th);
     if (this.atlas.needsUpload()) {
       this.atlas.uploadToGPU(this.device);
+      this.textBindGroup = null;
+      this.lastAtlasTexture = null;
+      this.lastAtlasSampler = null;
     }
     if (this.rectCount > 0) {
       const byteCount = this.rectCount * 8 * 4;
@@ -11160,50 +13447,214 @@ class WebGPUUIRenderer {
         byteCount
       );
     }
+    if (this.imageCount > 0) {
+      const byteCount = this.imageCount * 12 * 4;
+      this.device.queue.writeBuffer(
+        this.imageInstanceBuffer,
+        0,
+        this.imageData.buffer,
+        0,
+        byteCount
+      );
+    }
+    if (this.polyVertexCount > 0) {
+      const byteCount = this.polyVertexCount * 2 * 4;
+      this.device.queue.writeBuffer(
+        this.polyVertexBuffer,
+        0,
+        this.polyData.buffer,
+        0,
+        byteCount
+      );
+    }
     const commandEncoder = this.device.createCommandEncoder();
     const pass = commandEncoder.beginRenderPass({
       colorAttachments: [{
-        view: this.texture.createView(),
-        clearValue: { r: this.clearColor[0], g: this.clearColor[1], b: this.clearColor[2], a: this.clearColor[3] },
+        view: targetTexture.createView(),
+        clearValue: clear,
         loadOp: "clear",
         storeOp: "store"
-      }]
+      }],
+      depthStencilAttachment: {
+        view: depthStencil.createView(),
+        depthClearValue: 1,
+        depthLoadOp: "clear",
+        depthStoreOp: "store",
+        stencilClearValue: 0,
+        stencilLoadOp: "clear",
+        stencilStoreOp: "store"
+      }
     });
-    if (this.rectCount > 0) {
-      const rectBindGroup = this.device.createBindGroup({
-        layout: this.rectPipeline.getBindGroupLayout(0),
+    const applyScissor = (clipX, clipY, clipW, clipH) => {
+      if (clipX < 0 || clipY < 0 || clipW < 0 || clipH < 0) {
+        return { x: 0, y: 0, w: tw, h: th };
+      }
+      const x1 = Math.max(0, Math.min(tw, clipX));
+      const y1 = Math.max(0, Math.min(th, clipY));
+      const x2 = Math.max(x1, Math.min(tw, clipX + clipW));
+      const y2 = Math.max(y1, Math.min(th, clipY + clipH));
+      return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+    };
+    if (!this.rectBindGroup) {
+      this.rectBindGroup = this.device.createBindGroup({
+        layout: this.uniformBindGroupLayout,
         entries: [{ binding: 0, resource: { buffer: this.uniformBuffer } }]
       });
-      pass.setPipeline(this.rectPipeline);
-      pass.setBindGroup(0, rectBindGroup);
-      pass.setVertexBuffer(0, this.rectInstanceBuffer);
-      pass.draw(6, this.rectCount);
     }
-    if (this.textCount > 0) {
-      const atlasTexture = this.atlas.getTexture();
-      const atlasSampler = this.atlas.getSampler();
-      if (atlasTexture && atlasSampler) {
-        const textBindGroup = this.device.createBindGroup({
-          layout: this.textPipeline.getBindGroupLayout(0),
+    const atlasTexture = this.atlas.getTexture();
+    const atlasSampler = this.atlas.getSampler();
+    if (atlasTexture && atlasSampler) {
+      const atlasChanged = atlasTexture !== this.lastAtlasTexture || atlasSampler !== this.lastAtlasSampler;
+      if (!this.textBindGroup || atlasChanged) {
+        this.textBindGroup = this.device.createBindGroup({
+          layout: this.texturedBindGroupLayout,
           entries: [
             { binding: 0, resource: { buffer: this.uniformBuffer } },
             { binding: 1, resource: atlasTexture.createView() },
             { binding: 2, resource: atlasSampler }
           ]
         });
-        pass.setPipeline(this.textPipeline);
-        pass.setBindGroup(0, textBindGroup);
-        pass.setVertexBuffer(0, this.textInstanceBuffer);
-        pass.draw(6, this.textCount);
+        this.lastAtlasTexture = atlasTexture;
+        this.lastAtlasSampler = atlasSampler;
       }
     }
+    const getRectClip = (idx) => {
+      const o = idx * 4;
+      return { x: this.rectClipData[o + 0], y: this.rectClipData[o + 1], w: this.rectClipData[o + 2], h: this.rectClipData[o + 3] };
+    };
+    const getTextClip = (idx) => {
+      const o = idx * 4;
+      return { x: this.textClipData[o + 0], y: this.textClipData[o + 1], w: this.textClipData[o + 2], h: this.textClipData[o + 3] };
+    };
+    const getImageClip = (idx) => {
+      const o = idx * 4;
+      return { x: this.imageClipData[o + 0], y: this.imageClipData[o + 1], w: this.imageClipData[o + 2], h: this.imageClipData[o + 3] };
+    };
+    const flushRun = (run2) => {
+      if (!run2 || run2.count <= 0) return;
+      const sc = applyScissor(run2.clipX, run2.clipY, run2.clipW, run2.clipH);
+      if (sc.w <= 0 || sc.h <= 0) return;
+      pass.setPipeline(run2.pipeline);
+      if (run2.bindGroup) pass.setBindGroup(0, run2.bindGroup);
+      pass.setVertexBuffer(0, run2.vertexBuffer);
+      pass.setScissorRect(sc.x, sc.y, sc.w, sc.h);
+      pass.setStencilReference(Math.max(0, Math.floor(run2.stencilRef)));
+      pass.draw(6, run2.count, 0, run2.start);
+    };
+    let run = null;
+    for (const cmd of this.drawCommands) {
+      if (cmd.kind === "poly") {
+        flushRun(run);
+        run = null;
+        const sc = applyScissor(cmd.clipX, cmd.clipY, cmd.clipW, cmd.clipH);
+        if (sc.w <= 0 || sc.h <= 0) {
+          continue;
+        }
+        const pipeline2 = cmd.mode === "maskPush" ? this.polyMaskPushPipeline : this.polyMaskPopPipeline;
+        pass.setPipeline(pipeline2);
+        pass.setBindGroup(0, this.rectBindGroup);
+        pass.setVertexBuffer(0, this.polyVertexBuffer);
+        pass.setScissorRect(sc.x, sc.y, sc.w, sc.h);
+        pass.setStencilReference(Math.max(0, Math.floor(cmd.stencilRef)));
+        pass.draw(cmd.vertexCount, 1, cmd.firstVertex, 0);
+        continue;
+      }
+      if (cmd.kind === "rect") {
+        const clip2 = getRectClip(cmd.start);
+        const stencilRef2 = this.rectStencilRef[cmd.start] ?? 0;
+        const pipeline2 = cmd.mode === "fill" ? this.rectPipeline : cmd.mode === "maskPush" ? this.maskPushPipeline : this.maskPopPipeline;
+        const bindGroup2 = this.rectBindGroup;
+        const vertexBuffer2 = this.rectInstanceBuffer;
+        const canExtend2 = run && run.kind === "rect" && run.pipeline === pipeline2 && run.stencilRef === stencilRef2 && run.clipX === clip2.x && run.clipY === clip2.y && run.clipW === clip2.w && run.clipH === clip2.h && run.start + run.count === cmd.start;
+        if (!canExtend2) {
+          flushRun(run);
+          run = {
+            kind: "rect",
+            pipeline: pipeline2,
+            bindGroup: bindGroup2,
+            vertexBuffer: vertexBuffer2,
+            start: cmd.start,
+            count: cmd.count,
+            clipX: clip2.x,
+            clipY: clip2.y,
+            clipW: clip2.w,
+            clipH: clip2.h,
+            stencilRef: stencilRef2
+          };
+        } else if (run) {
+          run.count += cmd.count;
+        }
+        continue;
+      }
+      if (cmd.kind === "image") {
+        const bindGroup2 = this.imageBindGroups.get(cmd.imageId) ?? null;
+        if (!bindGroup2) continue;
+        const clip2 = getImageClip(cmd.start);
+        const stencilRef2 = this.imageStencilRef[cmd.start] ?? 0;
+        const pipeline2 = this.textPipeline;
+        const vertexBuffer2 = this.imageInstanceBuffer;
+        const canExtend2 = run && run.kind === "image" && run.pipeline === pipeline2 && run.bindGroup === bindGroup2 && run.stencilRef === stencilRef2 && run.clipX === clip2.x && run.clipY === clip2.y && run.clipW === clip2.w && run.clipH === clip2.h && run.start + run.count === cmd.start;
+        if (!canExtend2) {
+          flushRun(run);
+          run = {
+            kind: "image",
+            pipeline: pipeline2,
+            bindGroup: bindGroup2,
+            vertexBuffer: vertexBuffer2,
+            start: cmd.start,
+            count: cmd.count,
+            clipX: clip2.x,
+            clipY: clip2.y,
+            clipW: clip2.w,
+            clipH: clip2.h,
+            stencilRef: stencilRef2
+          };
+        } else if (run) {
+          run.count += cmd.count;
+        }
+        continue;
+      }
+      if (!this.textBindGroup) {
+        continue;
+      }
+      const clip = getTextClip(cmd.start);
+      const stencilRef = this.textStencilRef[cmd.start] ?? 0;
+      const pipeline = this.textPipeline;
+      const bindGroup = this.textBindGroup;
+      const vertexBuffer = this.textInstanceBuffer;
+      const canExtend = run && run.kind === "text" && run.pipeline === pipeline && run.stencilRef === stencilRef && run.clipX === clip.x && run.clipY === clip.y && run.clipW === clip.w && run.clipH === clip.h && run.start + run.count === cmd.start;
+      if (!canExtend) {
+        flushRun(run);
+        run = {
+          kind: "text",
+          pipeline,
+          bindGroup,
+          vertexBuffer,
+          start: cmd.start,
+          count: cmd.count,
+          clipX: clip.x,
+          clipY: clip.y,
+          clipW: clip.w,
+          clipH: clip.h,
+          stencilRef
+        };
+      } else if (run) {
+        run.count += cmd.count;
+      }
+    }
+    flushRun(run);
     pass.end();
     this.device.queue.submit([commandEncoder.finish()]);
     this.clearCommands();
-    this.clearColor = [0, 0, 0, 0];
+    if (options.resetClearColor) {
+      this.clearColor = [0, 0, 0, 0];
+    }
   }
-  writeUniforms() {
-    const data = new Float32Array([this.width, this.height, 0, 0]);
+  writeUniforms(width, height) {
+    if (width === this.lastUniformW && height === this.lastUniformH) return;
+    this.lastUniformW = width;
+    this.lastUniformH = height;
+    const data = new Float32Array([width, height, 0, 0]);
     this.device.queue.writeBuffer(this.uniformBuffer, 0, data);
   }
   createRenderTexture(width, height) {
@@ -11263,7 +13714,7 @@ class WebGPUUIRenderer {
       `
     });
     return this.device.createRenderPipeline({
-      layout: "auto",
+      layout: this.uniformPipelineLayout,
       vertex: {
         module: shader,
         entryPoint: "vs_main",
@@ -11287,6 +13738,185 @@ class WebGPUUIRenderer {
           }
         }]
       },
+      depthStencil: {
+        format: "depth24plus-stencil8",
+        depthWriteEnabled: false,
+        depthCompare: "always",
+        stencilFront: { compare: "equal", failOp: "keep", depthFailOp: "keep", passOp: "keep" },
+        stencilBack: { compare: "equal", failOp: "keep", depthFailOp: "keep", passOp: "keep" },
+        stencilReadMask: 255,
+        stencilWriteMask: 0
+      },
+      primitive: { topology: "triangle-list" }
+    });
+  }
+  createMaskPipeline(mode) {
+    const shader = this.device.createShaderModule({
+      code: `
+        struct Uniforms { resolution: vec2f }
+        @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+        struct VSOut {
+          @builtin(position) position: vec4f,
+          @location(0) localPx: vec2f,
+          @location(1) sizePx: vec2f,
+          @location(2) radiusPx: f32,
+        }
+
+        @vertex
+        fn vs_main(
+          @builtin(vertex_index) vertexIndex: u32,
+          @builtin(instance_index) instanceIndex: u32,
+          @location(0) posSize: vec4f,
+          @location(1) color: vec4f,
+        ) -> VSOut {
+          var quad = array<vec2f, 6>(
+            vec2f(0.0, 0.0),
+            vec2f(1.0, 0.0),
+            vec2f(0.0, 1.0),
+            vec2f(1.0, 0.0),
+            vec2f(1.0, 1.0),
+            vec2f(0.0, 1.0)
+          );
+
+          let x = posSize.x;
+          let y = posSize.y;
+          let w = posSize.z;
+          let h = posSize.w;
+
+          let p = vec2f(x, y) + quad[vertexIndex] * vec2f(w, h);
+
+          var clip = (p / uniforms.resolution) * 2.0 - 1.0;
+          clip.y = -clip.y;
+
+          var out: VSOut;
+          out.position = vec4f(clip, 0.0, 1.0);
+          out.localPx = quad[vertexIndex] * vec2f(w, h);
+          out.sizePx = vec2f(w, h);
+          out.radiusPx = color.a;
+          return out;
+        }
+
+        @fragment
+        fn fs_main(input: VSOut) -> @location(0) vec4f {
+          // Rounded-rect mask. Radius is packed into alpha.
+          let w = input.sizePx.x;
+          let h = input.sizePx.y;
+          var r = input.radiusPx;
+          r = clamp(r, 0.0, min(w, h) * 0.5);
+
+          if (r > 0.0) {
+            let x = input.localPx.x;
+            let y = input.localPx.y;
+
+            // Fast accept in the central cross area.
+            if (!((x >= r && x <= (w - r)) || (y >= r && y <= (h - r)))) {
+              let cx = select(r, w - r, x > (w - r));
+              let cy = select(r, h - r, y > (h - r));
+              let dx = x - cx;
+              let dy = y - cy;
+              if ((dx * dx + dy * dy) > (r * r)) {
+                discard;
+              }
+            }
+          }
+
+          // Color writes are disabled for this pipeline, but we must return something.
+          return vec4f(0.0, 0.0, 0.0, 0.0);
+        }
+      `
+    });
+    const passOp = mode === "increment" ? "increment-clamp" : "decrement-clamp";
+    return this.device.createRenderPipeline({
+      layout: this.uniformPipelineLayout,
+      vertex: {
+        module: shader,
+        entryPoint: "vs_main",
+        buffers: [{
+          arrayStride: 32,
+          stepMode: "instance",
+          attributes: [
+            { shaderLocation: 0, offset: 0, format: "float32x4" },
+            { shaderLocation: 1, offset: 16, format: "float32x4" }
+          ]
+        }]
+      },
+      fragment: {
+        module: shader,
+        entryPoint: "fs_main",
+        targets: [{
+          format: this.textureFormat,
+          writeMask: 0
+        }]
+      },
+      depthStencil: {
+        format: "depth24plus-stencil8",
+        depthWriteEnabled: false,
+        depthCompare: "always",
+        stencilFront: { compare: "equal", failOp: "keep", depthFailOp: "keep", passOp },
+        stencilBack: { compare: "equal", failOp: "keep", depthFailOp: "keep", passOp },
+        stencilReadMask: 255,
+        stencilWriteMask: 255
+      },
+      primitive: { topology: "triangle-list" }
+    });
+  }
+  createPolyMaskPipeline(mode) {
+    const shader = this.device.createShaderModule({
+      code: `
+        struct Uniforms { resolution: vec2f }
+        @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+        struct VSOut {
+          @builtin(position) position: vec4f,
+        }
+
+        @vertex
+        fn vs_main(
+          @location(0) pos: vec2f
+        ) -> VSOut {
+          var clip = (pos / uniforms.resolution) * 2.0 - 1.0;
+          clip.y = -clip.y;
+          var out: VSOut;
+          out.position = vec4f(clip, 0.0, 1.0);
+          return out;
+        }
+
+        @fragment
+        fn fs_main(_input: VSOut) -> @location(0) vec4f {
+          return vec4f(0.0, 0.0, 0.0, 0.0);
+        }
+      `
+    });
+    const passOp = mode === "increment" ? "increment-clamp" : "decrement-clamp";
+    return this.device.createRenderPipeline({
+      layout: this.uniformPipelineLayout,
+      vertex: {
+        module: shader,
+        entryPoint: "vs_main",
+        buffers: [{
+          arrayStride: 8,
+          stepMode: "vertex",
+          attributes: [{ shaderLocation: 0, offset: 0, format: "float32x2" }]
+        }]
+      },
+      fragment: {
+        module: shader,
+        entryPoint: "fs_main",
+        targets: [{
+          format: this.textureFormat,
+          writeMask: 0
+        }]
+      },
+      depthStencil: {
+        format: "depth24plus-stencil8",
+        depthWriteEnabled: false,
+        depthCompare: "always",
+        stencilFront: { compare: "equal", failOp: "keep", depthFailOp: "keep", passOp },
+        stencilBack: { compare: "equal", failOp: "keep", depthFailOp: "keep", passOp },
+        stencilReadMask: 255,
+        stencilWriteMask: 255
+      },
       primitive: { topology: "triangle-list" }
     });
   }
@@ -11295,8 +13925,8 @@ class WebGPUUIRenderer {
       code: `
         struct Uniforms { resolution: vec2f }
         @group(0) @binding(0) var<uniform> uniforms: Uniforms;
-        @group(0) @binding(1) var fontAtlas: texture_2d<f32>;
-        @group(0) @binding(2) var fontSampler: sampler;
+        @group(0) @binding(1) var tex: texture_2d<f32>;
+        @group(0) @binding(2) var texSampler: sampler;
 
         struct VSOut {
           @builtin(position) position: vec4f,
@@ -11340,13 +13970,13 @@ class WebGPUUIRenderer {
 
         @fragment
         fn fs_main(input: VSOut) -> @location(0) vec4f {
-          let a = textureSample(fontAtlas, fontSampler, input.uv).a;
-          return vec4f(input.color.rgb, input.color.a * a);
+          let c = textureSample(tex, texSampler, input.uv);
+          return vec4f(input.color.rgb * c.rgb, input.color.a * c.a);
         }
       `
     });
     return this.device.createRenderPipeline({
-      layout: "auto",
+      layout: this.texturedPipelineLayout,
       vertex: {
         module: shader,
         entryPoint: "vs_main",
@@ -11371,9 +14001,2303 @@ class WebGPUUIRenderer {
           }
         }]
       },
+      depthStencil: {
+        format: "depth24plus-stencil8",
+        depthWriteEnabled: false,
+        depthCompare: "always",
+        stencilFront: { compare: "equal", failOp: "keep", depthFailOp: "keep", passOp: "keep" },
+        stencilBack: { compare: "equal", failOp: "keep", depthFailOp: "keep", passOp: "keep" },
+        stencilReadMask: 255,
+        stencilWriteMask: 0
+      },
       primitive: { topology: "triangle-list" }
     });
   }
+}
+class ShaderManager {
+  constructor(device, format) {
+    __publicField(this, "device");
+    __publicField(this, "format");
+    // Compiled shaders
+    __publicField(this, "shaders", /* @__PURE__ */ new Map());
+    // Shared resources
+    __publicField(this, "resources", null);
+    // Active shader
+    __publicField(this, "activeShader", null);
+    __publicField(this, "initialized", false);
+    this.device = device;
+    this.format = format || navigator.gpu.getPreferredCanvasFormat();
+  }
+  async init() {
+    if (this.initialized) return;
+    console.log("[ShaderManager] Initializing...");
+    const vertices = new Float32Array([
+      // Position (x, y)    UV (u, v)
+      -1,
+      1,
+      0,
+      0,
+      // Top-left
+      1,
+      1,
+      1,
+      0,
+      // Top-right
+      -1,
+      -1,
+      0,
+      1,
+      // Bottom-left
+      1,
+      -1,
+      1,
+      1
+      // Bottom-right
+    ]);
+    const vertexBuffer = this.device.createBuffer({
+      size: vertices.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true
+    });
+    new Float32Array(vertexBuffer.getMappedRange()).set(vertices);
+    vertexBuffer.unmap();
+    const sampler = this.device.createSampler({
+      magFilter: "nearest",
+      minFilter: "nearest",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge"
+    });
+    this.resources = { vertexBuffer, sampler };
+    this.initialized = true;
+    console.log("[ShaderManager] Initialized");
+  }
+  /**
+   * Register and compile a WGSL shader from parsed metadata
+   */
+  async registerShader(shader) {
+    if (!this.initialized) await this.init();
+    try {
+      console.log(`[ShaderManager] Compiling shader: ${shader.name} (${shader.kind})`);
+      if (shader.kind !== "fragment") {
+        console.warn(`[ShaderManager] Only fragment shaders supported, got: ${shader.kind}`);
+        return false;
+      }
+      const module = this.device.createShaderModule({
+        code: shader.code,
+        label: shader.name
+      });
+      const uniformLayout = this.calculateUniformLayout(shader);
+      const uniformBufferSize = this.calculateUniformBufferSize(uniformLayout);
+      const uniformBuffer = this.device.createBuffer({
+        size: uniformBufferSize,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        label: `${shader.name}_uniforms`
+      });
+      const bindGroupLayout = this.device.createBindGroupLayout({
+        label: `${shader.name}_bindGroupLayout`,
+        entries: [
+          {
+            binding: 0,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: { sampleType: "float" }
+          },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.FRAGMENT,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.FRAGMENT,
+            buffer: { type: "uniform" }
+          }
+        ]
+      });
+      const pipelineLayout = this.device.createPipelineLayout({
+        label: `${shader.name}_pipelineLayout`,
+        bindGroupLayouts: [bindGroupLayout]
+      });
+      const pipeline = this.device.createRenderPipeline({
+        label: `${shader.name}_pipeline`,
+        layout: pipelineLayout,
+        vertex: {
+          module,
+          entryPoint: "vertexMain",
+          buffers: [{
+            arrayStride: 16,
+            // 4 floats * 4 bytes
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: "float32x2" },
+              // position
+              { shaderLocation: 1, offset: 8, format: "float32x2" }
+              // uv
+            ]
+          }]
+        },
+        fragment: {
+          module,
+          entryPoint: "fragmentMain",
+          targets: [{
+            format: this.format
+          }]
+        },
+        primitive: {
+          topology: "triangle-strip",
+          stripIndexFormat: void 0
+        }
+      });
+      const compiled = {
+        metadata: shader,
+        module,
+        pipeline,
+        uniformBuffer,
+        uniformLayout,
+        uniformValues: /* @__PURE__ */ new Map(),
+        bindGroupLayout
+      };
+      for (const uniformName of shader.uniforms) {
+        compiled.uniformValues.set(uniformName, 0);
+      }
+      this.shaders.set(shader.name, compiled);
+      console.log(`[ShaderManager] ✓ Shader compiled: ${shader.name}`);
+      console.log(`[ShaderManager]   Uniforms: ${shader.uniforms.join(", ") || "none"}`);
+      return true;
+    } catch (error) {
+      console.error(`[ShaderManager] Failed to compile shader ${shader.name}:`, error);
+      return false;
+    }
+  }
+  /**
+   * Set a uniform value for a shader
+   */
+  setUniform(shaderName, uniformName, value) {
+    const shader = this.shaders.get(shaderName);
+    if (!shader) {
+      console.warn(`[ShaderManager] Shader not found: ${shaderName}`);
+      return false;
+    }
+    if (!shader.metadata.uniforms.includes(uniformName)) {
+      console.warn(`[ShaderManager] Uniform not found: ${uniformName} in shader ${shaderName}`);
+      return false;
+    }
+    shader.uniformValues.set(uniformName, value);
+    return true;
+  }
+  /**
+   * Check whether a shader declares a uniform (without logging warnings).
+   */
+  hasUniform(shaderName, uniformName) {
+    const shader = this.shaders.get(shaderName);
+    if (!shader) return false;
+    return shader.metadata.uniforms.includes(uniformName);
+  }
+  /**
+   * Get current uniform value
+   */
+  getUniform(shaderName, uniformName) {
+    const shader = this.shaders.get(shaderName);
+    if (!shader) return void 0;
+    return shader.uniformValues.get(uniformName);
+  }
+  /**
+   * Set the active shader for rendering
+   */
+  setActiveShader(shaderName) {
+    if (shaderName === null) {
+      this.activeShader = null;
+      return true;
+    }
+    if (!this.shaders.has(shaderName)) {
+      console.warn(`[ShaderManager] Cannot activate unknown shader: ${shaderName}`);
+      return false;
+    }
+    this.activeShader = shaderName;
+    return true;
+  }
+  /**
+   * Get the currently active shader name
+   */
+  getActiveShader() {
+    return this.activeShader;
+  }
+  /**
+   * Apply the active shader to a texture and render to output
+   */
+  applyShader(inputTexture, outputTexture, commandEncoder) {
+    if (!this.activeShader) return false;
+    const shader = this.shaders.get(this.activeShader);
+    if (!shader || !this.resources) return false;
+    this.updateUniformBuffer(shader, outputTexture.width, outputTexture.height);
+    const bindGroup = this.device.createBindGroup({
+      layout: shader.bindGroupLayout,
+      entries: [
+        { binding: 0, resource: inputTexture.createView() },
+        { binding: 1, resource: this.resources.sampler },
+        { binding: 2, resource: { buffer: shader.uniformBuffer } }
+      ]
+    });
+    const renderPass = commandEncoder.beginRenderPass({
+      colorAttachments: [{
+        view: outputTexture.createView(),
+        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        loadOp: "clear",
+        storeOp: "store"
+      }]
+    });
+    renderPass.setPipeline(shader.pipeline);
+    renderPass.setBindGroup(0, bindGroup);
+    renderPass.setVertexBuffer(0, this.resources.vertexBuffer);
+    renderPass.draw(4, 1, 0, 0);
+    renderPass.end();
+    return true;
+  }
+  /**
+   * Calculate uniform buffer layout with proper alignment
+   */
+  calculateUniformLayout(shader) {
+    const parsed = this.tryParseUniformStructLayout(shader.code);
+    if (parsed) {
+      return parsed.layout;
+    }
+    const layout = /* @__PURE__ */ new Map();
+    let offset = 0;
+    layout.set("time", { offset, size: 4 });
+    offset += 4;
+    offset = this.roundUp(offset, 8);
+    layout.set("resolution", { offset, size: 8 });
+    offset += 8;
+    for (const uniformName of shader.uniforms) {
+      offset = this.roundUp(offset, 4);
+      layout.set(uniformName, { offset, size: 4 });
+      offset += 4;
+    }
+    return layout;
+  }
+  roundUp(value, alignment) {
+    const a = Math.max(1, alignment | 0);
+    return Math.ceil(value / a) * a;
+  }
+  tryParseUniformStructLayout(code) {
+    const uniformDecl = code.match(/var\s*<\s*uniform\s*>\s+uniforms\s*:\s*([A-Za-z_][A-Za-z0-9_]*)/);
+    const structName = (uniformDecl == null ? void 0 : uniformDecl[1]) ?? null;
+    if (!structName) return null;
+    const structMatch = this.extractWGSLStructBody(code, structName);
+    if (!structMatch) return null;
+    const { fields } = structMatch;
+    if (fields.length === 0) return null;
+    const layout = /* @__PURE__ */ new Map();
+    let offset = 0;
+    let structAlign = 1;
+    for (const field of fields) {
+      const typeLayout = this.getWGSLTypeLayout(field.type);
+      const align = typeLayout.align;
+      const size = typeLayout.size;
+      structAlign = Math.max(structAlign, align);
+      offset = this.roundUp(offset, align);
+      layout.set(field.name, { offset, size });
+      offset += size;
+    }
+    const structSize = this.roundUp(offset, Math.max(16, structAlign));
+    return { layout, size: structSize };
+  }
+  extractWGSLStructBody(code, structName) {
+    const re = new RegExp(`struct\\s+${structName}\\s*\\{([\\s\\S]*?)\\}`, "m");
+    const m = code.match(re);
+    if (!m) return null;
+    const body = m[1] ?? "";
+    const fields = [];
+    for (const rawLine of body.split("\n")) {
+      const line = rawLine.replace(/\/\/.*$/, "").trim();
+      if (!line) continue;
+      const fm = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([^,]+)\s*,?\s*$/);
+      if (!fm) continue;
+      fields.push({ name: fm[1], type: fm[2].trim() });
+    }
+    return { fields };
+  }
+  getWGSLTypeLayout(type) {
+    const t = type.replace(/\s+/g, "");
+    if (t === "f32" || t === "i32" || t === "u32" || t === "bool") {
+      return { align: 4, size: 4 };
+    }
+    const vecf = t.match(/^vec([234])f$/);
+    if (vecf) {
+      const n = parseInt(vecf[1], 10);
+      if (n === 2) return { align: 8, size: 8 };
+      if (n === 3) return { align: 16, size: 16 };
+      return { align: 16, size: 16 };
+    }
+    const vec = t.match(/^vec([234])<([A-Za-z0-9_]+)>$/);
+    if (vec) {
+      const n = parseInt(vec[1], 10);
+      if (n === 2) return { align: 8, size: 8 };
+      if (n === 3) return { align: 16, size: 16 };
+      return { align: 16, size: 16 };
+    }
+    const arr = t.match(/^array<(.+),(\d+)>$/);
+    if (arr) {
+      const elemType = arr[1];
+      const count = parseInt(arr[2], 10);
+      const elem = this.getWGSLTypeLayout(elemType);
+      const stride = this.roundUp(elem.size, 16);
+      return { align: Math.max(16, elem.align), size: Math.max(0, count) * stride };
+    }
+    return { align: 16, size: 16 };
+  }
+  /**
+   * Calculate total uniform buffer size
+   */
+  calculateUniformBufferSize(layout) {
+    let maxOffset = 0;
+    let maxSize = 0;
+    for (const [, value] of layout) {
+      if (value.offset + value.size > maxOffset + maxSize) {
+        maxOffset = value.offset;
+        maxSize = value.size;
+      }
+    }
+    const totalSize = maxOffset + maxSize;
+    return Math.ceil(totalSize / 16) * 16;
+  }
+  /**
+   * Update uniform buffer with current values
+   */
+  updateUniformBuffer(shader, outputWidth, outputHeight) {
+    const bufferData = new Float32Array(shader.uniformBuffer.size / 4);
+    const timeLayout = shader.uniformLayout.get("time");
+    if (timeLayout) {
+      bufferData[timeLayout.offset / 4] = performance.now() / 1e3;
+    }
+    const resolutionLayout = shader.uniformLayout.get("resolution");
+    if (resolutionLayout) {
+      bufferData[resolutionLayout.offset / 4] = outputWidth;
+      bufferData[resolutionLayout.offset / 4 + 1] = outputHeight;
+    }
+    for (const [uniformName, value] of shader.uniformValues) {
+      const layout = shader.uniformLayout.get(uniformName);
+      if (!layout) continue;
+      if (typeof value === "number") {
+        bufferData[layout.offset / 4] = value;
+      } else if (Array.isArray(value)) {
+        const maxFloats = Math.max(0, Math.floor(layout.size / 4));
+        const n = Math.min(value.length, maxFloats);
+        for (let i = 0; i < n; i++) {
+          bufferData[layout.offset / 4 + i] = value[i];
+        }
+      }
+    }
+    this.device.queue.writeBuffer(shader.uniformBuffer, 0, bufferData);
+  }
+  /**
+   * Get list of registered shader names
+   */
+  getShaderNames() {
+    return Array.from(this.shaders.keys());
+  }
+  /**
+   * Alias for getShaderNames() - for API consistency
+   */
+  getRegisteredShaders() {
+    return this.getShaderNames();
+  }
+  /**
+   * Check if a shader is registered
+   */
+  hasShader(name) {
+    return this.shaders.has(name);
+  }
+  /**
+   * Get shader metadata
+   */
+  getShaderMetadata(name) {
+    var _a;
+    return (_a = this.shaders.get(name)) == null ? void 0 : _a.metadata;
+  }
+  /**
+   * Alias for getShaderMetadata() - for API consistency
+   */
+  getShaderInfo(name) {
+    return this.getShaderMetadata(name);
+  }
+  /**
+   * Get the currently active shader name
+   */
+  getActiveShaderName() {
+    return this.activeShader;
+  }
+}
+class ShaderChainManager {
+  constructor(shaderManager, device, format) {
+    __publicField(this, "shaderManager");
+    __publicField(this, "device");
+    __publicField(this, "format");
+    // Active chain
+    __publicField(this, "activeChain", []);
+    __publicField(this, "chainSource", "none");
+    // Intermediate textures for multi-pass rendering
+    __publicField(this, "intermediateTextures", []);
+    // Constants
+    __publicField(this, "MAX_CHAIN_LENGTH", 8);
+    __publicField(this, "SUPPORTED_SEPARATORS", ["+", ";", ",", "|"]);
+    this.shaderManager = shaderManager;
+    this.device = device;
+    this.format = format || navigator.gpu.getPreferredCanvasFormat();
+  }
+  /**
+   * Parse a shader chain string into an array of shader names
+   * Supports separators: + ; , |
+   * Examples:
+   *   "invert+paper+scanlines"
+   *   "bloom;crt;vignette"
+   *   "custom,invert,blur"
+   */
+  parseChainString(chainStr) {
+    if (!chainStr || chainStr.trim().length === 0) {
+      return [];
+    }
+    const trimmed = chainStr.trim();
+    for (const separator of this.SUPPORTED_SEPARATORS) {
+      if (trimmed.includes(separator)) {
+        return trimmed.split(separator).map((s) => s.trim()).filter((s) => s.length > 0);
+      }
+    }
+    return [trimmed];
+  }
+  /**
+   * Activate a shader chain from an array of shader names
+   */
+  async activateChain(shaderNames, source = "api") {
+    if (!shaderNames || shaderNames.length === 0) {
+      console.log("[ShaderChain] Clearing chain");
+      this.clearChain();
+      return true;
+    }
+    if (shaderNames.length > this.MAX_CHAIN_LENGTH) {
+      console.warn(
+        `[ShaderChain] Chain too long (${shaderNames.length} shaders), truncating to ${this.MAX_CHAIN_LENGTH}`
+      );
+      shaderNames = shaderNames.slice(0, this.MAX_CHAIN_LENGTH);
+    }
+    console.log(`[ShaderChain] Activating chain (${source}): ${shaderNames.join(" → ")}`);
+    for (const name of shaderNames) {
+      if (!this.shaderManager.hasShader(name)) {
+        console.log(`[ShaderChain] Loading built-in shader: ${name}`);
+        try {
+          await this.loadBuiltinShader(name);
+        } catch (error) {
+          console.warn(`[ShaderChain] Failed to load shader "${name}":`, error);
+        }
+      }
+    }
+    const validShaders = [];
+    const missingShaders = [];
+    for (const name of shaderNames) {
+      if (this.shaderManager.hasShader(name)) {
+        validShaders.push(name);
+      } else {
+        console.warn(`[ShaderChain] Shader not available: ${name}`);
+        missingShaders.push(name);
+      }
+    }
+    if (validShaders.length === 0) {
+      console.error("[ShaderChain] No valid shaders in chain");
+      return false;
+    }
+    if (missingShaders.length > 0) {
+      console.warn(
+        `[ShaderChain] ${missingShaders.length} shader(s) not found: ${missingShaders.join(", ")}
+[ShaderChain] Using ${validShaders.length} valid shader(s): ${validShaders.join(", ")}`
+      );
+    }
+    this.activeChain = validShaders;
+    this.chainSource = source;
+    console.log(`[ShaderChain] ✓ Active chain: ${validShaders.join(" → ")}`);
+    return true;
+  }
+  /**
+   * Activate a chain from a chain string (frontmatter or URL format)
+   */
+  async activateChainFromString(chainStr, source = "api") {
+    const shaderNames = this.parseChainString(chainStr);
+    return this.activateChain(shaderNames, source);
+  }
+  /**
+   * Clear the active chain
+   */
+  clearChain() {
+    this.activeChain = [];
+    this.chainSource = "none";
+    this.releaseIntermediateTextures();
+  }
+  /**
+   * Load a built-in shader from the shader library
+   * Attempts to load from ./shaders/{name}.wgsl.js
+   */
+  async loadBuiltinShader(name) {
+    try {
+      const shaderPath = `./shaders/${name}.wgsl.js`;
+      console.log(`[ShaderChain] Loading: ${shaderPath}`);
+      const response = await fetch(shaderPath);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch shader: ${response.status} ${response.statusText}`);
+      }
+      const shaderCode = await response.text();
+      const evalFunc = new Function(shaderCode + "\nreturn getShaderConfig();");
+      const config = evalFunc();
+      if (!config || !config.vertexShader || !config.fragmentShader) {
+        throw new Error("Shader config must include vertexShader and fragmentShader");
+      }
+      const combinedCode = config.vertexShader + "\n" + config.fragmentShader;
+      const uniformNames = config.uniforms ? Object.keys(config.uniforms) : [];
+      const wglsShader = {
+        name,
+        code: combinedCode,
+        kind: "fragment",
+        uniforms: uniformNames,
+        bindings: [],
+        workgroupSize: [1, 1, 1]
+        // Default for fragment shaders (not used)
+      };
+      await this.shaderManager.registerShader(wglsShader);
+      if (config.uniforms) {
+        for (const [uniformName, defaultValue] of Object.entries(config.uniforms)) {
+          this.shaderManager.setUniform(name, uniformName, defaultValue);
+        }
+      }
+      console.log(`[ShaderChain] ✓ Loaded built-in shader: ${name}`);
+    } catch (error) {
+      console.error(`[ShaderChain] Failed to load built-in shader "${name}":`, error);
+      throw error;
+    }
+  }
+  /**
+   * Check if there's an active chain
+   */
+  hasActiveChain() {
+    return this.activeChain.length > 0;
+  }
+  /**
+   * Get the active chain
+   */
+  getActiveChain() {
+    return [...this.activeChain];
+  }
+  /**
+   * Get the source of the active chain
+   */
+  getChainSource() {
+    return this.chainSource;
+  }
+  /**
+   * Apply the shader chain to an input texture, writing to output texture
+   * 
+   * This performs multi-pass rendering:
+   * 1. First shader: inputTexture → intermediate1
+   * 2. Second shader: intermediate1 → intermediate2
+   * 3. ...
+   * N. Last shader: intermediateN-1 → outputTexture
+   */
+  applyChain(inputTexture, outputTexture, commandEncoder) {
+    if (this.activeChain.length === 0) {
+      return false;
+    }
+    if (this.activeChain.length === 1) {
+      this.shaderManager.setActiveShader(this.activeChain[0]);
+      return this.shaderManager.applyShader(inputTexture, outputTexture, commandEncoder);
+    }
+    this.ensureIntermediateTextures(
+      this.activeChain.length - 1,
+      inputTexture.width,
+      inputTexture.height
+    );
+    let currentInput = inputTexture;
+    for (let i = 0; i < this.activeChain.length; i++) {
+      const shaderName = this.activeChain[i];
+      const isLast = i === this.activeChain.length - 1;
+      const currentOutput = isLast ? outputTexture : this.intermediateTextures[i];
+      this.shaderManager.setActiveShader(shaderName);
+      const success = this.shaderManager.applyShader(
+        currentInput,
+        currentOutput,
+        commandEncoder
+      );
+      if (!success) {
+        console.error(`[ShaderChain] Failed to apply shader: ${shaderName}`);
+        return false;
+      }
+      currentInput = currentOutput;
+    }
+    return true;
+  }
+  /**
+   * Ensure we have enough intermediate textures for the chain
+   */
+  ensureIntermediateTextures(count, width, height) {
+    if (this.intermediateTextures.length > 0) {
+      const firstTexture = this.intermediateTextures[0];
+      if (firstTexture.width !== width || firstTexture.height !== height) {
+        this.releaseIntermediateTextures();
+      }
+    }
+    while (this.intermediateTextures.length < count) {
+      const texture = this.device.createTexture({
+        size: { width, height },
+        format: this.format,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        label: `ShaderChain_Intermediate_${this.intermediateTextures.length}`
+      });
+      this.intermediateTextures.push(texture);
+    }
+    while (this.intermediateTextures.length > count) {
+      const texture = this.intermediateTextures.pop();
+      texture == null ? void 0 : texture.destroy();
+    }
+  }
+  /**
+   * Release all intermediate textures
+   */
+  releaseIntermediateTextures() {
+    for (const texture of this.intermediateTextures) {
+      texture.destroy();
+    }
+    this.intermediateTextures = [];
+  }
+  /**
+   * Get info about the current chain for debugging
+   */
+  getChainInfo() {
+    return {
+      active: this.activeChain.length > 0,
+      count: this.activeChain.length,
+      shaders: this.activeChain,
+      source: this.chainSource,
+      intermediateTextures: this.intermediateTextures.length
+    };
+  }
+  /**
+   * Cleanup resources
+   */
+  destroy() {
+    this.releaseIntermediateTextures();
+    this.activeChain = [];
+  }
+}
+function vec3(x = 0, y = 0, z = 0) {
+  return { x, y, z };
+}
+function vec3Add(a, b) {
+  return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
+}
+function vec3Sub(a, b) {
+  return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+}
+function vec3Scale(v, s) {
+  return { x: v.x * s, y: v.y * s, z: v.z * s };
+}
+function vec3Dot(a, b) {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+function vec3Length(v) {
+  return Math.sqrt(vec3Dot(v, v));
+}
+function vec3Normalize(v) {
+  const len = vec3Length(v);
+  if (len <= 1e-8) return { x: 0, y: 0, z: 0 };
+  return { x: v.x / len, y: v.y / len, z: v.z / len };
+}
+function mat4TransformVec4(m, x, y, z, w) {
+  return {
+    x: m[0] * x + m[4] * y + m[8] * z + m[12] * w,
+    y: m[1] * x + m[5] * y + m[9] * z + m[13] * w,
+    z: m[2] * x + m[6] * y + m[10] * z + m[14] * w,
+    w: m[3] * x + m[7] * y + m[11] * z + m[15] * w
+  };
+}
+function mat4TransformPoint(m, v) {
+  const r = mat4TransformVec4(m, v.x, v.y, v.z, 1);
+  const invW = r.w !== 0 ? 1 / r.w : 1;
+  return { x: r.x * invW, y: r.y * invW, z: r.z * invW };
+}
+function mat4TransformDirection(m, v) {
+  const r = mat4TransformVec4(m, v.x, v.y, v.z, 0);
+  return { x: r.x, y: r.y, z: r.z };
+}
+function mat4Invert(a) {
+  const out = new Float32Array(16);
+  const a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
+  const a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
+  const a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
+  const a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+  const b00 = a00 * a11 - a01 * a10;
+  const b01 = a00 * a12 - a02 * a10;
+  const b02 = a00 * a13 - a03 * a10;
+  const b03 = a01 * a12 - a02 * a11;
+  const b04 = a01 * a13 - a03 * a11;
+  const b05 = a02 * a13 - a03 * a12;
+  const b06 = a20 * a31 - a21 * a30;
+  const b07 = a20 * a32 - a22 * a30;
+  const b08 = a20 * a33 - a23 * a30;
+  const b09 = a21 * a32 - a22 * a31;
+  const b10 = a21 * a33 - a23 * a31;
+  const b11 = a22 * a33 - a23 * a32;
+  let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+  if (Math.abs(det) < 1e-12) {
+    return null;
+  }
+  det = 1 / det;
+  out[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
+  out[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+  out[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
+  out[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+  out[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
+  out[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+  out[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
+  out[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+  out[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
+  out[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+  out[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
+  out[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+  out[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
+  out[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+  out[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
+  out[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+  return out;
+}
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+function lerpAngle(a, b, t) {
+  const normalize = (angle) => {
+    while (angle < 0) angle += Math.PI * 2;
+    while (angle >= Math.PI * 2) angle -= Math.PI * 2;
+    return angle;
+  };
+  a = normalize(a);
+  b = normalize(b);
+  let diff = b - a;
+  if (diff > Math.PI) {
+    diff -= Math.PI * 2;
+  } else if (diff < -Math.PI) {
+    diff += Math.PI * 2;
+  }
+  return normalize(a + diff * t);
+}
+function lerpVec3(a, b, t) {
+  return {
+    x: lerp(a.x, b.x, t),
+    y: lerp(a.y, b.y, t),
+    z: lerp(a.z, b.z, t)
+  };
+}
+function lerpRotation(a, b, t) {
+  return {
+    x: lerpAngle(a.x, b.x, t),
+    y: lerpAngle(a.y, b.y, t),
+    z: lerpAngle(a.z, b.z, t)
+  };
+}
+function distance(a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const dz = b.z - a.z;
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+function mat4Identity() {
+  const m = new Float32Array(16);
+  m[0] = m[5] = m[10] = m[15] = 1;
+  return m;
+}
+function mat4Perspective(fov, aspect, near, far) {
+  const f = 1 / Math.tan(fov / 2);
+  const nf = 1 / (near - far);
+  const m = new Float32Array(16);
+  m[0] = f / aspect;
+  m[5] = f;
+  m[10] = (far + near) * nf;
+  m[11] = -1;
+  m[14] = 2 * far * near * nf;
+  return m;
+}
+function mat4Translate(x, y, z) {
+  const m = mat4Identity();
+  m[12] = x;
+  m[13] = y;
+  m[14] = z;
+  return m;
+}
+function mat4RotateX(angle) {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const m = mat4Identity();
+  m[5] = c;
+  m[6] = s;
+  m[9] = -s;
+  m[10] = c;
+  return m;
+}
+function mat4RotateY(angle) {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const m = mat4Identity();
+  m[0] = c;
+  m[2] = -s;
+  m[8] = s;
+  m[10] = c;
+  return m;
+}
+function mat4RotateZ(angle) {
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const m = mat4Identity();
+  m[0] = c;
+  m[1] = s;
+  m[4] = -s;
+  m[5] = c;
+  return m;
+}
+function mat4Scale(x, y, z) {
+  const m = mat4Identity();
+  m[0] = x;
+  m[5] = y;
+  m[10] = z;
+  return m;
+}
+function mat4Multiply(a, b) {
+  const out = new Float32Array(16);
+  const a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
+  const a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
+  const a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
+  const a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
+  const b00 = b[0], b01 = b[1], b02 = b[2], b03 = b[3];
+  const b10 = b[4], b11 = b[5], b12 = b[6], b13 = b[7];
+  const b20 = b[8], b21 = b[9], b22 = b[10], b23 = b[11];
+  const b30 = b[12], b31 = b[13], b32 = b[14], b33 = b[15];
+  out[0] = a00 * b00 + a10 * b01 + a20 * b02 + a30 * b03;
+  out[1] = a01 * b00 + a11 * b01 + a21 * b02 + a31 * b03;
+  out[2] = a02 * b00 + a12 * b01 + a22 * b02 + a32 * b03;
+  out[3] = a03 * b00 + a13 * b01 + a23 * b02 + a33 * b03;
+  out[4] = a00 * b10 + a10 * b11 + a20 * b12 + a30 * b13;
+  out[5] = a01 * b10 + a11 * b11 + a21 * b12 + a31 * b13;
+  out[6] = a02 * b10 + a12 * b11 + a22 * b12 + a32 * b13;
+  out[7] = a03 * b10 + a13 * b11 + a23 * b12 + a33 * b13;
+  out[8] = a00 * b20 + a10 * b21 + a20 * b22 + a30 * b23;
+  out[9] = a01 * b20 + a11 * b21 + a21 * b22 + a31 * b23;
+  out[10] = a02 * b20 + a12 * b21 + a22 * b22 + a32 * b23;
+  out[11] = a03 * b20 + a13 * b21 + a23 * b22 + a33 * b23;
+  out[12] = a00 * b30 + a10 * b31 + a20 * b32 + a30 * b33;
+  out[13] = a01 * b30 + a11 * b31 + a21 * b32 + a31 * b33;
+  out[14] = a02 * b30 + a12 * b31 + a22 * b32 + a32 * b33;
+  out[15] = a03 * b30 + a13 * b31 + a23 * b32 + a33 * b33;
+  return out;
+}
+function mat4LookAt(eye, target, up = { x: 0, y: 1, z: 0 }) {
+  const zAxis = {
+    x: eye.x - target.x,
+    y: eye.y - target.y,
+    z: eye.z - target.z
+  };
+  const zLength = Math.sqrt(zAxis.x * zAxis.x + zAxis.y * zAxis.y + zAxis.z * zAxis.z);
+  zAxis.x /= zLength;
+  zAxis.y /= zLength;
+  zAxis.z /= zLength;
+  const xAxis = {
+    x: up.y * zAxis.z - up.z * zAxis.y,
+    y: up.z * zAxis.x - up.x * zAxis.z,
+    z: up.x * zAxis.y - up.y * zAxis.x
+  };
+  const xLength = Math.sqrt(xAxis.x * xAxis.x + xAxis.y * xAxis.y + xAxis.z * xAxis.z);
+  xAxis.x /= xLength;
+  xAxis.y /= xLength;
+  xAxis.z /= xLength;
+  const yAxis = {
+    x: zAxis.y * xAxis.z - zAxis.z * xAxis.y,
+    y: zAxis.z * xAxis.x - zAxis.x * xAxis.z,
+    z: zAxis.x * xAxis.y - zAxis.y * xAxis.x
+  };
+  const m = new Float32Array(16);
+  m[0] = xAxis.x;
+  m[1] = yAxis.x;
+  m[2] = zAxis.x;
+  m[3] = 0;
+  m[4] = xAxis.y;
+  m[5] = yAxis.y;
+  m[6] = zAxis.y;
+  m[7] = 0;
+  m[8] = xAxis.z;
+  m[9] = yAxis.z;
+  m[10] = zAxis.z;
+  m[11] = 0;
+  m[12] = -(xAxis.x * eye.x + xAxis.y * eye.y + xAxis.z * eye.z);
+  m[13] = -(yAxis.x * eye.x + yAxis.y * eye.y + yAxis.z * eye.z);
+  m[14] = -(zAxis.x * eye.x + zAxis.y * eye.y + zAxis.z * eye.z);
+  m[15] = 1;
+  return m;
+}
+function mat4FromTransform(transform) {
+  const translation = mat4Translate(transform.position.x, transform.position.y, transform.position.z);
+  const rotationX = mat4RotateX(transform.rotation.x);
+  const rotationY = mat4RotateY(transform.rotation.y);
+  const rotationZ = mat4RotateZ(transform.rotation.z);
+  const scale = mat4Scale(transform.scale.x, transform.scale.y, transform.scale.z);
+  let m = scale;
+  m = mat4Multiply(rotationZ, m);
+  m = mat4Multiply(rotationY, m);
+  m = mat4Multiply(rotationX, m);
+  m = mat4Multiply(translation, m);
+  return m;
+}
+function createCamera3D(config = {}) {
+  return {
+    position: config.position || vec3(0, 0, 10),
+    rotation: config.rotation || vec3(0, 0, 0),
+    target: config.target || null,
+    targetRotation: config.targetRotation || null,
+    fov: config.fov || Math.PI / 4,
+    // 45 degrees
+    near: config.near || 0.1,
+    far: config.far || 1e3,
+    positionEaseSpeed: config.positionEaseSpeed || 0.1,
+    rotationEaseSpeed: config.rotationEaseSpeed || 0.1
+  };
+}
+function updateCamera3D(camera, _deltaTime) {
+  const hasTargetPos = !!camera.target;
+  const hasTargetRot = !!camera.targetRotation;
+  if (!hasTargetPos && !hasTargetRot) return;
+  if (camera.target) {
+    camera.position = lerpVec3(camera.position, camera.target, camera.positionEaseSpeed);
+  }
+  if (camera.targetRotation) {
+    camera.rotation = lerpVec3(camera.rotation, camera.targetRotation, camera.rotationEaseSpeed);
+  }
+  const posDone = !camera.target || distance(camera.position, camera.target) < 0.01;
+  const rotDone = !camera.targetRotation || distance(camera.rotation, camera.targetRotation) < 1e-3;
+  if (posDone && camera.target) {
+    camera.position = { ...camera.target };
+    camera.target = null;
+  }
+  if (rotDone && camera.targetRotation) {
+    camera.rotation = { ...camera.targetRotation };
+    camera.targetRotation = null;
+  }
+}
+function setCameraTarget(camera, target, rotation) {
+  camera.target = { ...target };
+  if (rotation) {
+    camera.targetRotation = { ...rotation };
+  }
+}
+function clamp$1(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+function computeYawPitchFromForward(forward) {
+  const fx = forward.x;
+  const fy = forward.y;
+  const fz = forward.z;
+  const yaw = Math.atan2(fx, -fz);
+  const pitch = Math.asin(clamp$1(-fy, -1, 1));
+  return { x: pitch, y: yaw, z: 0 };
+}
+function focusOnSectionFit(camera, layout, viewportAspect, fill = 0.9, distanceLimits = {}) {
+  var _a, _b;
+  const safeAspect = Number.isFinite(viewportAspect) && viewportAspect > 0 ? viewportAspect : 1;
+  const safeFill = clamp$1(fill, 0.05, 0.99);
+  const worldWidth = layout.width * (((_a = layout.transform.scale) == null ? void 0 : _a.x) ?? 1);
+  const worldHeight = layout.height * (((_b = layout.transform.scale) == null ? void 0 : _b.y) ?? 1);
+  const vFov = camera.fov;
+  const hFov = 2 * Math.atan(Math.tan(vFov / 2) * safeAspect);
+  const halfW = Math.max(1e-6, worldWidth / 2);
+  const halfH = Math.max(1e-6, worldHeight / 2);
+  const distForHeight = halfH / (Math.tan(vFov / 2) * safeFill);
+  const distForWidth = halfW / (Math.tan(hFov / 2) * safeFill);
+  let distance2 = Math.max(distForHeight, distForWidth);
+  if (Number.isFinite(distanceLimits.min ?? NaN)) distance2 = Math.max(distance2, distanceLimits.min);
+  if (Number.isFinite(distanceLimits.max ?? NaN)) distance2 = Math.min(distance2, distanceLimits.max);
+  const rotOnly = mat4FromTransform({
+    position: { x: 0, y: 0, z: 0 },
+    rotation: layout.transform.rotation,
+    scale: { x: 1, y: 1, z: 1 }
+  });
+  const normalWorld = vec3Normalize(mat4TransformDirection(rotOnly, { x: 0, y: 0, z: 1 }));
+  const forward = vec3Scale(normalWorld, -1);
+  const rotation = computeYawPitchFromForward(forward);
+  const target = {
+    x: layout.transform.position.x + normalWorld.x * distance2,
+    y: layout.transform.position.y + normalWorld.y * distance2,
+    z: layout.transform.position.z + normalWorld.z * distance2
+  };
+  setCameraTarget(camera, target, rotation);
+}
+function getCameraViewMatrix(camera) {
+  const forward = {
+    x: Math.sin(camera.rotation.y) * Math.cos(camera.rotation.x),
+    y: -Math.sin(camera.rotation.x),
+    z: -Math.cos(camera.rotation.y) * Math.cos(camera.rotation.x)
+  };
+  const target = {
+    x: camera.position.x + forward.x,
+    y: camera.position.y + forward.y,
+    z: camera.position.z + forward.z
+  };
+  return mat4LookAt(camera.position, target);
+}
+function getCameraProjectionMatrix(camera, aspect) {
+  return mat4Perspective(camera.fov, aspect, camera.near, camera.far);
+}
+function parseTransform3D(section, sectionIndex, config) {
+  const metadata = parseSectionMetadata(section.title);
+  const hasExplicitPosition = Object.prototype.hasOwnProperty.call(metadata, "x") || Object.prototype.hasOwnProperty.call(metadata, "y") || Object.prototype.hasOwnProperty.call(metadata, "z") || Object.prototype.hasOwnProperty.call(metadata, "depth");
+  let x = parseFloat(metadata.x || "0");
+  let y = parseFloat(metadata.y || "0");
+  const z = parseFloat(metadata.z || metadata.depth || String(config.defaultDepth));
+  const autoEnabled = config.autoLayoutEnabled !== false;
+  if (autoEnabled && !hasExplicitPosition) {
+    const cols = Math.max(1, Math.floor(config.autoLayoutColumns ?? 3));
+    const spacing = Number.isFinite(config.autoLayoutSpacing ?? NaN) ? config.autoLayoutSpacing : 200;
+    const col = sectionIndex % cols;
+    const row = Math.floor(sectionIndex / cols);
+    const xCenter = (cols - 1) / 2;
+    x = (col - xCenter) * spacing;
+    y = -row * spacing;
+  }
+  const rotX = parseFloat(metadata["rotate-x"] || "0") * Math.PI / 180;
+  const rotY = parseFloat(metadata["rotate-y"] || "0") * Math.PI / 180;
+  const rotZ = parseFloat(metadata["rotate-z"] || "0") * Math.PI / 180;
+  const scale = parseFloat(metadata.scale || "1");
+  const width = parseFloat(metadata.width || String(config.defaultSectionWidth));
+  const height = parseFloat(metadata.height || String(config.defaultSectionHeight));
+  const visible = metadata.hidden !== "true";
+  const navigable = metadata.navigable !== "false";
+  const displayTitle = section.title.replace(/\s*\{[^}]+\}\s*$/, "").trim();
+  return {
+    sectionIndex,
+    sectionTitle: section.title,
+    displayTitle,
+    content: section.content,
+    transform: {
+      position: vec3(x, y, z),
+      rotation: vec3(rotX, rotY, rotZ),
+      scale: vec3(scale, scale, 1)
+    },
+    width,
+    height,
+    texture: null,
+    visible,
+    navigable
+  };
+}
+function parseSectionMetadata(title) {
+  const match = title.match(/\{[^}]+\}/);
+  if (!match) return {};
+  try {
+    const jsonStr = match[0];
+    const parsed = JSON.parse(jsonStr);
+    const result = {};
+    for (const key in parsed) {
+      result[key] = String(parsed[key]);
+    }
+    return result;
+  } catch (e) {
+    console.warn("Failed to parse section metadata:", title);
+    return {};
+  }
+}
+function createSection3DLayouts(sections, config) {
+  const layouts = [];
+  let sectionIndex = 0;
+  function processSections(sectionList) {
+    for (const section of sectionList) {
+      layouts.push(parseTransform3D(section, sectionIndex, config));
+      sectionIndex++;
+      if (section.children.length > 0) {
+        processSections(section.children);
+      }
+    }
+  }
+  processSections(sections);
+  return layouts;
+}
+function getDefaultCanvas3DConfig() {
+  return {
+    defaultDepth: -100,
+    // Sections start 100 units in front of camera (negative Z)
+    defaultSectionWidth: 60,
+    defaultSectionHeight: 20,
+    cameraFov: Math.PI / 4,
+    // 45 degrees
+    cameraNear: 0.1,
+    cameraFar: 1e3,
+    positionEaseSpeed: 0.1,
+    rotationEaseSpeed: 0.15,
+    autoLayoutEnabled: true,
+    autoLayoutColumns: 3,
+    autoLayoutSpacing: 200,
+    sectionTextureMode: "canvas2d",
+    sectionBorderEnabled: true,
+    sectionBorderWidth: 2,
+    // Use the theme surface by default (typically bgAlt / elevated panel color)
+    sectionBackground: "surface"
+  };
+}
+function focusOnSection(camera, layout, distance2 = 50) {
+  const target = {
+    x: layout.transform.position.x,
+    y: layout.transform.position.y,
+    z: layout.transform.position.z + distance2
+  };
+  const rotation = {
+    x: layout.transform.rotation.x,
+    y: layout.transform.rotation.y,
+    z: 0
+  };
+  setCameraTarget(camera, target, rotation);
+}
+class Canvas3DRenderer {
+  constructor(device, width, height) {
+    __publicField(this, "device");
+    __publicField(this, "renderPipeline", null);
+    // Buffers
+    __publicField(this, "vertexBuffer", null);
+    __publicField(this, "indexBuffer", null);
+    __publicField(this, "uniformBuffer", null);
+    __publicField(this, "sampler", null);
+    __publicField(this, "uniformStride", 256);
+    __publicField(this, "uniformCapacity", 0);
+    // Render to offscreen texture (for compositor)
+    __publicField(this, "renderTexture", null);
+    __publicField(this, "depthTexture", null);
+    __publicField(this, "width");
+    __publicField(this, "height");
+    __publicField(this, "format");
+    this.device = device;
+    this.width = width;
+    this.height = height;
+    this.format = navigator.gpu.getPreferredCanvasFormat();
+    this.createRenderTexture();
+  }
+  /**
+   * Initialize the 3D renderer
+   */
+  async init() {
+    await this.createRenderPipeline(this.format);
+    this.createGeometryBuffers();
+    this.ensureUniformBufferCapacity(64);
+    this.sampler = this.device.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+      addressModeU: "clamp-to-edge",
+      addressModeV: "clamp-to-edge"
+    });
+    this.createDepthTexture();
+  }
+  /**
+   * Create offscreen render texture
+   */
+  createRenderTexture() {
+    if (this.renderTexture) {
+      this.renderTexture.destroy();
+    }
+    this.renderTexture = this.device.createTexture({
+      size: { width: this.width, height: this.height },
+      format: this.format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+    });
+  }
+  /**
+   * Create the render pipeline with shaders
+   */
+  async createRenderPipeline(format) {
+    const shaderModule = this.device.createShaderModule({
+      label: "3D Canvas Shader",
+      code: `
+        struct Uniforms {
+          mvpMatrix: mat4x4<f32>,
+          params0: vec4<f32>,
+          params1: vec4<f32>,
+        };
+        
+        @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+        @group(0) @binding(1) var textureSampler: sampler;
+        @group(0) @binding(2) var textureData: texture_2d<f32>;
+        
+        struct VertexInput {
+          @location(0) position: vec3<f32>,
+          @location(1) uv: vec2<f32>,
+        };
+        
+        struct VertexOutput {
+          @builtin(position) position: vec4<f32>,
+          @location(0) uv: vec2<f32>,
+        };
+        
+        @vertex
+        fn vertexMain(input: VertexInput) -> VertexOutput {
+          var output: VertexOutput;
+          output.position = uniforms.mvpMatrix * vec4<f32>(input.position, 1.0);
+          output.uv = input.uv;
+          return output;
+        }
+        
+        @fragment
+        fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
+          let texColor = textureSample(textureData, textureSampler, input.uv);
+          // params0.z is full-card hover flag (1 = hovered)
+          if (uniforms.params0.z > 0.5) {
+            return vec4<f32>(vec3<f32>(1.0) - texColor.rgb, texColor.a);
+          }
+          // params0.w is highlight flag (1 = enabled)
+          if (uniforms.params0.w > 0.5) {
+            let umin = uniforms.params1.x;
+            let vmin = uniforms.params1.y;
+            let umax = uniforms.params1.z;
+            let vmax = uniforms.params1.w;
+            if (input.uv.x >= umin && input.uv.x <= umax && input.uv.y >= vmin && input.uv.y <= vmax) {
+              return vec4<f32>(vec3<f32>(1.0) - texColor.rgb, texColor.a);
+            }
+          }
+          return texColor;
+        }
+      `
+    });
+    const vertexBufferLayout = {
+      arrayStride: 20,
+      // 3 floats (position) + 2 floats (uv) = 5 * 4 bytes
+      attributes: [
+        {
+          // position
+          shaderLocation: 0,
+          offset: 0,
+          format: "float32x3"
+        },
+        {
+          // uv
+          shaderLocation: 1,
+          offset: 12,
+          format: "float32x2"
+        }
+      ]
+    };
+    this.renderPipeline = this.device.createRenderPipeline({
+      label: "3D Canvas Pipeline",
+      layout: "auto",
+      vertex: {
+        module: shaderModule,
+        entryPoint: "vertexMain",
+        buffers: [vertexBufferLayout]
+      },
+      fragment: {
+        module: shaderModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format,
+          blend: {
+            color: {
+              srcFactor: "src-alpha",
+              dstFactor: "one-minus-src-alpha",
+              operation: "add"
+            },
+            alpha: {
+              srcFactor: "one",
+              dstFactor: "one-minus-src-alpha",
+              operation: "add"
+            }
+          }
+        }]
+      },
+      primitive: {
+        topology: "triangle-list",
+        cullMode: "none"
+        // DEBUG: Disable culling to see if winding order is wrong
+      }
+      // DEBUG: Depth testing disabled to test if that's the issue
+      // depthStencil: {
+      //   format: 'depth24plus',
+      //   depthWriteEnabled: true,
+      //   depthCompare: 'less'
+      // }
+    });
+  }
+  /**
+   * Create geometry buffers for a quad
+   */
+  createGeometryBuffers() {
+    const vertices = new Float32Array([
+      // position           uv
+      -0.5,
+      -0.5,
+      0,
+      0,
+      1,
+      // bottom-left
+      0.5,
+      -0.5,
+      0,
+      1,
+      1,
+      // bottom-right
+      0.5,
+      0.5,
+      0,
+      1,
+      0,
+      // top-right
+      -0.5,
+      0.5,
+      0,
+      0,
+      0
+      // top-left
+    ]);
+    this.vertexBuffer = this.device.createBuffer({
+      label: "Quad Vertex Buffer",
+      size: vertices.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    });
+    this.device.queue.writeBuffer(this.vertexBuffer, 0, vertices);
+    const indices = new Uint16Array([
+      0,
+      1,
+      2,
+      // first triangle
+      0,
+      2,
+      3
+      // second triangle
+    ]);
+    this.indexBuffer = this.device.createBuffer({
+      label: "Quad Index Buffer",
+      size: indices.byteLength,
+      usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST
+    });
+    this.device.queue.writeBuffer(this.indexBuffer, 0, indices);
+  }
+  /**
+   * Create uniform buffer for MVP matrix
+   */
+  ensureUniformBufferCapacity(sectionCount) {
+    var _a;
+    const needed = Math.max(1, sectionCount);
+    if (this.uniformBuffer && this.uniformCapacity >= needed) {
+      return;
+    }
+    (_a = this.uniformBuffer) == null ? void 0 : _a.destroy();
+    this.uniformCapacity = needed;
+    this.uniformBuffer = this.device.createBuffer({
+      label: "3D Uniform Buffer",
+      size: this.uniformCapacity * this.uniformStride,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+  }
+  /**
+   * Create depth texture for depth testing
+   */
+  createDepthTexture() {
+    this.depthTexture = this.device.createTexture({
+      size: {
+        width: this.width,
+        height: this.height
+      },
+      format: "depth24plus",
+      usage: GPUTextureUsage.RENDER_ATTACHMENT
+    });
+  }
+  /**
+   * Render all 3D sections
+   */
+  render(camera, layouts, hoveredSectionIndex = null) {
+    if (!this.renderPipeline || !this.vertexBuffer || !this.indexBuffer || !this.renderTexture) {
+      console.warn("Canvas3DRenderer not fully initialized");
+      return;
+    }
+    this.ensureUniformBufferCapacity(layouts.length);
+    if (!this.uniformBuffer || !this.sampler) {
+      console.warn("Canvas3DRenderer not fully initialized");
+      return;
+    }
+    layouts.filter((l) => l.visible && l.texture).length;
+    const view = this.renderTexture.createView();
+    const encoder = this.device.createCommandEncoder({ label: "3D Canvas Encoder" });
+    const renderPassDescriptor = {
+      colorAttachments: [{
+        view,
+        clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        // Transparent
+        loadOp: "clear",
+        storeOp: "store"
+      }]
+      // DEBUG: Depth testing disabled
+      // depthStencilAttachment: {
+      //   view: this.depthTexture!.createView(),
+      //   depthClearValue: 1.0,
+      //   depthLoadOp: 'clear',
+      //   depthStoreOp: 'store'
+      // }
+    };
+    const pass = encoder.beginRenderPass(renderPassDescriptor);
+    pass.setPipeline(this.renderPipeline);
+    pass.setVertexBuffer(0, this.vertexBuffer);
+    pass.setIndexBuffer(this.indexBuffer, "uint16");
+    const aspect = this.width / this.height;
+    const viewMatrix = getCameraViewMatrix(camera);
+    const projectionMatrix = getCameraProjectionMatrix(camera, aspect);
+    const viewProjectionMatrix = mat4Multiply(projectionMatrix, viewMatrix);
+    for (let i = 0; i < layouts.length; i++) {
+      const layout = layouts[i];
+      if (!layout.visible || !layout.texture) continue;
+      const sectionTransform = {
+        position: layout.transform.position,
+        rotation: layout.transform.rotation,
+        scale: {
+          x: layout.transform.scale.x * layout.width,
+          y: layout.transform.scale.y * layout.height,
+          z: layout.transform.scale.z
+        }
+      };
+      const modelMatrix = mat4FromTransform(sectionTransform);
+      const mvpMatrix = mat4Multiply(viewProjectionMatrix, modelMatrix);
+      const clip = (x, y, z, w) => {
+        const m = mvpMatrix;
+        return {
+          x: m[0] * x + m[4] * y + m[8] * z + m[12] * w,
+          y: m[1] * x + m[5] * y + m[9] * z + m[13] * w,
+          z: m[2] * x + m[6] * y + m[10] * z + m[14] * w,
+          w: m[3] * x + m[7] * y + m[11] * z + m[15] * w
+        };
+      };
+      const corners = [
+        clip(-0.5, -0.5, 0, 1),
+        clip(0.5, -0.5, 0, 1),
+        clip(0.5, 0.5, 0, 1),
+        clip(-0.5, 0.5, 0, 1)
+      ];
+      const all = (pred) => corners.every(pred);
+      if (all((p) => p.x < -p.w) || all((p) => p.x > p.w) || all((p) => p.y < -p.w) || all((p) => p.y > p.w) || all((p) => p.z < 0) || all((p) => p.z > p.w)) {
+        continue;
+      }
+      const uniformOffset = i * this.uniformStride;
+      this.device.queue.writeBuffer(
+        this.uniformBuffer,
+        uniformOffset + 0,
+        mvpMatrix.buffer,
+        mvpMatrix.byteOffset,
+        mvpMatrix.byteLength
+      );
+      const hover = hoveredSectionIndex !== null && layout.sectionIndex === hoveredSectionIndex ? 1 : 0;
+      const rect = layout.highlightUvRect;
+      const highlightEnabled = rect ? 1 : 0;
+      const params0 = new Float32Array([layout.width, layout.height, hover, highlightEnabled]);
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
+      const params1 = rect ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax]) : new Float32Array([0, 0, 0, 0]);
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
+      const bindGroup = this.createSectionBindGroup(layout, uniformOffset);
+      if (!bindGroup) continue;
+      pass.setBindGroup(0, bindGroup);
+      pass.drawIndexed(6);
+    }
+    pass.end();
+    this.device.queue.submit([encoder.finish()]);
+  }
+  /**
+   * Create bind group for a section (texture sampling)
+   */
+  createSectionBindGroup(layout, uniformOffset) {
+    if (!layout.texture || !this.renderPipeline || !this.uniformBuffer || !this.sampler) return null;
+    return this.device.createBindGroup({
+      layout: this.renderPipeline.getBindGroupLayout(0),
+      entries: [
+        {
+          binding: 0,
+          resource: { buffer: this.uniformBuffer, offset: uniformOffset, size: 96 }
+        },
+        {
+          binding: 1,
+          resource: this.sampler
+        },
+        {
+          binding: 2,
+          resource: layout.texture.createView()
+        }
+      ]
+    });
+  }
+  /**
+   * Resize the renderer
+   */
+  resize(width, height) {
+    this.width = width;
+    this.height = height;
+    if (this.depthTexture) {
+      this.depthTexture.destroy();
+    }
+    this.createDepthTexture();
+    this.createRenderTexture();
+  }
+  /**
+   * Get the render texture (for compositor layer)
+   */
+  getRenderTexture() {
+    return this.renderTexture;
+  }
+  /**
+   * Clean up resources
+   */
+  destroy() {
+    var _a, _b, _c, _d, _e;
+    (_a = this.vertexBuffer) == null ? void 0 : _a.destroy();
+    (_b = this.indexBuffer) == null ? void 0 : _b.destroy();
+    (_c = this.uniformBuffer) == null ? void 0 : _c.destroy();
+    (_d = this.depthTexture) == null ? void 0 : _d.destroy();
+    (_e = this.renderTexture) == null ? void 0 : _e.destroy();
+  }
+}
+class LineStream {
+  constructor(text) {
+    __publicField(this, "lines");
+    __publicField(this, "i", 0);
+    this.lines = String(text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  }
+  atEnd() {
+    return this.i >= this.lines.length;
+  }
+  readLine() {
+    if (this.atEnd()) return "";
+    const line = this.lines[this.i] ?? "";
+    this.i++;
+    return line;
+  }
+}
+function parseIntAuto(s) {
+  const t = String(s ?? "").trim();
+  if (!t) return null;
+  try {
+    if (/^0x/i.test(t)) return Number.parseInt(t.substring(2), 16);
+    if (/^0[0-7]+$/.test(t) && t.length > 1) return Number.parseInt(t.substring(1), 8);
+    return Number.parseInt(t, 10);
+  } catch {
+    return null;
+  }
+}
+function parseCharacter(stream, height, hardblank) {
+  const lines = new Array(Math.max(0, height));
+  let width = 0;
+  for (let i = 0; i < height; i++) {
+    let line = stream.readLine();
+    if (line.length === 0 && stream.atEnd()) {
+      throw new Error("FIGlet: unexpected end of character data");
+    }
+    let endPos = line.length - 1;
+    const endChar = line[endPos] ?? "";
+    if (i === height - 1 && endPos > 0 && line[endPos - 1] === endChar) {
+      endPos = endPos - 1;
+    }
+    line = line.substring(0, Math.max(0, endPos));
+    if (hardblank) {
+      line = line.split(hardblank).join(" ");
+    }
+    lines[i] = line;
+    if (line.length > width) width = line.length;
+  }
+  return { lines, width };
+}
+function parseFIGfont(fontText, name) {
+  const stream = new LineStream(fontText);
+  const headerLine = stream.readLine();
+  if (!headerLine.startsWith("flf2a")) {
+    throw new Error("FIGlet: invalid FIGfont signature");
+  }
+  const hardblank = headerLine[5] ?? "$";
+  const parts = headerLine.substring(6).trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 5) {
+    throw new Error("FIGlet: invalid header format");
+  }
+  const height = Number.parseInt(parts[0], 10);
+  const baseline = Number.parseInt(parts[1], 10);
+  const maxLength = Number.parseInt(parts[2], 10);
+  const oldLayout = Number.parseInt(parts[3], 10);
+  const commentLines = Number.parseInt(parts[4], 10);
+  const printDirection = parts.length > 5 && Number.parseInt(parts[5], 10) === 1 ? 1 : 0;
+  const fullLayout = parts.length > 6 ? Number.parseInt(parts[6], 10) : oldLayout;
+  const codetagCount = parts.length > 7 ? Number.parseInt(parts[7], 10) : 0;
+  const comments = [];
+  for (let i = 0; i < commentLines; i++) {
+    comments.push(stream.readLine());
+  }
+  const chars = /* @__PURE__ */ new Map();
+  const requiredChars = [
+    32,
+    33,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86,
+    87,
+    88,
+    89,
+    90,
+    91,
+    92,
+    93,
+    94,
+    95,
+    96,
+    97,
+    98,
+    99,
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107,
+    108,
+    109,
+    110,
+    111,
+    112,
+    113,
+    114,
+    115,
+    116,
+    117,
+    118,
+    119,
+    120,
+    121,
+    122,
+    123,
+    124,
+    125,
+    126,
+    196,
+    214,
+    220,
+    228,
+    246,
+    252,
+    223
+  ];
+  for (const code of requiredChars) {
+    chars.set(code, parseCharacter(stream, height, hardblank));
+  }
+  while (!stream.atEnd()) {
+    const raw = stream.readLine();
+    const line = raw.trim();
+    if (!line) continue;
+    const tok = line.split(/\s+/)[0] ?? "";
+    const cc = parseIntAuto(tok);
+    if (cc === null || cc === -1) continue;
+    try {
+      chars.set(cc, parseCharacter(stream, height, hardblank));
+    } catch {
+      break;
+    }
+  }
+  return {
+    name,
+    signature: "flf2a",
+    hardblank,
+    height,
+    baseline,
+    maxLength,
+    oldLayout,
+    commentLines,
+    printDirection,
+    fullLayout,
+    codetagCount,
+    comments,
+    chars
+  };
+}
+function renderFigletLines(font, text, _opts = {}) {
+  const t = String(text ?? "");
+  const height = Math.max(0, font.height | 0);
+  const out = new Array(height).fill("");
+  const fallback = font.chars.get(32);
+  for (const ch of Array.from(t)) {
+    const code = ch.codePointAt(0) ?? 32;
+    const fig = font.chars.get(code) ?? fallback;
+    if (!fig) continue;
+    for (let i = 0; i < height; i++) {
+      out[i] = (out[i] ?? "") + (fig.lines[i] ?? "");
+    }
+  }
+  return out;
+}
+function renderFigletCharLines(font, ch) {
+  const height = Math.max(0, font.height | 0);
+  const c = String(ch ?? " ").slice(0, 1);
+  const cp = c.codePointAt(0) ?? 32;
+  const fig = font.chars.get(cp) ?? font.chars.get(32);
+  if (!fig) return new Array(height).fill("");
+  const out = new Array(height);
+  for (let i = 0; i < height; i++) out[i] = fig.lines[i] ?? "";
+  return out;
+}
+function measureFigletLinesWidth(lines) {
+  let w = 0;
+  for (const l of lines) w = Math.max(w, (l ?? "").length);
+  return w;
+}
+const ESC = "\x1B";
+function clampByte(n) {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(255, n | 0));
+}
+function packRgb(r, g, b) {
+  return ColorUtils.rgb(clampByte(r), clampByte(g), clampByte(b));
+}
+const ANSI_16 = [
+  packRgb(0, 0, 0),
+  // 0 black
+  packRgb(205, 0, 0),
+  // 1 red
+  packRgb(0, 205, 0),
+  // 2 green
+  packRgb(205, 205, 0),
+  // 3 yellow
+  packRgb(0, 0, 238),
+  // 4 blue
+  packRgb(205, 0, 205),
+  // 5 magenta
+  packRgb(0, 205, 205),
+  // 6 cyan
+  packRgb(229, 229, 229),
+  // 7 white (light gray)
+  packRgb(127, 127, 127),
+  // 8 bright black (dark gray)
+  packRgb(255, 0, 0),
+  // 9 bright red
+  packRgb(0, 255, 0),
+  // 10 bright green
+  packRgb(255, 255, 0),
+  // 11 bright yellow
+  packRgb(92, 92, 255),
+  // 12 bright blue
+  packRgb(255, 0, 255),
+  // 13 bright magenta
+  packRgb(0, 255, 255),
+  // 14 bright cyan
+  packRgb(255, 255, 255)
+  // 15 bright white
+];
+function xterm256ToColor(n) {
+  const idx = n | 0;
+  if (idx < 0) return ANSI_16[0];
+  if (idx < 16) return ANSI_16[idx];
+  if (idx >= 16 && idx <= 231) {
+    const v = idx - 16;
+    const r = Math.floor(v / 36);
+    const g = Math.floor(v % 36 / 6);
+    const b = v % 6;
+    const steps = [0, 95, 135, 175, 215, 255];
+    return packRgb(steps[r], steps[g], steps[b]);
+  }
+  if (idx >= 232 && idx <= 255) {
+    const gray = 8 + (idx - 232) * 10;
+    return packRgb(gray, gray, gray);
+  }
+  return ANSI_16[7];
+}
+function isDigit(ch) {
+  const c = ch.charCodeAt(0);
+  return c >= 48 && c <= 57;
+}
+function tryParseSGRAt(text, i, allowBracket) {
+  if (i >= text.length) return null;
+  let start = i;
+  if (text[start] === ESC) {
+    if (text[start + 1] !== "[") return null;
+    start += 2;
+  } else {
+    if (!allowBracket || text[start] !== "[") return null;
+    start += 1;
+  }
+  let j = start;
+  while (j < text.length) {
+    const ch = text[j];
+    if (ch === "m") {
+      const paramStr = text.substring(start, j);
+      const rawParts = paramStr.length ? paramStr.split(";") : ["0"];
+      const params = [];
+      for (const p of rawParts) {
+        if (!p) {
+          params.push(0);
+          continue;
+        }
+        if ([...p].every(isDigit)) {
+          params.push(Number.parseInt(p, 10));
+        } else {
+          return null;
+        }
+      }
+      return { params, nextIndex: j + 1 };
+    }
+    if (ch === ";" || isDigit(ch)) {
+      j++;
+      continue;
+    }
+    return null;
+  }
+  return null;
+}
+function applySGR(params, state, defaults2) {
+  if (params.length === 0) params = [0];
+  let k = 0;
+  while (k < params.length) {
+    const p = params[k] ?? 0;
+    if (p === 0) {
+      state.fg = defaults2.fg;
+      state.bg = defaults2.bg;
+      state.bright = false;
+      k++;
+      continue;
+    }
+    if (p === 1) {
+      state.bright = true;
+      k++;
+      continue;
+    }
+    if (p === 22) {
+      state.bright = false;
+      k++;
+      continue;
+    }
+    if (p === 39) {
+      state.fg = defaults2.fg;
+      k++;
+      continue;
+    }
+    if (p === 49) {
+      state.bg = defaults2.bg;
+      k++;
+      continue;
+    }
+    if (p >= 30 && p <= 37) {
+      const base = p - 30;
+      state.fg = ANSI_16[state.bright ? base + 8 : base];
+      k++;
+      continue;
+    }
+    if (p >= 40 && p <= 47) {
+      const base = p - 40;
+      state.bg = ANSI_16[base];
+      k++;
+      continue;
+    }
+    if (p >= 90 && p <= 97) {
+      state.fg = ANSI_16[p - 90 + 8];
+      k++;
+      continue;
+    }
+    if (p >= 100 && p <= 107) {
+      state.bg = ANSI_16[p - 100 + 8];
+      k++;
+      continue;
+    }
+    if (p === 38 || p === 48) {
+      const isFg = p === 38;
+      const mode = params[k + 1];
+      if (mode === 5) {
+        const idx = params[k + 2];
+        if (typeof idx === "number") {
+          const c = xterm256ToColor(idx);
+          if (isFg) state.fg = c;
+          else state.bg = c;
+          k += 3;
+          continue;
+        }
+      } else if (mode === 2) {
+        const r = params[k + 2];
+        const g = params[k + 3];
+        const b = params[k + 4];
+        if (typeof r === "number" && typeof g === "number" && typeof b === "number") {
+          const c = packRgb(r, g, b);
+          if (isFg) state.fg = c;
+          else state.bg = c;
+          k += 5;
+          continue;
+        }
+      }
+    }
+    k++;
+  }
+}
+function parseAnsiToRuns(text, opts) {
+  const tabSize = Math.max(0, (opts.tabSize ?? 4) | 0) || 4;
+  const bracketSGR = opts.bracketSGR ?? true;
+  const defaults2 = { fg: opts.defaultFg, bg: opts.defaultBg };
+  const state = { fg: defaults2.fg, bg: defaults2.bg, bright: false };
+  const lines = [];
+  let currentLine = [];
+  let currentText = "";
+  let currentFg = state.fg;
+  let currentBg = state.bg;
+  const flush = () => {
+    if (currentText.length > 0) {
+      currentLine.push({ text: currentText, fg: currentFg, bg: currentBg });
+      currentText = "";
+    }
+  };
+  const pushLine = () => {
+    flush();
+    lines.push(currentLine);
+    currentLine = [];
+  };
+  const s = String(text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "");
+  let i = 0;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === "\n") {
+      pushLine();
+      i++;
+      continue;
+    }
+    if (ch === "	") {
+      currentText += " ".repeat(tabSize);
+      i++;
+      continue;
+    }
+    if (ch === ESC || bracketSGR && ch === "[") {
+      const parsed = tryParseSGRAt(s, i, bracketSGR);
+      if (parsed) {
+        flush();
+        applySGR(parsed.params, state, defaults2);
+        currentFg = state.fg;
+        currentBg = state.bg;
+        i = parsed.nextIndex;
+        continue;
+      }
+    }
+    currentText += ch;
+    i++;
+  }
+  pushLine();
+  let width = 0;
+  for (const line of lines) {
+    let w = 0;
+    for (const run of line) w += (run.text ?? "").length;
+    width = Math.max(width, w);
+  }
+  return { lines, width, height: lines.length };
+}
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+function toSeed(seed) {
+  if (seed === void 0) return Math.random() * 4294967295 >>> 0;
+  if (typeof seed === "number" && Number.isFinite(seed)) return seed >>> 0;
+  const s = String(seed);
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = a + 1831565813 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function randRange(rng, min, max) {
+  return min + (max - min) * rng();
+}
+function randChoice(rng, choices) {
+  return choices[Math.floor(rng() * choices.length)];
+}
+function envAR(gainParam, t0, attack, release, peak) {
+  const a = Math.max(5e-4, attack);
+  const r = Math.max(2e-3, release);
+  gainParam.cancelScheduledValues(t0);
+  gainParam.setValueAtTime(1e-5, t0);
+  gainParam.exponentialRampToValueAtTime(Math.max(1e-5, peak), t0 + a);
+  gainParam.exponentialRampToValueAtTime(1e-5, t0 + a + r);
+}
+function envADSR(gainParam, t0, attack, decay, sustain, release, peak, hold) {
+  const a = Math.max(5e-4, attack);
+  const d = Math.max(1e-3, decay);
+  const r = Math.max(2e-3, release);
+  const sus = clamp(sustain, 0, 1);
+  const pk = Math.max(1e-5, peak);
+  const tA = t0 + a;
+  const tD = tA + d;
+  const tH = tD + Math.max(0, hold);
+  gainParam.cancelScheduledValues(t0);
+  gainParam.setValueAtTime(1e-5, t0);
+  gainParam.exponentialRampToValueAtTime(pk, tA);
+  gainParam.exponentialRampToValueAtTime(Math.max(1e-5, pk * sus), tD);
+  gainParam.setValueAtTime(Math.max(1e-5, pk * sus), tH);
+  gainParam.exponentialRampToValueAtTime(1e-5, tH + r);
+}
+function scheduleFreqDrop(freqParam, t0, startHz, endHz, duration) {
+  const d = Math.max(0.01, duration);
+  freqParam.cancelScheduledValues(t0);
+  freqParam.setValueAtTime(Math.max(1, startHz), t0);
+  freqParam.exponentialRampToValueAtTime(Math.max(1, endHz), t0 + d);
+}
+function createNoiseSource(ctx, duration, seed) {
+  const frames = Math.max(1, Math.floor(duration * ctx.sampleRate));
+  const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  const rng = mulberry32(seed ^ 2654435769);
+  for (let i = 0; i < frames; i++) {
+    data[i] = rng() * 2 - 1;
+  }
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.loop = false;
+  return src;
+}
+function safeConnect(node, dest) {
+  try {
+    node.connect(dest);
+  } catch {
+  }
+}
+function getSfxPresetNames() {
+  return ["coin", "zap", "boom", "jump", "1up", "lose", "hurt", "blip"];
+}
+function sfxSnippet(name, seed, volume) {
+  const seedPart = seed === void 0 ? "" : `, ${JSON.stringify(seed)}`;
+  const optPart = volume === void 0 ? "" : `, { volume: ${volume} }`;
+  return `audio.sfx.play(${JSON.stringify(name)}${seedPart}${optPart})`;
+}
+function playSfx(ctx, name, seedIn, options = {}) {
+  ctx.resume().catch(() => {
+  });
+  const seed = toSeed(seedIn);
+  const rng = mulberry32(seed);
+  const t0 = ctx.currentTime + (options.when ?? 0);
+  const vol = clamp(options.volume ?? 0.8, 0, 2);
+  const outGain = ctx.createGain();
+  outGain.gain.value = vol;
+  safeConnect(outGain, ctx.destination);
+  const nodesToStop = [];
+  const stopAll = (when = 0) => {
+    const t = ctx.currentTime + when;
+    for (const n of nodesToStop) {
+      try {
+        n.stop(t);
+      } catch {
+      }
+    }
+    try {
+      outGain.gain.cancelScheduledValues(t);
+      outGain.gain.setValueAtTime(outGain.gain.value, t);
+      outGain.gain.exponentialRampToValueAtTime(1e-5, t + 0.03);
+    } catch {
+    }
+  };
+  const addOsc = (type, freqHz, gain) => {
+    const osc = ctx.createOscillator();
+    osc.type = type;
+    osc.frequency.value = Math.max(1, freqHz);
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    safeConnect(osc, g);
+    safeConnect(g, outGain);
+    osc.start(t0);
+    nodesToStop.push(osc);
+    return { osc, g };
+  };
+  const addNoise = (duration, gain) => {
+    const src = createNoiseSource(ctx, duration, seed);
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    safeConnect(src, g);
+    safeConnect(g, outGain);
+    src.start(t0);
+    nodesToStop.push(src);
+    return { src, g };
+  };
+  const addFilter = (input, type, freqHz, q2) => {
+    const f = ctx.createBiquadFilter();
+    f.type = type;
+    f.frequency.value = Math.max(10, freqHz);
+    f.Q.value = Math.max(1e-4, q2);
+    safeConnect(input, f);
+    return f;
+  };
+  switch (name) {
+    case "blip": {
+      const base = randRange(rng, 600, 1200);
+      const type = randChoice(rng, ["square", "triangle"]);
+      const { osc, g } = addOsc(type, base, 1);
+      envAR(g.gain, t0, randRange(rng, 2e-3, 0.01), randRange(rng, 0.05, 0.12), 0.6);
+      osc.stop(t0 + 0.2);
+      break;
+    }
+    case "coin": {
+      const type = randChoice(rng, ["square", "triangle"]);
+      const f1 = randRange(rng, 900, 1400);
+      const f2 = f1 * randRange(rng, 1.25, 1.7);
+      const a = addOsc(type, f1, 1);
+      const b = addOsc(type, f2, 0.8);
+      envAR(a.g.gain, t0, 2e-3, randRange(rng, 0.08, 0.16), 0.5);
+      envAR(b.g.gain, t0, 2e-3, randRange(rng, 0.06, 0.14), 0.4);
+      a.osc.stop(t0 + 0.25);
+      b.osc.stop(t0 + 0.25);
+      break;
+    }
+    case "jump": {
+      const type = randChoice(rng, ["square", "sawtooth", "triangle"]);
+      const start = randRange(rng, 250, 420);
+      const end = start * randRange(rng, 1.8, 2.8);
+      const dur = randRange(rng, 0.1, 0.18);
+      const { osc, g } = addOsc(type, start, 1);
+      scheduleFreqDrop(osc.frequency, t0, start, end, dur);
+      envAR(g.gain, t0, 2e-3, dur + 0.05, 0.55);
+      osc.stop(t0 + dur + 0.12);
+      break;
+    }
+    case "zap": {
+      const type = randChoice(rng, ["sawtooth", "square"]);
+      const start = randRange(rng, 900, 2200);
+      const end = randRange(rng, 90, 260);
+      const dur = randRange(rng, 0.08, 0.18);
+      const { osc, g } = addOsc(type, start, 1);
+      const filter = addFilter(g, "lowpass", randRange(rng, 1200, 5e3), randRange(rng, 0.3, 2.5));
+      try {
+        g.disconnect();
+      } catch {
+      }
+      safeConnect(g, filter);
+      safeConnect(filter, outGain);
+      scheduleFreqDrop(osc.frequency, t0, start, end, dur);
+      envAR(g.gain, t0, 1e-3, dur + 0.06, 0.45);
+      osc.stop(t0 + dur + 0.15);
+      break;
+    }
+    case "hurt": {
+      const type = randChoice(rng, ["square", "sawtooth"]);
+      const start = randRange(rng, 380, 720);
+      const end = randRange(rng, 80, 140);
+      const dur = randRange(rng, 0.18, 0.28);
+      const { osc, g } = addOsc(type, start, 1);
+      scheduleFreqDrop(osc.frequency, t0, start, end, dur);
+      const noise = addNoise(0.12, 0.15);
+      const nf = addFilter(noise.g, "bandpass", randRange(rng, 1200, 2600), randRange(rng, 2, 8));
+      try {
+        noise.g.disconnect();
+      } catch {
+      }
+      safeConnect(noise.g, nf);
+      safeConnect(nf, outGain);
+      envAR(g.gain, t0, 2e-3, dur + 0.06, 0.55);
+      envAR(noise.g.gain, t0, 1e-3, 0.1, 0.18);
+      osc.stop(t0 + dur + 0.18);
+      noise.src.stop(t0 + 0.2);
+      break;
+    }
+    case "lose": {
+      const type = randChoice(rng, ["square", "triangle"]);
+      const start = randRange(rng, 520, 900);
+      const end = randRange(rng, 110, 200);
+      const dur = randRange(rng, 0.35, 0.55);
+      const { osc, g } = addOsc(type, start, 1);
+      scheduleFreqDrop(osc.frequency, t0, start, end, dur);
+      envADSR(g.gain, t0, 3e-3, 0.12, 0.45, 0.18, 0.6, dur - 0.12);
+      osc.stop(t0 + dur + 0.25);
+      break;
+    }
+    case "1up": {
+      const type = randChoice(rng, ["square", "triangle"]);
+      const base = randRange(rng, 440, 620);
+      const intervals = [1, 1.26, 1.5, 2];
+      const stepDur = randRange(rng, 0.08, 0.11);
+      const { osc, g } = addOsc(type, base, 1);
+      envADSR(g.gain, t0, 2e-3, 0.06, 0.8, 0.1, 0.5, stepDur * (intervals.length - 1));
+      intervals.forEach((k, i) => {
+        const t = t0 + i * stepDur;
+        osc.frequency.setValueAtTime(Math.max(1, base * k), t);
+      });
+      osc.stop(t0 + stepDur * intervals.length + 0.12);
+      break;
+    }
+    case "boom": {
+      const dur = randRange(rng, 0.45, 0.75);
+      const thump = addOsc("sine", randRange(rng, 55, 90), 1);
+      scheduleFreqDrop(thump.osc.frequency, t0, thump.osc.frequency.value, randRange(rng, 25, 40), dur * 0.6);
+      envAR(thump.g.gain, t0, 2e-3, dur, 0.65);
+      thump.osc.stop(t0 + dur + 0.2);
+      const noise = addNoise(dur, 0.25);
+      const bp = addFilter(noise.g, "bandpass", randRange(rng, 120, 380), randRange(rng, 0.7, 2.2));
+      const lp = addFilter(bp, "lowpass", randRange(rng, 800, 1800), randRange(rng, 0.2, 1.1));
+      try {
+        noise.g.disconnect();
+      } catch {
+      }
+      safeConnect(noise.g, bp);
+      safeConnect(bp, lp);
+      safeConnect(lp, outGain);
+      envAR(noise.g.gain, t0, 1e-3, dur, 0.5);
+      noise.src.stop(t0 + dur + 0.05);
+      break;
+    }
+    default: {
+      const { osc, g } = addOsc("square", 880, 1);
+      envAR(g.gain, t0, 2e-3, 0.09, 0.45);
+      osc.stop(t0 + 0.2);
+      break;
+    }
+  }
+  return { stop: stopAll };
 }
 class StorieEngine {
   constructor(canvas, config = {}) {
@@ -11384,6 +16308,8 @@ class StorieEngine {
     __publicField(this, "renderer");
     __publicField(this, "compositor", null);
     __publicField(this, "sandbox");
+    __publicField(this, "api");
+    // User API (initialized in constructor)
     // Native browser APIs (shared instances)
     __publicField(this, "audioContext");
     __publicField(this, "canvas2DContext", null);
@@ -11392,6 +16318,36 @@ class StorieEngine {
     __publicField(this, "webgpuDevice", null);
     // WebGPU UI (optional)
     __publicField(this, "webgpuUIRenderer", null);
+    __publicField(this, "sectionWebGPUUIRenderer", null);
+    // WebGPU shader management
+    __publicField(this, "shaderManager", null);
+    __publicField(this, "shaderChainManager", null);
+    // Cache the last terminal cellSize pushed to shaders to avoid redundant updates.
+    __publicField(this, "lastShaderCellSize", null);
+    // Deferred shader chain (applied after WebGPU init)
+    __publicField(this, "pendingShaderChain", null);
+    // 3D Canvas system
+    __publicField(this, "canvas3DRenderer", null);
+    __publicField(this, "camera3D", null);
+    __publicField(this, "section3DLayouts", []);
+    __publicField(this, "pending3DCameraFocus", null);
+    // Last focus request that was actually applied (used to re-frame on resize).
+    __publicField(this, "lastApplied3DCameraFocus", null);
+    __publicField(this, "canvas3DConfig", getDefaultCanvas3DConfig());
+    __publicField(this, "canvas3DEnabled", false);
+    __publicField(this, "canvas3DLayoutCallback", null);
+    // 3D interaction state (hover + basic navigation controls)
+    __publicField(this, "canvas3DControlsEnabled", false);
+    __publicField(this, "mouseLookActive", false);
+    __publicField(this, "mouseLookLastX", 0);
+    __publicField(this, "mouseLookLastY", 0);
+    // 3D link-centric interaction (canvas.nim parity)
+    __publicField(this, "hovered3DLink", null);
+    __publicField(this, "focused3DLink", null);
+    __publicField(this, "current3DSectionIndex", null);
+    // 3D section texture rasterization cache
+    __publicField(this, "sectionTextureCache", /* @__PURE__ */ new Map());
+    __publicField(this, "sectionLinkRegionsCache", /* @__PURE__ */ new Map());
     // Theme system
     __publicField(this, "currentTheme");
     __publicField(this, "styleSheet");
@@ -11416,10 +16372,12 @@ class StorieEngine {
     this.canvas = canvas;
     this.width = config.width || 80;
     this.height = config.height || 24;
+    this.camera3D = createCamera3D();
     this.currentTheme = getTheme("neotopia");
     this.styleSheet = applyTheme(this.currentTheme);
     this.audioContext = new AudioContext();
     this.layers = new LayerStack(this.width, this.height);
+    this.layers.clearAll(this.currentTheme.bg);
     this.input = new InputManager(canvas);
     const preferWebGPU = config.preferWebGPU !== false;
     if (preferWebGPU && navigator.gpu) {
@@ -11441,6 +16399,7 @@ class StorieEngine {
     this.renderer.resize(this.width, this.height);
     this.moduleLoader = new ModuleLoader(this, config.modules);
     const api = this.createUserAPI();
+    this.api = api;
     this.sandbox = new ScriptSandbox(api);
     this.setupEventListeners();
     console.log("✓ S|torie engine initialized");
@@ -11490,14 +16449,15 @@ class StorieEngine {
     this.compositor = new Compositor(device, this.canvas);
     await this.compositor.init();
     const terminalTexture = this.renderer.getRenderTexture();
-    if (terminalTexture) {
-      this.compositor.registerLayer("terminal", {
-        texture: terminalTexture,
-        width: this.canvas.width,
-        height: this.canvas.height,
-        zIndex: 0
-        // Terminal at back
-      });
+    this.compositor.registerLayer("terminal", {
+      texture: terminalTexture ?? void 0,
+      width: this.canvas.width,
+      height: this.canvas.height,
+      zIndex: 0
+      // Terminal at back
+    });
+    if (!terminalTexture) {
+      console.warn("[Compositor] Terminal render texture not ready yet; will attach on first render/resize");
     }
     console.log("✓ Compositor initialized (terminal layer)");
   }
@@ -11548,6 +16508,10 @@ class StorieEngine {
       }
       this.webgpuDevice = await adapter.requestDevice();
       console.log("✓ WebGPU device created for user API");
+      this.shaderManager = new ShaderManager(this.webgpuDevice);
+      console.log("✓ ShaderManager initialized");
+      this.shaderChainManager = new ShaderChainManager(this.shaderManager, this.webgpuDevice);
+      console.log("✓ ShaderChainManager initialized");
       return true;
     } catch (error) {
       console.error("Failed to initialize WebGPU:", error);
@@ -11560,6 +16524,136 @@ class StorieEngine {
   createUserAPI() {
     const layers = this.layers;
     const engine = this;
+    let nextUIImageId = 1;
+    const MAX_BLOB_BYTES = 8 * 1024 * 1024;
+    const getBlobStore = (documentId) => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId);
+      return doc && doc._blobStore ? doc._blobStore : null;
+    };
+    const getAsciiStore = (documentId) => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId);
+      return doc && doc._asciiStore ? doc._asciiStore : null;
+    };
+    const getFigletStore = (documentId) => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId);
+      return doc && doc._figletStore ? doc._figletStore : null;
+    };
+    const getAnsiStore = (documentId) => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId);
+      return doc && doc._ansiStore ? doc._ansiStore : null;
+    };
+    const estimateBase64Bytes = (b64) => {
+      const s = b64.replace(/\s+/g, "");
+      const padding = s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0;
+      return Math.max(0, Math.floor(s.length * 3 / 4) - padding);
+    };
+    const normalizeHex = (hex) => {
+      return hex.replace(/0x/gi, "").replace(/[^0-9a-f]/gi, "").trim();
+    };
+    const estimateHexBytes = (hex) => {
+      const s = normalizeHex(hex);
+      return Math.floor(s.length / 2);
+    };
+    const decodeBase64ToBytes = (b64) => {
+      const clean = b64.replace(/\s+/g, "");
+      const est = estimateBase64Bytes(clean);
+      if (est <= 0) return new Uint8Array(0);
+      if (est > MAX_BLOB_BYTES) {
+        console.warn(`[blob] Refusing to decode blob larger than ${MAX_BLOB_BYTES} bytes (estimated ${est}).`);
+        return void 0;
+      }
+      try {
+        const bin = atob(clean);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 255;
+        return out;
+      } catch (e) {
+        console.warn("[blob] Base64 decode failed:", e);
+        return void 0;
+      }
+    };
+    const decodeHexToBytes = (hex) => {
+      const clean = normalizeHex(hex);
+      if (clean.length === 0) return new Uint8Array(0);
+      if (clean.length % 2 !== 0) {
+        console.warn("[blob] Hex decode failed: odd-length hex string");
+        return void 0;
+      }
+      const est = estimateHexBytes(clean);
+      if (est > MAX_BLOB_BYTES) {
+        console.warn(`[blob] Refusing to decode blob larger than ${MAX_BLOB_BYTES} bytes (estimated ${est}).`);
+        return void 0;
+      }
+      const out = new Uint8Array(est);
+      for (let i = 0; i < est; i++) {
+        const byteStr = clean.slice(i * 2, i * 2 + 2);
+        const v = Number.parseInt(byteStr, 16);
+        if (!Number.isFinite(v) || Number.isNaN(v)) {
+          console.warn("[blob] Hex decode failed: invalid byte");
+          return void 0;
+        }
+        out[i] = v & 255;
+      }
+      return out;
+    };
+    const estimateBlobBytes = (entry) => {
+      return entry.encoding === "hex" ? estimateHexBytes(entry.data) : estimateBase64Bytes(entry.data);
+    };
+    const decodeBlobToBytes = (entry) => {
+      return entry.encoding === "hex" ? decodeHexToBytes(entry.data) : decodeBase64ToBytes(entry.data);
+    };
+    const getUIBlobImageCache = (documentId) => {
+      const docId = engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId);
+      if (!doc) return null;
+      if (!doc._uiBlobImageCache) {
+        doc._uiBlobImageCache = {
+          resolved: /* @__PURE__ */ new Map(),
+          inFlight: /* @__PURE__ */ new Map(),
+          failed: /* @__PURE__ */ new Set()
+        };
+      }
+      return doc._uiBlobImageCache;
+    };
+    const loadImageFromBlobInternal = async (name, documentId) => {
+      const ui = engine.ensureWebGPUUI();
+      if (!ui) return null;
+      const store = getBlobStore(documentId);
+      if (!store) return null;
+      const entry = store.get(String(name));
+      if (!entry) return null;
+      if (!entry.bytes) {
+        entry.bytes = decodeBlobToBytes(entry);
+      }
+      if (!entry.bytes) return null;
+      const mime = entry.mime || "application/octet-stream";
+      const bytes = new Uint8Array(entry.bytes);
+      const blob = new Blob([bytes], { type: mime });
+      let bitmap = null;
+      try {
+        bitmap = await createImageBitmap(blob);
+        const id = `img_${nextUIImageId++}`;
+        ui.registerImage(id, bitmap);
+        return id;
+      } catch (e) {
+        console.warn(`[ui.loadImageFromBlob] Failed to decode image "${String(name)}":`, e);
+        return null;
+      } finally {
+        try {
+          bitmap == null ? void 0 : bitmap.close();
+        } catch {
+        }
+      }
+    };
     return {
       // Terminal text API
       term: {
@@ -11567,9 +16661,9 @@ class StorieEngine {
           const layer = this.layers.getActive();
           layer.write(x, y, text, fg, bg);
         },
-        clear: () => {
+        clear: (bgColor) => {
           const layer = this.layers.getActive();
-          layer.clear();
+          layer.clear(bgColor ?? this.currentTheme.bg);
         },
         get layerID() {
           return layers.activeLayerId;
@@ -11659,7 +16753,18 @@ class StorieEngine {
             if (bg !== void 0) cell.bg = bg;
           }
         },
-        () => this.layers.getActive().buffer
+        () => this.layers.getActive().buffer,
+        (name) => this.getStyle(name)
+      ),
+      // Retained-mode GUI API
+      gui: createGUIAPI(
+        () => {
+          const atlas = this.renderer instanceof WebGPURenderer ? this.renderer.getAtlas() : null;
+          return {
+            charWidth: (atlas == null ? void 0 : atlas.getCharWidth()) ?? 10,
+            charHeight: (atlas == null ? void 0 : atlas.getCharHeight()) ?? 16
+          };
+        }
       ),
       // Theme API
       getStyle: (name) => this.getStyle(name),
@@ -11691,18 +16796,592 @@ class StorieEngine {
           this.moduleLoader.on(event, callback);
         }
       },
+      // Embedded binary blobs (from ```blob blocks)
+      blob: {
+        forDocument: (documentId) => {
+          const docId = String(documentId);
+          return {
+            list: () => {
+              const store = getBlobStore(docId);
+              if (!store) return [];
+              return Array.from(store.keys());
+            },
+            has: (name) => {
+              const store = getBlobStore(docId);
+              if (!store) return false;
+              return store.has(String(name));
+            },
+            get: (name) => {
+              const store = getBlobStore(docId);
+              if (!store) return null;
+              const key = String(name);
+              const entry = store.get(key);
+              if (!entry) return null;
+              return {
+                name: entry.name,
+                mime: entry.mime,
+                encoding: entry.encoding,
+                data: entry.data,
+                byteLength: estimateBlobBytes(entry)
+              };
+            },
+            base64: (name) => {
+              const store = getBlobStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              return entry.encoding === "base64" ? entry.data : null;
+            },
+            hex: (name) => {
+              const store = getBlobStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              return entry.encoding === "hex" ? entry.data : null;
+            },
+            bytes: (name) => {
+              const store = getBlobStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              if (!entry.bytes) {
+                entry.bytes = decodeBlobToBytes(entry);
+              }
+              return entry.bytes ?? null;
+            },
+            text: (name, encoding = "utf-8") => {
+              const store = getBlobStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              if (!entry.bytes) {
+                entry.bytes = decodeBlobToBytes(entry);
+              }
+              if (!entry.bytes) return null;
+              try {
+                const decoder = new TextDecoder(encoding);
+                return decoder.decode(entry.bytes);
+              } catch (e) {
+                console.warn("[blob] Text decode failed:", e);
+                return null;
+              }
+            }
+          };
+        },
+        list: () => {
+          const store = getBlobStore();
+          if (!store) return [];
+          return Array.from(store.keys());
+        },
+        has: (name) => {
+          const store = getBlobStore();
+          if (!store) return false;
+          return store.has(String(name));
+        },
+        get: (name) => {
+          const store = getBlobStore();
+          if (!store) return null;
+          const key = String(name);
+          const entry = store.get(key);
+          if (!entry) return null;
+          return {
+            name: entry.name,
+            mime: entry.mime,
+            encoding: entry.encoding,
+            data: entry.data,
+            byteLength: estimateBlobBytes(entry)
+          };
+        },
+        base64: (name) => {
+          const store = getBlobStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          return entry.encoding === "base64" ? entry.data : null;
+        },
+        hex: (name) => {
+          const store = getBlobStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          return entry.encoding === "hex" ? entry.data : null;
+        },
+        bytes: (name) => {
+          const store = getBlobStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          if (!entry.bytes) {
+            entry.bytes = decodeBlobToBytes(entry);
+          }
+          return entry.bytes ?? null;
+        },
+        text: (name, encoding = "utf-8") => {
+          const store = getBlobStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          if (!entry.bytes) {
+            entry.bytes = decodeBlobToBytes(entry);
+          }
+          if (!entry.bytes) return null;
+          try {
+            const decoder = new TextDecoder(encoding);
+            return decoder.decode(entry.bytes);
+          } catch (e) {
+            console.warn("[blob] Text decode failed:", e);
+            return null;
+          }
+        }
+      },
+      // Embedded ASCII art blocks (from ```ascii name:...)
+      ascii: {
+        forDocument: (documentId) => {
+          const docId = String(documentId);
+          return {
+            list: () => {
+              const store = getAsciiStore(docId);
+              if (!store) return [];
+              return Array.from(store.keys());
+            },
+            has: (name) => {
+              const store = getAsciiStore(docId);
+              if (!store) return false;
+              return store.has(String(name));
+            },
+            get: (name) => {
+              const store = getAsciiStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              const text = String(entry.text ?? "");
+              const lines = Array.isArray(entry.lines) ? entry.lines : text.split(/\r?\n/);
+              return { name: entry.name, text, lines };
+            },
+            text: (name) => {
+              const store = getAsciiStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              return String(entry.text ?? "");
+            },
+            lines: (name) => {
+              const store = getAsciiStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              if (!entry.lines) entry.lines = String(entry.text ?? "").split(/\r?\n/);
+              return entry.lines;
+            }
+          };
+        },
+        list: () => {
+          const store = getAsciiStore();
+          if (!store) return [];
+          return Array.from(store.keys());
+        },
+        has: (name) => {
+          const store = getAsciiStore();
+          if (!store) return false;
+          return store.has(String(name));
+        },
+        get: (name) => {
+          const store = getAsciiStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          const text = String(entry.text ?? "");
+          const lines = Array.isArray(entry.lines) ? entry.lines : text.split(/\r?\n/);
+          return { name: entry.name, text, lines };
+        },
+        text: (name) => {
+          const store = getAsciiStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          return String(entry.text ?? "");
+        },
+        lines: (name) => {
+          const store = getAsciiStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          if (!entry.lines) entry.lines = String(entry.text ?? "").split(/\r?\n/);
+          return entry.lines;
+        }
+      },
+      // Embedded FIGlet fonts (from ```figlet name:...)
+      figlet: {
+        forDocument: (documentId) => {
+          const docId = String(documentId);
+          const getStore = () => getFigletStore(docId);
+          const ensureFont = (name) => {
+            const store = getStore();
+            if (!store) return null;
+            const entry = store.get(String(name));
+            if (!entry) return null;
+            if (!entry.font) {
+              try {
+                entry.font = parseFIGfont(String(entry.text ?? ""), String(entry.name ?? name));
+              } catch (e) {
+                console.warn("[figlet] Failed to parse font:", name, e);
+                return null;
+              }
+            }
+            return entry.font ?? null;
+          };
+          return {
+            list: () => {
+              const store = getStore();
+              if (!store) return [];
+              return Array.from(store.keys());
+            },
+            has: (name) => {
+              const store = getStore();
+              if (!store) return false;
+              return store.has(String(name));
+            },
+            text: (name) => {
+              const store = getStore();
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              return String(entry.text ?? "");
+            },
+            height: (name) => {
+              const font = ensureFont(String(name));
+              return font ? Math.max(0, font.height | 0) : 0;
+            },
+            render: (fontName, text) => {
+              const font = ensureFont(String(fontName));
+              if (!font) return [];
+              return renderFigletLines(font, String(text ?? ""));
+            },
+            renderChar: (fontName, ch) => {
+              const font = ensureFont(String(fontName));
+              if (!font) return [];
+              return renderFigletCharLines(font, String(ch ?? " "));
+            }
+          };
+        },
+        list: () => {
+          const store = getFigletStore();
+          if (!store) return [];
+          return Array.from(store.keys());
+        },
+        has: (name) => {
+          const store = getFigletStore();
+          if (!store) return false;
+          return store.has(String(name));
+        },
+        text: (name) => {
+          const store = getFigletStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          return String(entry.text ?? "");
+        },
+        height: (name) => {
+          const store = getFigletStore();
+          if (!store) return 0;
+          const entry = store.get(String(name));
+          if (!entry) return 0;
+          if (!entry.font) {
+            try {
+              entry.font = parseFIGfont(String(entry.text ?? ""), String(entry.name ?? name));
+            } catch {
+              return 0;
+            }
+          }
+          return entry.font ? Math.max(0, entry.font.height | 0) : 0;
+        },
+        render: (fontName, text) => {
+          const store = getFigletStore();
+          if (!store) return [];
+          const entry = store.get(String(fontName));
+          if (!entry) return [];
+          if (!entry.font) {
+            try {
+              entry.font = parseFIGfont(String(entry.text ?? ""), String(entry.name ?? fontName));
+            } catch (e) {
+              console.warn("[figlet] Failed to parse font:", fontName, e);
+              return [];
+            }
+          }
+          return entry.font ? renderFigletLines(entry.font, String(text ?? "")) : [];
+        },
+        renderChar: (fontName, ch) => {
+          const store = getFigletStore();
+          if (!store) return [];
+          const entry = store.get(String(fontName));
+          if (!entry) return [];
+          if (!entry.font) {
+            try {
+              entry.font = parseFIGfont(String(entry.text ?? ""), String(entry.name ?? fontName));
+            } catch (e) {
+              console.warn("[figlet] Failed to parse font:", fontName, e);
+              return [];
+            }
+          }
+          return entry.font ? renderFigletCharLines(entry.font, String(ch ?? " ")) : [];
+        }
+      },
+      // Embedded ANSI art (from ```ansi name:...)
+      ansi: {
+        forDocument: (documentId) => {
+          const docId = String(documentId);
+          const getStore = () => getAnsiStore(docId);
+          return {
+            list: () => {
+              const store = getStore();
+              if (!store) return [];
+              return Array.from(store.keys());
+            },
+            has: (name) => {
+              const store = getStore();
+              if (!store) return false;
+              return store.has(String(name));
+            },
+            text: (name) => {
+              const store = getStore();
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              return String(entry.text ?? "");
+            },
+            runs: (name) => {
+              const store = getStore();
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              if (!entry.parsed) {
+                const defaultStyle = engine.getStyle("default");
+                entry.parsed = parseAnsiToRuns(String(entry.text ?? ""), {
+                  defaultFg: ColorUtils.from(defaultStyle.fg),
+                  defaultBg: engine.currentTheme.bg,
+                  tabSize: entry.tabSize ?? 4,
+                  bracketSGR: true
+                });
+              }
+              return entry.parsed.lines;
+            },
+            width: (name) => {
+              const store = getStore();
+              if (!store) return 0;
+              const entry = store.get(String(name));
+              if (!entry) return 0;
+              if (!entry.parsed) {
+                const defaultStyle = engine.getStyle("default");
+                entry.parsed = parseAnsiToRuns(String(entry.text ?? ""), {
+                  defaultFg: ColorUtils.from(defaultStyle.fg),
+                  defaultBg: engine.currentTheme.bg,
+                  tabSize: entry.tabSize ?? 4,
+                  bracketSGR: true
+                });
+              }
+              return entry.parsed.width;
+            },
+            height: (name) => {
+              const store = getStore();
+              if (!store) return 0;
+              const entry = store.get(String(name));
+              if (!entry) return 0;
+              if (!entry.parsed) {
+                const defaultStyle = engine.getStyle("default");
+                entry.parsed = parseAnsiToRuns(String(entry.text ?? ""), {
+                  defaultFg: ColorUtils.from(defaultStyle.fg),
+                  defaultBg: engine.currentTheme.bg,
+                  tabSize: entry.tabSize ?? 4,
+                  bracketSGR: true
+                });
+              }
+              return entry.parsed.height;
+            }
+          };
+        },
+        list: () => {
+          const store = getAnsiStore();
+          if (!store) return [];
+          return Array.from(store.keys());
+        },
+        has: (name) => {
+          const store = getAnsiStore();
+          if (!store) return false;
+          return store.has(String(name));
+        },
+        text: (name) => {
+          const store = getAnsiStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          return String(entry.text ?? "");
+        },
+        runs: (name) => {
+          const store = getAnsiStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          if (!entry.parsed) {
+            const defaultStyle = engine.getStyle("default");
+            entry.parsed = parseAnsiToRuns(String(entry.text ?? ""), {
+              defaultFg: ColorUtils.from(defaultStyle.fg),
+              defaultBg: engine.currentTheme.bg,
+              tabSize: entry.tabSize ?? 4,
+              bracketSGR: true
+            });
+          }
+          return entry.parsed.lines;
+        },
+        width: (name) => {
+          const store = getAnsiStore();
+          if (!store) return 0;
+          const entry = store.get(String(name));
+          if (!entry) return 0;
+          if (!entry.parsed) {
+            const defaultStyle = engine.getStyle("default");
+            entry.parsed = parseAnsiToRuns(String(entry.text ?? ""), {
+              defaultFg: ColorUtils.from(defaultStyle.fg),
+              defaultBg: engine.currentTheme.bg,
+              tabSize: entry.tabSize ?? 4,
+              bracketSGR: true
+            });
+          }
+          return entry.parsed.width;
+        },
+        height: (name) => {
+          const store = getAnsiStore();
+          if (!store) return 0;
+          const entry = store.get(String(name));
+          if (!entry) return 0;
+          if (!entry.parsed) {
+            const defaultStyle = engine.getStyle("default");
+            entry.parsed = parseAnsiToRuns(String(entry.text ?? ""), {
+              defaultFg: ColorUtils.from(defaultStyle.fg),
+              defaultBg: engine.currentTheme.bg,
+              tabSize: entry.tabSize ?? 4,
+              bracketSGR: true
+            });
+          }
+          return entry.parsed.height;
+        }
+      },
+      // Convenience: draw named ASCII art at x/y using the active layer.
+      // Usage: drawAscii(x, y, 'art')
+      drawAscii: (x, y, name, fg, bg) => {
+        const store = getAsciiStore();
+        if (!store) return;
+        const entry = store.get(String(name));
+        if (!entry) return;
+        if (!entry.lines) entry.lines = String(entry.text ?? "").split(/\r?\n/);
+        const layer = this.layers.getActive();
+        for (let i = 0; i < entry.lines.length; i++) {
+          const line = entry.lines[i] ?? "";
+          layer.write(x, y + i, line, fg, bg);
+        }
+      },
+      // Convenience: draw FIGlet-rendered text using an embedded font.
+      // Usage: drawFiglet(x, y, 'standard', 'HELLO', fg?, bg?, { vertical?: boolean, letterSpacing?: number })
+      drawFiglet: (x, y, fontName, text, fg, bg, options) => {
+        const store = getFigletStore();
+        if (!store) return;
+        const entry = store.get(String(fontName));
+        if (!entry) return;
+        if (!entry.font) {
+          try {
+            entry.font = parseFIGfont(String(entry.text ?? ""), String(entry.name ?? fontName));
+          } catch (e) {
+            console.warn("[figlet] Failed to parse font:", fontName, e);
+            return;
+          }
+        }
+        const font = entry.font;
+        if (!font) return;
+        const layer = this.layers.getActive();
+        const vertical = !!(options == null ? void 0 : options.vertical);
+        const letterSpacing = Math.max(0, (options == null ? void 0 : options.letterSpacing) ?? 0);
+        if (vertical) {
+          let currentY = y;
+          for (const ch of Array.from(String(text ?? ""))) {
+            const charLines = renderFigletCharLines(font, ch);
+            let lineY = currentY;
+            for (const line of charLines) {
+              layer.write(x, lineY, line ?? "", fg, bg);
+              lineY++;
+            }
+            currentY = lineY + letterSpacing;
+          }
+          return;
+        }
+        if (letterSpacing > 0) {
+          let currentX = x;
+          for (const ch of Array.from(String(text ?? ""))) {
+            const charLines = renderFigletCharLines(font, ch);
+            const charWidth = measureFigletLinesWidth(charLines);
+            for (let i = 0; i < charLines.length; i++) {
+              layer.write(currentX, y + i, charLines[i] ?? "", fg, bg);
+            }
+            currentX += charWidth + letterSpacing;
+          }
+          return;
+        }
+        const lines = renderFigletLines(font, String(text ?? ""));
+        for (let i = 0; i < lines.length; i++) {
+          layer.write(x, y + i, lines[i] ?? "", fg, bg);
+        }
+      },
+      // Convenience: draw ANSI art (colors) using the active layer.
+      // Usage: drawAnsi(x, y, 'logo')
+      drawAnsi: (x, y, name) => {
+        const store = getAnsiStore();
+        if (!store) return;
+        const entry = store.get(String(name));
+        if (!entry) return;
+        if (!entry.parsed) {
+          const defaultStyle = engine.getStyle("default");
+          entry.parsed = parseAnsiToRuns(String(entry.text ?? ""), {
+            defaultFg: ColorUtils.from(defaultStyle.fg),
+            defaultBg: engine.currentTheme.bg,
+            tabSize: entry.tabSize ?? 4,
+            bracketSGR: true
+          });
+        }
+        const layer = this.layers.getActive();
+        const lines = entry.parsed.lines;
+        for (let row = 0; row < lines.length; row++) {
+          let cx = x;
+          const runs = lines[row] ?? [];
+          for (const run of runs) {
+            const t = String(run.text ?? "");
+            if (t.length > 0) {
+              layer.write(cx, y + row, t, run.fg, run.bg);
+              cx += t.length;
+            }
+          }
+        }
+      },
       // Global accessors (for convenience)
+      // These eliminate the need for users to track coordinates manually
       get mouseX() {
-        const rect = engine.canvas.getBoundingClientRect();
-        const charWidth = rect.width / engine.width;
+        return engine.input.getMouseX();
+      },
+      get mouseY() {
+        return engine.input.getMouseY();
+      },
+      get mouseCellX() {
+        const charWidth = engine.canvas.width / engine.width;
         const pixelX = engine.input.getMouseX();
         return Math.floor(pixelX / charWidth);
       },
-      get mouseY() {
-        const rect = engine.canvas.getBoundingClientRect();
-        const charHeight = rect.height / engine.height;
+      get mouseCellY() {
+        const charHeight = engine.canvas.height / engine.height;
         const pixelY = engine.input.getMouseY();
         return Math.floor(pixelY / charHeight);
+      },
+      get mousePixelX() {
+        return engine.input.getMouseX();
+      },
+      get mousePixelY() {
+        return engine.input.getMouseY();
       },
       get termWidth() {
         return engine.width;
@@ -11760,6 +17439,12 @@ class StorieEngine {
         createPanner: () => this.audioContext.createPanner(),
         createStereoPanner: () => this.audioContext.createStereoPanner(),
         createWaveShaper: () => this.audioContext.createWaveShaper(),
+        // === SEEDED SFX HELPERS (Chiptone basics) ===
+        sfx: {
+          names: () => getSfxPresetNames(),
+          play: (presetName, seed, options) => playSfx(this.audioContext, presetName, seed, options),
+          snippet: (presetName, seed, volume) => sfxSnippet(presetName, seed, volume)
+        },
         // === PROPERTIES ===
         get currentTime() {
           return engine.audioContext.currentTime;
@@ -11898,6 +17583,104 @@ class StorieEngine {
           const ui = engine.ensureWebGPUUI();
           if (!ui) return;
           ui.text(text, x, y, color);
+        },
+        /**
+         * Load an image URL into a GPU texture and return an opaque image id.
+         * WebGPU-only: returns null if WebGPU UI is unavailable.
+         */
+        loadImage: async (url) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return null;
+          if (typeof url !== "string" || url.length === 0) return null;
+          const res = await fetch(url);
+          if (!res.ok) return null;
+          const blob = await res.blob();
+          const bitmap = await createImageBitmap(blob);
+          const id = `img_${nextUIImageId++}`;
+          ui.registerImage(id, bitmap);
+          try {
+            bitmap.close();
+          } catch {
+          }
+          return id;
+        },
+        /**
+         * Load an image from an embedded ```blob block by name.
+         * The blob should be base64-encoded PNG/JPEG (mime:image/png or mime:image/jpeg).
+         */
+        loadImageFromBlob: async (name, documentId) => {
+          return await loadImageFromBlobInternal(name, documentId);
+        },
+        /**
+         * Draw a loaded image by id.
+         */
+        image: (imageId, x, y, w, h, options) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          const key = String(imageId ?? "");
+          if (!key) return;
+          if (ui.getImageSize(key)) {
+            ui.image(key, x, y, w, h, options);
+            return;
+          }
+          const cache = getUIBlobImageCache();
+          if (!cache) return;
+          const resolved = cache.resolved.get(key);
+          if (resolved && ui.getImageSize(resolved)) {
+            ui.image(resolved, x, y, w, h, options);
+            return;
+          }
+          if (cache.failed.has(key)) return;
+          if (cache.inFlight.has(key)) return;
+          const store = getBlobStore();
+          const entry = (store == null ? void 0 : store.get(key)) ?? null;
+          if (!entry) return;
+          const mime = String(entry.mime ?? "");
+          if (!mime.startsWith("image/")) return;
+          const promise = loadImageFromBlobInternal(key).then((id) => {
+            cache.inFlight.delete(key);
+            if (id) {
+              cache.resolved.set(key, id);
+            } else {
+              cache.failed.add(key);
+            }
+            return id;
+          }).catch((_e) => {
+            cache.inFlight.delete(key);
+            cache.failed.add(key);
+            return null;
+          });
+          cache.inFlight.set(key, promise);
+        },
+        pushClipRect: (x, y, w, h) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.pushClipRect(x, y, w, h);
+        },
+        popClipRect: () => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.popClipRect();
+        },
+        pushMaskRect: (x, y, w, h) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.pushMaskRect(x, y, w, h);
+        },
+        pushMaskRoundedRect: (x, y, w, h, radius) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.pushMaskRoundedRect(x, y, w, h, radius);
+        },
+        pushMaskPolygon: (points) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.pushMaskPolygon(points);
+        },
+        popMask: () => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.popMask();
         },
         button: (_id, x, y, w, h, label) => {
           const ui = engine.ensureWebGPUUI();
@@ -12049,6 +17832,76 @@ class StorieEngine {
           });
         }
       },
+      // WGSL Shader API (high-level shader management)
+      shader: {
+        setUniform: (shaderName, uniformName, value) => {
+          if (!engine.shaderManager) {
+            console.warn("ShaderManager not available (WebGPU not initialized)");
+            return;
+          }
+          try {
+            engine.shaderManager.setUniform(shaderName, uniformName, value);
+          } catch (error) {
+            console.error(`Failed to set uniform ${uniformName} on shader ${shaderName}:`, error);
+          }
+        },
+        setActive: (shaderName) => {
+          if (!engine.shaderManager) {
+            console.warn("ShaderManager not available (WebGPU not initialized)");
+            return;
+          }
+          try {
+            engine.shaderManager.setActiveShader(shaderName);
+          } catch (error) {
+            console.error(`Failed to set active shader to ${shaderName}:`, error);
+          }
+        },
+        getActive: () => {
+          if (!engine.shaderManager) return null;
+          return engine.shaderManager.getActiveShaderName();
+        },
+        list: () => {
+          if (!engine.shaderManager) return [];
+          return engine.shaderManager.getRegisteredShaders();
+        },
+        has: (shaderName) => {
+          if (!engine.shaderManager) return false;
+          return engine.shaderManager.hasShader(shaderName);
+        },
+        info: (shaderName) => {
+          if (!engine.shaderManager) return null;
+          return engine.shaderManager.getShaderInfo(shaderName);
+        },
+        // Shader chain API
+        setChain: async (shaderNames) => {
+          if (!engine.shaderChainManager) {
+            console.warn("ShaderChainManager not available (WebGPU not initialized)");
+            return false;
+          }
+          try {
+            return await engine.shaderChainManager.activateChain(shaderNames, "api");
+          } catch (error) {
+            console.error("Failed to set shader chain:", error);
+            return false;
+          }
+        },
+        getChain: () => {
+          if (!engine.shaderChainManager) return [];
+          return engine.shaderChainManager.getActiveChain();
+        },
+        clearChain: () => {
+          if (!engine.shaderChainManager) return;
+          engine.shaderChainManager.clearChain();
+        },
+        hasChain: () => {
+          if (!engine.shaderChainManager) return false;
+          return engine.shaderChainManager.hasActiveChain();
+        },
+        chainInfo: () => {
+          if (!engine.shaderChainManager) return null;
+          return engine.shaderChainManager.getChainInfo();
+        }
+      },
       // Compositor API (Phase 1: Auto-compositing, future: manual mode)
       compositor: {
         // Current mode
@@ -12155,19 +18008,262 @@ class StorieEngine {
         get available() {
           return engine.compositor !== null;
         }
+      },
+      // 3D Canvas API - Hardware-accelerated 3D section rendering
+      canvas3D: {
+        // Enable/disable 3D rendering mode
+        enable: () => {
+          var _a;
+          engine.canvas3DEnabled = true;
+          if ((_a = engine.compositor) == null ? void 0 : _a.layers.get("3d")) {
+            engine.compositor.updateLayer("3d", { enabled: true });
+          }
+          return engine.canvas3DRenderer !== null;
+        },
+        disable: () => {
+          var _a;
+          engine.canvas3DEnabled = false;
+          if ((_a = engine.compositor) == null ? void 0 : _a.layers.get("3d")) {
+            engine.compositor.updateLayer("3d", { enabled: false });
+          }
+          console.log("3D Canvas mode disabled");
+        },
+        get enabled() {
+          return engine.canvas3DEnabled;
+        },
+        get available() {
+          return engine.canvas3DRenderer !== null;
+        },
+        // Built-in navigation controls (WASD + QE + right-drag mouse-look)
+        controls: {
+          setEnabled: (enabled) => {
+            engine.canvas3DControlsEnabled = !!enabled;
+          },
+          get enabled() {
+            return engine.canvas3DControlsEnabled;
+          }
+        },
+        // Camera controls
+        camera: {
+          setPosition: (x, y, z) => {
+            if (!engine.camera3D) return;
+            engine.camera3D.position = { x, y, z };
+          },
+          setRotation: (x, y, z) => {
+            if (!engine.camera3D) return;
+            engine.camera3D.rotation = { x, y, z };
+          },
+          moveTo: (x, y, z) => {
+            if (!engine.camera3D) return;
+            engine.camera3D.target = { x, y, z };
+          },
+          focusOnSection: (sectionIndex, distance2 = 50) => {
+            if (!engine.camera3D) return;
+            engine.request3DCameraFocus({ kind: "focus", sectionIndex, distance: distance2 });
+          },
+          focusOnSectionFit: (sectionIndex, fill = 0.9) => {
+            if (!engine.camera3D) return;
+            engine.request3DCameraFocus({ kind: "fit", sectionIndex, fill });
+          },
+          setFOV: (fov) => {
+            if (!engine.camera3D) return;
+            engine.camera3D.fov = fov;
+          },
+          setEaseSpeed: (position, rotation) => {
+            if (!engine.camera3D) return;
+            engine.camera3D.positionEaseSpeed = position;
+            engine.camera3D.rotationEaseSpeed = rotation;
+          },
+          getPosition: () => {
+            if (!engine.camera3D) return { x: 0, y: 0, z: 0 };
+            return { ...engine.camera3D.position };
+          },
+          getRotation: () => {
+            if (!engine.camera3D) return { x: 0, y: 0, z: 0 };
+            return { ...engine.camera3D.rotation };
+          }
+        },
+        get currentSection() {
+          return engine.current3DSectionIndex;
+        },
+        // Section layout access
+        getSectionLayout: (sectionIndex) => {
+          const layout = engine.section3DLayouts[sectionIndex];
+          if (!layout) return null;
+          return {
+            sectionIndex: layout.sectionIndex,
+            sectionTitle: layout.sectionTitle,
+            position: { ...layout.transform.position },
+            rotation: { ...layout.transform.rotation },
+            scale: { ...layout.transform.scale },
+            width: layout.width,
+            height: layout.height,
+            visible: layout.visible,
+            navigable: layout.navigable
+          };
+        },
+        setSectionTransform: (sectionIndex, transform) => {
+          const layout = engine.section3DLayouts[sectionIndex];
+          if (!layout) {
+            console.warn(`Section ${sectionIndex} not found`);
+            return;
+          }
+          if (transform.position) {
+            layout.transform.position = { ...transform.position };
+          }
+          if (transform.rotation) {
+            layout.transform.rotation = {
+              x: transform.rotation.x * Math.PI / 180,
+              y: transform.rotation.y * Math.PI / 180,
+              z: transform.rotation.z * Math.PI / 180
+            };
+          }
+          if (transform.scale) {
+            layout.transform.scale = { ...transform.scale };
+          }
+        },
+        setSectionVisible: (sectionIndex, visible) => {
+          const layout = engine.section3DLayouts[sectionIndex];
+          if (!layout) {
+            console.warn(`Section ${sectionIndex} not found`);
+            return;
+          }
+          layout.visible = visible;
+        },
+        getSectionCount: () => {
+          return engine.section3DLayouts.length;
+        },
+        // Configuration
+        config: {
+          setDefaults: (config) => {
+            if (config.defaultDepth !== void 0) {
+              engine.canvas3DConfig.defaultDepth = config.defaultDepth;
+            }
+            if (config.defaultSectionWidth !== void 0) {
+              engine.canvas3DConfig.defaultSectionWidth = config.defaultSectionWidth;
+            }
+            if (config.defaultSectionHeight !== void 0) {
+              engine.canvas3DConfig.defaultSectionHeight = config.defaultSectionHeight;
+            }
+            if (config.cameraFov !== void 0) {
+              engine.canvas3DConfig.cameraFov = config.cameraFov;
+            }
+            if (config.cameraNear !== void 0) {
+              engine.canvas3DConfig.cameraNear = config.cameraNear;
+            }
+            if (config.cameraFar !== void 0) {
+              engine.canvas3DConfig.cameraFar = config.cameraFar;
+            }
+            if (config.positionEaseSpeed !== void 0) {
+              engine.canvas3DConfig.positionEaseSpeed = config.positionEaseSpeed;
+            }
+            if (config.rotationEaseSpeed !== void 0) {
+              engine.canvas3DConfig.rotationEaseSpeed = config.rotationEaseSpeed;
+            }
+            if (config.autoLayoutEnabled !== void 0) {
+              engine.canvas3DConfig.autoLayoutEnabled = config.autoLayoutEnabled;
+            }
+            if (config.autoLayoutColumns !== void 0) {
+              engine.canvas3DConfig.autoLayoutColumns = config.autoLayoutColumns;
+            }
+            if (config.autoLayoutSpacing !== void 0) {
+              engine.canvas3DConfig.autoLayoutSpacing = config.autoLayoutSpacing;
+            }
+            if (config.sectionTextureMode !== void 0) {
+              const prev = engine.canvas3DConfig.sectionTextureMode;
+              engine.canvas3DConfig.sectionTextureMode = config.sectionTextureMode;
+              if (prev !== config.sectionTextureMode) {
+                engine.clear3DSectionTextures();
+              }
+            }
+            if (config.sectionBorderEnabled !== void 0) {
+              const prev = engine.canvas3DConfig.sectionBorderEnabled;
+              engine.canvas3DConfig.sectionBorderEnabled = config.sectionBorderEnabled;
+              if (prev !== config.sectionBorderEnabled) {
+                engine.clear3DSectionTextures();
+              }
+            }
+            if (config.sectionBorderWidth !== void 0) {
+              const prev = engine.canvas3DConfig.sectionBorderWidth;
+              engine.canvas3DConfig.sectionBorderWidth = config.sectionBorderWidth;
+              if (prev !== config.sectionBorderWidth) {
+                engine.clear3DSectionTextures();
+              }
+            }
+            if (config.sectionBackground !== void 0) {
+              const prev = engine.canvas3DConfig.sectionBackground;
+              engine.canvas3DConfig.sectionBackground = config.sectionBackground;
+              if (prev !== config.sectionBackground) {
+                engine.clear3DSectionTextures();
+              }
+            }
+            engine.applyCanvas3DLayoutCallback();
+          },
+          getDefaults: () => {
+            return { ...engine.canvas3DConfig };
+          }
+        },
+        layout: {
+          setCallback: (fn2) => {
+            engine.canvas3DLayoutCallback = typeof fn2 === "function" ? fn2 : null;
+            engine.applyCanvas3DLayoutCallback();
+          },
+          clearCallback: () => {
+            engine.canvas3DLayoutCallback = null;
+          }
+        }
       }
     };
+  }
+  /**
+   * Register any shaders from loaded documents that weren't registered yet
+   */
+  async registerPendingShaders() {
+    if (!this.shaderManager) return;
+    for (const [docId, doc] of this.documents) {
+      const parsed = doc._parsedMarkdown;
+      if ((parsed == null ? void 0 : parsed.wgslShaders) && parsed.wgslShaders.length > 0) {
+        console.log(`[ShaderManager] Registering ${parsed.wgslShaders.length} shader(s) from ${docId}...`);
+        for (const shader of parsed.wgslShaders) {
+          try {
+            await this.shaderManager.registerShader(shader);
+            console.log(`  ✓ Registered ${shader.name}`);
+          } catch (error) {
+            console.error(`  ✗ Failed to register ${shader.name}:`, error);
+          }
+        }
+      }
+    }
   }
   /**
    * Load a markdown document and execute its code with lifecycle hooks
    */
   async loadMarkdown(documentId, markdown) {
-    var _a;
+    var _a, _b, _c, _d, _e, _f;
     try {
       console.log(`Loading document: ${documentId}`);
-      const parsed = parseMarkdown(markdown);
+      const parsed = await parseMarkdown(markdown);
       console.log(`  Found ${parsed.sections.length} sections`);
       console.log(`  Found ${parsed.codeBlocks.length} code blocks`);
+      if (parsed.wgslShaders && parsed.wgslShaders.length > 0) {
+        console.log(`  Found ${parsed.wgslShaders.length} WGSL shader(s):`);
+        for (const shader of parsed.wgslShaders) {
+          console.log(`    - ${shader.name} (${shader.kind})`);
+        }
+        if (this.shaderManager) {
+          console.log(`  Registering shaders with ShaderManager...`);
+          for (const shader of parsed.wgslShaders) {
+            try {
+              await this.shaderManager.registerShader(shader);
+              console.log(`    ✓ Registered ${shader.name}`);
+            } catch (error) {
+              console.error(`    ✗ Failed to register ${shader.name}:`, error);
+            }
+          }
+        } else {
+          console.log(`  ⏳ ShaderManager not yet initialized - shaders will be registered when WebGPU starts`);
+        }
+      }
       if (parsed.metadata.modules) {
         const modules = Array.isArray(parsed.metadata.modules) ? parsed.metadata.modules : [parsed.metadata.modules];
         console.log(`  Loading ${modules.length} module(s):`, modules);
@@ -12178,11 +18274,28 @@ class StorieEngine {
           console.error(`  ✗ Failed to load modules:`, error);
         }
       }
+      if (this.canvas3DRenderer) {
+        this.section3DLayouts = createSection3DLayouts(parsed.sections, this.canvas3DConfig);
+        console.log(`  Created 3D layouts for ${this.section3DLayouts.length} sections`);
+        this.applyPending3DCameraFocus();
+        this.applyCanvas3DLayoutCallback(parsed.sections);
+      }
       if (parsed.metadata.theme) {
         const themeName = String(parsed.metadata.theme).toLowerCase().replace(/['"]/g, "");
         this.currentTheme = getTheme(themeName);
         this.styleSheet = applyTheme(this.currentTheme);
         console.log(`  Theme: ${themeName}`);
+        this.layers.clearAll(this.currentTheme.bg);
+      }
+      if (parsed.metadata.shaders) {
+        const shadersStr = String(parsed.metadata.shaders);
+        console.log(`  Shader chain (frontmatter): ${shadersStr}`);
+        if (this.shaderChainManager) {
+          await this.shaderChainManager.activateChainFromString(shadersStr, "frontmatter");
+        } else {
+          console.log(`  Deferring shader chain until WebGPU init`);
+          this.pendingShaderChain = { chainStr: shadersStr, source: "frontmatter" };
+        }
       }
       const frontmatterKeys = Object.keys(parsed.metadata);
       if (frontmatterKeys.length > 0) {
@@ -12191,6 +18304,89 @@ class StorieEngine {
       const jsBlocks = parsed.codeBlocks.filter(
         (block) => block.lang === "javascript" || block.lang === "js"
       );
+      const blobStore = /* @__PURE__ */ new Map();
+      if (parsed.blobBlocks && parsed.blobBlocks.length > 0) {
+        for (const b of parsed.blobBlocks) {
+          const name = String(b.name ?? "").trim();
+          if (!name) continue;
+          const mime = String(b.mime ?? "application/octet-stream").trim() || "application/octet-stream";
+          const encoding = String(b.encoding ?? "base64").trim().toLowerCase() === "hex" ? "hex" : "base64";
+          const data = encoding === "hex" ? String(b.data ?? "") : String(b.data ?? "").replace(/\s+/g, "");
+          if (!data) continue;
+          if (blobStore.has(name)) {
+            console.warn(`  [blob] Duplicate name "${name}"; last one wins.`);
+          }
+          blobStore.set(name, { name, mime, encoding, data });
+        }
+        console.log(`  Found ${blobStore.size} blob block(s)`);
+      }
+      const asciiStore = /* @__PURE__ */ new Map();
+      for (const b of parsed.codeBlocks) {
+        let name = null;
+        if (typeof b.lang === "string" && b.lang.startsWith("ascii:")) {
+          console.warn(`  [ascii] Legacy fence syntax "${b.lang}" is no longer supported. Use \`\`\`ascii name:...\`\`\` instead.`);
+        }
+        if (b.lang === "ascii") {
+          const n = String(((_a = b.metadata) == null ? void 0 : _a.name) ?? "").trim();
+          if (n) name = n;
+        }
+        if (!name) continue;
+        const text = String(b.code ?? "");
+        if (asciiStore.has(name)) {
+          console.warn(`  [ascii] Duplicate name "${name}"; last one wins.`);
+        }
+        asciiStore.set(name, { name, text });
+      }
+      if (asciiStore.size > 0) {
+        console.log(`  Found ${asciiStore.size} ascii block(s)`);
+      }
+      const figletStore = /* @__PURE__ */ new Map();
+      for (const b of parsed.codeBlocks) {
+        let name = null;
+        if (typeof b.lang === "string" && b.lang.startsWith("figlet:")) {
+          console.warn(`  [figlet] Legacy fence syntax "${b.lang}" is no longer supported. Use \`\`\`figlet name:...\`\`\` instead.`);
+        }
+        if (b.lang === "figlet") {
+          const n = String(((_b = b.metadata) == null ? void 0 : _b.name) ?? "").trim();
+          if (n) name = n;
+        }
+        if (!name) continue;
+        const text = String(b.code ?? "");
+        if (figletStore.has(name)) {
+          console.warn(`  [figlet] Duplicate name "${name}"; last one wins.`);
+        }
+        figletStore.set(name, { name, text });
+      }
+      if (figletStore.size > 0) {
+        console.log(`  Found ${figletStore.size} figlet font block(s)`);
+      }
+      const ansiStore = /* @__PURE__ */ new Map();
+      {
+        const defaultStyle = this.getStyle("default");
+        const defaultFg = ColorUtils.from(defaultStyle.fg);
+        const defaultBg = this.currentTheme.bg;
+        for (const b of parsed.codeBlocks) {
+          if (b.lang !== "ansi") continue;
+          const name = String(((_c = b.metadata) == null ? void 0 : _c.name) ?? "").trim();
+          if (!name) continue;
+          const rawTab = String(((_d = b.metadata) == null ? void 0 : _d.tab) ?? ((_e = b.metadata) == null ? void 0 : _e.tabSize) ?? "").trim();
+          const tabSize = rawTab ? Math.max(1, Number.parseInt(rawTab, 10) || 4) : 4;
+          const text = String(b.code ?? "");
+          if (ansiStore.has(name)) {
+            console.warn(`  [ansi] Duplicate name "${name}"; last one wins.`);
+          }
+          const parsedAnsi = parseAnsiToRuns(text, {
+            defaultFg,
+            defaultBg,
+            tabSize,
+            bracketSGR: true
+          });
+          ansiStore.set(name, { name, text, tabSize, parsed: parsedAnsi });
+        }
+        if (ansiStore.size > 0) {
+          console.log(`  Found ${ansiStore.size} ansi block(s)`);
+        }
+      }
       if (jsBlocks.length === 0) {
         console.warn("  No JavaScript code blocks found");
         return false;
@@ -12201,8 +18397,9 @@ class StorieEngine {
       const renderBlocks = [];
       const inputBlocks = [];
       const globalBlocks = [];
+      const enterBlocksBySection = /* @__PURE__ */ new Map();
       for (const block of jsBlocks) {
-        const hook = (_a = block.metadata) == null ? void 0 : _a.on;
+        const hook = (_f = block.metadata) == null ? void 0 : _f.on;
         if (hook === "init") {
           initBlocks.push(block.code);
         } else if (hook === "update") {
@@ -12211,6 +18408,15 @@ class StorieEngine {
           renderBlocks.push(block.code);
         } else if (hook === "input") {
           inputBlocks.push(block.code);
+        } else if (hook === "enter") {
+          const sectionIdx = this.findSectionIndexForLine(parsed.sections, block.startLine);
+          if (sectionIdx !== null) {
+            const arr = enterBlocksBySection.get(sectionIdx) ?? [];
+            arr.push(block.code);
+            enterBlocksBySection.set(sectionIdx, arr);
+          } else {
+            globalBlocks.push(block.code);
+          }
         } else {
           globalBlocks.push(block.code);
         }
@@ -12224,11 +18430,12 @@ class StorieEngine {
       if (scopeVarNames.length > 0 && globalBlocks.length > 0) {
         console.log(`  Re-executing global blocks to create closures for ${scopeVarNames.length} variables`);
         const exports$1 = scopeVarNames.map((k) => `  try { scope.${k} = ${k}; } catch (e) {}`).join("\n");
+        const apiParams = "term, termCanvas, layer, key, mouse, tui, gui, getStyle, theme, modules, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY, termWidth, termHeight, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, canvas3D";
         for (const code of globalBlocks) {
-          const wrappedCode = `(function() {
+          const wrappedCode = `(function(${apiParams}) {
 ${code}
 ${exports$1}
-})();`;
+})(${apiParams});`;
           this.sandbox.executeCodeBlock(documentId, wrappedCode, true);
         }
       }
@@ -12287,6 +18494,22 @@ ${exportVars}
 };`;
         this.sandbox.executeCodeBlock(documentId, inputCode, true);
       }
+      if (enterBlocksBySection.size > 0) {
+        const pieces = [];
+        pieces.push(`scope.__enterHandlers = scope.__enterHandlers || {};`);
+        const indices = Array.from(enterBlocksBySection.keys()).sort((a, b) => a - b);
+        for (const idx of indices) {
+          const blocks = enterBlocksBySection.get(idx) ?? [];
+          if (blocks.length === 0) continue;
+          pieces.push(`scope.__enterHandlers[${idx}] = function() {`);
+          if (importVars) pieces.push(importVars);
+          if (captureVars) pieces.push(captureVars);
+          pieces.push(blocks.join("\n\n"));
+          if (exportVars) pieces.push(exportVars);
+          pieces.push(`};`);
+        }
+        this.sandbox.executeCodeBlock(documentId, pieces.join("\n"), true);
+      }
       const handlers = this.sandbox.extractHandlers(documentId);
       if (!handlers) {
         console.error("  Failed to extract handlers");
@@ -12295,7 +18518,13 @@ ${exportVars}
       this.documents.set(documentId, {
         id: documentId,
         handlers,
-        sections: parsed.sections
+        sections: parsed.sections,
+        _parsedMarkdown: parsed,
+        // Store for deferred shader registration
+        _blobStore: blobStore,
+        _asciiStore: asciiStore,
+        _figletStore: figletStore,
+        _ansiStore: ansiStore
       });
       if (!this.activeDocumentId) {
         this.activeDocumentId = documentId;
@@ -12330,6 +18559,17 @@ ${exportVars}
     }
   }
   /**
+   * Apply shader chain (typically from URL parameter, overrides frontmatter)
+   */
+  async applyShaderChain(chainStr, source = "url") {
+    if (!this.shaderChainManager) {
+      console.log("[Engine] Deferring shader chain until WebGPU init:", chainStr);
+      this.pendingShaderChain = { chainStr, source };
+      return true;
+    }
+    return await this.shaderChainManager.activateChainFromString(chainStr, source);
+  }
+  /**
    * Get the currently active document
    */
   getActiveDocument() {
@@ -12340,6 +18580,7 @@ ${exportVars}
    * Start the main loop (async to support WebGPU init)
    */
   async start() {
+    var _a;
     if (this.running) return;
     if ("init" in this.renderer && typeof this.renderer.init === "function") {
       const success = await this.renderer.init();
@@ -12352,7 +18593,72 @@ ${exportVars}
         this.renderer.resize(this.width, this.height);
       } else if (this.renderer instanceof WebGPURenderer) {
         await this.initCompositor();
+        const device = this.renderer.getContext().getDevice();
+        if (device) {
+          this.webgpuDevice = device;
+          if (!this.shaderManager) {
+            this.shaderManager = new ShaderManager(device);
+            console.log("✓ ShaderManager initialized (renderer device)");
+          }
+          if (!this.shaderChainManager) {
+            this.shaderChainManager = new ShaderChainManager(this.shaderManager, device);
+            console.log("✓ ShaderChainManager initialized (renderer device)");
+          }
+          if (!this.canvas3DRenderer) {
+            try {
+              this.canvas3DRenderer = new Canvas3DRenderer(device, this.canvas.width, this.canvas.height);
+              await this.canvas3DRenderer.init();
+              if (!this.camera3D) {
+                this.camera3D = createCamera3D();
+              }
+              const renderTexture = this.canvas3DRenderer.getRenderTexture();
+              if (renderTexture && this.compositor) {
+                this.compositor.registerLayer("3d", {
+                  texture: renderTexture,
+                  width: this.canvas.width,
+                  height: this.canvas.height,
+                  zIndex: 5,
+                  // Above terminal (0) but below UI (20)
+                  enabled: this.canvas3DEnabled,
+                  // Honor early canvas3D.enable() calls
+                  opacity: 1,
+                  // Full opacity
+                  blendMode: "normal"
+                  // Normal blend (not multiply)
+                });
+              } else {
+                console.warn("✗ Failed to register 3D layer");
+              }
+              for (const [docId, docData] of this.documents.entries()) {
+                const anyDocData = docData;
+                if ((_a = anyDocData._parsedMarkdown) == null ? void 0 : _a.sections) {
+                  const layouts = createSection3DLayouts(anyDocData._parsedMarkdown.sections, this.canvas3DConfig);
+                  this.section3DLayouts = layouts;
+                  this.applyPending3DCameraFocus();
+                  this.applyCanvas3DLayoutCallback(anyDocData._parsedMarkdown.sections);
+                  console.log(`✓ Created ${layouts.length} 3D section layouts for document ${docId}`);
+                } else {
+                }
+              }
+            } catch (error) {
+              console.warn("Failed to initialize Canvas3DRenderer:", error);
+            }
+          }
+          if (this.compositor) {
+            this.compositor.setShaderManager(this.shaderManager);
+            this.compositor.setShaderChainManager(this.shaderChainManager);
+          }
+          if (this.pendingShaderChain) {
+            console.log(`✓ Applying deferred shader chain (${this.pendingShaderChain.source}): ${this.pendingShaderChain.chainStr}`);
+            await this.shaderChainManager.activateChainFromString(
+              this.pendingShaderChain.chainStr,
+              this.pendingShaderChain.source
+            );
+            this.pendingShaderChain = null;
+          }
+        }
         this.ensureWebGPUUI();
+        await this.registerPendingShaders();
       }
     }
     this.running = true;
@@ -12371,6 +18677,7 @@ ${exportVars}
    * Main loop: update, render, composite
    */
   mainLoop(timestamp) {
+    var _a, _b;
     if (!this.running) return;
     try {
       this.deltaTime = (timestamp - this.lastFrameTime) / 1e3;
@@ -12381,11 +18688,63 @@ ${exportVars}
       if (this.compositor) {
         const composited = this.layers.composite();
         this.renderer.render(composited);
+        if (this.renderer instanceof WebGPURenderer) {
+          const terminalTexture = this.renderer.getRenderTexture();
+          const existing = (_a = this.compositor.layers.get("terminal")) == null ? void 0 : _a.texture;
+          if (terminalTexture && existing !== terminalTexture) {
+            this.compositor.updateLayerTexture("terminal", terminalTexture);
+            if (this.frameCount < 3) {
+              console.log("[Compositor] Updated terminal layer texture");
+            }
+          } else if (!terminalTexture && this.frameCount < 3) {
+            console.warn("[Compositor] Terminal render texture missing; frame may be blank");
+          }
+        }
+        if (this.canvas3DEnabled && this.section3DLayouts.length > 0 && this.renderer instanceof WebGPURenderer) {
+          const device = this.renderer.getContext().getDevice();
+          if (device) {
+            if (this.canvas3DConfig.sectionTextureMode === "webgpu-ui") {
+              this.ensure3DSectionTexturesWebGPUUI(device);
+            } else {
+              this.ensure3DSectionTextures(device);
+            }
+          }
+        }
+        if (this.canvas3DEnabled && this.canvas3DRenderer && this.camera3D) {
+          const pick = this.pick3DAt(this.input.getMouseX(), this.input.getMouseY());
+          this.hovered3DLink = null;
+          if (pick) {
+            const linkHit = this.hitTest3DLinkAtUV(pick.layout.sectionIndex, pick.u, pick.v);
+            if (linkHit) {
+              this.hovered3DLink = { sectionIndex: pick.layout.sectionIndex, linkIndex: linkHit.linkIndex };
+            }
+          }
+          for (const layout of this.section3DLayouts) {
+            layout.highlightUvRect = void 0;
+          }
+          const active = this.hovered3DLink ?? this.focused3DLink;
+          if (active) {
+            const rect = this.get3DLinkUvRect(active.sectionIndex, active.linkIndex);
+            if (rect) {
+              const layout = this.section3DLayouts.find((l) => l.sectionIndex === active.sectionIndex);
+              if (layout) layout.highlightUvRect = rect;
+            }
+          }
+          this.canvas3DRenderer.render(this.camera3D, this.section3DLayouts, null);
+        }
         if (this.webgpuUIRenderer) {
+          const guiAPI = (_b = this.api) == null ? void 0 : _b.gui;
+          if (guiAPI && guiAPI.getSystem && guiAPI.getSystem()) {
+            guiAPI.render(this.api.ui);
+          }
           this.webgpuUIRenderer.flush();
         }
         if (this.compositor.mode === "auto") {
+          this.syncTerminalCellSizeToShaders();
+          this.compositor.setAutoClearColor(this.currentTheme.bg);
           this.compositor.autoComposite();
+        } else if (this.frameCount < 3) {
+          console.warn("[Compositor] Manual mode is active; user code must call compositor.present() each frame");
         }
       } else {
         const composited = this.layers.composite();
@@ -12399,11 +18758,423 @@ ${exportVars}
     requestAnimationFrame((ts) => this.mainLoop(ts));
   }
   /**
+   * Push the terminal cell size (in render-texture pixels) into any active
+   * post-process shader(s) that declare a `cellSize` uniform.
+   *
+   * This mirrors tstorie behavior where font metrics were provided to shaders
+   * like `ruledlines` so effects can align to the text grid.
+   */
+  syncTerminalCellSizeToShaders() {
+    if (!this.shaderManager) return;
+    if (!(this.renderer instanceof WebGPURenderer)) return;
+    const terminal = this.renderer.getTerminalRenderer();
+    const cellW = Math.max(1, terminal.getCellWidth());
+    const cellH = Math.max(1, terminal.getCellHeight());
+    if (this.lastShaderCellSize && this.lastShaderCellSize.w === cellW && this.lastShaderCellSize.h === cellH) {
+      return;
+    }
+    this.lastShaderCellSize = { w: cellW, h: cellH };
+    const value = [cellW, cellH];
+    if (this.shaderChainManager && this.shaderChainManager.hasActiveChain()) {
+      const chain = this.shaderChainManager.getActiveChain();
+      for (const shaderName of chain) {
+        if (this.shaderManager.hasUniform(shaderName, "cellSize")) {
+          this.shaderManager.setUniform(shaderName, "cellSize", value);
+        }
+      }
+      return;
+    }
+    const active = this.shaderManager.getActiveShaderName();
+    if (active) {
+      if (this.shaderManager.hasUniform(active, "cellSize")) {
+        this.shaderManager.setUniform(active, "cellSize", value);
+      }
+    }
+  }
+  ensure3DSectionTextures(device) {
+    if (!this.canvas3DEnabled || !this.camera3D) return;
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    const aspect = canvasW > 0 && canvasH > 0 ? canvasW / canvasH : 1;
+    const view = getCameraViewMatrix(this.camera3D);
+    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+    const viewProj = mat4Multiply(proj, view);
+    const fontSizePx = 16;
+    const fontStack = "'3270-regular', 'Consolas', 'Monaco', monospace";
+    const texturePadding = 12;
+    const measureCanvas = new OffscreenCanvas(1, 1);
+    const measureCtx = measureCanvas.getContext("2d", { alpha: true });
+    if (!measureCtx) return;
+    measureCtx.textBaseline = "top";
+    measureCtx.textAlign = "left";
+    measureCtx.font = `${fontSizePx}px ${fontStack}`;
+    const m = measureCtx.measureText("M");
+    const measuredCharW = Math.max(1, Math.ceil(m.width));
+    const measuredCharH = Math.max(
+      1,
+      m.fontBoundingBoxAscent && m.fontBoundingBoxDescent ? Math.ceil(m.fontBoundingBoxAscent + m.fontBoundingBoxDescent) : Math.ceil(fontSizePx * 1.25)
+    );
+    const baseLineHeight = Math.max(1, Math.round(measuredCharH * 1.25));
+    for (const layout of this.section3DLayouts) {
+      if (!layout.visible) continue;
+      if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
+        continue;
+      }
+      if (layout.texture) continue;
+      const minW = 256;
+      const minH = 128;
+      const maxW = 1024;
+      const maxH = 1024;
+      const desiredW = Math.round(layout.width * measuredCharW + texturePadding * 2);
+      const desiredH = Math.round(layout.height * baseLineHeight + texturePadding * 2);
+      const widthPx = Math.max(minW, Math.min(maxW, desiredW));
+      const heightPx = Math.max(minH, Math.min(maxH, desiredH));
+      const canvas = new OffscreenCanvas(widthPx, heightPx);
+      const ctx = canvas.getContext("2d", { alpha: true });
+      if (!ctx) {
+        continue;
+      }
+      ctx.textBaseline = "top";
+      ctx.textAlign = "left";
+      ctx.font = `${fontSizePx}px ${fontStack}`;
+      const charW = measuredCharW;
+      const charH = measuredCharH;
+      const base = this.getStyle("default");
+      const dim = this.getStyle("dim");
+      const heading = this.getStyle("heading");
+      const link2 = this.getStyle("link");
+      const code = this.getStyle("code");
+      const surfaceBg = this.resolveCanvas3DSectionBackground();
+      const borderStyle = this.getStyle("border");
+      const mdStyle = {
+        fg: base.fg,
+        mutedFg: dim.fg,
+        headingFg: heading.fg,
+        linkFg: link2.fg,
+        codeFg: code.fg,
+        codeBg: code.bg,
+        bg: surfaceBg
+      };
+      const title = (layout.displayTitle || layout.sectionTitle || "").trim();
+      const content = (layout.content || "").trim();
+      const markdown = `# ${title}
+
+${content}`.trim();
+      const nodes = parseMarkdownLite(markdown);
+      const result = layoutMarkdownDocument(
+        nodes,
+        { x: 0, y: 0, width: widthPx, height: heightPx },
+        { charW, charH },
+        mdStyle,
+        0,
+        texturePadding
+      );
+      ctx.clearRect(0, 0, widthPx, heightPx);
+      for (const op of result.ops) {
+        if (op.kind === "rect") {
+          ctx.fillStyle = ColorUtils.toCss(op.color);
+          ctx.fillRect(op.x, op.y, op.w, op.h);
+        } else {
+          ctx.fillStyle = ColorUtils.toCss(op.color);
+          ctx.fillText(op.text, op.x, op.y);
+        }
+      }
+      const borderEnabled = this.canvas3DConfig.sectionBorderEnabled !== false;
+      const borderWidth = Math.max(0, Math.round(this.canvas3DConfig.sectionBorderWidth ?? 2));
+      if (borderEnabled && borderWidth > 0) {
+        ctx.strokeStyle = ColorUtils.toCss(borderStyle.fg);
+        ctx.lineWidth = borderWidth;
+        const inset = borderWidth / 2;
+        ctx.strokeRect(inset, inset, widthPx - borderWidth, heightPx - borderWidth);
+      }
+      const texture = device.createTexture({
+        size: { width: widthPx, height: heightPx },
+        format: "rgba8unorm",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+      });
+      try {
+        device.queue.copyExternalImageToTexture(
+          { source: canvas },
+          { texture },
+          { width: widthPx, height: heightPx }
+        );
+      } catch {
+        const bitmap = canvas.transferToImageBitmap();
+        device.queue.copyExternalImageToTexture(
+          { source: bitmap },
+          { texture },
+          { width: widthPx, height: heightPx }
+        );
+        bitmap.close();
+      }
+      layout.texture = texture;
+      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx });
+      this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
+    }
+  }
+  clear3DSectionTextures() {
+    for (const layout of this.section3DLayouts) {
+      if (layout.texture) {
+        try {
+          layout.texture.destroy();
+        } catch {
+        }
+        layout.texture = null;
+      }
+      layout.highlightUvRect = void 0;
+    }
+    this.sectionTextureCache.clear();
+    this.sectionLinkRegionsCache.clear();
+    this.hovered3DLink = null;
+    this.focused3DLink = null;
+  }
+  parseHexColorToPackedColor(hex) {
+    const s = hex.trim();
+    if (!s.startsWith("#")) return null;
+    const h = s.slice(1);
+    if (!(h.length === 6 || h.length === 8)) return null;
+    const r = Number.parseInt(h.slice(0, 2), 16);
+    const g = Number.parseInt(h.slice(2, 4), 16);
+    const b = Number.parseInt(h.slice(4, 6), 16);
+    const a = h.length === 8 ? Number.parseInt(h.slice(6, 8), 16) : 255;
+    if (![r, g, b, a].every(Number.isFinite)) return null;
+    return (r & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | a & 255;
+  }
+  resolveCanvas3DSectionBackground() {
+    const v = this.canvas3DConfig.sectionBackground;
+    if (v === void 0 || v === null || v === "surface") {
+      return this.getStyle("surface").bg;
+    }
+    if (typeof v === "number") {
+      return v;
+    }
+    if (typeof v === "string") {
+      const trimmed = v.trim();
+      if (!trimmed) {
+        return this.getStyle("surface").bg;
+      }
+      const hex = this.parseHexColorToPackedColor(trimmed);
+      if (hex !== null) {
+        return hex;
+      }
+      const key = trimmed.toLowerCase();
+      switch (key) {
+        case "bg":
+        case "background":
+          return this.currentTheme.bg;
+        case "bgalt":
+        case "bg_alt":
+        case "bgsecondary":
+        case "bg_secondary":
+          return this.currentTheme.bgAlt;
+        case "fg":
+        case "foreground":
+          return this.currentTheme.fg;
+        case "fgalt":
+        case "fg_alt":
+        case "fgsecondary":
+        case "fg_secondary":
+          return this.currentTheme.fgAlt;
+        case "accent1":
+        case "primary":
+          return this.currentTheme.accent1;
+        case "accent2":
+        case "secondary":
+          return this.currentTheme.accent2;
+        case "accent3":
+        case "tertiary":
+          return this.currentTheme.accent3;
+        default:
+          return this.getStyle("surface").bg;
+      }
+    }
+    return ColorUtils.from(v);
+  }
+  ensure3DSectionTexturesWebGPUUI(device) {
+    if (!(this.renderer instanceof WebGPURenderer)) return;
+    if (!this.canvas3DEnabled || !this.camera3D) return;
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    const aspect = canvasW > 0 && canvasH > 0 ? canvasW / canvasH : 1;
+    const view = getCameraViewMatrix(this.camera3D);
+    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+    const viewProj = mat4Multiply(proj, view);
+    const atlas = this.renderer.getAtlas();
+    const charW = atlas ? atlas.getCharWidth() : 10;
+    const charH = atlas ? atlas.getCharHeight() : 16;
+    const texturePadding = 12;
+    const baseLineHeight = Math.max(1, Math.round(charH * 1.25));
+    if (!this.sectionWebGPUUIRenderer) {
+      this.sectionWebGPUUIRenderer = new WebGPUUIRenderer(device, atlas, 1, 1);
+    }
+    const ui = this.sectionWebGPUUIRenderer;
+    const format = ui.getTextureFormat();
+    const base = this.getStyle("default");
+    const dim = this.getStyle("dim");
+    const heading = this.getStyle("heading");
+    const link2 = this.getStyle("link");
+    const code = this.getStyle("code");
+    const surfaceBg = this.resolveCanvas3DSectionBackground();
+    const borderStyle = this.getStyle("border");
+    const style = {
+      fg: base.fg,
+      mutedFg: dim.fg,
+      headingFg: heading.fg,
+      linkFg: link2.fg,
+      codeFg: code.fg,
+      codeBg: code.bg,
+      // Give 3D cards a panel-like background; matches theme elevated surfaces.
+      bg: surfaceBg
+    };
+    const borderEnabled = this.canvas3DConfig.sectionBorderEnabled !== false;
+    const borderWidth = Math.max(0, Math.round(this.canvas3DConfig.sectionBorderWidth ?? 2));
+    for (const layout of this.section3DLayouts) {
+      if (!layout.visible) continue;
+      if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
+        continue;
+      }
+      const minW = 256;
+      const minH = 128;
+      const maxW = 1024;
+      const maxH = 1024;
+      const desiredW = Math.round(layout.width * charW + texturePadding * 2);
+      const desiredH = Math.round(layout.height * baseLineHeight + texturePadding * 2);
+      const widthPx = Math.max(minW, Math.min(maxW, desiredW));
+      const heightPx = Math.max(minH, Math.min(maxH, desiredH));
+      const existing = this.sectionTextureCache.get(layout.sectionIndex);
+      if (existing && existing.width === widthPx && existing.height === heightPx && layout.texture) {
+        if (!this.sectionLinkRegionsCache.has(layout.sectionIndex)) {
+          const title2 = (layout.displayTitle || layout.sectionTitle || "").trim();
+          const content2 = (layout.content || "").trim();
+          const markdown2 = `# ${title2}
+
+${content2}`.trim();
+          const nodes2 = parseMarkdownLite(markdown2);
+          const result2 = layoutMarkdownDocument(
+            nodes2,
+            { x: 0, y: 0, width: widthPx, height: heightPx },
+            { charW, charH },
+            style,
+            0,
+            texturePadding
+          );
+          this.sectionLinkRegionsCache.set(layout.sectionIndex, result2.linkRegions);
+        }
+        continue;
+      }
+      if (layout.texture) {
+        try {
+          layout.texture.destroy();
+        } catch {
+        }
+        layout.texture = null;
+      }
+      const texture = device.createTexture({
+        size: { width: widthPx, height: heightPx },
+        format,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+      });
+      const title = (layout.displayTitle || layout.sectionTitle || "").trim();
+      const content = (layout.content || "").trim();
+      const markdown = `# ${title}
+
+${content}`.trim();
+      const nodes = parseMarkdownLite(markdown);
+      const result = layoutMarkdownDocument(
+        nodes,
+        { x: 0, y: 0, width: widthPx, height: heightPx },
+        { charW, charH },
+        style,
+        0,
+        texturePadding
+      );
+      this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
+      ui.clearCommands();
+      for (const op of result.ops) {
+        if (op.kind === "rect") {
+          ui.rect(op.x, op.y, op.w, op.h, op.color);
+        } else {
+          ui.text(op.text, op.x, op.y, op.color);
+        }
+      }
+      if (borderEnabled && borderWidth > 0) {
+        const bw = Math.max(1, borderWidth);
+        const c = borderStyle.fg;
+        ui.rect(0, 0, widthPx, bw, c);
+        ui.rect(0, heightPx - bw, widthPx, bw, c);
+        ui.rect(0, 0, bw, heightPx, c);
+        ui.rect(widthPx - bw, 0, bw, heightPx, c);
+      }
+      ui.flushTo(texture, widthPx, heightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
+      layout.texture = texture;
+      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx });
+    }
+  }
+  /**
    * Update phase - call user's update handler
    */
   update() {
     var _a;
     this.moduleLoader.update(this.deltaTime);
+    if (this.canvas3DEnabled && this.canvas3DControlsEnabled && this.camera3D) {
+      const dt = this.deltaTime;
+      const moveSpeed = 120;
+      const lookSpeed = 1.6;
+      const applyMove = (dx, dy, dz) => {
+        this.camera3D.position.x += dx;
+        this.camera3D.position.y += dy;
+        this.camera3D.position.z += dz;
+        if (this.camera3D.target) {
+          this.camera3D.target.x += dx;
+          this.camera3D.target.y += dy;
+          this.camera3D.target.z += dz;
+        }
+      };
+      if (this.input.isKeyDown("w") || this.input.isKeyDown("W")) {
+        applyMove(0, moveSpeed * dt, 0);
+      }
+      if (this.input.isKeyDown("s") || this.input.isKeyDown("S")) {
+        applyMove(0, -moveSpeed * dt, 0);
+      }
+      if (this.input.isKeyDown("a") || this.input.isKeyDown("A")) {
+        applyMove(-moveSpeed * dt, 0, 0);
+      }
+      if (this.input.isKeyDown("d") || this.input.isKeyDown("D")) {
+        applyMove(moveSpeed * dt, 0, 0);
+      }
+      if (this.input.isKeyDown("q") || this.input.isKeyDown("Q")) {
+        this.camera3D.rotation.y -= lookSpeed * dt;
+      }
+      if (this.input.isKeyDown("e") || this.input.isKeyDown("E")) {
+        this.camera3D.rotation.y += lookSpeed * dt;
+      }
+      const rmbDown = this.input.isMouseDown(2);
+      const mx = this.input.getMouseX();
+      const my = this.input.getMouseY();
+      if (rmbDown) {
+        if (!this.mouseLookActive) {
+          this.mouseLookActive = true;
+          this.mouseLookLastX = mx;
+          this.mouseLookLastY = my;
+        } else {
+          const dx = mx - this.mouseLookLastX;
+          const dy = my - this.mouseLookLastY;
+          this.mouseLookLastX = mx;
+          this.mouseLookLastY = my;
+          const sensitivity = 3e-3;
+          this.camera3D.rotation.y += dx * sensitivity;
+          this.camera3D.rotation.x += dy * sensitivity;
+          const limit = Math.PI / 2 - 0.01;
+          if (this.camera3D.rotation.x > limit) this.camera3D.rotation.x = limit;
+          if (this.camera3D.rotation.x < -limit) this.camera3D.rotation.x = -limit;
+        }
+      } else {
+        this.mouseLookActive = false;
+      }
+    }
+    if (this.camera3D && this.canvas3DEnabled) {
+      updateCamera3D(this.camera3D, this.deltaTime);
+    }
     const doc = this.getActiveDocument();
     if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.update) {
       try {
@@ -12502,6 +19273,14 @@ ${exportVars}
         this.webgpuUIRenderer.resize(this.canvas.width, this.canvas.height);
         this.compositor.updateLayerTexture("ui", this.webgpuUIRenderer.getTexture());
       }
+      if (this.canvas3DRenderer) {
+        this.canvas3DRenderer.resize(this.canvas.width, this.canvas.height);
+        const renderTexture = this.canvas3DRenderer.getRenderTexture();
+        if (renderTexture) {
+          this.compositor.updateLayerTexture("3d", renderTexture);
+        }
+        this.refocus3DForCurrentViewport();
+      }
     }
   }
   /**
@@ -12542,32 +19321,47 @@ ${exportVars}
    * Handle keyboard events for on:input
    */
   handleKeyEvent(e, action) {
-    var _a;
-    console.log("⌨️ Key event:", action, e.key, `(code: ${e.keyCode})`);
+    var _a, _b;
     const doc = this.getActiveDocument();
-    if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) {
-      console.log("   No input handler defined");
-      return;
-    }
-    const mods = [];
-    if (e.shiftKey) mods.push("shift");
-    if (e.ctrlKey) mods.push("ctrl");
-    if (e.altKey) mods.push("alt");
-    if (e.metaKey) mods.push("meta");
-    const event = {
-      type: action === "press" ? "keydown" : "keyup",
-      key: e.key,
-      keyCode: e.keyCode,
-      mods
-    };
-    try {
-      const shouldContinue = doc.handlers.input(event);
-      if (shouldContinue === false) {
-        this.stop();
+    let handledBy3D = false;
+    if (action === "press" && this.canvas3DEnabled && this.camera3D) {
+      if (e.key === "Tab") {
+        this.move3DLinkFocus(e.shiftKey ? -1 : 1);
+        handledBy3D = true;
+      } else if (e.key === "Enter") {
+        this.activateFocused3DLink();
+        handledBy3D = true;
+      } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+        this.move3DLinkFocus(1);
+        handledBy3D = true;
+      } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+        this.move3DLinkFocus(-1);
+        handledBy3D = true;
       }
+    }
+    if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input) {
+      const mods = [];
+      if (e.shiftKey) mods.push("shift");
+      if (e.ctrlKey) mods.push("ctrl");
+      if (e.altKey) mods.push("alt");
+      if (e.metaKey) mods.push("meta");
+      const event = {
+        type: action === "press" ? "keydown" : "keyup",
+        key: e.key,
+        keyCode: e.keyCode,
+        mods
+      };
+      try {
+        const shouldContinue = doc.handlers.input(event);
+        if (shouldContinue === false) {
+          this.stop();
+        }
+      } catch (error) {
+        console.error("Error in input handler:", error);
+      }
+    }
+    if (handledBy3D || ((_b = doc == null ? void 0 : doc.handlers) == null ? void 0 : _b.input)) {
       e.preventDefault();
-    } catch (error) {
-      console.error("Error in input handler:", error);
     }
   }
   /**
@@ -12576,19 +19370,30 @@ ${exportVars}
   handleMouseEvent(e, action) {
     var _a;
     const doc = this.getActiveDocument();
-    if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) {
-      console.warn("No input handler for mouse event");
-      return;
-    }
     const rect = this.canvas.getBoundingClientRect();
-    const pixelX = e.clientX - rect.left;
-    const pixelY = e.clientY - rect.top;
+    const cssX = e.clientX - rect.left;
+    const cssY = e.clientY - rect.top;
+    const pixelX = cssX * (this.canvas.width / rect.width);
+    const pixelY = cssY * (this.canvas.height / rect.height);
     this.input.updateMousePosition(pixelX, pixelY);
-    const charWidth = rect.width / this.width;
-    const charHeight = rect.height / this.height;
-    const x = Math.floor(pixelX / charWidth);
-    const y = Math.floor(pixelY / charHeight);
-    console.log(`🔍 Mouse calc: pixel(${pixelX.toFixed(1)},${pixelY.toFixed(1)}) display(${rect.width.toFixed(0)}x${rect.height.toFixed(0)}) grid(${this.width}x${this.height}) charSize(${charWidth.toFixed(2)}x${charHeight.toFixed(2)}) result(${x},${y})`);
+    if (action === "press" && e.button === 0) {
+      const picked = this.pick3DAt(pixelX, pixelY);
+      if (picked && this.camera3D) {
+        const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
+        if (linkHit) {
+          this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
+          this.activate3DLink(linkHit.region.url);
+        } else {
+          this.setCurrent3DSection(picked.layout.sectionIndex);
+          const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
+          focusOnSectionFit(this.camera3D, picked.layout, aspect, 0.9, { min: 60, max: 400 });
+        }
+      }
+    }
+    const charWidth = this.canvas.width / this.width;
+    const charHeight = this.canvas.height / this.height;
+    const cellX = Math.floor(pixelX / charWidth);
+    const cellY = Math.floor(pixelY / charHeight);
     const mods = [];
     if (e.shiftKey) mods.push("shift");
     if (e.ctrlKey) mods.push("ctrl");
@@ -12599,21 +19404,382 @@ ${exportVars}
       type: "mouse",
       action,
       button,
-      x,
-      y,
+      x: pixelX,
+      // Pixel coordinates (primary)
+      y: pixelY,
+      cellX,
+      // Cell coordinates (for TUI)
+      cellY,
       mods
     };
-    console.log("🖱️ Mouse event:", action, button, `(${x},${y})`);
     try {
-      const shouldContinue = doc.handlers.input(event);
-      console.log("   Input handler returned:", shouldContinue);
-      if (shouldContinue === false) {
-        this.stop();
+      if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input) {
+        const shouldContinue = doc.handlers.input(event);
+        if (shouldContinue === false) {
+          this.stop();
+        }
       }
       e.preventDefault();
     } catch (error) {
       console.error("Error in input handler:", error);
     }
+  }
+  pick3DAt(pixelX, pixelY) {
+    if (!this.canvas3DEnabled || !this.camera3D) return null;
+    if (!this.section3DLayouts || this.section3DLayouts.length === 0) return null;
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    if (canvasW <= 0 || canvasH <= 0) return null;
+    const ndcX = pixelX / canvasW * 2 - 1;
+    const ndcY = 1 - pixelY / canvasH * 2;
+    const aspect = canvasW / canvasH;
+    const view = getCameraViewMatrix(this.camera3D);
+    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+    const viewProj = mat4Multiply(proj, view);
+    const invViewProj = mat4Invert(viewProj);
+    if (!invViewProj) return null;
+    const nearWorld = mat4TransformPoint(invViewProj, { x: ndcX, y: ndcY, z: -1 });
+    const farWorld = mat4TransformPoint(invViewProj, { x: ndcX, y: ndcY, z: 1 });
+    const rayDirWorld = vec3Normalize(vec3Sub(farWorld, nearWorld));
+    let best = null;
+    for (const layout of this.section3DLayouts) {
+      if (!layout.visible || !layout.texture) continue;
+      const sectionTransform = {
+        position: layout.transform.position,
+        rotation: layout.transform.rotation,
+        scale: {
+          x: layout.transform.scale.x * layout.width,
+          y: layout.transform.scale.y * layout.height,
+          z: layout.transform.scale.z
+        }
+      };
+      const model = mat4FromTransform(sectionTransform);
+      const invModel = mat4Invert(model);
+      if (!invModel) continue;
+      const rayOriginLocal = mat4TransformPoint(invModel, nearWorld);
+      const rayDirLocal = vec3Normalize(mat4TransformDirection(invModel, rayDirWorld));
+      const denom = rayDirLocal.z;
+      if (Math.abs(denom) < 1e-6) continue;
+      const t = -rayOriginLocal.z / denom;
+      if (t <= 0) continue;
+      const hitLocal = vec3Add(rayOriginLocal, vec3Scale(rayDirLocal, t));
+      if (hitLocal.x < -0.5 || hitLocal.x > 0.5 || hitLocal.y < -0.5 || hitLocal.y > 0.5) {
+        continue;
+      }
+      const u = hitLocal.x + 0.5;
+      const v = 0.5 - hitLocal.y;
+      const hitWorld = mat4TransformPoint(model, hitLocal);
+      const dist = vec3Length(vec3Sub(hitWorld, nearWorld));
+      if (!best || dist < best.dist) {
+        best = { layout, dist, u, v };
+      }
+    }
+    return best ? { layout: best.layout, u: best.u, v: best.v } : null;
+  }
+  hitTest3DLinkAtUV(sectionIndex, u, v) {
+    const dims = this.sectionTextureCache.get(sectionIndex);
+    const regions = this.sectionLinkRegionsCache.get(sectionIndex);
+    if (!dims || !regions || regions.length === 0) return null;
+    const xPx = u * dims.width;
+    const yPx = v * dims.height;
+    for (let i = 0; i < regions.length; i++) {
+      const r = regions[i];
+      if (xPx >= r.x && xPx <= r.x + r.w && yPx >= r.y && yPx <= r.y + r.h) {
+        return { linkIndex: i, region: r };
+      }
+    }
+    return null;
+  }
+  get3DLinkUvRect(sectionIndex, linkIndex) {
+    const dims = this.sectionTextureCache.get(sectionIndex);
+    const regions = this.sectionLinkRegionsCache.get(sectionIndex);
+    if (!dims || !regions) return null;
+    const r = regions[linkIndex];
+    if (!r) return null;
+    return {
+      uMin: r.x / dims.width,
+      vMin: r.y / dims.height,
+      uMax: (r.x + r.w) / dims.width,
+      vMax: (r.y + r.h) / dims.height
+    };
+  }
+  activateFocused3DLink() {
+    const focused = this.focused3DLink;
+    if (!focused) return;
+    const regions = this.sectionLinkRegionsCache.get(focused.sectionIndex);
+    const region = regions ? regions[focused.linkIndex] : void 0;
+    if (!region) return;
+    this.activate3DLink(region.url);
+  }
+  move3DLinkFocus(delta) {
+    const links = this.getVisible3DLinks();
+    if (links.length === 0) {
+      this.focused3DLink = null;
+      return;
+    }
+    const cur = this.focused3DLink;
+    let idx = -1;
+    if (cur) {
+      idx = links.findIndex((l) => l.sectionIndex === cur.sectionIndex && l.linkIndex === cur.linkIndex);
+    }
+    const next = ((idx >= 0 ? idx : 0) + delta + links.length) % links.length;
+    const sel = links[next];
+    this.focused3DLink = { sectionIndex: sel.sectionIndex, linkIndex: sel.linkIndex };
+  }
+  activate3DLink(url) {
+    if (!url) return;
+    if (url.startsWith("#")) {
+      const target = decodeURIComponent(url.slice(1)).trim();
+      if (!target || !this.camera3D) return;
+      const slugify = (s) => s.toLowerCase().trim().replace(/[`*_~]/g, "").replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-");
+      const targetSlug = slugify(target);
+      const layout = this.section3DLayouts.find((l) => {
+        const title = (l.displayTitle || l.sectionTitle || "").trim();
+        return slugify(title) === targetSlug;
+      });
+      if (layout) {
+        this.setCurrent3DSection(layout.sectionIndex);
+        const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
+        focusOnSectionFit(this.camera3D, layout, aspect, 0.9, { min: 60, max: 400 });
+      }
+      return;
+    }
+    if (url.startsWith("http://") || url.startsWith("https://")) {
+      try {
+        window.open(url, "_blank", "noopener,noreferrer");
+      } catch {
+      }
+    }
+  }
+  get3DCardModelMatrix(layout) {
+    const sectionTransform = {
+      position: layout.transform.position,
+      rotation: layout.transform.rotation,
+      scale: {
+        x: layout.transform.scale.x * layout.width,
+        y: layout.transform.scale.y * layout.height,
+        z: layout.transform.scale.z
+      }
+    };
+    return mat4FromTransform(sectionTransform);
+  }
+  request3DCameraFocus(req) {
+    if (!this.section3DLayouts || this.section3DLayouts.length === 0) {
+      this.pending3DCameraFocus = req;
+      return;
+    }
+    if (!this.camera3D) return;
+    const idx = this.resolve3DSectionIndex(req.sectionIndex);
+    if (idx === null) {
+      console.warn(`Section "${String(req.sectionIndex)}" not found`);
+      return;
+    }
+    const layout = this.section3DLayouts[idx];
+    if (!layout) {
+      console.warn(`Section ${String(req.sectionIndex)} not found`);
+      return;
+    }
+    this.setCurrent3DSection(layout.sectionIndex);
+    if (req.kind === "focus") {
+      this.lastApplied3DCameraFocus = {
+        kind: "focus",
+        sectionIndex: layout.sectionIndex,
+        distance: req.distance
+      };
+    } else {
+      this.lastApplied3DCameraFocus = {
+        kind: "fit",
+        sectionIndex: layout.sectionIndex,
+        fill: req.fill
+      };
+    }
+    if (req.kind === "focus") {
+      focusOnSection(this.camera3D, layout, req.distance);
+    } else {
+      const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
+      focusOnSectionFit(this.camera3D, layout, aspect, req.fill);
+    }
+  }
+  refocus3DForCurrentViewport() {
+    if (!this.canvas3DEnabled || !this.camera3D) return;
+    if (!this.lastApplied3DCameraFocus) return;
+    const layout = this.section3DLayouts.find((l) => l.sectionIndex === this.lastApplied3DCameraFocus.sectionIndex);
+    if (!layout) return;
+    if (this.lastApplied3DCameraFocus.kind === "focus") {
+      focusOnSection(this.camera3D, layout, this.lastApplied3DCameraFocus.distance);
+    } else {
+      const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
+      focusOnSectionFit(this.camera3D, layout, aspect, this.lastApplied3DCameraFocus.fill);
+    }
+  }
+  applyPending3DCameraFocus() {
+    if (!this.pending3DCameraFocus) return;
+    const req = this.pending3DCameraFocus;
+    this.pending3DCameraFocus = null;
+    this.request3DCameraFocus(req);
+  }
+  setCurrent3DSection(sectionIndex) {
+    if (this.current3DSectionIndex === sectionIndex) return;
+    this.current3DSectionIndex = sectionIndex;
+    this.runSectionEnterHandlers(sectionIndex);
+  }
+  runSectionEnterHandlers(sectionIndex) {
+    var _a;
+    const doc = this.getActiveDocument();
+    if (!(doc == null ? void 0 : doc.id)) return;
+    const scope = this.sandbox.getScope(doc.id);
+    const handler = (_a = scope == null ? void 0 : scope.__enterHandlers) == null ? void 0 : _a[sectionIndex];
+    if (typeof handler !== "function") return;
+    try {
+      handler();
+    } catch (error) {
+      console.error("Error in on:enter handler:", error);
+    }
+  }
+  resolve3DSectionIndex(selector) {
+    if (typeof selector === "number" && Number.isFinite(selector)) {
+      return selector;
+    }
+    if (typeof selector !== "string") return null;
+    const query = selector.trim();
+    if (!query) return null;
+    const slugify = (s) => s.toLowerCase().trim().replace(/[`*_~]/g, "").replace(/\{[^}]*\}\s*$/g, "").replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-");
+    const want = slugify(query);
+    const exact = this.section3DLayouts.find((l) => {
+      const title = (l.displayTitle || l.sectionTitle || "").trim();
+      return slugify(title) === want;
+    });
+    return exact ? exact.sectionIndex : null;
+  }
+  findSectionIndexForLine(sections, line) {
+    let sectionIndex = 0;
+    let best = null;
+    const visit = (list) => {
+      for (const s of list) {
+        const idx = sectionIndex;
+        sectionIndex++;
+        if (typeof s.startLine === "number" && typeof s.endLine === "number") {
+          if (line >= s.startLine && line <= s.endLine) {
+            best = idx;
+            if (Array.isArray(s.children) && s.children.length > 0) {
+              visit(s.children);
+            }
+          }
+        }
+        if (!(line >= s.startLine && line <= s.endLine)) {
+          if (Array.isArray(s.children) && s.children.length > 0) {
+            visit(s.children);
+          }
+        }
+      }
+    };
+    visit(sections);
+    return best;
+  }
+  applyCanvas3DLayoutCallback(sections) {
+    var _a;
+    if (!this.canvas3DLayoutCallback) return;
+    if (!this.section3DLayouts || this.section3DLayouts.length === 0) return;
+    const order = [];
+    const walk = (list) => {
+      for (const s of list) {
+        order.push(s);
+        if (Array.isArray(s.children) && s.children.length > 0) walk(s.children);
+      }
+    };
+    const doc = sections ? { sections } : ((_a = this.getActiveDocument()) == null ? void 0 : _a.sections) ? { sections: this.getActiveDocument().sections } : null;
+    if (!(doc == null ? void 0 : doc.sections)) return;
+    walk(doc.sections);
+    for (let i = 0; i < Math.min(order.length, this.section3DLayouts.length); i++) {
+      const layout = this.section3DLayouts[i];
+      if (!layout) continue;
+      try {
+        const out = this.canvas3DLayoutCallback({
+          sectionIndex: layout.sectionIndex,
+          title: String(layout.displayTitle || layout.sectionTitle || ""),
+          layout
+        });
+        if (!out) continue;
+        if (out.position) {
+          layout.transform.position = { ...out.position };
+        }
+        if (out.rotation) {
+          layout.transform.rotation = {
+            x: out.rotation.x * Math.PI / 180,
+            y: out.rotation.y * Math.PI / 180,
+            z: out.rotation.z * Math.PI / 180
+          };
+        }
+        if (out.scale) {
+          layout.transform.scale = { ...out.scale };
+        }
+        if (typeof out.width === "number") layout.width = out.width;
+        if (typeof out.height === "number") layout.height = out.height;
+        if (typeof out.visible === "boolean") layout.visible = out.visible;
+        if (typeof out.navigable === "boolean") layout.navigable = out.navigable;
+      } catch (error) {
+        console.error("[canvas3D.layout] callback error:", error);
+      }
+    }
+    this.clear3DSectionTextures();
+  }
+  is3DCardPossiblyVisible(viewProj, layout) {
+    const model = this.get3DCardModelMatrix(layout);
+    const corners = [
+      { x: -0.5, y: -0.5, z: 0 },
+      { x: 0.5, y: -0.5, z: 0 },
+      { x: 0.5, y: 0.5, z: 0 },
+      { x: -0.5, y: 0.5, z: 0 }
+    ];
+    const clips = corners.map((c) => {
+      const world = mat4TransformPoint(model, c);
+      return mat4TransformVec4(viewProj, world.x, world.y, world.z, 1);
+    });
+    const all = (pred) => clips.every(pred);
+    if (all((p) => p.x < -p.w)) return false;
+    if (all((p) => p.x > p.w)) return false;
+    if (all((p) => p.y < -p.w)) return false;
+    if (all((p) => p.y > p.w)) return false;
+    if (all((p) => p.z < 0)) return false;
+    if (all((p) => p.z > p.w)) return false;
+    return true;
+  }
+  getVisible3DLinks() {
+    if (!this.canvas3DEnabled || !this.camera3D) return [];
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    if (canvasW <= 0 || canvasH <= 0) return [];
+    const aspect = canvasW / canvasH;
+    const view = getCameraViewMatrix(this.camera3D);
+    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+    const viewProj = mat4Multiply(proj, view);
+    const out = [];
+    for (const layout of this.section3DLayouts) {
+      if (!layout.visible || !layout.texture) continue;
+      if (!this.is3DCardPossiblyVisible(viewProj, layout)) continue;
+      const dims = this.sectionTextureCache.get(layout.sectionIndex);
+      const regions = this.sectionLinkRegionsCache.get(layout.sectionIndex);
+      if (!dims || !regions || regions.length === 0) continue;
+      const model = this.get3DCardModelMatrix(layout);
+      for (let i = 0; i < regions.length; i++) {
+        const r = regions[i];
+        const u = (r.x + r.w * 0.5) / dims.width;
+        const v = (r.y + r.h * 0.5) / dims.height;
+        const xLocal = u - 0.5;
+        const yLocal = 0.5 - v;
+        const world = mat4TransformPoint(model, { x: xLocal, y: yLocal, z: 0 });
+        const clip = mat4TransformVec4(viewProj, world.x, world.y, world.z, 1);
+        if (clip.w <= 1e-6) continue;
+        const ndcX = clip.x / clip.w;
+        const ndcY = clip.y / clip.w;
+        if (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1) continue;
+        const screenX = (ndcX * 0.5 + 0.5) * canvasW;
+        const screenY = (1 - (ndcY * 0.5 + 0.5)) * canvasH;
+        out.push({ sectionIndex: layout.sectionIndex, linkIndex: i, region: r, screenX, screenY });
+      }
+    }
+    out.sort((a, b) => a.screenY - b.screenY || a.screenX - b.screenX);
+    return out;
   }
   /**
    * Handle mouse move events for on:input
@@ -12623,14 +19789,23 @@ ${exportVars}
     const doc = this.getActiveDocument();
     if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) return;
     const rect = this.canvas.getBoundingClientRect();
-    const charWidth = rect.width / this.width;
-    const charHeight = rect.height / this.height;
-    const x = Math.floor((e.clientX - rect.left) / charWidth);
-    const y = Math.floor((e.clientY - rect.top) / charHeight);
+    const cssX = e.clientX - rect.left;
+    const cssY = e.clientY - rect.top;
+    const pixelX = cssX * (this.canvas.width / rect.width);
+    const pixelY = cssY * (this.canvas.height / rect.height);
+    this.input.updateMousePosition(pixelX, pixelY);
+    const charWidth = this.canvas.width / this.width;
+    const charHeight = this.canvas.height / this.height;
+    const cellX = Math.floor(pixelX / charWidth);
+    const cellY = Math.floor(pixelY / charHeight);
     const event = {
       type: "mouse_move",
-      x,
-      y,
+      x: pixelX,
+      // Pixel coordinates (primary)
+      y: pixelY,
+      cellX,
+      // Cell coordinates (for TUI)
+      cellY,
       mods: []
     };
     try {
@@ -12698,6 +19873,7 @@ export {
   BuiltInModules,
   COLORS,
   Canvas2DRenderer,
+  Canvas3DRenderer,
   InputManager,
   KEY,
   Layer,
@@ -12708,9 +19884,20 @@ export {
   VERSION,
   WebGPURenderer,
   applyTheme,
+  createCamera3D,
+  createSection3DLayouts,
+  distance,
   findSection,
   flattenSections,
+  focusOnSection,
   getAvailableThemes,
+  getDefaultCanvas3DConfig,
   getTheme,
-  parseMarkdown
+  lerp,
+  lerpAngle,
+  lerpRotation,
+  lerpVec3,
+  parseMarkdown,
+  updateCamera3D,
+  vec3
 };

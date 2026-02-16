@@ -1,32 +1,60 @@
 ---
 title: ANSI Art Demo
 theme: "solarlight"
+shaders: "ruledlines+paper"
 ---
 
 # ANSI Art Support
 
-TStorie now supports `ansi:name` code blocks for embedding ANSI art with colors and styles!
+Storie supports **embedded ANSI (SGR color) art blocks** in markdown.
 
-You can also load `.ans` files directly (classic ANSI art files from the BBS era).
+- Define named blocks with fenced code like `ansi name:logo`.
+- Access them from sandboxed JS via `ansi.*`.
+- Draw them into the terminal with `drawAnsi(x, y, name)`.
 
-```nim on:render
-# Standard embedded blocks (with automatic escape sequence conversion)
-drawAnsi(0, 2, 3, "logo")
-drawAnsi(0, 2, 11, "gradient")
-drawAnsi(0, 2, 16, "styled")
+Notes:
 
-# Load .ans file (converted from \x1b[ to [ for markdown format)
-drawAnsi(0, 2, 24, "amiex")
+- Storie currently renders **colors only** (per-cell `fg`/`bg`).
+- Most non-color SGR attributes (underline/italic/etc) are ignored.
+- `SGR 1` (bold) is treated as **bright** for 16-color ANSI art.
 
-# Show info text
-draw(0, 2, 23, "Classic .ANS file from BBS era -->")
+```js
+let status = 'Loading…';
+```
+
+```js on:init
+term.layerID = 'default';
+term.clear();
+
+status = `Found ${ansi.list().length} ANSI asset(s): ${ansi.list().join(', ')}`;
+```
+
+```js on:render
+term.layerID = 'default';
+term.clear();
+
+const base = getStyle('default');
+const dim = getStyle('dim');
+const heading = getStyle('heading');
+
+term.write(2, 1, '=== ANSI Art Demo ===', heading.fg, heading.bg);
+term.write(2, 3, status, dim.fg, dim.bg);
+
+term.write(2, 5, 'logo:', base.fg, base.bg);
+drawAnsi(2, 6, 'logo');
+
+term.write(2, 13, 'gradient (256-color):', base.fg, base.bg);
+drawAnsi(2, 14, 'gradient');
+
+term.write(2, 17, 'palette (16/256/truecolor + bg):', base.fg, base.bg);
+drawAnsi(2, 18, 'palette');
 ```
 
 ## Embedded ANSI Art
 
-Here's some embedded ANSI art with various styles:
+These blocks use **bracket SGR** sequences like `[38;5;196m` (markdown-friendly).
 
-```ansi
+```ansi name:logo
 [38;2;0;217;142m  ▄  [0m [1;37m█[0m [38;2;100;100;100m▄▄▄▄   ▄                     [0m
 [38;2;0;217;142m ▄█▄ [0m [1;37m█[0m [38;2;100;100;100m█     ▄█▄  ▄▄▄▄ ▄▄▄▄ ▄  ▄▄▄▄▄[0m
 [38;2;0;217;142m  █  [0m [1;37m█[0m [38;2;100;100;100m▀▀▀▀▄  █   █  █ █    █  █▄▄▄█[0m
@@ -34,61 +62,29 @@ Here's some embedded ANSI art with various styles:
 [38;2;0;217;142m  ▀▀ [0m [1;37m█[0m [38;2;100;100;100m▀▀▀▀   ▀▀  ▀▀▀▀ ▀    ▀  ▀▀▀▀▀[0m
 ```
 
-```ansi:gradient
+```ansi name:gradient
 [38;5;196m▀[38;5;202m▀[38;5;208m▀[38;5;214m▀[38;5;220m▀[38;5;226m▀[38;5;190m▀[38;5;154m▀[38;5;118m▀[38;5;82m▀[38;5;46m▀[38;5;47m▀[38;5;48m▀[38;5;49m▀[38;5;50m▀[38;5;51m▀[38;5;45m▀[38;5;39m▀[38;5;33m▀[38;5;27m▀[0m  256 Color Gradient
 [38;5;196m■[38;5;202m■[38;5;208m■[38;5;214m■[38;5;220m■[38;5;226m■[38;5;190m■[38;5;154m■[38;5;118m■[38;5;82m■[38;5;46m■[38;5;47m■[38;5;48m■[38;5;49m■[38;5;50m■[38;5;51m■[38;5;45m■[38;5;39m■[38;5;33m■[38;5;27m■[0m
 ```
 
-```ansi:styled
-[1;31m●[0m [1;33m Bold Red + Bold Yellow[0m
-[3;32m●[0m [3;36m Italic Green + Italic Cyan[0m
-[4;35m●[0m [4;34m Underline Magenta + Underline Blue[0m
-[1;3;4;37m●[0m [1;3;4;37m Bold Italic Underline White[0m
-[38;2;255;105;180m●[0m [38;2;255;105;180m RGB Hot Pink[0m
-[48;5;18;38;5;226m█[48;5;19;38;5;227m█[48;5;20;38;5;228m█[48;5;21;38;5;229m█[0m Background + Foreground
-```
-
-```ansi:amiex
-[255D[6C[0;1;30m▄▄ ▄▄▄ ▄  ▄ ▄▄▄▄    ▄▄▄ ▄  ▄    ▄▄▄▄ ▄    ▄ ▄▄▄▄▄▄▄▄
-   ▄ ███▀ [0;31m▄▄▄▄▄▄[0;33m▄[0;31m▄[0;33m▄▄ [0;1;30m▀█▄█▀ [0;31m▄▄[0;33m▄[0;31m▄[0;33m▄▄ [0;1;30m▀█▄▀ [0;31m▄▄[0;33m▄[0;31m▄[0;33m▄▄   [0;31m▄▄▄▄▄[0;33m▄[0;31m▄[0;33m▄▄ [0;1;30m▀█▄▄
-    ██▀ [0;31m▄▀ ░▓▒░[5C[0;1;31m▀▄ [0;1;30m▀ [0;31m▄▀▓░    [0;1;31m▀▄  [0;31m▄▀▒▓░   [0;1;31m▀▄  [0;31m░▓▒░    [0;1;31m▀▄ [0;1;30m▀██▄  [0;34m· │  ·
-   [0;1;30m▀██▌[0;31m█    ▒░[8C[0;33m█ [0;31m▀  ▒[6C░[0;33m█    [0;31m▒[6C[0;33m▀▄ [0;31m▒░[6C▒[0;33m▓ [0;1;30m██[5C[0;1;34m│
-    [0;1;30m▐█▌[0;31m█    ░[9C█    ░[6C▒▓    ░[6C░█ ░[7C░▒ [0;1;30m▐▌[0;34m──[0;1;34m──[0;1m─┼─[0;1;34m──[0;34m──
-    [0;1;30m██ [0;31m█░[5C[0;33m▓[7C[0;31m█[11C░▒[11C▒█    ▄[0;33m▄[0;31m▄[0;33m▄▄[0;1;31m▄   [0;1;30m▌· [0;34m·  [0;1;34m│ [0;34m·
-    [0;1;30m▐▄ [0;31m█▒[5C[0;33m▒[6C[0;31m░█[12C░[11C▓█[5C░▒   [0;1;31m░[8C[0;34m│
-   [0;1;30m· ▌ [0;31m█▓[5C[0;33m░[6C[0;31m▒█[24C▒█[6C░  ░[0;33m▓  [0;1;30m▌ [0m·   [0;34m·
-    [0m·  [0;31m█▒[12C▓█[24C░▓[9C▒▓ [0m·  [0;1m·
-    [0;1;30m· r[0;31m▓░[12C▒█[25C▒[9C▓█   [0m·  [0;1m·
-  [0m·   [0;1;30mo[0;31m▒   [0;1;30m·[5C·   [0;31m░█[14C[0;32m▄███▄[6C[0;31m░[9C▒▓ [0;1;30m·  ·[0;1m·  ·
-   [0m·  [0;1;30my[0;31m░    [0;1;30m· ·  [0;33m─ ── [0;31m▓ [0;33m─ ───────── [0;32m██▀[0;33m──[0;32m▀[0;1;33;42m▀[1C[0;33m─ ─────────── [0;31m░▒ [0;33m── ──  ─
- [0;1m·  [0m·    [0;1;30m·[7C[0;31m░ ░░ ▒ ░ ░░▒▒▒▒▓▀ [0;32m███▄  ▄  [0;31m▀ [0;32m▄[0;1;33m▄ [0;31m▀█▓▓▒▒░░  ░ ░░ ░░  ░
-   [0;1m·   [0m·    ·    [0;33m─ ── [0;31m░ [0;33m─ ─────── [0;32m██▄ ▀[0;1;33m▀[0;33m─ [0;32m▀█▄█▀ [0;33m─────────────── ──  ─
-[9C[0m·[5C[0;1;30m·   ·[15C[0;32m▀▀█▄   ▄██▄[5C[0;33mTOOLZ
-[12C[0;1m·[27C[0;32m▄█▀ ▀█[0;1;33m▀
-
-[0m[255D
+```ansi name:palette
+[31m●[0m Red   [32m●[0m Green   [33m●[0m Yellow   [34m●[0m Blue
+[1;31m●[0m Bright red via SGR 1 (treated as “bright”)
+[38;5;141m●[0m 256-color example (38;5;141)
+[38;2;255;105;180m●[0m Truecolor example (hot pink)
+[48;5;18;38;5;226m  BG+FG  [0m Background + Foreground
 ```
 
 ## Advanced Features
 
-ANSI art supports:
+Supported in Storie today:
 
-- **8-color mode**: Basic ANSI colors (30-37, 90-97)
-- **256-color mode**: Extended palette (ESC[38;5;Nm)
-- **RGB mode**: True color (ESC[38;2;R;G;Bm)
-- **Styles**: Bold, italic, underline, dim
-- **Cursor positioning**: For complex layouts
-- **.ans files**: Classic ANSI art files from the BBS era (use `skipConversion: true`)
+- **16-color mode**: `30–37`, `40–47`, `90–97`, `100–107`
+- **256-color mode**: `38;5;N` / `48;5;N`
+- **RGB mode**: `38;2;R;G;B` / `48;2;R;G;B`
+- **Reset/defaults**: `0`, `39`, `49`
 
-Perfect for terminal-based graphics, logos, and retro ASCII art!
+Notes:
 
-### Using .ans Files
-
-To use classic `.ans` files (which already contain proper escape sequences):
-
-```nim
-# Pass 'true' as the 5th parameter to skip escape sequence conversion
-drawAnsi(0, 10, 5, "amiex", true)
-```
-
-The `skipConversion` flag tells `drawAnsi()` not to convert `[` to `\x1b[` since `.ans` files already have the proper escape codes.
+- Tabs in ANSI blocks are expanded to spaces during parsing (default `tabSize=4`).
+- You can override tab size per-block with metadata like: `ansi name:myArt tabSize:8`.

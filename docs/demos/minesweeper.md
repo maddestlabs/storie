@@ -285,9 +285,9 @@ initGrid();
 ```javascript on:input
 // Handle mouse events
 if (event.type === 'mouse') {
-  // Use event coordinates directly (these are correct character coordinates)
-  const mouseX = event.x;
-  const mouseY = event.y;
+  // Use cellX/cellY for terminal cell coordinates
+  const mouseX = event.cellX;
+  const mouseY = event.cellY;
   
   console.log(`🎮 Minesweeper input:`, event.type, event.action, event.button, `click(${mouseX},${mouseY}) term(${termWidth}x${termHeight})`);
   

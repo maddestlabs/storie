@@ -1,6 +1,10 @@
 /**
  * Base Widget Class
  * Core widget functionality shared by all UI implementations
+ * 
+ * The `id` field in WidgetConfig is optional. If not provided, a unique ID
+ * will be auto-generated using an internal counter. Users can reference
+ * widgets directly via the returned object without needing explicit IDs.
  */
 
 import type {
@@ -13,7 +17,7 @@ import type {
 } from './types.js';
 
 export interface WidgetConfig {
-  id: WidgetId;
+  id?: WidgetId;
   bounds: Bounds;
   style?: WidgetStyle;
   group?: string | number;
@@ -21,6 +25,9 @@ export interface WidgetConfig {
   enabled?: boolean;
   focusable?: boolean;
 }
+
+// Auto-increment counter for widget IDs
+let nextAutoId = 1;
 
 /**
  * Abstract base class for all widgets
@@ -37,7 +44,8 @@ export abstract class BaseWidget {
   protected eventListeners: Map<string, ((event: WidgetEvent) => void)[]>;
   
   constructor(config: WidgetConfig) {
-    this.id = config.id;
+    // Auto-generate ID if not provided
+    this.id = config.id ?? `widget_${nextAutoId++}`;
     this.bounds = { ...config.bounds };
     this.style = config.style || {};
     this.group = config.group || 0;

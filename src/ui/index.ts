@@ -9,5 +9,5 @@ export * from './core/index.js';
 // TUI (Terminal UI) system
 export * from './tui/index.js';
 
-// Future: GUI system for canvas/WebGPU rendering
-// export * from './gui/index.js';
+// GUI (Graphical UI) system for canvas/WebGPU rendering
+export * from './gui/index.js';

@@ -4,45 +4,66 @@ theme: "alleycat"
 shaders: "invert+ruledlines+paper"
 ---
 
-# ASCII Art Demoascii
+# ASCII Art Demo
 
-This demo shows ASCII art support using tStorie's content blocks.
+This demo shows **ASCII block assets** in Storie:
 
-```nim on:init
-# Load ASCII art into global variables using getContent()
-var robotArt = getContent("ascii:robot")
-var bannerArt = getContent("ascii:banner")
-var frameArt = getContent("ascii:frame")
+- Define named ASCII assets in markdown with `ascii name:...` fenced blocks.
+- Access them from sandboxed JS via `ascii.*` (document-scoped).
+- Draw them into the terminal layer with `drawAscii(x, y, name, fg?, bg?)`.
+
+```js
+let robotArt = [];
+let bannerArt = [];
+let frameArt = [];
+let status = 'Loading…';
 ```
 
-```nim on:render
-clear()
+```js on:init
+term.layerID = 'default';
+term.clear();
 
-# Basic ASCII Art
-draw(0, 0, 0, "Basic ASCII Art:")
-drawAscii(0, 1, 1, "robot")
+// Pull named ASCII assets from the document.
+// (These are sourced from fenced blocks like ```ascii name:robot.)
+robotArt = ascii.lines('robot') ?? [];
+bannerArt = ascii.lines('banner') ?? [];
+frameArt = ascii.lines('frame') ?? [];
 
-# With Style
-draw(0, 2, 12, "With Style:")
-var style = getStyle("heading")
-drawAscii(0, 2, 13, "banner", style)
-
-# Manual processing with pre-loaded globals
-draw(0, 40, 2, "Manual (using globals):")
-var y = 3
-for line in frameArt:
-  draw(0, 40, y, line)
-  y = y + 1
-draw(0, 40, y + 1, "Lines: " & $(len(frameArt)))
-
-# Show loaded art info
-draw(0, 40, y + 3, "Loaded art pieces:")
-draw(0, 40, y + 4, "  robot: " & $(len(robotArt)) & " lines")
-draw(0, 40, y + 5, "  banner: " & $(len(bannerArt)) & " lines")
-draw(0, 40, y + 6, "  frame: " & $(len(frameArt)) & " lines")
+status = `Found ${ascii.list().length} ascii block(s): ${ascii.list().join(', ')}`;
 ```
 
-```ascii:robot
+```js on:render
+term.layerID = 'default';
+term.clear();
+
+term.write(2, 1, '=== ASCII Art Demo ===', 0xffffffff);
+term.write(2, 3, status, 0xaaaaaaff);
+
+// Basic ASCII Art
+term.write(2, 5, 'Basic ASCII Art:', 0xccccccff);
+drawAscii(2, 6, 'robot', 0xffffffff);
+
+// With color
+term.write(2, 16, 'With Color:', 0xccccccff);
+drawAscii(2, 17, 'banner', 0x00ff88ff);
+
+// Manual processing (pre-loaded globals)
+term.write(42, 5, 'Manual (using cached arrays):', 0xccccccff);
+let y = 6;
+for (const line of frameArt) {
+  term.write(42, y, line, 0xffffffff);
+  y++;
+}
+term.write(42, y + 1, `Lines: ${frameArt.length}`, 0xaaaaaaff);
+
+// Show loaded art info
+term.write(42, y + 3, 'Loaded art pieces:', 0xccccccff);
+term.write(42, y + 4, `  robot: ${robotArt.length} lines`, 0xaaaaaaff);
+term.write(42, y + 5, `  banner: ${bannerArt.length} lines`, 0xaaaaaaff);
+term.write(42, y + 6, `  frame: ${frameArt.length} lines`, 0xaaaaaaff);
+```
+
+```ascii name:robot
     ___
    [o_o]
    |\_/|
@@ -52,7 +73,7 @@ draw(0, 40, y + 6, "  frame: " & $(len(frameArt)) & " lines")
 \___)=(___/
 ```
 
-```ascii:banner
+```ascii name:banner
  █████╗ ███████╗ ██████╗██╗██╗
 ██╔══██╗██╔════╝██╔════╝██║██║
 ███████║███████╗██║     ██║██║
@@ -61,7 +82,7 @@ draw(0, 40, y + 6, "  frame: " & $(len(frameArt)) & " lines")
 ╚═╝  ╚═╝╚══════╝ ╚═════╝╚═╝╚═╝
 ```
 
-```ascii:frame
+```ascii name:frame
 ╔═══════════════╗
 ║               ║
 ║   CONTENT     ║
@@ -70,6 +91,6 @@ draw(0, 40, y + 6, "  frame: " & $(len(frameArt)) & " lines")
 ╚═══════════════╝
 ```
 
-```ascii:symbols
+```ascii name:symbols
 ㊀ ㊁ ㊂ ㊃ ㊄ ㊅ ㊆ ㊇ ㊈ ㊉ ㊊ ㊋ ㊌ ㊍ ㊎ ㊏ ㊐ ㊑ ㊒ ㊓ ㊔ ㊕ ㊖ ㊗ ㊘ ㊙ ㊚ ㊛ ㊜ ㊝ ㊞ ㊟ ㊠ ㊡ ㊢ ㊣ ㊤ ㊥ ㊦ ㊧ ㊨ ㊩ ㊪ ㊫ ㊬ ㊭ ㊮ ㊯ ㊰ ➀ ➁ ➂ ➃ ➄ ➅ ➆ ➇ ➈ ➉·¨…¦┅┆➊ ➋ ➌ ➍ ➎ ➏ ➐ ➑ ➒ ➓ α ɐ β ɔ 卐 ™ © ® ¿ ¡ ½ ⅓ ⅔ ¼ ¾ ⅛ ⅜ ⅝ ⅞ ℅ № ⇨ ❝ ❞ ℃ ∃ ┈ ℑ ∧ ∠ ∨ ∩ ⊂ ⊃ ∪ ⊥ ∀ Ξ Γ ə ɘ ε ɟ ɥ ɯ и η ℵ ℘ ๏ ɹ ʁ ℜ я ʌ ʍ λ ℓ ч ∞ Σ Π ⌥ ⌘ ¢ € £¥ Ⓐ Ⓑ Ⓒ Ⓓ Ⓔ Ⓕ Ⓖ Ⓗ Ⓘ Ⓙ Ⓚ Ⓛ Ⓜ Ⓝ Ⓞ Ⓟ Ⓠ Ⓡ Ⓢ Ⓣ Ⓤ Ⓥ Ⓦ Ⓧ Ⓨ Ⓩ ╧ ╨ ╤ ╥ ╙ ⓐ ⓑ ⓒ ⓓ ⓔ ⓕ ⓖ ⓗ ⓘ ⓙ ⓚ ⓛ ⓜ ⓝ ⓞ ⓟ ⓠ ⓡ ⓢ ⓣ ⓤ ⓥ ⓦ ⓧ ⓨ ⓩ ╒ ╓ ╫ ╪ ┘ ツ ♋ 웃 유 Σ ⊗ ♒ ☠ ☮ ☯ ♠ Ω ♤ ♣ ♧ ♥ ♡ ♦ ♢ ♔ ♕ ♚ ♛ ★ ☆ ✮ ✯ ☄ ☾ ☽ ♏ ╘ ┌ ╬ ☼ ☀ ☁ ☂ ☃ ☻ ☺ ۞ ۩ ♬ ✄ ✂ ✆ ✉ ✦ ✧ ∞ ♂ ♀ ☿ ❤ ❥ ❦ ❧ ™ ® © ✗ ✘ ⊗ ♒ ▢ ╛ ┐ ─ ┼ ▲ △ ▼ ▽ ◆ ◇ ○ ◎ ● ◯ Δ ◕ ◔ ʊ ϟ ღ 回 ₪ ✓ ✔ ✕ ✖ ☢ ☣ ☤ ☥ ☦ ☧ ☨ ☩ ☪ ☫ ☬ ☭ └ ┴ ┬ ├ ┊╱ ╲ ╳ ¯ – — ≡ ჻ ░ ▒ ▓ ▤ ▥ ▦ ▧ ▨ ▩ █ ▌ ▐ ▀ ▄ ◠ ◡ ╭ ╮ ╯ ╰ │ ┤ ╡ ╢ ╖ ╕ ╣ ║ ╝ ╜ ╞ ╟ ╚ ╔ ╩ ╦ ╠ ═ { ｡ ^ ◕ ‿ ◕ ^ ｡ } ( ◕ ^ ^ ◕ ) ✖ ✗ ✘ ♒ ♬ ✄ ✂ ✆ ✉ ✦ ✧ ♱ ♰ ♂ ♀☿ ❤ ❥ ❦❧ ™ ® © ♡ ♦ ♢ ♔ ♕ ♚ ♛ ★ ☆ ✮ ✯ ☄ ☾ ☽ ☼ ☀ ☁ ☂ ☃ ☻ ☺ ☹ ☮ ۞ ۩ ε ї з ☎ ☏ ¢ ☚ ☛ ☜ ☝ ☞ ☟ ✍ ✌ ☢ ☣ ☠ ☮ ☯ ♠ ♤ ♣ ♧ ♥ ♨ ๑ ❀ ✿ ψ ♆ ☪ ☭ ♪ ♩ ♫ ʊ ϟ ღ ツ 回 ₪ 卐 © ® ¿ ¡ ½ ⅓ ⅔ ¼ ¾ ⅛ ⅜ ⅝ ⅞ ℅ № ⇨ ❝ ❞ ℃ ◠ ◡ ╭ ╮╯╰ ★ ☆ ⊙ ¤ ㊣ ★ ☆ ♀ ◆ ◇ ™ ║ ▼ ╒ ▲ ◣ ◢ ◥ ▼ △ ▽ ⊿ ◤ ◥ △ ▴ ▵ ▶ ▷ ▸ ▹ ► ▻ ▼ ▽ ▾ ▿ ◀ ◁ ◂ ◃ ◄ ◅ ▆ ▇ █ █ ■ ▓ 回 □ 〓 ≡☌ ╝╚╔╗╬ ═╓╩ ┠┨┯┷┏ ┓┗┛┳⊥ ﹃﹄┌ ┐└┘∟「 」↑↓→ ←↘↙♀ ♂┇┅﹉﹊ ﹍﹎╭╮╰╯ *^_^* ^*^ ^-^ ^_^ ^︵^∵∴‖ ︱︳︴﹏ ﹋﹌♂♀ ♥♡☜☞☎ ☏⊙◎☺☻ ►◄▧▨ ♨◐◑↔↕ ▪▫☼♦▀ ▄█▌▐ ░▒▬♦◊ ◦ ☼ ♠ ♣ ▣ ▤▥▦▩ ぃ◘◙◈♫ ♬♪♩♭♪ の☆→あ ￡❤｡◕‿ ◕｡✎✟ஐ ≈๑۩ ۩.. ..۩۩๑ ๑۩۞۩๑ ✲❈➹ ~.~◕ ‿-｡☀☂☁ 【】┱┲❣ ✚✪✣ ✤✥ ✦❉ ❥❦❧❃ ❂❁❀✄☪ ☣☢☠☭♈ ➸✓✔✕ ✖㊚㊛ *.:｡ ✿*ﾟ‘ﾟ･ ⊙¤㊣★☆ ♀◆◇ ◣◢◥▲△▽⊿◤ ◥▆▇ ██■▓ 回□〓≡╝ ╚╔╗ ╬═╓╩ ┠┨┯┷┏ ┓┗┛ ┳⊥﹃﹄ ┌┐└┘∟ 「」↑↓ → ← ↘ ↙♀♂┇┅﹉ ﹊﹍﹎ ╭╮╰╯ *^_^* ^*^ ^-^ ^_^ ^︵^∵ ∴‖ ︱︳ ︴﹏﹋﹌ ♂♀♥♡☜ ☞☎☏⊙ ◎☺☻►◄ ▧▨♨◐◑ ↔↕▪▫ ☼♦▀▄█ ▌▐░▒▬ ♦◊◦☼ ♠♣▣▤▥ ▦▩ぃ◘◙ ◈♫♬♪ ♩♭♪の☆ →あ￡❤｡ ◕‿◕｡ ✎✟ஐ≈ ๑۩۩.. ..۩ ✉ ✍ ✎ ✏ ✐๑✲❈ ➹ ~.~◕‿-｡ ☀☂☁【】 ┱┲❣✚ ✪✣✤✥ ✦❉❥❦ ❧❃❂❁❀ ✄☪☣☢☠ ☭♈➸✓✔✕✖㊚ ㊛♧♤♧♡♬♪*.:｡✿*ﾟ ‘ﾟ･ ◊♥╠═╝▫■๑»«¶ஐ©† εïз♪ღ♣ ♠•± °•ิ.•ஐ இ * × ○ ▫ ✑ ✒ ⌨ ۩ ๑ ๑۩ ۞ ۩ ┭┮┯♂ • ♀ ◊ © ¤ ▲ ↔ ™ ® ☎ ε ї з ♨ ☏ ☆ ★ ▽ △ ▲ ∵ ∴ ∷ ＃ ♂ ♀ ♥ ♠ ♣ ☹ ☺ ☻┌ ┍┎ ┏ ┐ ┑┓ ♭♫♪ﻬஐღ ↔↕↘••● ¤╬﹌▽☜♥☞ ♬✞♥♕☯☭☠☃ ─ ━ │ ┃ ┄ ┅ ┆ ┇ ┈ ┉ ┊ ┋ ≨ ≩╨╩ ╪ ╫ ╬╏═≂ ≃ ≄ ≅ ≆ ≇ ≈ ≉ ≊ ≋ ≌ ≍ ≎ ≏ ≐ ≑ ≒ ≓ ≔ ≕ ≖ ≗ ≘ ≙ ≚ ≛ ≜ ≝ ≞ ≟ ≠ ≡≢ ≣ ≤ ≥ ≦≧␛ ␡ ␚ ␟ ␘ ␠ ␤ ␋ ␌ ␍ ␎ ␏ ␐ ␑ ␒ ␓ ␔ ␕ ␖ ␗ ␙ ␜ ␝ ␞╣ ╤ ╥ ╦ ╧ ╗ ╘ ╙ ╚ ╛╡ ┼ ┽ ┾ ┿ ╀ ╁ ╂ ╃ ╓ ╔ ╕ ╖ ♈ ♉ ♊ ♋ ♌ ♍ ♎ ♏ ♐ ♑ ♒ ♓ ╮ ╯ ╰ ╱ ╲ ╳ ‟ †‡•‣▀ ▁ ▂ ▃ ▄ ▅ ▆ ▇ █ ▉ ▊ ▋ ▌ ▍ ▎ ▏ ▐ ░ ▒ ▓ ▔ ▕ ■ □ ▢ ▣ ▤ ▥ ▦ ▧ ▨ ▩ ▪ ▫ ▬ ▭▮▯╭ ◞ ◟ ◠ ◡ ◢ ◣ ♔ ♕ ♖ ♗ ♘ ♙ ♚ ♛ ♝ ♞ ♟ ♠ ♡ ♢ ♣ ☔ ☕ ☖ ☗ ☘ ☙ ☊ ☋ ☌ ☍ ☎ ☏☐ ╴ ╵ ╶ ╷ ╸ ╹ ╺ ╻ ╼ ╽ ╾ ╿ ▰ ▱ ◆ ◇ ◈ ◉ ◊ ○ ◌ ◍ ◎ ● ◐ ◑ ◒ ◓ ◔ ◕ ◖ ◗ ◘ ◙ ◚ ◛ ◜ ◝ ◤ ◥ ◦ ◧ ◨ ◩ ◪ ◫ ◬ ◭ ◮ ◯◽ ◾ ◿ ☀ ☁ ☂ ☃ ☄ ★ ☆ ☇ ☈ ☉ ☑ ☒ ☓ ♅ ♆ ♇♜ ⇜ ⇝ ⇞ ⇟ ⇠ ⇡⇢⇣☟ ☠ ☡ ☢ ☣ ☤ ☥ ☦ ☧ ☨ ☩ ☪ ☫ ☬ ☭ ☮ ☯ ☰ ☱ ☲ ☳ ☴ ☵ ☶ ☷ ☸ ☹ ☺ ☻ ☼ ☽ ☾ ☿ ♀ ♁ ♂ ♃ ♄ℕ♤ ♥ ♦ ♧ ♨ ♩ ♪ ♫ ♬ ♭ ♮ ♯ ♰ ♱ ´ ῾ ‐ ‑ ‒ – — ― ‖ ‗ ‘ ’ ‚ ‛ “ ” „ ℋ ℌ ℍ ℎ ℏ ℐ ℑ ℒ ℓ ℔․ ‥ … ‧ ‰ ‱ ′ ″ ‴ ‵ ‶ ‷ ‸ ‹ › ※ ‼ ‽ ‾ ‿ ⁀ ⁁ ⁂ ⁃ ⁄ ⁅ ⁆ ⁑ ⁞ ₠ ₡ ₢ ₣ ₤ ₥ ₦ ₧ ₨ ₩ ₪ ₫ € ₭₮ ₯ ℀ ℁ ℂ ℃ ℄ ℅ ℆ ℇ ℈ ℉ ℊ № ℗ ℘ ℙ ℚ ℛ ℜ ℝ ℞ ℟ ℠ ℡ ™ ℣ ℤ ℥ Ω ℧ ℨ ℩ K Å ℬ ℭ ℮ ℯℰ ℱ Ⅎ ℳ ℴ ℵ ℶ ℷ ℸ ⅍ ⅎ ⅓ ⅔ ⅕ ⅖ ⅗ ⅘ ⅙ ⅚ ⅛ ⅜ ⅝ ⅞ ⅟ ⇍ ⇎ ≺ ≻ ≼ ≽ ≾ ≿ ⊀ ∏ ∐ ∑ −∓⁰ ⁱ ⁲ ⁳ ⁴ ⁵ ⁶ ⁷ ⁸ ⁹ ⁺ ⁻ ⁼ ⁽ ⁾ ⁿ ₀ ₁ ₂ ₃ ₄ ₅ ₆ ₇ ₈ ₉ ₊ ₋ ₌ ₍ ₎ ⇤ ⇥ ⇦ ⇧ ⇨ ⇩ ⇪ ⇹ ⇺ ⇻ ⇼ ⇽ ∔ ↶ₐ ₑ ₒ ₓ ₔⅠ Ⅱ Ⅲ Ⅳ Ⅴ Ⅵ Ⅶ Ⅷ Ⅸ Ⅹ Ⅺ Ⅻ Ⅼ Ⅽ Ⅾ Ⅿ ⅰ ⅱ ⅲ ⅳ ⅴ ⅵ ⅶ ⅷ ⅸ ⅹ ⅺ ⅻ ⅼ ⅽ ⅾ ⅿ ╢ ↵ ↷← ↑ → ↓ ↔ ↕ ↖ ↗ ↘ ↙ ↚ ↛ ↜ ↝ ↞ ↟ ↠ ↡ ↢ ↣ ↤ ↥ ↦ ↧ ↨ ↩ ↪ ↫ ↬ ↭ ↮ ↯ ↰ ↱ ↲ ↳↴ ￡ ↸ ↹ ↺ ↻ ↼ ↽ ↾ ↿ ⇀ ⇁ ⇂ ⇃ ⇄ ⇅ ⇆ ⇇ ⇈ ⇉ ⇊ ⇋ ⇌⇏ ⇐ ⇑ ⇒ ⇓ ⇔ ⇕ ⇖ ⇗ ⇘ ⇙ ⇚ ⇛ ∽∾⊣ ⊤⇫ ⇬ ⇭ ⇮ ⇯ ⇰ ⇱ ⇲ ⇳ ⇴ ⇵ ⇶ ⇷ ⇸ ⇾ ⇿ ∀ ∁ ∂ ∃ ∄ ∅ ∆ ∇ ∈ ∉ ∊ ∋ ∌ ∍ ∎ ◙ ▤▥▦▧▨ ▩ ♤ ♧♡∕ ∖ ∗ ∘ ∙ √ ∛ ∜ ∝ ∞ ∟ ∠ ∡ ∢ ∣ ∤ ∥ ∦ ∧ ∨ ∩ ∪ ∫ ∬ ∭ ∮ ∯ ∰ ∱ ∲ ∳ ∴ ∵ ∶ ∷ ∸ ∹ ∺ ∻ ∼ ∿ ≀ ≁ ≪ ≫ ≬ ≭ ≮ ≯ ≰ ≱ ≲ ≳ ≴ ≵ ≶ ≷ ≸ ≹ ⁇ ⁈ ⁉ ‼ ‽ ⁇ ⁈ ⁉ ‼ ‽ ™ © ®⍘ ⍙ ♬ ♭ ♮ ♯♰♱⊁ ⊂ ⊃ ⊄ ⊅ ⊆ ⊇ ⊈ ⊉ ⊊ ⊋ ⊌ ⊍ ⊎ ⊏ ⊐ ⊑ ⊒ ⊓ ⊔ ⊕ ⊖ ⊗ ⊘ ⊙ ⊚ ⊛ ⊜ ⊝ ⊞ ⊟ ⊠ ⊡ ⊢⊥⌕⌖ ⊦ ⊧ ⊨ ⊩ ⊪ ⊫ ⊬ ⊭ ⊮ ⊯ ⊰ ⊱ ⊲ ⊳ ⊴ ⊵ ⊶ ⊷ ⊸ ⊹ ⊺ ⊻ ┌ ┍ ┎ ┏ ┐ ┑ ┒ ┓⋟ ⋠ ⋡ ⋢ ⋣ ⌓⌔⊼ ⊽ ⊾ ⊿ ⋀ ⋁ ⋂ ⋃ ⋄ ⋅ ⋆ ⋇ ⋈ ⋉ ⋊ ⋋ ⋌ ⋍ ⋎ ⋏ ⋐ ⋑ ⋒ ⋓ ⋔ ⋕ ⋖ ⋗ ⋘ ⋙ ⋚ ⋛ ⋜ ⋝ ⋞ ♤ ♥♦♧♨ ⋤ ⋥ ⋦ ⋧ ⋨ ⋩ ⋪ ⋫ ⋬ ◐ ◑ ☢ ⊗ ⊙ ◘❃ ❂ ○ ◎ ● ◯ ◕ ◔ ┄ ┅ ┆ ┇ ┈ ┉ ┊ ┋ ♩ ♪ ♫ ♜ ♝⋭ ⋮ ⋯ ⋰ ⋱ ⋲ ⋳ ⋴ ⋵ ⋶ ⋷ ⋸ ⋹ ⋺ ⋻ ⋼ ⋽ ⋾ ⋿ ⌀ ⌁ ⌂ ⌃ ⌄ ⌅ ⌆ ⌇ ⌈ ⌉ ⌊ ⌋ ⌌ ⌍– ぱ ⌎ ⌐ ⌑⌒♔ ♕ ⌗ ⌘ ⌙ ⌚ ⌛ ⌜ ░ ▒ ▓ ▔ ▕ ª ↀ ↁ ↂ Ↄ ↄ ↅ⍚ ␋ ␢ ␣ ─ ━ │ ┃ ⌾ ⌿ ⍀ ⍁♞ ♟ ♠ ♡ ♢♣⌝ ⌞ ⌟ ⌠ ⌡ ⌢ ⌣ ⌤ ⌥ ⌦ ⌧ ⌨ 〈 〉 ⌫ ⌬ ⌭ ⌮ ⌯ ⌰ ⌱ ⌲ ⌳ ⌴ ⌵ ⌶ ⌷ ⌸ ⌹ ⌺ ⌻ ⌼ ⌽ ⍂ ⍃ ⍄ ⍅ ⍆ ⍇ ⍈ ⍉ ⍊ ⍋ ⍌ ⍍ ⍎ ⍏ ⍐ ⍑ ⍒ ⍓ ⍔ ⍕ ⍖ ⍗ ♎ ♏ ♐ ♑ ♒ ♓ ♖ ♗ ♘ ♙♚♛頹 – 衙 – 浳 – 浤 – 搰 – 煤 – 洳 – 橱 – 橱 – 煪 – ㍱ – 煱 – 둻 – 睤 – ㌹ – 楤 – ぱ – - 椹– 畱 – 煵 – 田 – つ – 煵 – 엌 – 嫠 – 쯦 – 案 – 迎 – 是 – 從 – 事 – 網 – 頁 – 設 – 計 – 簡
 ```

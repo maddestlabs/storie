@@ -42,8 +42,18 @@ export class Canvas2DRenderer {
     // Configure font
     this.fontFamily = config.fontFamily || '\'3270-regular\', \'Consolas\', \'Monaco\', monospace';
     this.fontSize = config.fontSize || 16;
-    this.cellWidth = config.cellWidth || 10;
-    this.cellHeight = config.cellHeight || 20;
+    
+    // Measure font dimensions properly
+    this.ctx.font = `${this.fontSize}px ${this.fontFamily}`;
+    const metrics = this.ctx.measureText('M');
+    
+    // Use actual font bounding box or defaults
+    if (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent) {
+      this.cellHeight = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent);
+    } else {
+      this.cellHeight = config.cellHeight || Math.ceil(this.fontSize * 1.25);
+    }
+    this.cellWidth = config.cellWidth || Math.ceil(metrics.width);
     
     this.setupCanvas();
     this.waitForFont();
@@ -113,9 +123,9 @@ export class Canvas2DRenderer {
     const px = x * this.cellWidth;
     const py = y * this.cellHeight;
 
-    // Draw background
+    // Draw background with extra clearance above/below to eliminate artifacts
     this.ctx.fillStyle = ColorUtils.toCss(cell.bg);
-    this.ctx.fillRect(px, py, this.cellWidth, this.cellHeight);
+    this.ctx.fillRect(px, py - 2, this.cellWidth, this.cellHeight + 4);
 
     // Draw character if not space
     if (cell.char && cell.char !== ' ') {

@@ -6,12 +6,17 @@
 import { TUISystem } from './ui/tui/index.js';
 import { ColorUtils } from './types.js';
 import type { TerminalRenderer } from './terminal-renderer.js';
+import { setTUIThemeFromStyles } from './ui/tui/theme.js';
 
 /**
  * Create TUI API for sandbox compartment
  * This gets exposed to user JavaScript code
  */
-export function createTUIAPI(renderer: TerminalRenderer, getCellBuffer: () => any[][]) {
+export function createTUIAPI(
+  renderer: TerminalRenderer,
+  getCellBuffer: () => any[][],
+  getStyle?: (name: string) => any
+) {
   let tuiSystem: TUISystem | null = null;
   
   return {
@@ -20,6 +25,13 @@ export function createTUIAPI(renderer: TerminalRenderer, getCellBuffer: () => an
      * Call this in on:init
      */
     init() {
+      if (getStyle) {
+        try {
+          setTUIThemeFromStyles(getStyle);
+        } catch {
+          // Ignore theme failures; widgets will fall back to built-in defaults.
+        }
+      }
       tuiSystem = new TUISystem(renderer);
       return tuiSystem;
     },
@@ -37,7 +49,6 @@ export function createTUIAPI(renderer: TerminalRenderer, getCellBuffer: () => an
      * @example
      * ```javascript
      * const btn = tui.createButton({
-     *   id: 'myBtn',
      *   bounds: { x: 10, y: 5, width: 20, height: 3 },
      *   label: 'Click Me'
      * });
@@ -56,7 +67,6 @@ export function createTUIAPI(renderer: TerminalRenderer, getCellBuffer: () => an
      * @example
      * ```javascript
      * const lbl = tui.createLabel({
-     *   id: 'title',
      *   bounds: { x: 5, y: 2, width: 30, height: 1 },
      *   text: 'My App',
      *   align: 'center'
@@ -76,7 +86,6 @@ export function createTUIAPI(renderer: TerminalRenderer, getCellBuffer: () => an
      * @example
      * ```javascript
      * const chk = tui.createCheckbox({
-     *   id: 'sound',
      *   bounds: { x: 10, y: 10, width: 20, height: 1 },
      *   label: 'Enable Sound',
      *   checked: true
@@ -96,7 +105,6 @@ export function createTUIAPI(renderer: TerminalRenderer, getCellBuffer: () => an
      * @example
      * ```javascript
      * const slider = tui.createSlider({
-     *   id: 'volume',
      *   bounds: { x: 10, y: 15, width: 30, height: 3 },
      *   label: 'Volume',
      *   min: 0,

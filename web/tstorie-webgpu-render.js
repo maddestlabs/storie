@@ -145,7 +145,13 @@ class TStorieWebGPURender {
         
         const metrics = this.atlasCtx.measureText('M');
         this.charWidth = Math.ceil(metrics.width);
-        this.charHeight = this.fontSize;
+        
+        // Use actual font bounding box height to prevent artifacts
+        if (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent) {
+            this.charHeight = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent);
+        } else {
+            this.charHeight = Math.ceil(this.fontSize * 1.25);
+        }
     }
     
     async initWebGPU(presentationFormat) {
@@ -741,12 +747,13 @@ class TStorieWebGPURender {
         }
         
         // Draw character to atlas
+        // Use integer positions to prevent sub-pixel rendering artifacts
         this.atlasCtx.fillStyle = 'white';
-        this.atlasCtx.fillText(char, this.atlasX, this.atlasY);
+        this.atlasCtx.fillText(char, Math.floor(this.atlasX), Math.floor(this.atlasY));
         
-        // Calculate UV coordinates
-        const u = this.atlasX / this.atlasCanvas.width;
-        const v = this.atlasY / this.atlasCanvas.height;
+        // Calculate UV coordinates with pixel-perfect boundaries
+        const u = Math.floor(this.atlasX) / this.atlasCanvas.width;
+        const v = Math.floor(this.atlasY) / this.atlasCanvas.height;
         const w = pixelWidth / this.atlasCanvas.width;
         const h = this.charHeight / this.atlasCanvas.height;
         

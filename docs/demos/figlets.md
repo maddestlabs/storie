@@ -4,42 +4,51 @@ theme: "neotopia"
 
 # Figlet Helper Demo
 
-This demo shows the new `drawFigletText` helper function that simplifies drawing figlet text.
+This demo shows **embedded FIGlet fonts** in Storie:
 
-API:
-`figletLoadFont("standard")`
-`drawFigletText (layer, x, y, fontName, text, style, direction, letter-spacing)`
+- Define named FIGlet fonts in markdown with `figlet name:...` fenced blocks.
+- Access them from sandboxed JS via `figlet.*` (document-scoped).
+- Draw them into the terminal with `drawFiglet(x, y, fontName, text, fg?, bg?, options?)`.
 
-```nim on:init
-var fontLoaded = figletLoadFont("standard")
+```js
+let status = 'Loading…';
 ```
 
-```nim on:render
-clear()
+```js on:init
+term.layerID = 'default';
+term.clear();
 
-# Manual way - loop through lines
-draw(0, 2, 2, "Manual way:")
-var lines = figletRender("standard", "HELLO")
-var y = 3
-for line in lines:
-  draw(0, 2, y, line)
-  y = y + 1
-
-# With style
-var warning = getStyle("warning")
-draw(0, 2, 10, "With style:")
-drawFigletText(0, 2, 11, "standard", "STYLED", 0, warning)
-
-# Horizontal with letter spacing
-draw(0, 2, 18, "Letter spacing (3):")
-drawFigletText(0, 2, 19, "standard", "SPACE", 0, 0, 0, 3)
-
-# Vertical text
-draw(0, 45, 2, "Vertical:")
-drawFigletText(0, 45, 3, "standard", "HEY", 0, 0, 1, 0)
+status = `Found ${figlet.list().length} figlet font(s): ${figlet.list().join(', ')}`;
 ```
 
-```figlet:standard
+```js on:render
+term.layerID = 'default';
+term.clear();
+
+term.write(2, 1, '=== Figlet Demo ===', 0xffffffff);
+term.write(2, 3, status, 0xaaaaaaff);
+
+// Manual way: render lines and write them
+term.write(2, 5, 'Manual (figlet.render + term.write):', 0xccccccff);
+const hello = figlet.render('standard', 'HELLO');
+for (let i = 0; i < hello.length; i++) {
+    term.write(2, 6 + i, hello[i] ?? '', 0xffffffff);
+}
+
+// Convenience helper
+term.write(2, 14, 'Helper (drawFiglet):', 0xccccccff);
+drawFiglet(2, 15, 'standard', 'STYLED', getStyle('warning').fg);
+
+// Horizontal with letter spacing
+term.write(2, 23, 'Letter spacing (3):', 0xccccccff);
+drawFiglet(2, 24, 'standard', 'SPACE', 0xffffffff, undefined, { letterSpacing: 3 });
+
+// Vertical
+term.write(45, 5, 'Vertical:', 0xccccccff);
+drawFiglet(45, 6, 'standard', 'HEY', 0xffffffff, undefined, { vertical: true, letterSpacing: 0 });
+```
+
+```figlet name:standard
 flf2a$ 6 4 6 -1 4
 3x5 font by Richard Kirk (rak@crosfield.co.uk).
 Ported to figlet, and slightly changed (without permission :-})
@@ -657,3 +666,4 @@ by Daniel Cabeza Gras (bardo@dia.fi.upm.es)
 # # @
 ##  @
 #   @@
+```

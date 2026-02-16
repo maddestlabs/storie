@@ -168,10 +168,34 @@ export interface CodeBlock {
   metadata?: Record<string, string>; // e.g., { "on": "init" }
 }
 
+export type WGSLShaderKind = 'compute' | 'vertex' | 'fragment';
+
+export interface WGSLShader {
+  name: string;
+  code: string;
+  kind: WGSLShaderKind;
+  uniforms: string[];          // Parsed uniform field names
+  bindings: number[];          // Detected @binding() numbers
+  workgroupSize: [number, number, number]; // For compute shaders
+}
+
+export type BlobEncoding = 'base64' | 'hex';
+
+export interface BlobBlock {
+  name: string;
+  mime: string;
+  encoding: BlobEncoding;
+  data: string; // encoded payload (e.g. base64), whitespace allowed
+  startLine: number;
+  endLine: number;
+}
+
 export interface MarkdownDocument {
   sections: Section[];
   codeBlocks: CodeBlock[];
   metadata: Record<string, any>;
+  wgslShaders?: WGSLShader[];  // Parsed WGSL shaders from ```wgsl blocks
+  blobBlocks?: BlobBlock[];    // Parsed binary blobs from ```blob blocks
 }
 
 export interface InputEvent {
@@ -183,10 +207,12 @@ export interface InputEvent {
   keyCode?: number;
   text?: string;  // For text input
   
-  // Mouse
+  // Mouse (pixel coordinates - matches DOM/Canvas standard)
   button?: 'left' | 'middle' | 'right';
-  x?: number;
-  y?: number;
+  x?: number;      // Pixel X coordinate (relative to canvas)
+  y?: number;      // Pixel Y coordinate (relative to canvas)
+  cellX?: number;  // Terminal cell X coordinate (for TUI/text-based games)
+  cellY?: number;  // Terminal cell Y coordinate (for TUI/text-based games)
   
   // Modifiers
   mods?: string[];  // ['shift', 'ctrl', 'alt', 'meta']

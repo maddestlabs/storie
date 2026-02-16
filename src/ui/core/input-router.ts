@@ -68,7 +68,8 @@ export class InputRouter {
       hoveredWidget.emit({
         type: 'click',
         widget: hoveredWidget.id,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        data: { x: mousePos.x, y: mousePos.y }
       });
     }
     

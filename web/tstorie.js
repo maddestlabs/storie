@@ -51,9 +51,14 @@ class TStorieTerminal {
         const metrics = this.ctx.measureText('M');
         this.charWidth = Math.ceil(metrics.width);
         
-        // Use fontSize directly for height to avoid gaps
-        // This matches how terminals render without inter-line spacing
-        this.charHeight = this.fontSize;
+        // Use actual font bounding box height to prevent artifacts
+        // Characters can extend beyond fontSize, especially with line spacing
+        if (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent) {
+            this.charHeight = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent);
+        } else {
+            // Fallback: add 25% padding for safety
+            this.charHeight = Math.ceil(this.fontSize * 1.25);
+        }
     }
     
     setFontSize(newSize) {
@@ -409,9 +414,9 @@ class TStorieTerminal {
         const height = Math.max(1, pyNext - py);
         
         // Draw background (always draw to ensure no gaps)
-        // Use integer coordinates to eliminate sub-pixel artifacts
+        // Clear extra pixels above and below to eliminate artifacts from adjacent rows
         this.ctx.fillStyle = `rgb(${bgR}, ${bgG}, ${bgB})`;
-        this.ctx.fillRect(px, py, width, height);
+        this.ctx.fillRect(px, py - 2, width, height + 4);
         
         // If no character, we're done
         if (!ch || ch === '') return;

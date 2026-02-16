@@ -6,25 +6,37 @@
  * STORIE CODE STYLE GUIDE (For AI Assistants & Code Generators)
  * ============================================================================
  * 
- * Use the TWO-BLOCK PATTERN for clean, readable code:
+ * Storie provides THREE ways to create persistent variables:
  * 
- * ✅ PREFERRED:
+ * 1. FRONTMATTER (for document configuration):
+ * ```yaml
+ * ---
+ * playerSpeed: 5
+ * startingHealth: 100
+ * debugMode: true
+ * ---
+ * ```
+ * Access directly: `playerSpeed`, `startingHealth`, `debugMode`
  * 
- * 1. Declare persistent state in raw `js` blocks (no lifecycle annotation):
+ * 2. RAW JS BLOCKS (for runtime state):
  * ```js
  * let score = 0;
  * let playerX = 10;
  * let enemies = [];
  * ```
  * 
- * 2. Use in lifecycle blocks - persistent vars auto-import, locals work normally:
+ * 3. LIFECYCLE BLOCKS use both (persistent vars auto-import, locals work normally):
  * ```js on:update
- * // score and playerX are automatically accessible (persistent)
- * score++;
- * playerX += 5;
+ * // Frontmatter config accessible
+ * const speed = debugMode ? playerSpeed * 2 : playerSpeed;
  * 
- * // velocity is local - doesn't persist (normal JavaScript)
+ * // Persistent vars accessible  
+ * score++;
+ * playerX += speed;
+ * 
+ * // Local vars don't persist (normal JavaScript)
  * const velocity = calculateSpeed();
+ * const bonus = Math.floor(delta * 10);
  * ```
  * 
  * ❌ AVOID (unnecessary boilerplate):
@@ -34,9 +46,10 @@
  * ```
  * 
  * HOW IT WORKS:
+ * - Frontmatter variables → automatically added to persistent scope
  * - Raw `js` blocks: Top-level declarations → persistent scope
  * - Lifecycle blocks (on:*): Auto-wrapped with import/export
- * - Result: Persistent vars accessible, local vars stay local, zero boilerplate
+ * - Result: Config + persistent vars accessible, local vars stay local, zero boilerplate
  * 
  * See docs/CODE_STYLE_GUIDE.md for complete guide.
  * ============================================================================
@@ -56,7 +69,7 @@ export interface SandboxAPI {
   // Terminal text API
   term: {
     write: (x: number, y: number, text: string, fg?: any, bg?: any) => void;
-    clear: () => void;
+    clear: (bgColor?: any) => void;
     layerID: string;
   };
   
@@ -117,11 +130,15 @@ export interface SandboxAPI {
     on: (event: string, callback: Function) => void;
   };
   
-  // Global accessors (for convenience)
-  mouseX: number;
-  mouseY: number;
-  termWidth: number;
-  termHeight: number;
+  // Global accessors (for convenience - eliminates manual coordinate tracking)
+  mouseX: number;        // Pixel X coordinate (default, matches event.x)
+  mouseY: number;        // Pixel Y coordinate (default, matches event.y)
+  mouseCellX: number;    // Cell X coordinate (for terminal/TUI work)
+  mouseCellY: number;    // Cell Y coordinate (for terminal/TUI work)
+  mousePixelX: number;   // Alias for mouseX (pixel coordinates)
+  mousePixelY: number;   // Alias for mouseY (pixel coordinates)
+  termWidth: number;     // Terminal width in cells
+  termHeight: number;    // Terminal height in cells
   
   // Read-only state
   getFrame: () => number;
@@ -148,6 +165,21 @@ export interface SandboxAPI {
     createPanner: () => PannerNode;
     createStereoPanner: () => StereoPannerNode;
     createWaveShaper: () => WaveShaperNode;
+
+    // Seeded SFX helper (built-in chiptone basics)
+    sfx: {
+      names: () => Array<'coin' | 'zap' | 'boom' | 'jump' | '1up' | 'lose' | 'hurt' | 'blip'>;
+      play: (
+        name: 'coin' | 'zap' | 'boom' | 'jump' | '1up' | 'lose' | 'hurt' | 'blip',
+        seed?: number | string,
+        options?: { volume?: number; when?: number }
+      ) => { stop: (when?: number) => void };
+      snippet: (
+        name: 'coin' | 'zap' | 'boom' | 'jump' | '1up' | 'lose' | 'hurt' | 'blip',
+        seed?: number | string,
+        volume?: number
+      ) => string;
+    };
     // Properties
     currentTime: number;
     sampleRate: number;
@@ -196,6 +228,33 @@ export interface SandboxAPI {
     createTexture: (width: number, height: number, format?: GPUTextureFormat) => GPUTexture | null;
   };
   
+  shader: {
+    // WGSL shader management (high-level API)
+    // Set uniform values for a registered shader
+    setUniform: (shaderName: string, uniformName: string, value: number | number[]) => void;
+    // Set the active shader (null to disable)
+    setActive: (shaderName: string | null) => void;
+    // Get the currently active shader name
+    getActive: () => string | null;
+    // Get list of registered shader names
+    list: () => string[];
+    // Check if a shader is registered
+    has: (shaderName: string) => boolean;
+    // Get shader info (kind, uniforms, etc.)
+    info: (shaderName: string) => any;
+    // Shader chain API
+    // Set a chain of shaders for multi-pass rendering (e.g., ['invert', 'bloom', 'crt'])
+    setChain: (shaderNames: string[]) => Promise<boolean>;
+    // Get the currently active shader chain
+    getChain: () => string[];
+    // Clear the active shader chain
+    clearChain: () => void;
+    // Check if there's an active shader chain
+    hasChain: () => boolean;
+    // Get detailed info about the active chain
+    chainInfo: () => any;
+  };
+  
   compositor: {
     // Current mode
     mode: 'auto' | 'manual';
@@ -230,9 +289,138 @@ export interface SandboxAPI {
 
   // Retained-mode terminal UI (TUI)
   tui: any;
+  
+  // Retained-mode graphical UI (GUI)
+  gui: any;
 
   // WebGPU UI (rendered to GPU texture + composited)
   ui: any;
+
+  // Embedded binary blobs (from ```blob blocks)
+  blob: {
+    forDocument?: (documentId: string) => {
+      list: () => string[];
+      has: (name: string) => boolean;
+      get: (name: string) => { name: string; mime: string; encoding: 'base64' | 'hex'; data: string; byteLength: number } | null;
+      base64: (name: string) => string | null;
+      hex: (name: string) => string | null;
+      bytes: (name: string) => Uint8Array | null;
+      text: (name: string, encoding?: string) => string | null;
+    };
+    list: () => string[];
+    has: (name: string) => boolean;
+    get: (name: string) => { name: string; mime: string; encoding: 'base64' | 'hex'; data: string; byteLength: number } | null;
+    base64: (name: string) => string | null;
+    hex: (name: string) => string | null;
+    bytes: (name: string) => Uint8Array | null;
+    text: (name: string, encoding?: string) => string | null;
+  };
+
+  // Embedded ASCII art blocks (from ```ascii name:...)
+  ascii: {
+    forDocument?: (documentId: string) => {
+      list: () => string[];
+      has: (name: string) => boolean;
+      get: (name: string) => { name: string; text: string; lines: string[] } | null;
+      text: (name: string) => string | null;
+      lines: (name: string) => string[] | null;
+    };
+    list: () => string[];
+    has: (name: string) => boolean;
+    get: (name: string) => { name: string; text: string; lines: string[] } | null;
+    text: (name: string) => string | null;
+    lines: (name: string) => string[] | null;
+  };
+
+  // Convenience drawing helper for named ASCII blocks
+  drawAscii: (x: number, y: number, name: string, fg?: any, bg?: any) => void;
+
+  // Embedded FIGlet fonts (from ```figlet name:...)
+  figlet: {
+    forDocument?: (documentId: string) => {
+      list: () => string[];
+      has: (name: string) => boolean;
+      text: (name: string) => string | null;
+      height: (name: string) => number;
+      render: (fontName: string, text: string) => string[];
+      renderChar: (fontName: string, ch: string) => string[];
+    };
+    list: () => string[];
+    has: (name: string) => boolean;
+    text: (name: string) => string | null;
+    height: (name: string) => number;
+    render: (fontName: string, text: string) => string[];
+    renderChar: (fontName: string, ch: string) => string[];
+  };
+
+  // Convenience drawing helper for FIGlet text
+  drawFiglet: (
+    x: number,
+    y: number,
+    fontName: string,
+    text: string,
+    fg?: any,
+    bg?: any,
+    options?: { vertical?: boolean; letterSpacing?: number }
+  ) => void;
+
+  // Embedded ANSI art blocks (from ```ansi name:...)
+  ansi: {
+    forDocument?: (documentId: string) => {
+      list: () => string[];
+      has: (name: string) => boolean;
+      text: (name: string) => string | null;
+      runs: (name: string) => any[] | null;
+      width: (name: string) => number;
+      height: (name: string) => number;
+    };
+    list: () => string[];
+    has: (name: string) => boolean;
+    text: (name: string) => string | null;
+    runs: (name: string) => any[] | null;
+    width: (name: string) => number;
+    height: (name: string) => number;
+  };
+
+  // Convenience drawing helper for ANSI assets
+  drawAnsi: (x: number, y: number, name: string) => void;
+  
+  // 3D Canvas API
+  canvas3D: {
+    enable: () => boolean;
+    disable: () => void;
+    enabled: boolean;
+    available: boolean;
+    currentSection: number | null;
+    controls: {
+      setEnabled: (enabled: boolean) => void;
+      enabled: boolean;
+    };
+    camera: {
+      setPosition: (x: number, y: number, z: number) => void;
+      setRotation: (x: number, y: number, z: number) => void;
+      moveTo: (x: number, y: number, z: number) => void;
+      focusOnSection: (sectionIndex: number | string, distance?: number) => void;
+      focusOnSectionFit: (sectionIndex: number | string, fill?: number) => void;
+      setFOV: (fov: number) => void;
+      setEaseSpeed: (position: number, rotation: number) => void;
+      getPosition: () => { x: number; y: number; z: number };
+      getRotation: () => { x: number; y: number; z: number };
+    };
+    getSectionLayout: (sectionIndex: number) => any;
+    setSectionTransform: (sectionIndex: number, transform: any) => void;
+    setSectionVisible: (sectionIndex: number, visible: boolean) => void;
+    getSectionCount: () => number;
+    config: {
+      setDefaults: (config: any) => void;
+      getDefaults: () => any;
+    };
+
+    layout: {
+      setCallback: (fn: (args: any) => any) => void;
+      clearCallback: () => void;
+    };
+  };
   
   // Input event (available in on:input blocks)
   event?: InputEvent;
@@ -299,13 +487,14 @@ export class ScriptSandbox {
   createCompartment(documentId: string, frontmatter: Record<string, any> = {}): any {
     try {
       // Create persistent scope for this document (shared across all code blocks)
+      // Scope is for USER variables only - API objects live in compartment globals
       const scope: Record<string, any> = {
-        ...frontmatter // Include frontmatter variables
+        ...frontmatter, // Include frontmatter variables
       };
       this.scopes.set(documentId, scope);
       
-      // Capture API for closures
-      const api = this.api;
+      // Capture API reference for use in compartment globals
+      const apiRef = this.api;
       
       // Build compartment globals - start with frontmatter variables exposed directly
       // This matches tstorie's exposeFrontMatterVariables() behavior
@@ -342,27 +531,138 @@ export class ScriptSandbox {
         canvas2d: this.api.canvas2d,
         webgl: this.api.webgl,
         webgpu: this.api.webgpu,
+
+        // WGSL Shader API (high-level shader management)
+        shader: this.api.shader,
         
         // Compositor API (Phase 1-5)
         compositor: this.api.compositor,
 
         // Retained-mode TUI API
         tui: this.api.tui,
+        
+        // Retained-mode GUI API
+        gui: this.api.gui,
 
-        // WebGPU UI API
-        ui: this.api.ui,
+        // Embedded blobs (document-scoped)
+        blob: (this.api as any).blob?.forDocument ? (this.api as any).blob.forDocument(documentId) : (this.api as any).blob,
+
+        // Embedded ASCII blocks (document-scoped)
+        ascii: (this.api as any).ascii?.forDocument ? (this.api as any).ascii.forDocument(documentId) : (this.api as any).ascii,
+
+        // Convenience drawing helper (document-aware)
+        drawAscii: (x: number, y: number, name: string, fg?: any, bg?: any) => {
+          const asciiRef: any = (this.api as any).ascii;
+          const ascii = asciiRef?.forDocument ? asciiRef.forDocument(documentId) : asciiRef;
+          if (!ascii || typeof ascii.lines !== 'function') return;
+          const lines = ascii.lines(name) as string[] | null;
+          if (!lines || !Array.isArray(lines)) return;
+          for (let i = 0; i < lines.length; i++) {
+            this.api.term.write(x, y + i, lines[i] ?? '', fg, bg);
+          }
+        },
+
+        // Embedded FIGlet fonts (document-scoped)
+        figlet: (this.api as any).figlet?.forDocument ? (this.api as any).figlet.forDocument(documentId) : (this.api as any).figlet,
+
+        // Convenience drawing helper (document-aware)
+        drawFiglet: (x: number, y: number, fontName: string, text: string, fg?: any, bg?: any, options?: { vertical?: boolean; letterSpacing?: number }) => {
+          const figletRef: any = (this.api as any).figlet;
+          const figlet = figletRef?.forDocument ? figletRef.forDocument(documentId) : figletRef;
+          if (!figlet) return;
+
+          const vertical = !!options?.vertical;
+          const letterSpacing = Math.max(0, options?.letterSpacing ?? 0);
+
+          if (vertical) {
+            let currentY = y;
+            for (const ch of Array.from(String(text ?? ''))) {
+              const lines = typeof figlet.renderChar === 'function' ? (figlet.renderChar(fontName, ch) as string[]) : [];
+              for (let i = 0; i < (lines?.length ?? 0); i++) {
+                this.api.term.write(x, currentY + i, lines[i] ?? '', fg, bg);
+              }
+              currentY += (typeof figlet.height === 'function' ? figlet.height(fontName) : (lines?.length ?? 0)) + letterSpacing;
+            }
+            return;
+          }
+
+          if (letterSpacing > 0 && typeof figlet.renderChar === 'function') {
+            let currentX = x;
+            const height = (typeof figlet.height === 'function') ? figlet.height(fontName) : 0;
+            for (const ch of Array.from(String(text ?? ''))) {
+              const lines = figlet.renderChar(fontName, ch) as string[];
+              for (let i = 0; i < (lines?.length ?? height); i++) {
+                this.api.term.write(currentX, y + i, (lines?.[i] ?? ''), fg, bg);
+              }
+              const w = Math.max(0, ...(lines ?? []).map((l: string) => (l ?? '').length));
+              currentX += w + letterSpacing;
+            }
+            return;
+          }
+
+          const lines = (typeof figlet.render === 'function') ? (figlet.render(fontName, text) as string[]) : [];
+          if (!lines || !Array.isArray(lines)) return;
+          for (let i = 0; i < lines.length; i++) {
+            this.api.term.write(x, y + i, lines[i] ?? '', fg, bg);
+          }
+        },
+
+        // Embedded ANSI art (document-scoped)
+        ansi: (this.api as any).ansi?.forDocument ? (this.api as any).ansi.forDocument(documentId) : (this.api as any).ansi,
+
+        // Convenience drawing helper (document-aware)
+        drawAnsi: (x: number, y: number, name: string) => {
+          const ansiRef: any = (this.api as any).ansi;
+          const ansi = ansiRef?.forDocument ? ansiRef.forDocument(documentId) : ansiRef;
+          if (!ansi || typeof ansi.runs !== 'function') return;
+          const lines = ansi.runs(name) as any[] | null;
+          if (!lines || !Array.isArray(lines)) return;
+          for (let row = 0; row < lines.length; row++) {
+            const runs = lines[row] as any[];
+            if (!runs || !Array.isArray(runs)) continue;
+            let cx = x;
+            for (const run of runs) {
+              const text = String(run?.text ?? '');
+              if (!text) continue;
+              this.api.term.write(cx, y + row, text, run?.fg, run?.bg);
+              cx += text.length;
+            }
+          }
+        },
+
+        // WebGPU UI API (document-aware wrapper for helpers that need doc context)
+        ui: (() => {
+          const uiRef: any = (this.api as any).ui;
+          if (!uiRef || typeof uiRef !== 'object') return uiRef;
+          if (typeof uiRef.loadImageFromBlob !== 'function') return uiRef;
+          const ui = Object.create(uiRef);
+          ui.loadImageFromBlob = (name: string) => uiRef.loadImageFromBlob(name, documentId);
+          return ui;
+        })(),
         
-        // Global accessors (as functions, not getters, for SES compatibility)
-        getMouseX: () => api.mouseX,
-        getMouseY: () => api.mouseY,
-        getTermWidth: () => api.termWidth,
-        getTermHeight: () => api.termHeight,
+        // 3D Canvas API
+        canvas3D: this.api.canvas3D,
         
-        // Also expose as properties for convenience (but these might not work in strict SES)
-        get mouseX() { return api.mouseX; },
-        get mouseY() { return api.mouseY; },
-        get termWidth() { return api.termWidth; },
-        get termHeight() { return api.termHeight; },
+        // Mouse/terminal accessors - provide BOTH properties (getters) and functions
+        // Use captured apiRef to avoid this binding issues in SES
+        get mouseX() { return apiRef.mouseX; },
+        get mouseY() { return apiRef.mouseY; },
+        get mouseCellX() { return apiRef.mouseCellX; },
+        get mouseCellY() { return apiRef.mouseCellY; },
+        get mousePixelX() { return apiRef.mousePixelX; },
+        get mousePixelY() { return apiRef.mousePixelY; },
+        get termWidth() { return apiRef.termWidth; },
+        get termHeight() { return apiRef.termHeight; },
+        
+        // Function versions - same as getters but explicit
+        getMouseX: () => apiRef.mouseX,
+        getMouseY: () => apiRef.mouseY,
+        getMouseCellX: () => apiRef.mouseCellX,
+        getMouseCellY: () => apiRef.mouseCellY,
+        getMousePixelX: () => apiRef.mousePixelX,
+        getMousePixelY: () => apiRef.mousePixelY,
+        getTermWidth: () => apiRef.termWidth,
+        getTermHeight: () => apiRef.termHeight,
         
         // Read-only state accessors
         getFrame: this.api.getFrame,

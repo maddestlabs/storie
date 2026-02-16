@@ -3,7 +3,9 @@
  * Sections are hierarchical based on heading levels (h1-h6)
  */
 
-import type { Section, CodeBlock, MarkdownDocument } from './types.js';
+import type { Section, CodeBlock, MarkdownDocument, BlobBlock, BlobEncoding } from './types.js';
+import { expandMagicBlocks } from './magic.js';
+import { extractWGSLBlocks } from './wgsl-parser.js';
 
 interface HeadingMatch {
   level: number;
@@ -11,16 +13,58 @@ interface HeadingMatch {
   line: number;
 }
 
-export function parseMarkdown(source: string): MarkdownDocument {
-  const sections = extractSections(source);
-  const codeBlocks = extractCodeBlocks(source);
-  const metadata = extractFrontmatter(source);
+export async function parseMarkdown(source: string): Promise<MarkdownDocument> {
+  // Step 1: Process magic blocks FIRST - they expand into markdown content
+  const expandedSource = await expandMagicBlocks(source);
+  
+  // Step 2: Extract WGSL shaders AFTER magic expansion (so shaders can be compressed)
+  const wgslShaders = extractWGSLBlocks(expandedSource);
+  
+  // Step 3: Extract normal markdown elements
+  const sections = extractSections(expandedSource);
+  const codeBlocks = extractCodeBlocks(expandedSource);
+  const blobBlocks = extractBlobBlocks(codeBlocks);
+  const metadata = extractFrontmatter(expandedSource);
 
   return {
     sections,
     codeBlocks,
-    metadata
+    metadata,
+    wgslShaders,
+    blobBlocks
   };
+}
+
+function extractBlobBlocks(codeBlocks: CodeBlock[]): BlobBlock[] {
+  const out: BlobBlock[] = [];
+
+  for (const block of codeBlocks) {
+    if (block.lang !== 'blob') continue;
+
+    const name = String(block.metadata?.name ?? '').trim();
+    if (!name) {
+      // Skip unnamed blobs.
+      continue;
+    }
+
+    const mime = String(block.metadata?.mime ?? 'application/octet-stream').trim() || 'application/octet-stream';
+    const encoding = String(block.metadata?.enc ?? 'base64').trim().toLowerCase() as BlobEncoding;
+    if (encoding !== 'base64' && encoding !== 'hex') {
+      continue;
+    }
+
+    // Keep payload as-is; consumers can strip whitespace when decoding.
+    out.push({
+      name,
+      mime,
+      encoding,
+      data: block.code,
+      startLine: block.startLine,
+      endLine: block.endLine
+    });
+  }
+
+  return out;
 }
 
 /**
@@ -30,9 +74,34 @@ function extractSections(source: string): Section[] {
   const lines = source.split('\n');
   const headings: HeadingMatch[] = [];
 
+  // Detect YAML frontmatter range so we don't accidentally treat the closing
+  // '---' as a Setext underline (e.g. "key: value\n---").
+  let frontmatterEnd = -1;
+  if (lines[0]?.trim() === '---') {
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i].trim() === '---') {
+        frontmatterEnd = i;
+        break;
+      }
+    }
+  }
+
+  // Track fenced code blocks so headings inside fences are ignored.
+  let inFence = false;
+
   // Find all headings
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+
+    // Toggle fenced code blocks
+    if (line.trim().startsWith('```')) {
+      inFence = !inFence;
+      continue;
+    }
+
+    // Skip frontmatter and fenced code
+    if (inFence) continue;
+    if (frontmatterEnd >= 0 && i <= frontmatterEnd) continue;
     
     // ATX-style headings (# Heading)
     const atxMatch = line.match(/^(#{1,6})\s+(.+)$/);
@@ -47,6 +116,9 @@ function extractSections(source: string): Section[] {
 
     // Setext-style headings (underlined with = or -)
     if (i > 0 && lines[i - 1].trim().length > 0) {
+      if (frontmatterEnd >= 0 && i - 1 <= frontmatterEnd) {
+        continue;
+      }
       if (/^=+$/.test(line.trim())) {
         headings.push({
           level: 1,
@@ -163,6 +235,21 @@ function extractCodeBlocks(source: string): CodeBlock[] {
     } else if (inCodeBlock && currentBlock) {
       currentBlock.lines.push(line);
     }
+  }
+
+  // If the file ends while still inside a fenced block, emit it anyway.
+  // This makes the parser more robust for large embedded assets.
+  if (inCodeBlock && currentBlock) {
+    const block: CodeBlock = {
+      lang: currentBlock.lang,
+      code: currentBlock.lines.join('\n'),
+      startLine: currentBlock.startLine,
+      endLine: lines.length - 1
+    };
+    if (Object.keys(currentBlock.metadata).length > 0) {
+      block.metadata = currentBlock.metadata;
+    }
+    codeBlocks.push(block);
   }
 
   return codeBlocks;

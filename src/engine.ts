@@ -13,12 +13,46 @@ import { parseMarkdown } from './markdown.js';
 import { getTheme, applyTheme } from './themes.js';
 import { ModuleLoader } from './modules/loader.js';
 import { createTUIAPI } from './tui-api.js';
+import { createGUIAPI } from './gui-api.js';
 import { WebGPUUIRenderer } from './ui/webgpu-ui-renderer.js';
+import { parseMarkdownLite } from './ui/document/markdown-lite.js';
+import { layoutMarkdownDocument } from './ui/document/layout.js';
+import type { LinkRegion, MarkdownStyle } from './ui/document/types.js';
+import { ShaderManager } from './shader-manager.js';
+import { ShaderChainManager } from './shader-chain.js';
+import { Canvas3DRenderer } from './canvas3d-renderer.js';
+import { parseFIGfont, renderFigletCharLines, renderFigletLines, measureFigletLinesWidth, type FigletFont } from './figlet.js';
+import { parseAnsiToRuns, type AnsiParsed, type AnsiRun } from './ansi.js';
+import {
+  createCamera3D,
+  updateCamera3D,
+  createSection3DLayouts,
+  getDefaultCanvas3DConfig,
+  focusOnSection,
+  focusOnSectionFit,
+  getCameraViewMatrix,
+  getCameraProjectionMatrix,
+  mat4Multiply,
+  mat4Invert,
+  mat4FromTransform,
+  mat4TransformVec4,
+  mat4TransformPoint,
+  mat4TransformDirection,
+  vec3Normalize,
+  vec3Sub,
+  vec3Add,
+  vec3Scale,
+  vec3Length,
+  type Camera3D,
+  type Section3DLayout,
+  type Canvas3DConfig
+} from './canvas3d.js';
 import type { ModuleResolverConfig } from './modules/types.js';
 import type { UserScript, Color, InputEvent, ThemeColors, ThemeStyleSheet, NamedStyle } from './types.js';
 import { KEY } from './types.js';
 import { ColorUtils } from './types.js';
 import type { SandboxAPI } from './sandbox.js';
+import { getSfxPresetNames, playSfx, sfxSnippet } from './audio/sfx.js';
 
 export interface EngineConfig {
   width?: number;
@@ -39,6 +73,7 @@ export class StorieEngine {
   private renderer: Renderer;
   private compositor: Compositor | null = null;
   private sandbox: ScriptSandbox;
+  private api!: SandboxAPI;  // User API (initialized in constructor)
   
   // Native browser APIs (shared instances)
   private audioContext: AudioContext;
@@ -49,6 +84,66 @@ export class StorieEngine {
 
   // WebGPU UI (optional)
   private webgpuUIRenderer: WebGPUUIRenderer | null = null;
+  private sectionWebGPUUIRenderer: WebGPUUIRenderer | null = null;
+  
+  // WebGPU shader management
+  private shaderManager: ShaderManager | null = null;
+  private shaderChainManager: ShaderChainManager | null = null;
+
+  // Cache the last terminal cellSize pushed to shaders to avoid redundant updates.
+  private lastShaderCellSize: { w: number; h: number } | null = null;
+  
+  // Deferred shader chain (applied after WebGPU init)
+  private pendingShaderChain: { chainStr: string; source: string } | null = null;
+  
+  // 3D Canvas system
+  private canvas3DRenderer: Canvas3DRenderer | null = null;
+  private camera3D: Camera3D | null = null;
+  private section3DLayouts: Section3DLayout[] = [];
+
+  private pending3DCameraFocus:
+    | { kind: 'focus'; sectionIndex: number | string; distance: number }
+    | { kind: 'fit'; sectionIndex: number | string; fill: number }
+    | null = null;
+
+  // Last focus request that was actually applied (used to re-frame on resize).
+  private lastApplied3DCameraFocus:
+    | { kind: 'focus'; sectionIndex: number; distance: number }
+    | { kind: 'fit'; sectionIndex: number; fill: number }
+    | null = null;
+  private canvas3DConfig: Canvas3DConfig = getDefaultCanvas3DConfig();
+  private canvas3DEnabled: boolean = false;
+
+  private canvas3DLayoutCallback: ((args: {
+    sectionIndex: number;
+    title: string;
+    layout: Section3DLayout;
+  }) =>
+    | {
+        position?: { x: number; y: number; z: number };
+        rotation?: { x: number; y: number; z: number }; // degrees
+        scale?: { x: number; y: number; z: number };
+        width?: number;
+        height?: number;
+        visible?: boolean;
+        navigable?: boolean;
+      }
+    | void) | null = null;
+
+  // 3D interaction state (hover + basic navigation controls)
+  private canvas3DControlsEnabled: boolean = false;
+  private mouseLookActive: boolean = false;
+  private mouseLookLastX: number = 0;
+  private mouseLookLastY: number = 0;
+
+  // 3D link-centric interaction (canvas.nim parity)
+  private hovered3DLink: { sectionIndex: number; linkIndex: number } | null = null;
+  private focused3DLink: { sectionIndex: number; linkIndex: number } | null = null;
+  private current3DSectionIndex: number | null = null;
+
+  // 3D section texture rasterization cache
+  private sectionTextureCache: Map<number, { width: number; height: number }> = new Map();
+  private sectionLinkRegionsCache: Map<number, LinkRegion[]> = new Map();
   
   // Theme system
   private currentTheme: ThemeColors;
@@ -82,6 +177,10 @@ export class StorieEngine {
     this.canvas = canvas;
     this.width = config.width || 80;
     this.height = config.height || 24;
+
+    // Camera state should exist even before WebGPU initializes so user code can
+    // configure it during on:init without worrying about timing.
+    this.camera3D = createCamera3D();
     
     // Initialize theme system
     this.currentTheme = getTheme('neotopia');
@@ -93,6 +192,8 @@ export class StorieEngine {
     
     // Initialize systems
     this.layers = new LayerStack(this.width, this.height);
+    // Ensure the default terminal buffers start with the theme background (not hard-coded black).
+    this.layers.clearAll(this.currentTheme.bg);
     this.input = new InputManager(canvas);
     
     // Try WebGPU first (unless explicitly disabled), fallback to Canvas2D
@@ -122,6 +223,8 @@ export class StorieEngine {
     
     // Create sandbox with API
     const api = this.createUserAPI();
+    this.api = api;  // Store api for later use
+
     this.sandbox = new ScriptSandbox(api);
     
     // Set up input event listeners
@@ -186,15 +289,19 @@ export class StorieEngine {
     this.compositor = new Compositor(device, this.canvas);
     await this.compositor.init();
     
-    // Register terminal layer (from WebGPU renderer)
+    // Register terminal layer (from WebGPU renderer).
+    // IMPORTANT: WebGPURenderer may create its render texture lazily (e.g. on first render()).
+    // If we only register the layer when the texture exists, the compositor may end up with
+    // *no* terminal layer and thus render a blank screen.
     const terminalTexture = this.renderer.getRenderTexture();
-    if (terminalTexture) {
-      this.compositor.registerLayer('terminal', {
-        texture: terminalTexture,
-        width: this.canvas.width,
-        height: this.canvas.height,
-        zIndex: 0  // Terminal at back
-      });
+    this.compositor.registerLayer('terminal', {
+      texture: terminalTexture ?? undefined,
+      width: this.canvas.width,
+      height: this.canvas.height,
+      zIndex: 0  // Terminal at back
+    });
+    if (!terminalTexture) {
+      console.warn('[Compositor] Terminal render texture not ready yet; will attach on first render/resize');
     }
     
     // Canvas2D layer is registered lazily on first use (see ensureCanvas2D()).
@@ -211,9 +318,6 @@ export class StorieEngine {
     if (!device) return null;
 
     const atlas = this.renderer.getAtlas();
-    // Note: atlas GPU resources may not be ready yet (font loading / init timing).
-    // The UI renderer can still render rects; text rendering will begin once the
-    // atlas texture + sampler exist (checked inside WebGPUUIRenderer.flush()).
 
     const ui = new WebGPUUIRenderer(device, atlas, this.canvas.width, this.canvas.height);
     this.webgpuUIRenderer = ui;
@@ -264,6 +368,15 @@ export class StorieEngine {
       
       this.webgpuDevice = await adapter.requestDevice();
       console.log('✓ WebGPU device created for user API');
+      
+      // Initialize shader manager
+      this.shaderManager = new ShaderManager(this.webgpuDevice);
+      console.log('✓ ShaderManager initialized');
+      
+      // Initialize shader chain manager
+      this.shaderChainManager = new ShaderChainManager(this.shaderManager, this.webgpuDevice);
+      console.log('✓ ShaderChainManager initialized');
+      
       return true;
     } catch (error) {
       console.error('Failed to initialize WebGPU:', error);
@@ -277,6 +390,164 @@ export class StorieEngine {
     // Need to capture 'this' for proper binding
     const layers = this.layers;
     const engine = this; // Capture for use in getters
+    let nextUIImageId = 1;
+
+    const MAX_BLOB_BYTES = 8 * 1024 * 1024;
+
+    const getBlobStore = (documentId?: string): Map<string, { name: string; mime: string; encoding: 'base64' | 'hex'; data: string; bytes?: Uint8Array }> | null => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId) as any;
+      return (doc && doc._blobStore) ? (doc._blobStore as Map<string, any>) : null;
+    };
+
+    const getAsciiStore = (documentId?: string): Map<string, { name: string; text: string; lines?: string[] }> | null => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId) as any;
+      return (doc && doc._asciiStore) ? (doc._asciiStore as Map<string, any>) : null;
+    };
+
+    const getFigletStore = (documentId?: string): Map<string, { name: string; text: string; font?: FigletFont }> | null => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId) as any;
+      return (doc && doc._figletStore) ? (doc._figletStore as Map<string, any>) : null;
+    };
+
+    const getAnsiStore = (documentId?: string): Map<string, { name: string; text: string; tabSize: number; parsed?: AnsiParsed }> | null => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId) as any;
+      return (doc && doc._ansiStore) ? (doc._ansiStore as Map<string, any>) : null;
+    };
+
+    const estimateBase64Bytes = (b64: string): number => {
+      const s = b64.replace(/\s+/g, '');
+      const padding = s.endsWith('==') ? 2 : s.endsWith('=') ? 1 : 0;
+      return Math.max(0, Math.floor((s.length * 3) / 4) - padding);
+    };
+
+    const normalizeHex = (hex: string): string => {
+      // Keep only hex digits; tolerate whitespace, commas, underscores, 0x prefixes, etc.
+      // This makes it safe to paste formatted/column-wrapped hex dumps.
+      return hex
+        .replace(/0x/gi, '')
+        .replace(/[^0-9a-f]/gi, '')
+        .trim();
+    };
+
+    const estimateHexBytes = (hex: string): number => {
+      const s = normalizeHex(hex);
+      return Math.floor(s.length / 2);
+    };
+
+    const decodeBase64ToBytes = (b64: string): Uint8Array | undefined => {
+      const clean = b64.replace(/\s+/g, '');
+      const est = estimateBase64Bytes(clean);
+      if (est <= 0) return new Uint8Array(0);
+      if (est > MAX_BLOB_BYTES) {
+        console.warn(`[blob] Refusing to decode blob larger than ${MAX_BLOB_BYTES} bytes (estimated ${est}).`);
+        return undefined;
+      }
+      try {
+        const bin = atob(clean);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 0xFF;
+        return out;
+      } catch (e) {
+        console.warn('[blob] Base64 decode failed:', e);
+        return undefined;
+      }
+    };
+
+    const decodeHexToBytes = (hex: string): Uint8Array | undefined => {
+      const clean = normalizeHex(hex);
+      if (clean.length === 0) return new Uint8Array(0);
+      if (clean.length % 2 !== 0) {
+        console.warn('[blob] Hex decode failed: odd-length hex string');
+        return undefined;
+      }
+
+      const est = estimateHexBytes(clean);
+      if (est > MAX_BLOB_BYTES) {
+        console.warn(`[blob] Refusing to decode blob larger than ${MAX_BLOB_BYTES} bytes (estimated ${est}).`);
+        return undefined;
+      }
+
+      const out = new Uint8Array(est);
+      for (let i = 0; i < est; i++) {
+        const byteStr = clean.slice(i * 2, i * 2 + 2);
+        const v = Number.parseInt(byteStr, 16);
+        if (!Number.isFinite(v) || Number.isNaN(v)) {
+          console.warn('[blob] Hex decode failed: invalid byte');
+          return undefined;
+        }
+        out[i] = v & 0xFF;
+      }
+      return out;
+    };
+
+    const estimateBlobBytes = (entry: { encoding: 'base64' | 'hex'; data: string }): number => {
+      return entry.encoding === 'hex' ? estimateHexBytes(entry.data) : estimateBase64Bytes(entry.data);
+    };
+
+    const decodeBlobToBytes = (entry: { encoding: 'base64' | 'hex'; data: string }): Uint8Array | undefined => {
+      return entry.encoding === 'hex' ? decodeHexToBytes(entry.data) : decodeBase64ToBytes(entry.data);
+    };
+
+    type UIBlobImageCache = {
+      resolved: Map<string, string>;
+      inFlight: Map<string, Promise<string | null>>;
+      failed: Set<string>;
+    };
+
+    const getUIBlobImageCache = (documentId?: string): UIBlobImageCache | null => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId) as any;
+      if (!doc) return null;
+
+      if (!doc._uiBlobImageCache) {
+        doc._uiBlobImageCache = {
+          resolved: new Map<string, string>(),
+          inFlight: new Map<string, Promise<string | null>>(),
+          failed: new Set<string>()
+        } satisfies UIBlobImageCache;
+      }
+      return doc._uiBlobImageCache as UIBlobImageCache;
+    };
+
+    const loadImageFromBlobInternal = async (name: string, documentId?: string): Promise<string | null> => {
+      const ui = engine.ensureWebGPUUI();
+      if (!ui) return null;
+
+      const store = getBlobStore(documentId);
+      if (!store) return null;
+      const entry = store.get(String(name));
+      if (!entry) return null;
+
+      if (!entry.bytes) {
+        entry.bytes = decodeBlobToBytes(entry);
+      }
+      if (!entry.bytes) return null;
+
+      const mime = entry.mime || 'application/octet-stream';
+      const bytes = new Uint8Array(entry.bytes);
+      const blob = new Blob([bytes], { type: mime });
+      let bitmap: ImageBitmap | null = null;
+      try {
+        bitmap = await createImageBitmap(blob);
+        const id = `img_${nextUIImageId++}`;
+        ui.registerImage(id, bitmap);
+        return id;
+      } catch (e) {
+        console.warn(`[ui.loadImageFromBlob] Failed to decode image "${String(name)}":`, e);
+        return null;
+      } finally {
+        try { bitmap?.close(); } catch { /* ignore */ }
+      }
+    };
     
     return {
       // Terminal text API
@@ -285,9 +556,9 @@ export class StorieEngine {
           const layer = this.layers.getActive();
           layer.write(x, y, text, fg, bg);
         },
-        clear: () => {
+        clear: (bgColor?: Color) => {
           const layer = this.layers.getActive();
-          layer.clear();
+          layer.clear(bgColor ?? this.currentTheme.bg);
         },
         get layerID(): string {
           return layers.activeLayerId;
@@ -384,7 +655,19 @@ export class StorieEngine {
                 if (bg !== undefined) cell.bg = bg;
               }
             } as any)),
-        () => this.layers.getActive().buffer
+        () => this.layers.getActive().buffer,
+        (name: string) => this.getStyle(name)
+      ),
+      
+      // Retained-mode GUI API
+      gui: createGUIAPI(
+        () => {
+          const atlas = (this.renderer instanceof WebGPURenderer) ? this.renderer.getAtlas() : null;
+          return {
+            charWidth: atlas?.getCharWidth() ?? 10,
+            charHeight: atlas?.getCharHeight() ?? 16
+          };
+        }
       ),
       
       // Theme API
@@ -418,19 +701,625 @@ export class StorieEngine {
           this.moduleLoader.on(event, callback);
         }
       },
+
+      // Embedded binary blobs (from ```blob blocks)
+      blob: {
+        forDocument: (documentId: string) => {
+          const docId = String(documentId);
+          return {
+            list: () => {
+              const store = getBlobStore(docId);
+              if (!store) return [];
+              return Array.from(store.keys());
+            },
+            has: (name: string) => {
+              const store = getBlobStore(docId);
+              if (!store) return false;
+              return store.has(String(name));
+            },
+            get: (name: string) => {
+              const store = getBlobStore(docId);
+              if (!store) return null;
+              const key = String(name);
+              const entry = store.get(key);
+              if (!entry) return null;
+              return {
+                name: entry.name,
+                mime: entry.mime,
+                encoding: entry.encoding,
+                data: entry.data,
+                byteLength: estimateBlobBytes(entry)
+              };
+            },
+            base64: (name: string) => {
+              const store = getBlobStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              return entry.encoding === 'base64' ? entry.data : null;
+            },
+            hex: (name: string) => {
+              const store = getBlobStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              return entry.encoding === 'hex' ? entry.data : null;
+            },
+            bytes: (name: string) => {
+              const store = getBlobStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              if (!entry.bytes) {
+                entry.bytes = decodeBlobToBytes(entry);
+              }
+              return entry.bytes ?? null;
+            },
+            text: (name: string, encoding: string = 'utf-8') => {
+              const store = getBlobStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              if (!entry.bytes) {
+                entry.bytes = decodeBlobToBytes(entry);
+              }
+              if (!entry.bytes) return null;
+              try {
+                const decoder = new TextDecoder(encoding);
+                return decoder.decode(entry.bytes);
+              } catch (e) {
+                console.warn('[blob] Text decode failed:', e);
+                return null;
+              }
+            }
+          };
+        },
+        list: () => {
+          const store = getBlobStore();
+          if (!store) return [];
+          return Array.from(store.keys());
+        },
+        has: (name: string) => {
+          const store = getBlobStore();
+          if (!store) return false;
+          return store.has(String(name));
+        },
+        get: (name: string) => {
+          const store = getBlobStore();
+          if (!store) return null;
+          const key = String(name);
+          const entry = store.get(key);
+          if (!entry) return null;
+          return {
+            name: entry.name,
+            mime: entry.mime,
+            encoding: entry.encoding,
+            data: entry.data,
+            byteLength: estimateBlobBytes(entry)
+          };
+        },
+        base64: (name: string) => {
+          const store = getBlobStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          return entry.encoding === 'base64' ? entry.data : null;
+        },
+        hex: (name: string) => {
+          const store = getBlobStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          return entry.encoding === 'hex' ? entry.data : null;
+        },
+        bytes: (name: string) => {
+          const store = getBlobStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          if (!entry.bytes) {
+            entry.bytes = decodeBlobToBytes(entry);
+          }
+              return entry.bytes ?? null;
+        },
+        text: (name: string, encoding: string = 'utf-8') => {
+          const store = getBlobStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          if (!entry.bytes) {
+            entry.bytes = decodeBlobToBytes(entry);
+          }
+          if (!entry.bytes) return null;
+          try {
+            const decoder = new TextDecoder(encoding);
+            return decoder.decode(entry.bytes);
+          } catch (e) {
+            console.warn('[blob] Text decode failed:', e);
+            return null;
+          }
+        }
+      },
+
+      // Embedded ASCII art blocks (from ```ascii name:...)
+      ascii: {
+        forDocument: (documentId: string) => {
+          const docId = String(documentId);
+          return {
+            list: () => {
+              const store = getAsciiStore(docId);
+              if (!store) return [];
+              return Array.from(store.keys());
+            },
+            has: (name: string) => {
+              const store = getAsciiStore(docId);
+              if (!store) return false;
+              return store.has(String(name));
+            },
+            get: (name: string) => {
+              const store = getAsciiStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              const text = String(entry.text ?? '');
+              const lines = Array.isArray(entry.lines) ? entry.lines : text.split(/\r?\n/);
+              return { name: entry.name, text, lines };
+            },
+            text: (name: string) => {
+              const store = getAsciiStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              return String(entry.text ?? '');
+            },
+            lines: (name: string) => {
+              const store = getAsciiStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              if (!entry.lines) entry.lines = String(entry.text ?? '').split(/\r?\n/);
+              return entry.lines;
+            }
+          };
+        },
+        list: () => {
+          const store = getAsciiStore();
+          if (!store) return [];
+          return Array.from(store.keys());
+        },
+        has: (name: string) => {
+          const store = getAsciiStore();
+          if (!store) return false;
+          return store.has(String(name));
+        },
+        get: (name: string) => {
+          const store = getAsciiStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          const text = String(entry.text ?? '');
+          const lines = Array.isArray(entry.lines) ? entry.lines : text.split(/\r?\n/);
+          return { name: entry.name, text, lines };
+        },
+        text: (name: string) => {
+          const store = getAsciiStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          return String(entry.text ?? '');
+        },
+        lines: (name: string) => {
+          const store = getAsciiStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          if (!entry.lines) entry.lines = String(entry.text ?? '').split(/\r?\n/);
+          return entry.lines;
+        }
+      },
+
+      // Embedded FIGlet fonts (from ```figlet name:...)
+      figlet: {
+        forDocument: (documentId: string) => {
+          const docId = String(documentId);
+          const getStore = () => getFigletStore(docId);
+
+          const ensureFont = (name: string): FigletFont | null => {
+            const store = getStore();
+            if (!store) return null;
+            const entry = store.get(String(name));
+            if (!entry) return null;
+            if (!entry.font) {
+              try {
+                entry.font = parseFIGfont(String(entry.text ?? ''), String(entry.name ?? name));
+              } catch (e) {
+                console.warn('[figlet] Failed to parse font:', name, e);
+                return null;
+              }
+            }
+            return entry.font ?? null;
+          };
+
+          return {
+            list: () => {
+              const store = getStore();
+              if (!store) return [];
+              return Array.from(store.keys());
+            },
+            has: (name: string) => {
+              const store = getStore();
+              if (!store) return false;
+              return store.has(String(name));
+            },
+            text: (name: string) => {
+              const store = getStore();
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              return String(entry.text ?? '');
+            },
+            height: (name: string) => {
+              const font = ensureFont(String(name));
+              return font ? Math.max(0, font.height | 0) : 0;
+            },
+            render: (fontName: string, text: string) => {
+              const font = ensureFont(String(fontName));
+              if (!font) return [];
+              return renderFigletLines(font, String(text ?? ''));
+            },
+            renderChar: (fontName: string, ch: string) => {
+              const font = ensureFont(String(fontName));
+              if (!font) return [];
+              return renderFigletCharLines(font, String(ch ?? ' '));
+            }
+          };
+        },
+        list: () => {
+          const store = getFigletStore();
+          if (!store) return [];
+          return Array.from(store.keys());
+        },
+        has: (name: string) => {
+          const store = getFigletStore();
+          if (!store) return false;
+          return store.has(String(name));
+        },
+        text: (name: string) => {
+          const store = getFigletStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          return String(entry.text ?? '');
+        },
+        height: (name: string) => {
+          const store = getFigletStore();
+          if (!store) return 0;
+          const entry = store.get(String(name));
+          if (!entry) return 0;
+          if (!entry.font) {
+            try {
+              entry.font = parseFIGfont(String(entry.text ?? ''), String(entry.name ?? name));
+            } catch {
+              return 0;
+            }
+          }
+          return entry.font ? Math.max(0, entry.font.height | 0) : 0;
+        },
+        render: (fontName: string, text: string) => {
+          const store = getFigletStore();
+          if (!store) return [];
+          const entry = store.get(String(fontName));
+          if (!entry) return [];
+          if (!entry.font) {
+            try {
+              entry.font = parseFIGfont(String(entry.text ?? ''), String(entry.name ?? fontName));
+            } catch (e) {
+              console.warn('[figlet] Failed to parse font:', fontName, e);
+              return [];
+            }
+          }
+          return entry.font ? renderFigletLines(entry.font, String(text ?? '')) : [];
+        },
+        renderChar: (fontName: string, ch: string) => {
+          const store = getFigletStore();
+          if (!store) return [];
+          const entry = store.get(String(fontName));
+          if (!entry) return [];
+          if (!entry.font) {
+            try {
+              entry.font = parseFIGfont(String(entry.text ?? ''), String(entry.name ?? fontName));
+            } catch (e) {
+              console.warn('[figlet] Failed to parse font:', fontName, e);
+              return [];
+            }
+          }
+          return entry.font ? renderFigletCharLines(entry.font, String(ch ?? ' ')) : [];
+        }
+      },
+
+      // Embedded ANSI art (from ```ansi name:...)
+      ansi: {
+        forDocument: (documentId: string) => {
+          const docId = String(documentId);
+          const getStore = () => getAnsiStore(docId);
+          return {
+            list: () => {
+              const store = getStore();
+              if (!store) return [];
+              return Array.from(store.keys());
+            },
+            has: (name: string) => {
+              const store = getStore();
+              if (!store) return false;
+              return store.has(String(name));
+            },
+            text: (name: string) => {
+              const store = getStore();
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              return String(entry.text ?? '');
+            },
+            runs: (name: string): AnsiRun[][] | null => {
+              const store = getStore();
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              if (!entry.parsed) {
+                const defaultStyle = engine.getStyle('default');
+                entry.parsed = parseAnsiToRuns(String(entry.text ?? ''), {
+                  defaultFg: ColorUtils.from(defaultStyle.fg),
+                  defaultBg: engine.currentTheme.bg,
+                  tabSize: entry.tabSize ?? 4,
+                  bracketSGR: true
+                });
+              }
+              return entry.parsed.lines;
+            },
+            width: (name: string) => {
+              const store = getStore();
+              if (!store) return 0;
+              const entry = store.get(String(name));
+              if (!entry) return 0;
+              if (!entry.parsed) {
+                const defaultStyle = engine.getStyle('default');
+                entry.parsed = parseAnsiToRuns(String(entry.text ?? ''), {
+                  defaultFg: ColorUtils.from(defaultStyle.fg),
+                  defaultBg: engine.currentTheme.bg,
+                  tabSize: entry.tabSize ?? 4,
+                  bracketSGR: true
+                });
+              }
+              return entry.parsed.width;
+            },
+            height: (name: string) => {
+              const store = getStore();
+              if (!store) return 0;
+              const entry = store.get(String(name));
+              if (!entry) return 0;
+              if (!entry.parsed) {
+                const defaultStyle = engine.getStyle('default');
+                entry.parsed = parseAnsiToRuns(String(entry.text ?? ''), {
+                  defaultFg: ColorUtils.from(defaultStyle.fg),
+                  defaultBg: engine.currentTheme.bg,
+                  tabSize: entry.tabSize ?? 4,
+                  bracketSGR: true
+                });
+              }
+              return entry.parsed.height;
+            }
+          };
+        },
+        list: () => {
+          const store = getAnsiStore();
+          if (!store) return [];
+          return Array.from(store.keys());
+        },
+        has: (name: string) => {
+          const store = getAnsiStore();
+          if (!store) return false;
+          return store.has(String(name));
+        },
+        text: (name: string) => {
+          const store = getAnsiStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          return String(entry.text ?? '');
+        },
+        runs: (name: string): AnsiRun[][] | null => {
+          const store = getAnsiStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          if (!entry.parsed) {
+            const defaultStyle = engine.getStyle('default');
+            entry.parsed = parseAnsiToRuns(String(entry.text ?? ''), {
+              defaultFg: ColorUtils.from(defaultStyle.fg),
+              defaultBg: engine.currentTheme.bg,
+              tabSize: entry.tabSize ?? 4,
+              bracketSGR: true
+            });
+          }
+          return entry.parsed.lines;
+        },
+        width: (name: string) => {
+          const store = getAnsiStore();
+          if (!store) return 0;
+          const entry = store.get(String(name));
+          if (!entry) return 0;
+          if (!entry.parsed) {
+            const defaultStyle = engine.getStyle('default');
+            entry.parsed = parseAnsiToRuns(String(entry.text ?? ''), {
+              defaultFg: ColorUtils.from(defaultStyle.fg),
+              defaultBg: engine.currentTheme.bg,
+              tabSize: entry.tabSize ?? 4,
+              bracketSGR: true
+            });
+          }
+          return entry.parsed.width;
+        },
+        height: (name: string) => {
+          const store = getAnsiStore();
+          if (!store) return 0;
+          const entry = store.get(String(name));
+          if (!entry) return 0;
+          if (!entry.parsed) {
+            const defaultStyle = engine.getStyle('default');
+            entry.parsed = parseAnsiToRuns(String(entry.text ?? ''), {
+              defaultFg: ColorUtils.from(defaultStyle.fg),
+              defaultBg: engine.currentTheme.bg,
+              tabSize: entry.tabSize ?? 4,
+              bracketSGR: true
+            });
+          }
+          return entry.parsed.height;
+        }
+      },
+
+      // Convenience: draw named ASCII art at x/y using the active layer.
+      // Usage: drawAscii(x, y, 'art')
+      drawAscii: (x: number, y: number, name: string, fg?: Color, bg?: Color) => {
+        const store = getAsciiStore();
+        if (!store) return;
+        const entry = store.get(String(name));
+        if (!entry) return;
+        if (!entry.lines) entry.lines = String(entry.text ?? '').split(/\r?\n/);
+
+        const layer = this.layers.getActive();
+        for (let i = 0; i < entry.lines.length; i++) {
+          const line = entry.lines[i] ?? '';
+          layer.write(x, y + i, line, fg, bg);
+        }
+      },
+
+      // Convenience: draw FIGlet-rendered text using an embedded font.
+      // Usage: drawFiglet(x, y, 'standard', 'HELLO', fg?, bg?, { vertical?: boolean, letterSpacing?: number })
+      drawFiglet: (
+        x: number,
+        y: number,
+        fontName: string,
+        text: string,
+        fg?: Color,
+        bg?: Color,
+        options?: { vertical?: boolean; letterSpacing?: number }
+      ) => {
+        const store = getFigletStore();
+        if (!store) return;
+        const entry = store.get(String(fontName));
+        if (!entry) return;
+        if (!entry.font) {
+          try {
+            entry.font = parseFIGfont(String(entry.text ?? ''), String(entry.name ?? fontName));
+          } catch (e) {
+            console.warn('[figlet] Failed to parse font:', fontName, e);
+            return;
+          }
+        }
+        const font = entry.font;
+        if (!font) return;
+
+        const layer = this.layers.getActive();
+        const vertical = !!options?.vertical;
+        const letterSpacing = Math.max(0, options?.letterSpacing ?? 0);
+
+        if (vertical) {
+          let currentY = y;
+          for (const ch of Array.from(String(text ?? ''))) {
+            const charLines = renderFigletCharLines(font, ch);
+            let lineY = currentY;
+            for (const line of charLines) {
+              layer.write(x, lineY, line ?? '', fg, bg);
+              lineY++;
+            }
+            currentY = lineY + letterSpacing;
+          }
+          return;
+        }
+
+        if (letterSpacing > 0) {
+          let currentX = x;
+          for (const ch of Array.from(String(text ?? ''))) {
+            const charLines = renderFigletCharLines(font, ch);
+            const charWidth = measureFigletLinesWidth(charLines);
+            for (let i = 0; i < charLines.length; i++) {
+              layer.write(currentX, y + i, charLines[i] ?? '', fg, bg);
+            }
+            currentX += charWidth + letterSpacing;
+          }
+          return;
+        }
+
+        const lines = renderFigletLines(font, String(text ?? ''));
+        for (let i = 0; i < lines.length; i++) {
+          layer.write(x, y + i, lines[i] ?? '', fg, bg);
+        }
+      },
+
+      // Convenience: draw ANSI art (colors) using the active layer.
+      // Usage: drawAnsi(x, y, 'logo')
+      drawAnsi: (x: number, y: number, name: string) => {
+        const store = getAnsiStore();
+        if (!store) return;
+        const entry = store.get(String(name));
+        if (!entry) return;
+
+        if (!entry.parsed) {
+          const defaultStyle = engine.getStyle('default');
+          entry.parsed = parseAnsiToRuns(String(entry.text ?? ''), {
+            defaultFg: ColorUtils.from(defaultStyle.fg),
+            defaultBg: engine.currentTheme.bg,
+            tabSize: entry.tabSize ?? 4,
+            bracketSGR: true
+          });
+        }
+
+        const layer = this.layers.getActive();
+        const lines = entry.parsed.lines;
+        for (let row = 0; row < lines.length; row++) {
+          let cx = x;
+          const runs = lines[row] ?? [];
+          for (const run of runs) {
+            const t = String(run.text ?? '');
+            if (t.length > 0) {
+              layer.write(cx, y + row, t, run.fg, run.bg);
+              cx += t.length;
+            }
+          }
+        }
+      },
       
       // Global accessors (for convenience)
+      // These eliminate the need for users to track coordinates manually
       get mouseX() {
-        const rect = engine.canvas.getBoundingClientRect();
-        const charWidth = rect.width / engine.width;
+        // Default to pixel coordinates (matches event.x/event.y)
+        return engine.input.getMouseX();
+      },
+      get mouseY() {
+        // Default to pixel coordinates (matches event.y)
+        return engine.input.getMouseY();
+      },
+      get mouseCellX() {
+        // Cell coordinates (for terminal/TUI work)
+        // Use backing store dimensions to match coordinate system of mouseX/mouseY
+        const charWidth = engine.canvas.width / engine.width;
         const pixelX = engine.input.getMouseX();
         return Math.floor(pixelX / charWidth);
       },
-      get mouseY() {
-        const rect = engine.canvas.getBoundingClientRect();
-        const charHeight = rect.height / engine.height;
+      get mouseCellY() {
+        // Cell coordinates (for terminal/TUI work)
+        // Use backing store dimensions to match coordinate system of mouseX/mouseY
+        const charHeight = engine.canvas.height / engine.height;
         const pixelY = engine.input.getMouseY();
         return Math.floor(pixelY / charHeight);
+      },
+      get mousePixelX() {
+        // Alias for mouseX (pixel coordinates)
+        return engine.input.getMouseX();
+      },
+      get mousePixelY() {
+        // Alias for mouseY (pixel coordinates)
+        return engine.input.getMouseY();
       },
       get termWidth() {
         return engine.width;
@@ -506,6 +1395,13 @@ export class StorieEngine {
         createPanner: () => this.audioContext.createPanner(),
         createStereoPanner: () => this.audioContext.createStereoPanner(),
         createWaveShaper: () => this.audioContext.createWaveShaper(),
+
+        // === SEEDED SFX HELPERS (Chiptone basics) ===
+        sfx: {
+          names: () => getSfxPresetNames(),
+          play: (presetName, seed, options) => playSfx(this.audioContext, presetName, seed, options),
+          snippet: (presetName, seed, volume) => sfxSnippet(presetName, seed, volume)
+        },
         
         // === PROPERTIES ===
         get currentTime() { return engine.audioContext.currentTime; },
@@ -653,6 +1549,117 @@ export class StorieEngine {
           const ui = engine.ensureWebGPUUI();
           if (!ui) return;
           ui.text(text, x, y, color);
+        },
+
+        /**
+         * Load an image URL into a GPU texture and return an opaque image id.
+         * WebGPU-only: returns null if WebGPU UI is unavailable.
+         */
+        loadImage: async (url: string): Promise<string | null> => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return null;
+          if (typeof url !== 'string' || url.length === 0) return null;
+
+          const res = await fetch(url);
+          if (!res.ok) return null;
+          const blob = await res.blob();
+          const bitmap = await createImageBitmap(blob);
+          const id = `img_${nextUIImageId++}`;
+          ui.registerImage(id, bitmap);
+          try { bitmap.close(); } catch { /* ignore */ }
+          return id;
+        },
+
+        /**
+         * Load an image from an embedded ```blob block by name.
+         * The blob should be base64-encoded PNG/JPEG (mime:image/png or mime:image/jpeg).
+         */
+        loadImageFromBlob: async (name: string, documentId?: string): Promise<string | null> => {
+          return await loadImageFromBlobInternal(name, documentId);
+        },
+
+        /**
+         * Draw a loaded image by id.
+         */
+        image: (imageId: string, x: number, y: number, w: number, h: number, options?: { tint?: Color; uv?: { u: number; v: number; w: number; h: number } }) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+
+          const key = String(imageId ?? '');
+          if (!key) return;
+
+          // Fast path: draw if already registered.
+          if (ui.getImageSize(key)) {
+            ui.image(key, x, y, w, h, options);
+            return;
+          }
+
+          // If not registered, treat `imageId` as a blob name and auto-load in the background.
+          const cache = getUIBlobImageCache();
+          if (!cache) return;
+
+          const resolved = cache.resolved.get(key);
+          if (resolved && ui.getImageSize(resolved)) {
+            ui.image(resolved, x, y, w, h, options);
+            return;
+          }
+
+          if (cache.failed.has(key)) return;
+          if (cache.inFlight.has(key)) return;
+
+          const store = getBlobStore();
+          const entry = store?.get(key) ?? null;
+          if (!entry) return;
+          const mime = String(entry.mime ?? '');
+          if (!mime.startsWith('image/')) return;
+
+          const promise = loadImageFromBlobInternal(key)
+            .then((id) => {
+              cache.inFlight.delete(key);
+              if (id) {
+                cache.resolved.set(key, id);
+              } else {
+                cache.failed.add(key);
+              }
+              return id;
+            })
+            .catch((_e) => {
+              cache.inFlight.delete(key);
+              cache.failed.add(key);
+              return null;
+            });
+
+          cache.inFlight.set(key, promise);
+        },
+        pushClipRect: (x: number, y: number, w: number, h: number) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.pushClipRect(x, y, w, h);
+        },
+        popClipRect: () => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.popClipRect();
+        },
+        pushMaskRect: (x: number, y: number, w: number, h: number) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.pushMaskRect(x, y, w, h);
+        },
+        pushMaskRoundedRect: (x: number, y: number, w: number, h: number, radius: number) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.pushMaskRoundedRect(x, y, w, h, radius);
+        },
+        pushMaskPolygon: (points: Array<{ x: number; y: number }>) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.pushMaskPolygon(points);
+        },
+        popMask: () => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.popMask();
         },
         button: (_id: string, x: number, y: number, w: number, h: number, label: string) => {
           const ui = engine.ensureWebGPUUI();
@@ -835,6 +1842,87 @@ export class StorieEngine {
         }
       },
       
+      // WGSL Shader API (high-level shader management)
+      shader: {
+        setUniform: (shaderName: string, uniformName: string, value: number | number[]) => {
+          if (!engine.shaderManager) {
+            console.warn('ShaderManager not available (WebGPU not initialized)');
+            return;
+          }
+          try {
+            engine.shaderManager.setUniform(shaderName, uniformName, value);
+          } catch (error) {
+            console.error(`Failed to set uniform ${uniformName} on shader ${shaderName}:`, error);
+          }
+        },
+        
+        setActive: (shaderName: string | null) => {
+          if (!engine.shaderManager) {
+            console.warn('ShaderManager not available (WebGPU not initialized)');
+            return;
+          }
+          try {
+            engine.shaderManager.setActiveShader(shaderName);
+          } catch (error) {
+            console.error(`Failed to set active shader to ${shaderName}:`, error);
+          }
+        },
+        
+        getActive: () => {
+          if (!engine.shaderManager) return null;
+          return engine.shaderManager.getActiveShaderName();
+        },
+        
+        list: () => {
+          if (!engine.shaderManager) return [];
+          return engine.shaderManager.getRegisteredShaders();
+        },
+        
+        has: (shaderName: string) => {
+          if (!engine.shaderManager) return false;
+          return engine.shaderManager.hasShader(shaderName);
+        },
+        
+        info: (shaderName: string) => {
+          if (!engine.shaderManager) return null;
+          return engine.shaderManager.getShaderInfo(shaderName);
+        },
+        
+        // Shader chain API
+        setChain: async (shaderNames: string[]) => {
+          if (!engine.shaderChainManager) {
+            console.warn('ShaderChainManager not available (WebGPU not initialized)');
+            return false;
+          }
+          try {
+            return await engine.shaderChainManager.activateChain(shaderNames, 'api');
+          } catch (error) {
+            console.error('Failed to set shader chain:', error);
+            return false;
+          }
+        },
+        
+        getChain: () => {
+          if (!engine.shaderChainManager) return [];
+          return engine.shaderChainManager.getActiveChain();
+        },
+        
+        clearChain: () => {
+          if (!engine.shaderChainManager) return;
+          engine.shaderChainManager.clearChain();
+        },
+        
+        hasChain: () => {
+          if (!engine.shaderChainManager) return false;
+          return engine.shaderChainManager.hasActiveChain();
+        },
+        
+        chainInfo: () => {
+          if (!engine.shaderChainManager) return null;
+          return engine.shaderChainManager.getChainInfo();
+        }
+      },
+      
       // Compositor API (Phase 1: Auto-compositing, future: manual mode)
       compositor: {
         // Current mode
@@ -961,8 +2049,269 @@ export class StorieEngine {
         get available(): boolean {
           return engine.compositor !== null;
         }
+      },
+      
+      // 3D Canvas API - Hardware-accelerated 3D section rendering
+      canvas3D: {
+        // Enable/disable 3D rendering mode
+        enable: () => {
+          // Treat enable() as a request that can be made before WebGPU is ready.
+          // If/when the 3D layer becomes available, it will be enabled.
+          engine.canvas3DEnabled = true;
+
+          // If the compositor already exists and the 3D layer is registered, enable it now.
+          if (engine.compositor?.layers.get('3d')) {
+            engine.compositor.updateLayer('3d', { enabled: true });
+          }
+
+          // Return whether Canvas3D is available immediately.
+          return engine.canvas3DRenderer !== null;
+        },
+        
+        disable: () => {
+          engine.canvas3DEnabled = false;
+          // Disable the 3D layer in compositor
+          if (engine.compositor?.layers.get('3d')) {
+            engine.compositor.updateLayer('3d', { enabled: false });
+          }
+          console.log('3D Canvas mode disabled');
+        },
+        
+        get enabled(): boolean {
+          return engine.canvas3DEnabled;
+        },
+        
+        get available(): boolean {
+          return engine.canvas3DRenderer !== null;
+        },
+
+        // Built-in navigation controls (WASD + QE + right-drag mouse-look)
+        controls: {
+          setEnabled: (enabled: boolean) => {
+            engine.canvas3DControlsEnabled = !!enabled;
+          },
+          get enabled(): boolean {
+            return engine.canvas3DControlsEnabled;
+          }
+        },
+        
+        // Camera controls
+        camera: {
+          setPosition: (x: number, y: number, z: number) => {
+            if (!engine.camera3D) return;
+            engine.camera3D.position = { x, y, z };
+          },
+          
+          setRotation: (x: number, y: number, z: number) => {
+            if (!engine.camera3D) return;
+            engine.camera3D.rotation = { x, y, z };
+          },
+          
+          moveTo: (x: number, y: number, z: number) => {
+            if (!engine.camera3D) return;
+            engine.camera3D.target = { x, y, z };
+          },
+          
+          focusOnSection: (sectionIndex: number | string, distance: number = 50) => {
+            if (!engine.camera3D) return;
+            engine.request3DCameraFocus({ kind: 'focus', sectionIndex, distance });
+          },
+
+          focusOnSectionFit: (sectionIndex: number | string, fill: number = 0.9) => {
+            if (!engine.camera3D) return;
+            engine.request3DCameraFocus({ kind: 'fit', sectionIndex, fill });
+          },
+          
+          setFOV: (fov: number) => {
+            if (!engine.camera3D) return;
+            engine.camera3D.fov = fov;
+          },
+          
+          setEaseSpeed: (position: number, rotation: number) => {
+            if (!engine.camera3D) return;
+            engine.camera3D.positionEaseSpeed = position;
+            engine.camera3D.rotationEaseSpeed = rotation;
+          },
+          
+          getPosition: () => {
+            if (!engine.camera3D) return { x: 0, y: 0, z: 0 };
+            return { ...engine.camera3D.position };
+          },
+          
+          getRotation: () => {
+            if (!engine.camera3D) return { x: 0, y: 0, z: 0 };
+            return { ...engine.camera3D.rotation };
+          }
+        },
+
+        get currentSection(): number | null {
+          return engine.current3DSectionIndex;
+        },
+        
+        // Section layout access
+        getSectionLayout: (sectionIndex: number) => {
+          const layout = engine.section3DLayouts[sectionIndex];
+          if (!layout) return null;
+          return {
+            sectionIndex: layout.sectionIndex,
+            sectionTitle: layout.sectionTitle,
+            position: { ...layout.transform.position },
+            rotation: { ...layout.transform.rotation },
+            scale: { ...layout.transform.scale },
+            width: layout.width,
+            height: layout.height,
+            visible: layout.visible,
+            navigable: layout.navigable
+          };
+        },
+        
+        setSectionTransform: (sectionIndex: number, transform: {
+          position?: { x: number; y: number; z: number };
+          rotation?: { x: number; y: number; z: number };
+          scale?: { x: number; y: number; z: number };
+        }) => {
+          const layout = engine.section3DLayouts[sectionIndex];
+          if (!layout) {
+            console.warn(`Section ${sectionIndex} not found`);
+            return;
+          }
+          if (transform.position) {
+            layout.transform.position = { ...transform.position };
+          }
+          if (transform.rotation) {
+            // Convert degrees to radians
+            layout.transform.rotation = {
+              x: (transform.rotation.x * Math.PI) / 180,
+              y: (transform.rotation.y * Math.PI) / 180,
+              z: (transform.rotation.z * Math.PI) / 180
+            };
+          }
+          if (transform.scale) {
+            layout.transform.scale = { ...transform.scale };
+          }
+        },
+        
+        setSectionVisible: (sectionIndex: number, visible: boolean) => {
+          const layout = engine.section3DLayouts[sectionIndex];
+          if (!layout) {
+            console.warn(`Section ${sectionIndex} not found`);
+            return;
+          }
+          layout.visible = visible;
+        },
+        
+        getSectionCount: () => {
+          return engine.section3DLayouts.length;
+        },
+        
+        // Configuration
+        config: {
+          setDefaults: (config: Partial<Canvas3DConfig>) => {
+            if (config.defaultDepth !== undefined) {
+              engine.canvas3DConfig.defaultDepth = config.defaultDepth;
+            }
+            if (config.defaultSectionWidth !== undefined) {
+              engine.canvas3DConfig.defaultSectionWidth = config.defaultSectionWidth;
+            }
+            if (config.defaultSectionHeight !== undefined) {
+              engine.canvas3DConfig.defaultSectionHeight = config.defaultSectionHeight;
+            }
+            if (config.cameraFov !== undefined) {
+              engine.canvas3DConfig.cameraFov = config.cameraFov;
+            }
+            if (config.cameraNear !== undefined) {
+              engine.canvas3DConfig.cameraNear = config.cameraNear;
+            }
+            if (config.cameraFar !== undefined) {
+              engine.canvas3DConfig.cameraFar = config.cameraFar;
+            }
+            if (config.positionEaseSpeed !== undefined) {
+              engine.canvas3DConfig.positionEaseSpeed = config.positionEaseSpeed;
+            }
+            if (config.rotationEaseSpeed !== undefined) {
+              engine.canvas3DConfig.rotationEaseSpeed = config.rotationEaseSpeed;
+            }
+            if (config.autoLayoutEnabled !== undefined) {
+              engine.canvas3DConfig.autoLayoutEnabled = config.autoLayoutEnabled;
+            }
+            if (config.autoLayoutColumns !== undefined) {
+              engine.canvas3DConfig.autoLayoutColumns = config.autoLayoutColumns;
+            }
+            if (config.autoLayoutSpacing !== undefined) {
+              engine.canvas3DConfig.autoLayoutSpacing = config.autoLayoutSpacing;
+            }
+            if (config.sectionTextureMode !== undefined) {
+              const prev = engine.canvas3DConfig.sectionTextureMode;
+              engine.canvas3DConfig.sectionTextureMode = config.sectionTextureMode;
+              if (prev !== config.sectionTextureMode) {
+                engine.clear3DSectionTextures();
+              }
+            }
+
+            if (config.sectionBorderEnabled !== undefined) {
+              const prev = engine.canvas3DConfig.sectionBorderEnabled;
+              engine.canvas3DConfig.sectionBorderEnabled = config.sectionBorderEnabled;
+              if (prev !== config.sectionBorderEnabled) {
+                engine.clear3DSectionTextures();
+              }
+            }
+            if (config.sectionBorderWidth !== undefined) {
+              const prev = engine.canvas3DConfig.sectionBorderWidth;
+              engine.canvas3DConfig.sectionBorderWidth = config.sectionBorderWidth;
+              if (prev !== config.sectionBorderWidth) {
+                engine.clear3DSectionTextures();
+              }
+            }
+
+            if ((config as any).sectionBackground !== undefined) {
+              const prev = (engine.canvas3DConfig as any).sectionBackground;
+              (engine.canvas3DConfig as any).sectionBackground = (config as any).sectionBackground;
+              if (prev !== (config as any).sectionBackground) {
+                engine.clear3DSectionTextures();
+              }
+            }
+
+            engine.applyCanvas3DLayoutCallback();
+          },
+          
+          getDefaults: () => {
+            return { ...engine.canvas3DConfig };
+          }
+        },
+
+        layout: {
+          setCallback: (fn: any) => {
+            engine.canvas3DLayoutCallback = typeof fn === 'function' ? fn : null;
+            engine.applyCanvas3DLayoutCallback();
+          },
+          clearCallback: () => {
+            engine.canvas3DLayoutCallback = null;
+          }
+        }
       }
     };
+  }
+
+  /**
+   * Register any shaders from loaded documents that weren't registered yet
+   */
+  private async registerPendingShaders(): Promise<void> {
+    if (!this.shaderManager) return;
+
+    for (const [docId, doc] of this.documents) {
+      const parsed = (doc as any)._parsedMarkdown;
+      if (parsed?.wgslShaders && parsed.wgslShaders.length > 0) {
+        console.log(`[ShaderManager] Registering ${parsed.wgslShaders.length} shader(s) from ${docId}...`);
+        for (const shader of parsed.wgslShaders) {
+          try {
+            await this.shaderManager.registerShader(shader);
+            console.log(`  ✓ Registered ${shader.name}`);
+          } catch (error) {
+            console.error(`  ✗ Failed to register ${shader.name}:`, error);
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -972,10 +2321,33 @@ export class StorieEngine {
     try {
       console.log(`Loading document: ${documentId}`);
       
-      // Parse markdown
-      const parsed = parseMarkdown(markdown);
+      // Parse markdown (now async to support magic block expansion)
+      const parsed = await parseMarkdown(markdown);
       console.log(`  Found ${parsed.sections.length} sections`);
       console.log(`  Found ${parsed.codeBlocks.length} code blocks`);
+      
+      // Log WGSL shaders if present
+      if (parsed.wgslShaders && parsed.wgslShaders.length > 0) {
+        console.log(`  Found ${parsed.wgslShaders.length} WGSL shader(s):`);
+        for (const shader of parsed.wgslShaders) {
+          console.log(`    - ${shader.name} (${shader.kind})`);
+        }
+        
+        // Register shaders with ShaderManager if WebGPU is available
+        if (this.shaderManager) {
+          console.log(`  Registering shaders with ShaderManager...`);
+          for (const shader of parsed.wgslShaders) {
+            try {
+              await this.shaderManager.registerShader(shader);
+              console.log(`    ✓ Registered ${shader.name}`);
+            } catch (error) {
+              console.error(`    ✗ Failed to register ${shader.name}:`, error);
+            }
+          }
+        } else {
+          console.log(`  ⏳ ShaderManager not yet initialized - shaders will be registered when WebGPU starts`);
+        }
+      }
       
       // Load modules from frontmatter if specified
       if (parsed.metadata.modules) {
@@ -994,12 +2366,39 @@ export class StorieEngine {
         }
       }
       
+      // Create 3D layouts for sections (if 3D canvas is available)
+      if (this.canvas3DRenderer) {
+        this.section3DLayouts = createSection3DLayouts(parsed.sections, this.canvas3DConfig);
+        console.log(`  Created 3D layouts for ${this.section3DLayouts.length} sections`);
+        this.applyPending3DCameraFocus();
+        this.applyCanvas3DLayoutCallback(parsed.sections);
+      }
+      
       // Apply theme from frontmatter if specified
       if (parsed.metadata.theme) {
         const themeName = String(parsed.metadata.theme).toLowerCase().replace(/['"]/g, '');
         this.currentTheme = getTheme(themeName);
         this.styleSheet = applyTheme(this.currentTheme);
         console.log(`  Theme: ${themeName}`);
+
+        // Retint terminal buffers to the new theme background so the “page background”
+        // matches the theme even when the terminal layer is otherwise empty.
+        this.layers.clearAll(this.currentTheme.bg);
+      }
+      
+      // Apply shader chain from frontmatter if specified
+      if (parsed.metadata.shaders) {
+        const shadersStr = String(parsed.metadata.shaders);
+        console.log(`  Shader chain (frontmatter): ${shadersStr}`);
+        
+        if (this.shaderChainManager) {
+          // ShaderChainManager ready, apply immediately
+          await this.shaderChainManager.activateChainFromString(shadersStr, 'frontmatter');
+        } else {
+          // Defer until WebGPU initialization
+          console.log(`  Deferring shader chain until WebGPU init`);
+          this.pendingShaderChain = { chainStr: shadersStr, source: 'frontmatter' };
+        }
       }
       
       // Log exposed frontmatter variables (for debugging)
@@ -1012,6 +2411,110 @@ export class StorieEngine {
       const jsBlocks = parsed.codeBlocks.filter(block => 
         block.lang === 'javascript' || block.lang === 'js'
       );
+
+      // Build blob store (```blob name:... enc:base64 mime:...)
+      const blobStore = new Map<string, { name: string; mime: string; encoding: 'base64' | 'hex'; data: string; bytes?: Uint8Array }>();
+      if (parsed.blobBlocks && parsed.blobBlocks.length > 0) {
+        for (const b of parsed.blobBlocks) {
+          const name = String(b.name ?? '').trim();
+          if (!name) continue;
+          const mime = String(b.mime ?? 'application/octet-stream').trim() || 'application/octet-stream';
+          const encoding = (String((b as any).encoding ?? 'base64').trim().toLowerCase() === 'hex') ? 'hex' : 'base64';
+          const data = encoding === 'hex'
+            ? String(b.data ?? '')
+            : String(b.data ?? '').replace(/\s+/g, '');
+          if (!data) continue;
+          if (blobStore.has(name)) {
+            console.warn(`  [blob] Duplicate name "${name}"; last one wins.`);
+          }
+          blobStore.set(name, { name, mime, encoding, data });
+        }
+        console.log(`  Found ${blobStore.size} blob block(s)`);
+      }
+
+      // Build ASCII store (```ascii name:...)
+      const asciiStore = new Map<string, { name: string; text: string; lines?: string[] }>();
+      for (const b of parsed.codeBlocks) {
+        let name: string | null = null;
+
+        if (typeof b.lang === 'string' && b.lang.startsWith('ascii:')) {
+          console.warn(`  [ascii] Legacy fence syntax "${b.lang}" is no longer supported. Use \`\`\`ascii name:...\`\`\` instead.`);
+        }
+
+        if (b.lang === 'ascii') {
+          const n = String(b.metadata?.name ?? '').trim();
+          if (n) name = n;
+        }
+
+        if (!name) continue;
+        const text = String(b.code ?? '');
+        if (asciiStore.has(name)) {
+          console.warn(`  [ascii] Duplicate name "${name}"; last one wins.`);
+        }
+        asciiStore.set(name, { name, text });
+      }
+      if (asciiStore.size > 0) {
+        console.log(`  Found ${asciiStore.size} ascii block(s)`);
+      }
+
+      // Build FIGlet font store (```figlet name:...)
+      const figletStore = new Map<string, { name: string; text: string; font?: FigletFont }>();
+      for (const b of parsed.codeBlocks) {
+        let name: string | null = null;
+
+        if (typeof b.lang === 'string' && b.lang.startsWith('figlet:')) {
+          console.warn(`  [figlet] Legacy fence syntax "${b.lang}" is no longer supported. Use \`\`\`figlet name:...\`\`\` instead.`);
+        }
+
+        if (b.lang === 'figlet') {
+          const n = String(b.metadata?.name ?? '').trim();
+          if (n) name = n;
+        }
+
+        if (!name) continue;
+        const text = String(b.code ?? '');
+        if (figletStore.has(name)) {
+          console.warn(`  [figlet] Duplicate name "${name}"; last one wins.`);
+        }
+        figletStore.set(name, { name, text });
+      }
+      if (figletStore.size > 0) {
+        console.log(`  Found ${figletStore.size} figlet font block(s)`);
+      }
+
+      // Build ANSI store (```ansi name:...)
+      const ansiStore = new Map<string, { name: string; text: string; tabSize: number; parsed?: AnsiParsed }>();
+      {
+        const defaultStyle = this.getStyle('default');
+        const defaultFg = ColorUtils.from(defaultStyle.fg);
+        const defaultBg = this.currentTheme.bg;
+
+        for (const b of parsed.codeBlocks) {
+          if (b.lang !== 'ansi') continue;
+          const name = String(b.metadata?.name ?? '').trim();
+          if (!name) continue;
+
+          const rawTab = String((b.metadata?.tab ?? b.metadata?.tabSize ?? '')).trim();
+          const tabSize = rawTab ? Math.max(1, Number.parseInt(rawTab, 10) || 4) : 4;
+          const text = String(b.code ?? '');
+          if (ansiStore.has(name)) {
+            console.warn(`  [ansi] Duplicate name "${name}"; last one wins.`);
+          }
+
+          // Parse once at load so rendering is fast.
+          const parsedAnsi = parseAnsiToRuns(text, {
+            defaultFg,
+            defaultBg,
+            tabSize,
+            bracketSGR: true
+          });
+          ansiStore.set(name, { name, text, tabSize, parsed: parsedAnsi });
+        }
+
+        if (ansiStore.size > 0) {
+          console.log(`  Found ${ansiStore.size} ansi block(s)`);
+        }
+      }
       
       if (jsBlocks.length === 0) {
         console.warn('  No JavaScript code blocks found');
@@ -1027,6 +2530,9 @@ export class StorieEngine {
       const renderBlocks: string[] = [];
       const inputBlocks: string[] = [];
       const globalBlocks: string[] = [];
+
+      // Section-scoped enter hooks
+      const enterBlocksBySection: Map<number, string[]> = new Map();
       
       for (const block of jsBlocks) {
         const hook = block.metadata?.on;
@@ -1039,6 +2545,16 @@ export class StorieEngine {
           renderBlocks.push(block.code);
         } else if (hook === 'input') {
           inputBlocks.push(block.code);
+        } else if (hook === 'enter') {
+          const sectionIdx = this.findSectionIndexForLine(parsed.sections, block.startLine);
+          if (sectionIdx !== null) {
+            const arr = enterBlocksBySection.get(sectionIdx) ?? [];
+            arr.push(block.code);
+            enterBlocksBySection.set(sectionIdx, arr);
+          } else {
+            // If it isn't inside a section, treat as global.
+            globalBlocks.push(block.code);
+          }
         } else {
           // No hook metadata - execute in document order (global scope)
           globalBlocks.push(block.code);
@@ -1065,11 +2581,14 @@ export class StorieEngine {
         // Wrap in try/catch to only export when a binding exists.
         const exports = scopeVarNames.map(k => `  try { scope.${k} = ${k}; } catch (e) {}` ).join('\n');
         
+        // Pass API globals as IIFE parameters so they're accessible inside the function
+        const apiParams = 'term, termCanvas, layer, key, mouse, tui, gui, getStyle, theme, modules, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY, termWidth, termHeight, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, canvas3D';
+        
         for (const code of globalBlocks) {
-          const wrappedCode = `(function() {
+          const wrappedCode = `(function(${apiParams}) {
 ${code}
 ${exports}
-})();`;
+})(${apiParams});`;
           this.sandbox.executeCodeBlock(documentId, wrappedCode, true); // Skip transform on second pass
         }
       }
@@ -1154,6 +2673,24 @@ ${exportVars}
 };`;
         this.sandbox.executeCodeBlock(documentId, inputCode, true);
       }
+
+      // Create section-scoped enter handlers (invoked by 3D navigation when a section becomes current).
+      if (enterBlocksBySection.size > 0) {
+        const pieces: string[] = [];
+        pieces.push(`scope.__enterHandlers = scope.__enterHandlers || {};`);
+        const indices = Array.from(enterBlocksBySection.keys()).sort((a, b) => a - b);
+        for (const idx of indices) {
+          const blocks = enterBlocksBySection.get(idx) ?? [];
+          if (blocks.length === 0) continue;
+          pieces.push(`scope.__enterHandlers[${idx}] = function() {`);
+          if (importVars) pieces.push(importVars);
+          if (captureVars) pieces.push(captureVars);
+          pieces.push(blocks.join('\n\n'));
+          if (exportVars) pieces.push(exportVars);
+          pieces.push(`};`);
+        }
+        this.sandbox.executeCodeBlock(documentId, pieces.join('\n'), true);
+      }
       
       // Extract handlers from scope
       const handlers = this.sandbox.extractHandlers(documentId);
@@ -1163,12 +2700,17 @@ ${exportVars}
         return false;
       }
       
-      // Store document
+      // Store document (include parsed markdown for deferred shader registration)
       this.documents.set(documentId, {
         id: documentId,
         handlers,
-        sections: parsed.sections
-      });
+        sections: parsed.sections,
+        _parsedMarkdown: parsed,  // Store for deferred shader registration
+        _blobStore: blobStore,
+        _asciiStore: asciiStore,
+        _figletStore: figletStore,
+        _ansiStore: ansiStore
+      } as any);
       
       // Set as active if first document
       if (!this.activeDocumentId) {
@@ -1211,6 +2753,19 @@ ${exportVars}
   }
 
   /**
+   * Apply shader chain (typically from URL parameter, overrides frontmatter)
+   */
+  async applyShaderChain(chainStr: string, source: string = 'url'): Promise<boolean> {
+    if (!this.shaderChainManager) {
+      console.log('[Engine] Deferring shader chain until WebGPU init:', chainStr);
+      this.pendingShaderChain = { chainStr, source };
+      return true;
+    }
+    
+    return await this.shaderChainManager.activateChainFromString(chainStr, source);
+  }
+
+  /**
    * Get the currently active document
    */
   private getActiveDocument(): UserScript | null {
@@ -1239,10 +2794,92 @@ ${exportVars}
         // WebGPU initialized successfully - set up compositor
         await this.initCompositor();
 
+        // Keep engine-level WebGPU device in sync with the renderer's device.
+        // The renderer is the source of truth for WebGPU initialization.
+        const device = this.renderer.getContext().getDevice();
+        if (device) {
+          this.webgpuDevice = device;
+          if (!this.shaderManager) {
+            this.shaderManager = new ShaderManager(device);
+            console.log('✓ ShaderManager initialized (renderer device)');
+          }
+          
+          if (!this.shaderChainManager) {
+            this.shaderChainManager = new ShaderChainManager(this.shaderManager, device);
+            console.log('✓ ShaderChainManager initialized (renderer device)');
+          }
+          
+          // Initialize 3D Canvas renderer
+          if (!this.canvas3DRenderer) {
+            try {
+              this.canvas3DRenderer = new Canvas3DRenderer(device, this.canvas.width, this.canvas.height);
+              await this.canvas3DRenderer.init();
+              if (!this.camera3D) {
+                this.camera3D = createCamera3D();
+              }
+              
+              // Register 3D layer with compositor
+              const renderTexture = this.canvas3DRenderer.getRenderTexture();
+              if (renderTexture && this.compositor) {
+                this.compositor.registerLayer('3d', {
+                  texture: renderTexture,
+                  width: this.canvas.width,
+                  height: this.canvas.height,
+                  zIndex: 5,  // Above terminal (0) but below UI (20)
+                  enabled: this.canvas3DEnabled,  // Honor early canvas3D.enable() calls
+                  opacity: 1.0,  // Full opacity
+                  blendMode: 'normal'  // Normal blend (not multiply)
+                });
+              } else {
+                console.warn('✗ Failed to register 3D layer');
+              }
+              
+              // (init logs removed)
+              
+              // Create section3DLayouts for any documents that were loaded before Canvas3D was ready
+              // (debug log removed)
+              for (const [docId, docData] of this.documents.entries()) {
+                const anyDocData = docData as any;
+                if (anyDocData._parsedMarkdown?.sections) {
+                  const layouts = createSection3DLayouts(anyDocData._parsedMarkdown.sections, this.canvas3DConfig);
+                  this.section3DLayouts = layouts;
+                  this.applyPending3DCameraFocus();
+                  this.applyCanvas3DLayoutCallback(anyDocData._parsedMarkdown.sections);
+                  console.log(`✓ Created ${layouts.length} 3D section layouts for document ${docId}`);
+                } else {
+                  // (debug log removed)
+                }
+              }
+              
+            } catch (error) {
+              console.warn('Failed to initialize Canvas3DRenderer:', error);
+            }
+          }
+
+          // Let the compositor use the ShaderManager and ShaderChainManager for post-processing.
+          if (this.compositor) {
+            this.compositor.setShaderManager(this.shaderManager);
+            this.compositor.setShaderChainManager(this.shaderChainManager);
+          }
+          
+          // Apply any pending shader chain
+          if (this.pendingShaderChain) {
+            console.log(`✓ Applying deferred shader chain (${this.pendingShaderChain.source}): ${this.pendingShaderChain.chainStr}`);
+            await this.shaderChainManager.activateChainFromString(
+              this.pendingShaderChain.chainStr,
+              this.pendingShaderChain.source
+            );
+            this.pendingShaderChain = null;
+          }
+        }
+
         // Eagerly create the UI layer once WebGPU + compositor are ready.
         // This avoids a class of issues where demo code calls ui.* but the
         // layer isn't registered due to timing/guardrails.
         this.ensureWebGPUUI();
+        
+        // Register any WGSL shaders that were parsed before WebGPU was initialized
+        await this.registerPendingShaders();
       }
     }
     
@@ -1284,17 +2921,92 @@ ${exportVars}
       if (this.compositor) {
         // WebGPU path: terminal renders to texture, compositor blits it + canvas2d
         const composited = this.layers.composite();
+
         this.renderer.render(composited);  // Render terminal to offscreen texture
+
+        // Keep compositor terminal layer texture in sync.
+        // The terminal render texture can be created lazily or recreated on resize.
+        if (this.renderer instanceof WebGPURenderer) {
+          const terminalTexture = this.renderer.getRenderTexture();
+          const existing = this.compositor.layers.get('terminal')?.texture;
+          if (terminalTexture && existing !== terminalTexture) {
+            this.compositor.updateLayerTexture('terminal', terminalTexture);
+            if (this.frameCount < 3) {
+              console.log('[Compositor] Updated terminal layer texture');
+            }
+          } else if (!terminalTexture && this.frameCount < 3) {
+            console.warn('[Compositor] Terminal render texture missing; frame may be blank');
+          }
+
+        }
+
+        // Ensure each section has a texture with its rendered heading/content.
+        if (this.canvas3DEnabled && this.section3DLayouts.length > 0 && this.renderer instanceof WebGPURenderer) {
+          const device = this.renderer.getContext().getDevice();
+          if (device) {
+            if (this.canvas3DConfig.sectionTextureMode === 'webgpu-ui') {
+              this.ensure3DSectionTexturesWebGPUUI(device);
+            } else {
+              this.ensure3DSectionTextures(device);
+            }
+          }
+        }
+
+        // Render 3D canvas to offscreen texture (before compositing)
+        if (this.canvas3DEnabled && this.canvas3DRenderer && this.camera3D) {
+          const pick = this.pick3DAt(this.input.getMouseX(), this.input.getMouseY());
+
+          // Link hover/focus highlight (invert only the link region)
+          this.hovered3DLink = null;
+          if (pick) {
+            const linkHit = this.hitTest3DLinkAtUV(pick.layout.sectionIndex, pick.u, pick.v);
+            if (linkHit) {
+              this.hovered3DLink = { sectionIndex: pick.layout.sectionIndex, linkIndex: linkHit.linkIndex };
+            }
+          }
+
+          // Clear previous highlights
+          for (const layout of this.section3DLayouts) {
+            layout.highlightUvRect = undefined;
+          }
+
+          // Prefer mouse hover over keyboard focus
+          const active = this.hovered3DLink ?? this.focused3DLink;
+          if (active) {
+            const rect = this.get3DLinkUvRect(active.sectionIndex, active.linkIndex);
+            if (rect) {
+              const layout = this.section3DLayouts.find(l => l.sectionIndex === active.sectionIndex);
+              if (layout) layout.highlightUvRect = rect;
+            }
+          }
+
+          // Whole-card hover invert disabled (we highlight links instead)
+          this.canvas3DRenderer.render(this.camera3D, this.section3DLayouts, null);
+        }
 
         // Render GPU UI into its own texture (if created)
         if (this.webgpuUIRenderer) {
+          // Render retained-mode GUI widgets
+          const guiAPI = this.api?.gui;
+          if (guiAPI && guiAPI.getSystem && guiAPI.getSystem()) {
+            guiAPI.render(this.api.ui);
+          }
+          
           this.webgpuUIRenderer.flush();
         }
 
         // Only auto-composite in auto mode. In manual mode, user code controls
         // clear/blit/present inside the document render handler.
         if (this.compositor.mode === 'auto') {
+          // Keep built-in shaders (e.g. ruledlines) in sync with the actual
+          // terminal cell size derived from the current font metrics.
+          this.syncTerminalCellSizeToShaders();
+
+          // Clear to theme background (Canvas3D renders to transparent).
+          this.compositor.setAutoClearColor(this.currentTheme.bg);
           this.compositor.autoComposite();   // Composite all layers to main canvas
+        } else if (this.frameCount < 3) {
+          console.warn('[Compositor] Manual mode is active; user code must call compositor.present() each frame');
         }
       } else {
         // Canvas2D fallback: render directly
@@ -1314,11 +3026,531 @@ ${exportVars}
   }
 
   /**
+   * Push the terminal cell size (in render-texture pixels) into any active
+   * post-process shader(s) that declare a `cellSize` uniform.
+   *
+   * This mirrors tstorie behavior where font metrics were provided to shaders
+   * like `ruledlines` so effects can align to the text grid.
+   */
+  private syncTerminalCellSizeToShaders(): void {
+    if (!this.shaderManager) return;
+    if (!(this.renderer instanceof WebGPURenderer)) return;
+
+    const terminal = this.renderer.getTerminalRenderer();
+    // TerminalRenderer metrics are in the same pixel space as the render texture
+    // and the compositor/shader pipeline resolution.
+    const cellW = Math.max(1, terminal.getCellWidth());
+    const cellH = Math.max(1, terminal.getCellHeight());
+
+    if (
+      this.lastShaderCellSize &&
+      this.lastShaderCellSize.w === cellW &&
+      this.lastShaderCellSize.h === cellH
+    ) {
+      return;
+    }
+    this.lastShaderCellSize = { w: cellW, h: cellH };
+
+    const value: number[] = [cellW, cellH];
+
+    // If a chain is active, update every shader in the chain.
+    if (this.shaderChainManager && this.shaderChainManager.hasActiveChain()) {
+      const chain = this.shaderChainManager.getActiveChain();
+      for (const shaderName of chain) {
+        // Only update shaders that actually declare `cellSize`.
+        // Avoid spamming warnings for shaders that don't use grid alignment.
+        if (this.shaderManager.hasUniform(shaderName, 'cellSize')) {
+          this.shaderManager.setUniform(shaderName, 'cellSize', value);
+        }
+      }
+      return;
+    }
+
+    // Otherwise update the currently active single shader, if any.
+    const active = this.shaderManager.getActiveShaderName();
+    if (active) {
+      if (this.shaderManager.hasUniform(active, 'cellSize')) {
+        this.shaderManager.setUniform(active, 'cellSize', value);
+      }
+    }
+  }
+
+  private ensure3DSectionTextures(device: GPUDevice): void {
+    if (!this.canvas3DEnabled || !this.camera3D) return;
+
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    const aspect = canvasW > 0 && canvasH > 0 ? canvasW / canvasH : 1;
+    const view = getCameraViewMatrix(this.camera3D);
+    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+    const viewProj = mat4Multiply(proj, view);
+
+    // Treat section width/height as character columns/rows when generating
+    // section textures. This makes defaultSectionHeight behave like “rows of text”.
+    const fontSizePx = 16;
+    const fontStack = "'3270-regular', 'Consolas', 'Monaco', monospace";
+    const texturePadding = 12;
+
+    const measureCanvas = new OffscreenCanvas(1, 1);
+    const measureCtx = measureCanvas.getContext('2d', { alpha: true });
+    if (!measureCtx) return;
+    measureCtx.textBaseline = 'top';
+    measureCtx.textAlign = 'left';
+    measureCtx.font = `${fontSizePx}px ${fontStack}`;
+    const m = measureCtx.measureText('M');
+    const measuredCharW = Math.max(1, Math.ceil(m.width));
+    const measuredCharH = Math.max(
+      1,
+      (m.fontBoundingBoxAscent && m.fontBoundingBoxDescent)
+        ? Math.ceil(m.fontBoundingBoxAscent + m.fontBoundingBoxDescent)
+        : Math.ceil(fontSizePx * 1.25)
+    );
+    const baseLineHeight = Math.max(1, Math.round(measuredCharH * 1.25));
+
+    for (const layout of this.section3DLayouts) {
+      if (!layout.visible) continue;
+
+      if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
+        continue;
+      }
+
+      // Only rasterize once per section for now.
+      if (layout.texture) continue;
+
+      const minW = 256;
+      const minH = 128;
+      const maxW = 1024;
+      const maxH = 1024;
+
+      const desiredW = Math.round(layout.width * measuredCharW + texturePadding * 2);
+      const desiredH = Math.round(layout.height * baseLineHeight + texturePadding * 2);
+      const widthPx = Math.max(minW, Math.min(maxW, desiredW));
+      const heightPx = Math.max(minH, Math.min(maxH, desiredH));
+
+      const canvas = new OffscreenCanvas(widthPx, heightPx);
+      const ctx = canvas.getContext('2d', { alpha: true });
+      if (!ctx) {
+        continue;
+      }
+
+      // Use the same markdown-lite layout engine as the WebGPU-UI path so:
+      // - explicit newlines are preserved
+      // - link regions exist for picking/navigation
+      //
+      // IMPORTANT: In Canvas2D sectionTextureMode we must lay out using the same
+      // font metrics that Canvas2D will use to draw, otherwise the monospace-based
+      // layout (charW/charH) won’t match the actual rendered glyph widths.
+      // That mismatch shows up as “extra spaces” between words.
+
+      ctx.textBaseline = 'top';
+      ctx.textAlign = 'left';
+      ctx.font = `${fontSizePx}px ${fontStack}`;
+
+      // Use the same metrics we used to size the texture.
+      const charW = measuredCharW;
+      const charH = measuredCharH;
+
+      const base = this.getStyle('default');
+      const dim = this.getStyle('dim');
+      const heading = this.getStyle('heading');
+      const link = this.getStyle('link');
+      const code = this.getStyle('code');
+      const surfaceBg = this.resolveCanvas3DSectionBackground();
+      const borderStyle = this.getStyle('border');
+
+      const mdStyle: MarkdownStyle = {
+        fg: base.fg,
+        mutedFg: dim.fg,
+        headingFg: heading.fg,
+        linkFg: link.fg,
+        codeFg: code.fg,
+        codeBg: code.bg,
+        bg: surfaceBg,
+      };
+
+      const title = (layout.displayTitle || layout.sectionTitle || '').trim();
+      const content = (layout.content || '').trim();
+      const markdown = `# ${title}\n\n${content}`.trim();
+
+      const nodes = parseMarkdownLite(markdown);
+      const result = layoutMarkdownDocument(
+        nodes,
+        { x: 0, y: 0, width: widthPx, height: heightPx },
+        { charW, charH },
+        mdStyle,
+        0,
+        texturePadding
+      );
+
+      // Draw ops into the Canvas2D surface
+      ctx.clearRect(0, 0, widthPx, heightPx);
+      for (const op of result.ops) {
+        if (op.kind === 'rect') {
+          ctx.fillStyle = ColorUtils.toCss(op.color as any);
+          ctx.fillRect(op.x, op.y, op.w, op.h);
+        } else {
+          ctx.fillStyle = ColorUtils.toCss(op.color as any);
+          ctx.fillText(op.text, op.x, op.y);
+        }
+      }
+
+      // Border on top (matches previous Canvas2D look)
+      const borderEnabled = this.canvas3DConfig.sectionBorderEnabled !== false;
+      const borderWidth = Math.max(0, Math.round(this.canvas3DConfig.sectionBorderWidth ?? 2));
+      if (borderEnabled && borderWidth > 0) {
+        ctx.strokeStyle = ColorUtils.toCss(borderStyle.fg);
+        ctx.lineWidth = borderWidth;
+        const inset = borderWidth / 2;
+        ctx.strokeRect(inset, inset, widthPx - borderWidth, heightPx - borderWidth);
+      }
+
+      // Create GPU texture + upload
+      const texture = device.createTexture({
+        size: { width: widthPx, height: heightPx },
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+
+      try {
+        device.queue.copyExternalImageToTexture(
+          { source: canvas },
+          { texture },
+          { width: widthPx, height: heightPx }
+        );
+      } catch {
+        // Fallback path for implementations that don't accept OffscreenCanvas directly.
+        const bitmap = canvas.transferToImageBitmap();
+        device.queue.copyExternalImageToTexture(
+          { source: bitmap },
+          { texture },
+          { width: widthPx, height: heightPx }
+        );
+        bitmap.close();
+      }
+
+      layout.texture = texture;
+      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx });
+      this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
+    }
+  }
+
+  private clear3DSectionTextures(): void {
+    for (const layout of this.section3DLayouts) {
+      if (layout.texture) {
+        try {
+          layout.texture.destroy();
+        } catch {
+          // ignore
+        }
+        layout.texture = null;
+      }
+      layout.highlightUvRect = undefined;
+    }
+    this.sectionTextureCache.clear();
+    this.sectionLinkRegionsCache.clear();
+    this.hovered3DLink = null;
+    this.focused3DLink = null;
+  }
+
+  private parseHexColorToPackedColor(hex: string): Color | null {
+    const s = hex.trim();
+    if (!s.startsWith('#')) return null;
+    const h = s.slice(1);
+    if (!(h.length === 6 || h.length === 8)) return null;
+
+    const r = Number.parseInt(h.slice(0, 2), 16);
+    const g = Number.parseInt(h.slice(2, 4), 16);
+    const b = Number.parseInt(h.slice(4, 6), 16);
+    const a = h.length === 8 ? Number.parseInt(h.slice(6, 8), 16) : 0xFF;
+    if (![r, g, b, a].every(Number.isFinite)) return null;
+    return ((r & 0xFF) << 24) | ((g & 0xFF) << 16) | ((b & 0xFF) << 8) | (a & 0xFF);
+  }
+
+  private resolveCanvas3DSectionBackground(): Color {
+    const v: any = (this.canvas3DConfig as any).sectionBackground;
+
+    // Default: match the theme's elevated surface color (existing behavior).
+    if (v === undefined || v === null || v === 'surface') {
+      return this.getStyle('surface').bg;
+    }
+
+    if (typeof v === 'number') {
+      return v as Color;
+    }
+
+    if (typeof v === 'string') {
+      const trimmed = v.trim();
+      if (!trimmed) {
+        return this.getStyle('surface').bg;
+      }
+
+      const hex = this.parseHexColorToPackedColor(trimmed);
+      if (hex !== null) {
+        return hex;
+      }
+
+      const key = trimmed.toLowerCase();
+      switch (key) {
+        case 'bg':
+        case 'background':
+          return this.currentTheme.bg;
+        case 'bgalt':
+        case 'bg_alt':
+        case 'bgsecondary':
+        case 'bg_secondary':
+          return this.currentTheme.bgAlt;
+        case 'fg':
+        case 'foreground':
+          return this.currentTheme.fg;
+        case 'fgalt':
+        case 'fg_alt':
+        case 'fgsecondary':
+        case 'fg_secondary':
+          return this.currentTheme.fgAlt;
+        case 'accent1':
+        case 'primary':
+          return this.currentTheme.accent1;
+        case 'accent2':
+        case 'secondary':
+          return this.currentTheme.accent2;
+        case 'accent3':
+        case 'tertiary':
+          return this.currentTheme.accent3;
+        default:
+          return this.getStyle('surface').bg;
+      }
+    }
+
+    // Legacy object format ({r,g,b,a?})
+    return ColorUtils.from(v);
+  }
+
+  private ensure3DSectionTexturesWebGPUUI(device: GPUDevice): void {
+    if (!(this.renderer instanceof WebGPURenderer)) return;
+    if (!this.canvas3DEnabled || !this.camera3D) return;
+
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    const aspect = canvasW > 0 && canvasH > 0 ? canvasW / canvasH : 1;
+    const view = getCameraViewMatrix(this.camera3D);
+    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+    const viewProj = mat4Multiply(proj, view);
+
+    const atlas = this.renderer.getAtlas();
+    const charW = atlas ? atlas.getCharWidth() : 10;
+    const charH = atlas ? atlas.getCharHeight() : 16;
+    const texturePadding = 12;
+    const baseLineHeight = Math.max(1, Math.round(charH * 1.25));
+
+    if (!this.sectionWebGPUUIRenderer) {
+      // Internal texture is unused for this renderer; we only use flushTo().
+      this.sectionWebGPUUIRenderer = new WebGPUUIRenderer(device, atlas, 1, 1);
+    }
+
+    const ui = this.sectionWebGPUUIRenderer;
+    const format = ui.getTextureFormat();
+
+    // Derive markdown styling from the active theme stylesheet.
+    // (Theme colors are packed 0xRRGGBBAA, compatible with UI renderer.)
+    const base = this.getStyle('default');
+    const dim = this.getStyle('dim');
+    const heading = this.getStyle('heading');
+    const link = this.getStyle('link');
+    const code = this.getStyle('code');
+    const surfaceBg = this.resolveCanvas3DSectionBackground();
+    const borderStyle = this.getStyle('border');
+
+    const style: MarkdownStyle = {
+      fg: base.fg,
+      mutedFg: dim.fg,
+      headingFg: heading.fg,
+      linkFg: link.fg,
+      codeFg: code.fg,
+      codeBg: code.bg,
+      // Give 3D cards a panel-like background; matches theme elevated surfaces.
+      bg: surfaceBg,
+    };
+
+    const borderEnabled = this.canvas3DConfig.sectionBorderEnabled !== false;
+    const borderWidth = Math.max(0, Math.round(this.canvas3DConfig.sectionBorderWidth ?? 2));
+
+    for (const layout of this.section3DLayouts) {
+      if (!layout.visible) continue;
+
+      // Skip texture work if the card is entirely offscreen.
+      if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
+        continue;
+      }
+
+      const minW = 256;
+      const minH = 128;
+      const maxW = 1024;
+      const maxH = 1024;
+
+      const desiredW = Math.round(layout.width * charW + texturePadding * 2);
+      const desiredH = Math.round(layout.height * baseLineHeight + texturePadding * 2);
+
+      const widthPx = Math.max(minW, Math.min(maxW, desiredW));
+      const heightPx = Math.max(minH, Math.min(maxH, desiredH));
+
+      const existing = this.sectionTextureCache.get(layout.sectionIndex);
+      if (existing && existing.width === widthPx && existing.height === heightPx && layout.texture) {
+        // Texture already matches current size; ensure link regions are present.
+        if (!this.sectionLinkRegionsCache.has(layout.sectionIndex)) {
+          const title = (layout.displayTitle || layout.sectionTitle || '').trim();
+          const content = (layout.content || '').trim();
+          const markdown = `# ${title}\n\n${content}`.trim();
+          const nodes = parseMarkdownLite(markdown);
+          const result = layoutMarkdownDocument(
+            nodes,
+            { x: 0, y: 0, width: widthPx, height: heightPx },
+            { charW, charH },
+            style,
+            0,
+            texturePadding
+          );
+          this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
+        }
+        continue;
+      }
+
+      // If we need to regenerate, destroy the old texture first.
+      if (layout.texture) {
+        try {
+          layout.texture.destroy();
+        } catch {
+          // ignore
+        }
+        layout.texture = null;
+      }
+
+      const texture = device.createTexture({
+        size: { width: widthPx, height: heightPx },
+        format,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+      });
+
+      const title = (layout.displayTitle || layout.sectionTitle || '').trim();
+      const content = (layout.content || '').trim();
+      const markdown = `# ${title}\n\n${content}`.trim();
+
+      const nodes = parseMarkdownLite(markdown);
+      const result = layoutMarkdownDocument(
+        nodes,
+        { x: 0, y: 0, width: widthPx, height: heightPx },
+        { charW, charH },
+        style,
+        0,
+        texturePadding
+      );
+
+      this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
+
+      // Replay ops into UI renderer and render into this section texture.
+      ui.clearCommands();
+      for (const op of result.ops) {
+        if (op.kind === 'rect') {
+          ui.rect(op.x, op.y, op.w, op.h, op.color as any);
+        } else {
+          ui.text(op.text, op.x, op.y, op.color as any);
+        }
+      }
+
+      if (borderEnabled && borderWidth > 0) {
+        const bw = Math.max(1, borderWidth);
+        const c = borderStyle.fg as any;
+        ui.rect(0, 0, widthPx, bw, c);
+        ui.rect(0, heightPx - bw, widthPx, bw, c);
+        ui.rect(0, 0, bw, heightPx, c);
+        ui.rect(widthPx - bw, 0, bw, heightPx, c);
+      }
+
+      ui.flushTo(texture, widthPx, heightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
+
+      layout.texture = texture;
+      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx });
+    }
+  }
+
+  /**
    * Update phase - call user's update handler
    */
   private update(): void {
     // Update modules first
     this.moduleLoader.update(this.deltaTime);
+
+    // Built-in 3D controls (useful for testing picking/navigation)
+    if (this.canvas3DEnabled && this.canvas3DControlsEnabled && this.camera3D) {
+      const dt = this.deltaTime;
+      const moveSpeed = 120; // world units / second
+      const lookSpeed = 1.6; // radians / second
+
+      const applyMove = (dx: number, dy: number, dz: number) => {
+        this.camera3D!.position.x += dx;
+        this.camera3D!.position.y += dy;
+        this.camera3D!.position.z += dz;
+        if (this.camera3D!.target) {
+          this.camera3D!.target.x += dx;
+          this.camera3D!.target.y += dy;
+          this.camera3D!.target.z += dz;
+        }
+      };
+
+      // Movement in XY plane: WASD (arrow keys reserved for link navigation)
+      if (this.input.isKeyDown('w') || this.input.isKeyDown('W')) {
+        applyMove(0, moveSpeed * dt, 0);
+      }
+      if (this.input.isKeyDown('s') || this.input.isKeyDown('S')) {
+        applyMove(0, -moveSpeed * dt, 0);
+      }
+      if (this.input.isKeyDown('a') || this.input.isKeyDown('A')) {
+        applyMove(-moveSpeed * dt, 0, 0);
+      }
+      if (this.input.isKeyDown('d') || this.input.isKeyDown('D')) {
+        applyMove(moveSpeed * dt, 0, 0);
+      }
+
+      // QE = look left/right (yaw)
+      if (this.input.isKeyDown('q') || this.input.isKeyDown('Q')) {
+        this.camera3D.rotation.y -= lookSpeed * dt;
+      }
+      if (this.input.isKeyDown('e') || this.input.isKeyDown('E')) {
+        this.camera3D.rotation.y += lookSpeed * dt;
+      }
+
+      // Right-drag mouse-look
+      const rmbDown = this.input.isMouseDown(2);
+      const mx = this.input.getMouseX();
+      const my = this.input.getMouseY();
+      if (rmbDown) {
+        if (!this.mouseLookActive) {
+          this.mouseLookActive = true;
+          this.mouseLookLastX = mx;
+          this.mouseLookLastY = my;
+        } else {
+          const dx = mx - this.mouseLookLastX;
+          const dy = my - this.mouseLookLastY;
+          this.mouseLookLastX = mx;
+          this.mouseLookLastY = my;
+
+          const sensitivity = 0.003; // radians / pixel
+          this.camera3D.rotation.y += dx * sensitivity;
+          this.camera3D.rotation.x += dy * sensitivity;
+
+          // Clamp pitch to avoid flipping
+          const limit = Math.PI / 2 - 0.01;
+          if (this.camera3D.rotation.x > limit) this.camera3D.rotation.x = limit;
+          if (this.camera3D.rotation.x < -limit) this.camera3D.rotation.x = -limit;
+        }
+      } else {
+        this.mouseLookActive = false;
+      }
+    }
+    
+    // Update 3D camera (easing)
+    if (this.camera3D && this.canvas3DEnabled) {
+      updateCamera3D(this.camera3D, this.deltaTime);
+    }
     
     // Then update user code
     const doc = this.getActiveDocument();
@@ -1443,6 +3675,18 @@ ${exportVars}
         this.webgpuUIRenderer.resize(this.canvas.width, this.canvas.height);
         this.compositor.updateLayerTexture('ui', this.webgpuUIRenderer.getTexture());
       }
+
+      // Resize Canvas3D render targets (offscreen) and keep compositor layer in sync.
+      if (this.canvas3DRenderer) {
+        this.canvas3DRenderer.resize(this.canvas.width, this.canvas.height);
+        const renderTexture = this.canvas3DRenderer.getRenderTexture();
+        if (renderTexture) {
+          this.compositor.updateLayerTexture('3d', renderTexture);
+        }
+
+        // Re-frame the focused section for the new aspect ratio.
+        this.refocus3DForCurrentViewport();
+      }
     }
   }
 
@@ -1491,37 +3735,55 @@ ${exportVars}
    * Handle keyboard events for on:input
    */
   private handleKeyEvent(e: KeyboardEvent, action: 'press' | 'release'): void {
-    console.log('⌨️ Key event:', action, e.key, `(code: ${e.keyCode})`);
     const doc = this.getActiveDocument();
-    if (!doc?.handlers?.input) {
-      console.log('   No input handler defined');
-      return;
+
+    // Built-in 3D link navigation (canvas.nim parity)
+    let handledBy3D = false;
+    if (action === 'press' && this.canvas3DEnabled && this.camera3D) {
+      if (e.key === 'Tab') {
+        this.move3DLinkFocus(e.shiftKey ? -1 : 1);
+        handledBy3D = true;
+      } else if (e.key === 'Enter') {
+        this.activateFocused3DLink();
+        handledBy3D = true;
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        this.move3DLinkFocus(1);
+        handledBy3D = true;
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        this.move3DLinkFocus(-1);
+        handledBy3D = true;
+      }
     }
 
-    // Build modifiers array
-    const mods: string[] = [];
-    if (e.shiftKey) mods.push('shift');
-    if (e.ctrlKey) mods.push('ctrl');
-    if (e.altKey) mods.push('alt');
-    if (e.metaKey) mods.push('meta');
+    if (doc?.handlers?.input) {
+      // Build modifiers array
+      const mods: string[] = [];
+      if (e.shiftKey) mods.push('shift');
+      if (e.ctrlKey) mods.push('ctrl');
+      if (e.altKey) mods.push('alt');
+      if (e.metaKey) mods.push('meta');
 
-    // Dispatch keydown/keyup events (TStorie convention)
-    const event: InputEvent = {
-      type: action === 'press' ? 'keydown' : 'keyup',
-      key: e.key,
-      keyCode: e.keyCode,
-      mods
-    };
+      // Dispatch keydown/keyup events (TStorie convention)
+      const event: InputEvent = {
+        type: action === 'press' ? 'keydown' : 'keyup',
+        key: e.key,
+        keyCode: e.keyCode,
+        mods
+      };
 
-    try {
-      const shouldContinue = doc.handlers.input(event);
-      // Only stop if handler explicitly returns false (undefined = continue)
-      if (shouldContinue === false) {
-        this.stop();
+      try {
+        const shouldContinue = doc.handlers.input(event);
+        // Only stop if handler explicitly returns false (undefined = continue)
+        if (shouldContinue === false) {
+          this.stop();
+        }
+      } catch (error) {
+        console.error('Error in input handler:', error);
       }
+    }
+
+    if (handledBy3D || doc?.handlers?.input) {
       e.preventDefault();
-    } catch (error) {
-      console.error('Error in input handler:', error);
     }
   }
 
@@ -1530,26 +3792,44 @@ ${exportVars}
    */
   private handleMouseEvent(e: MouseEvent, action: 'press' | 'release'): void {
     const doc = this.getActiveDocument();
-    if (!doc?.handlers?.input) {
-      console.warn('No input handler for mouse event');
-      return;
-    }
 
     const rect = this.canvas.getBoundingClientRect();
     
-    // Update InputManager's mouse position so mouseX/mouseY globals reflect click position
-    const pixelX = e.clientX - rect.left;
-    const pixelY = e.clientY - rect.top;
-    this.input.updateMousePosition(pixelX, pixelY);
+    // Get CSS coordinates
+    const cssX = e.clientX - rect.left;
+    const cssY = e.clientY - rect.top;
     
-    // Calculate character size using displayed dimensions (rect), not canvas backing store
-    // This handles HiDPI displays correctly
-    const charWidth = rect.width / this.width;
-    const charHeight = rect.height / this.height;
-    const x = Math.floor(pixelX / charWidth);
-    const y = Math.floor(pixelY / charHeight);
+    // Scale to canvas backing store coordinates (handles HiDPI/CSS scaling)
+    const pixelX = cssX * (this.canvas.width / rect.width);
+    const pixelY = cssY * (this.canvas.height / rect.height);
+    
+    // Update InputManager's mouse position so mouseX/mouseY globals reflect click position
+    this.input.updateMousePosition(pixelX, pixelY);
 
-    console.log(`🔍 Mouse calc: pixel(${pixelX.toFixed(1)},${pixelY.toFixed(1)}) display(${rect.width.toFixed(0)}x${rect.height.toFixed(0)}) grid(${this.width}x${this.height}) charSize(${charWidth.toFixed(2)}x${charHeight.toFixed(2)}) result(${x},${y})`);
+    // Built-in 3D picking/navigation: click a section card to focus camera.
+    // This runs even if the document doesn't define an on:input handler.
+    if (action === 'press' && e.button === 0) {
+      const picked = this.pick3DAt(pixelX, pixelY);
+      if (picked && this.camera3D) {
+        const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
+        if (linkHit) {
+          this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
+          this.activate3DLink(linkHit.region.url);
+        } else {
+          this.setCurrent3DSection(picked.layout.sectionIndex);
+          const aspect = this.canvas.width > 0 && this.canvas.height > 0
+            ? this.canvas.width / this.canvas.height
+            : 1;
+          focusOnSectionFit(this.camera3D, picked.layout, aspect, 0.9, { min: 60, max: 400 });
+        }
+      }
+    }
+    
+    // Calculate character size in backing store pixels (same coordinate system as pixelX/pixelY)
+    const charWidth = this.canvas.width / this.width;
+    const charHeight = this.canvas.height / this.height;
+    const cellX = Math.floor(pixelX / charWidth);
+    const cellY = Math.floor(pixelY / charHeight);
 
     // Build modifiers array
     const mods: string[] = [];
@@ -1564,24 +3844,527 @@ ${exportVars}
       type: 'mouse',
       action,
       button,
-      x,
-      y,
+      x: pixelX,     // Pixel coordinates (primary)
+      y: pixelY,
+      cellX,         // Cell coordinates (for TUI)
+      cellY,
       mods
     };
 
-    console.log('🖱️ Mouse event:', action, button, `(${x},${y})`);
-
     try {
-      const shouldContinue = doc.handlers.input(event);
-      console.log('   Input handler returned:', shouldContinue);
-      // Only stop if handler explicitly returns false (undefined = continue)
-      if (shouldContinue === false) {
-        this.stop();
+      if (doc?.handlers?.input) {
+        const shouldContinue = doc.handlers.input(event);
+        // Only stop if handler explicitly returns false (undefined = continue)
+        if (shouldContinue === false) {
+          this.stop();
+        }
       }
       e.preventDefault();
     } catch (error) {
       console.error('Error in input handler:', error);
     }
+  }
+
+  private pick3DAt(
+    pixelX: number,
+    pixelY: number
+  ): { layout: Section3DLayout; u: number; v: number } | null {
+    if (!this.canvas3DEnabled || !this.camera3D) return null;
+    if (!this.section3DLayouts || this.section3DLayouts.length === 0) return null;
+
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    if (canvasW <= 0 || canvasH <= 0) return null;
+
+    const ndcX = (pixelX / canvasW) * 2 - 1;
+    const ndcY = 1 - (pixelY / canvasH) * 2;
+
+    const aspect = canvasW / canvasH;
+    const view = getCameraViewMatrix(this.camera3D);
+    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+    const viewProj = mat4Multiply(proj, view);
+    const invViewProj = mat4Invert(viewProj);
+    if (!invViewProj) return null;
+
+    // Build a world-space ray from NDC.
+    const nearWorld = mat4TransformPoint(invViewProj, { x: ndcX, y: ndcY, z: -1 });
+    const farWorld = mat4TransformPoint(invViewProj, { x: ndcX, y: ndcY, z: 1 });
+    const rayDirWorld = vec3Normalize(vec3Sub(farWorld, nearWorld));
+
+    let best: { layout: Section3DLayout; dist: number; u: number; v: number } | null = null;
+
+    for (const layout of this.section3DLayouts) {
+      if (!layout.visible || !layout.texture) continue;
+
+      // Match renderer's model matrix: apply width/height into scale.
+      const sectionTransform = {
+        position: layout.transform.position,
+        rotation: layout.transform.rotation,
+        scale: {
+          x: layout.transform.scale.x * layout.width,
+          y: layout.transform.scale.y * layout.height,
+          z: layout.transform.scale.z,
+        },
+      };
+
+      const model = mat4FromTransform(sectionTransform as any);
+      const invModel = mat4Invert(model);
+      if (!invModel) continue;
+
+      const rayOriginLocal = mat4TransformPoint(invModel, nearWorld);
+      const rayDirLocal = vec3Normalize(mat4TransformDirection(invModel, rayDirWorld));
+
+      const denom = rayDirLocal.z;
+      if (Math.abs(denom) < 1e-6) continue;
+
+      const t = -rayOriginLocal.z / denom;
+      if (t <= 0) continue;
+
+      const hitLocal = vec3Add(rayOriginLocal, vec3Scale(rayDirLocal, t));
+
+      // Quad in local space spans [-0.5, 0.5] in X and Y.
+      if (hitLocal.x < -0.5 || hitLocal.x > 0.5 || hitLocal.y < -0.5 || hitLocal.y > 0.5) {
+        continue;
+      }
+
+      // Map local hit point to UVs.
+      // Local (-0.5,-0.5) => UV(0,1); Local (-0.5,0.5) => UV(0,0)
+      const u = hitLocal.x + 0.5;
+      const v = 0.5 - hitLocal.y;
+
+      const hitWorld = mat4TransformPoint(model, hitLocal);
+      const dist = vec3Length(vec3Sub(hitWorld, nearWorld));
+      if (!best || dist < best.dist) {
+        best = { layout, dist, u, v };
+      }
+    }
+
+    return best ? { layout: best.layout, u: best.u, v: best.v } : null;
+  }
+
+  private hitTest3DLinkAtUV(
+    sectionIndex: number,
+    u: number,
+    v: number
+  ): { linkIndex: number; region: LinkRegion } | null {
+    const dims = this.sectionTextureCache.get(sectionIndex);
+    const regions = this.sectionLinkRegionsCache.get(sectionIndex);
+    if (!dims || !regions || regions.length === 0) return null;
+
+    const xPx = u * dims.width;
+    const yPx = v * dims.height;
+
+    for (let i = 0; i < regions.length; i++) {
+      const r = regions[i];
+      if (xPx >= r.x && xPx <= r.x + r.w && yPx >= r.y && yPx <= r.y + r.h) {
+        return { linkIndex: i, region: r };
+      }
+    }
+    return null;
+  }
+
+  private get3DLinkUvRect(
+    sectionIndex: number,
+    linkIndex: number
+  ): { uMin: number; vMin: number; uMax: number; vMax: number } | null {
+    const dims = this.sectionTextureCache.get(sectionIndex);
+    const regions = this.sectionLinkRegionsCache.get(sectionIndex);
+    if (!dims || !regions) return null;
+    const r = regions[linkIndex];
+    if (!r) return null;
+    return {
+      uMin: r.x / dims.width,
+      vMin: r.y / dims.height,
+      uMax: (r.x + r.w) / dims.width,
+      vMax: (r.y + r.h) / dims.height,
+    };
+  }
+
+  private activateFocused3DLink(): void {
+    const focused = this.focused3DLink;
+    if (!focused) return;
+    const regions = this.sectionLinkRegionsCache.get(focused.sectionIndex);
+    const region = regions ? regions[focused.linkIndex] : undefined;
+    if (!region) return;
+    this.activate3DLink(region.url);
+  }
+
+  private move3DLinkFocus(delta: number): void {
+    const links = this.getVisible3DLinks();
+    if (links.length === 0) {
+      this.focused3DLink = null;
+      return;
+    }
+
+    const cur = this.focused3DLink;
+    let idx = -1;
+    if (cur) {
+      idx = links.findIndex(l => l.sectionIndex === cur.sectionIndex && l.linkIndex === cur.linkIndex);
+    }
+
+    const next = ((idx >= 0 ? idx : 0) + delta + links.length) % links.length;
+    const sel = links[next];
+    this.focused3DLink = { sectionIndex: sel.sectionIndex, linkIndex: sel.linkIndex };
+  }
+
+  private activate3DLink(url: string): void {
+    if (!url) return;
+
+    // Internal link: #anchor
+    if (url.startsWith('#')) {
+      const target = decodeURIComponent(url.slice(1)).trim();
+      if (!target || !this.camera3D) return;
+
+      const slugify = (s: string) =>
+        s
+          .toLowerCase()
+          .trim()
+          .replace(/[`*_~]/g, '')
+          .replace(/[^a-z0-9\s-]/g, '')
+          .replace(/\s+/g, '-')
+          .replace(/-+/g, '-');
+
+      const targetSlug = slugify(target);
+      const layout = this.section3DLayouts.find(l => {
+        const title = (l.displayTitle || l.sectionTitle || '').trim();
+        return slugify(title) === targetSlug;
+      });
+
+      if (layout) {
+        this.setCurrent3DSection(layout.sectionIndex);
+        const aspect = this.canvas.width > 0 && this.canvas.height > 0
+          ? this.canvas.width / this.canvas.height
+          : 1;
+        focusOnSectionFit(this.camera3D, layout, aspect, 0.9, { min: 60, max: 400 });
+      }
+      return;
+    }
+
+    // External link
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      try {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  private get3DCardModelMatrix(layout: Section3DLayout): Float32Array {
+    const sectionTransform = {
+      position: layout.transform.position,
+      rotation: layout.transform.rotation,
+      scale: {
+        x: layout.transform.scale.x * layout.width,
+        y: layout.transform.scale.y * layout.height,
+        z: layout.transform.scale.z,
+      },
+    };
+    return mat4FromTransform(sectionTransform as any);
+  }
+
+  private request3DCameraFocus(
+    req:
+      | { kind: 'focus'; sectionIndex: number | string; distance: number }
+      | { kind: 'fit'; sectionIndex: number | string; fill: number }
+  ): void {
+    // If layouts aren’t ready yet (common during on:init), remember the intent
+    // and apply it once parsing/layout generation completes.
+    if (!this.section3DLayouts || this.section3DLayouts.length === 0) {
+      this.pending3DCameraFocus = req;
+      return;
+    }
+
+    if (!this.camera3D) return;
+
+    const idx = this.resolve3DSectionIndex(req.sectionIndex);
+    if (idx === null) {
+      console.warn(`Section "${String(req.sectionIndex)}" not found`);
+      return;
+    }
+    const layout = this.section3DLayouts[idx];
+    if (!layout) {
+      console.warn(`Section ${String(req.sectionIndex)} not found`);
+      return;
+    }
+
+    this.setCurrent3DSection(layout.sectionIndex);
+
+    // Remember last applied focus (use resolved numeric section index).
+    if (req.kind === 'focus') {
+      this.lastApplied3DCameraFocus = {
+        kind: 'focus',
+        sectionIndex: layout.sectionIndex,
+        distance: req.distance
+      };
+    } else {
+      this.lastApplied3DCameraFocus = {
+        kind: 'fit',
+        sectionIndex: layout.sectionIndex,
+        fill: req.fill
+      };
+    }
+
+    if (req.kind === 'focus') {
+      focusOnSection(this.camera3D, layout, req.distance);
+    } else {
+      const aspect = this.canvas.width > 0 && this.canvas.height > 0
+        ? this.canvas.width / this.canvas.height
+        : 1;
+      focusOnSectionFit(this.camera3D, layout, aspect, req.fill);
+    }
+  }
+
+  private refocus3DForCurrentViewport(): void {
+    if (!this.canvas3DEnabled || !this.camera3D) return;
+    if (!this.lastApplied3DCameraFocus) return;
+
+    const layout = this.section3DLayouts.find(l => l.sectionIndex === this.lastApplied3DCameraFocus!.sectionIndex);
+    if (!layout) return;
+
+    if (this.lastApplied3DCameraFocus.kind === 'focus') {
+      focusOnSection(this.camera3D, layout, this.lastApplied3DCameraFocus.distance);
+    } else {
+      const aspect = this.canvas.width > 0 && this.canvas.height > 0
+        ? this.canvas.width / this.canvas.height
+        : 1;
+      focusOnSectionFit(this.camera3D, layout, aspect, this.lastApplied3DCameraFocus.fill);
+    }
+  }
+
+  private applyPending3DCameraFocus(): void {
+    if (!this.pending3DCameraFocus) return;
+    const req = this.pending3DCameraFocus;
+    this.pending3DCameraFocus = null;
+    this.request3DCameraFocus(req);
+  }
+
+  private setCurrent3DSection(sectionIndex: number): void {
+    if (this.current3DSectionIndex === sectionIndex) return;
+    this.current3DSectionIndex = sectionIndex;
+    this.runSectionEnterHandlers(sectionIndex);
+  }
+
+  private runSectionEnterHandlers(sectionIndex: number): void {
+    const doc = this.getActiveDocument() as any;
+    if (!doc?.id) return;
+
+    const scope = this.sandbox.getScope(doc.id) as any;
+    const handler = scope?.__enterHandlers?.[sectionIndex];
+    if (typeof handler !== 'function') return;
+
+    try {
+      handler();
+    } catch (error) {
+      console.error('Error in on:enter handler:', error);
+    }
+  }
+
+  private resolve3DSectionIndex(selector: number | string): number | null {
+    if (typeof selector === 'number' && Number.isFinite(selector)) {
+      return selector;
+    }
+    if (typeof selector !== 'string') return null;
+    const query = selector.trim();
+    if (!query) return null;
+
+    const slugify = (s: string) =>
+      s
+        .toLowerCase()
+        .trim()
+        .replace(/[`*_~]/g, '')
+        .replace(/\{[^}]*\}\s*$/g, '')
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-');
+
+    const want = slugify(query);
+    const exact = this.section3DLayouts.find(l => {
+      const title = (l.displayTitle || l.sectionTitle || '').trim();
+      return slugify(title) === want;
+    });
+    return exact ? exact.sectionIndex : null;
+  }
+
+  private findSectionIndexForLine(sections: any[], line: number): number | null {
+    // Mirrors createSection3DLayouts() traversal order and returns the deepest
+    // section that contains the given line.
+    let sectionIndex = 0;
+    let best: number | null = null;
+
+    const visit = (list: any[]) => {
+      for (const s of list) {
+        const idx = sectionIndex;
+        sectionIndex++;
+
+        if (typeof s.startLine === 'number' && typeof s.endLine === 'number') {
+          if (line >= s.startLine && line <= s.endLine) {
+            best = idx;
+            if (Array.isArray(s.children) && s.children.length > 0) {
+              visit(s.children);
+            }
+          }
+        }
+
+        // If not in this section, still need to advance over children indices
+        // (since createSection3DLayouts includes them).
+        if (!(line >= s.startLine && line <= s.endLine)) {
+          if (Array.isArray(s.children) && s.children.length > 0) {
+            visit(s.children);
+          }
+        }
+      }
+    };
+
+    visit(sections);
+    return best;
+  }
+
+  private applyCanvas3DLayoutCallback(sections?: any[]): void {
+    if (!this.canvas3DLayoutCallback) return;
+    if (!this.section3DLayouts || this.section3DLayouts.length === 0) return;
+
+    const order: any[] = [];
+    const walk = (list: any[]) => {
+      for (const s of list) {
+        order.push(s);
+        if (Array.isArray(s.children) && s.children.length > 0) walk(s.children);
+      }
+    };
+
+    const doc = sections
+      ? { sections }
+      : ((this.getActiveDocument() as any)?.sections ? { sections: (this.getActiveDocument() as any).sections } : null);
+    if (!doc?.sections) return;
+    walk(doc.sections);
+
+    for (let i = 0; i < Math.min(order.length, this.section3DLayouts.length); i++) {
+      const layout = this.section3DLayouts[i];
+      if (!layout) continue;
+
+      try {
+        const out = this.canvas3DLayoutCallback({
+          sectionIndex: layout.sectionIndex,
+          title: String(layout.displayTitle || layout.sectionTitle || ''),
+          layout,
+        });
+
+        if (!out) continue;
+
+        if (out.position) {
+          layout.transform.position = { ...out.position };
+        }
+        if (out.rotation) {
+          // Callback rotation is degrees (matches setSectionTransform API)
+          layout.transform.rotation = {
+            x: (out.rotation.x * Math.PI) / 180,
+            y: (out.rotation.y * Math.PI) / 180,
+            z: (out.rotation.z * Math.PI) / 180,
+          };
+        }
+        if (out.scale) {
+          layout.transform.scale = { ...out.scale };
+        }
+        if (typeof out.width === 'number') layout.width = out.width;
+        if (typeof out.height === 'number') layout.height = out.height;
+        if (typeof out.visible === 'boolean') layout.visible = out.visible;
+        if (typeof out.navigable === 'boolean') layout.navigable = out.navigable;
+      } catch (error) {
+        console.error('[canvas3D.layout] callback error:', error);
+      }
+    }
+
+    // Layout changes imply textures may need to be regenerated at different sizes.
+    // Keep it simple: clear texture cache so cards re-rasterize on demand.
+    this.clear3DSectionTextures();
+  }
+
+  private is3DCardPossiblyVisible(viewProj: Float32Array, layout: Section3DLayout): boolean {
+    const model = this.get3DCardModelMatrix(layout);
+
+    const corners = [
+      { x: -0.5, y: -0.5, z: 0 },
+      { x: 0.5, y: -0.5, z: 0 },
+      { x: 0.5, y: 0.5, z: 0 },
+      { x: -0.5, y: 0.5, z: 0 },
+    ];
+
+    const clips = corners.map(c => {
+      const world = mat4TransformPoint(model, c);
+      return mat4TransformVec4(viewProj, world.x, world.y, world.z, 1);
+    });
+
+    const all = (pred: (p: { x: number; y: number; z: number; w: number }) => boolean) => clips.every(pred);
+    if (all(p => p.x < -p.w)) return false; // left
+    if (all(p => p.x > p.w)) return false; // right
+    if (all(p => p.y < -p.w)) return false; // bottom
+    if (all(p => p.y > p.w)) return false; // top
+    // WebGPU NDC z is [0, 1] after divide; clip test is [0, w]
+    if (all(p => p.z < 0)) return false; // near
+    if (all(p => p.z > p.w)) return false; // far
+    return true;
+  }
+
+  private getVisible3DLinks(): Array<{
+    sectionIndex: number;
+    linkIndex: number;
+    region: LinkRegion;
+    screenX: number;
+    screenY: number;
+  }> {
+    if (!this.canvas3DEnabled || !this.camera3D) return [];
+
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    if (canvasW <= 0 || canvasH <= 0) return [];
+
+    const aspect = canvasW / canvasH;
+    const view = getCameraViewMatrix(this.camera3D);
+    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+    const viewProj = mat4Multiply(proj, view);
+
+    const out: Array<{
+      sectionIndex: number;
+      linkIndex: number;
+      region: LinkRegion;
+      screenX: number;
+      screenY: number;
+    }> = [];
+
+    for (const layout of this.section3DLayouts) {
+      if (!layout.visible || !layout.texture) continue;
+      if (!this.is3DCardPossiblyVisible(viewProj, layout)) continue;
+
+      const dims = this.sectionTextureCache.get(layout.sectionIndex);
+      const regions = this.sectionLinkRegionsCache.get(layout.sectionIndex);
+      if (!dims || !regions || regions.length === 0) continue;
+
+      const model = this.get3DCardModelMatrix(layout);
+
+      for (let i = 0; i < regions.length; i++) {
+        const r = regions[i];
+        const u = (r.x + r.w * 0.5) / dims.width;
+        const v = (r.y + r.h * 0.5) / dims.height;
+        const xLocal = u - 0.5;
+        const yLocal = 0.5 - v;
+
+        const world = mat4TransformPoint(model, { x: xLocal, y: yLocal, z: 0 });
+        const clip = mat4TransformVec4(viewProj, world.x, world.y, world.z, 1);
+        if (clip.w <= 1e-6) continue;
+
+        const ndcX = clip.x / clip.w;
+        const ndcY = clip.y / clip.w;
+        // Keep only links whose center is within screen bounds.
+        if (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1) continue;
+
+        const screenX = (ndcX * 0.5 + 0.5) * canvasW;
+        const screenY = (1 - (ndcY * 0.5 + 0.5)) * canvasH;
+        out.push({ sectionIndex: layout.sectionIndex, linkIndex: i, region: r, screenX, screenY });
+      }
+    }
+
+    out.sort((a, b) => (a.screenY - b.screenY) || (a.screenX - b.screenX));
+    return out;
   }
 
   /**
@@ -1592,15 +4375,30 @@ ${exportVars}
     if (!doc?.handlers?.input) return;
 
     const rect = this.canvas.getBoundingClientRect();
-    const charWidth = rect.width / this.width;
-    const charHeight = rect.height / this.height;
-    const x = Math.floor((e.clientX - rect.left) / charWidth);
-    const y = Math.floor((e.clientY - rect.top) / charHeight);
+    
+    // Get CSS coordinates
+    const cssX = e.clientX - rect.left;
+    const cssY = e.clientY - rect.top;
+    
+    // Scale to canvas backing store coordinates (handles HiDPI/CSS scaling)
+    const pixelX = cssX * (this.canvas.width / rect.width);
+    const pixelY = cssY * (this.canvas.height / rect.height);
+    
+    // Update InputManager's mouse position for mouseX/mouseY globals
+    this.input.updateMousePosition(pixelX, pixelY);
+    
+    // Calculate character size in backing store pixels (same coordinate system as pixelX/pixelY)
+    const charWidth = this.canvas.width / this.width;
+    const charHeight = this.canvas.height / this.height;
+    const cellX = Math.floor(pixelX / charWidth);
+    const cellY = Math.floor(pixelY / charHeight);
 
     const event: InputEvent = {
       type: 'mouse_move',
-      x,
-      y,
+      x: pixelX,     // Pixel coordinates (primary)
+      y: pixelY,
+      cellX,         // Cell coordinates (for TUI)
+      cellY,
       mods: []
     };
 

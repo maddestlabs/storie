@@ -97,7 +97,6 @@ Create → Register → Update → Render → Destroy
 Interactive button with box-drawing border
 ```typescript
 const btn = tui.createButton({
-  id: 'myButton',
   bounds: { x: 10, y: 5, width: 20, height: 3 },
   label: 'Click Me',
   group: 0 // Optional group for visibility management
@@ -116,11 +115,12 @@ if (btn.state.hovered) {
 btn.setLabel('New Label');
 ```
 
+**Note:** The `id` field is optional. If not provided, a unique ID is auto-generated internally.
+
 #### **Label**
 Static text display
 ```typescript
 const lbl = tui.createLabel({
-  id: 'title',
   bounds: { x: 5, y: 2, width: 30, height: 1 },
   text: 'My Application',
   align: 'center' // 'left', 'center', 'right'
@@ -134,7 +134,6 @@ lbl.setText('Updated Title');
 Toggle control with label
 ```typescript
 const chk = tui.createCheckbox({
-  id: 'option1',
   bounds: { x: 10, y: 10, width: 20, height: 1 },
   label: 'Enable sound',
   checked: true
@@ -153,7 +152,6 @@ chk.setChecked(false);
 Draggable value control
 ```typescript
 const slider = tui.createSlider({
-  id: 'volume',
   bounds: { x: 10, y: 15, width: 30, height: 3 },
   label: 'Volume',
   min: 0,
@@ -195,8 +193,8 @@ tui.handleKey(key, { shift: false, ctrl: false, alt: false });
 Organize widgets into groups for visibility management:
 ```javascript
 // Create widgets in different groups
-const menuBtn = tui.createButton({ id: 'menu', group: 0, ... });
-const settingsBtn = tui.createButton({ id: 'settings', group: 1, ... });
+const menuBtn = tui.createButton({ bounds: {...}, label: 'Menu', group: 0 });
+const settingsBtn = tui.createButton({ bounds: {...}, label: 'Settings', group: 1 });
 
 // Toggle group visibility
 tui.setGroupVisible(1, false); // Hide all group 1 widgets
@@ -207,7 +205,6 @@ tui.setGroupVisible(1, false); // Hide all group 1 widgets
 Widgets support theming via style objects:
 ```typescript
 const btn = tui.createButton({
-  id: 'styled',
   bounds: { x: 10, y: 5, width: 20, height: 3 },
   label: 'Styled',
   style: {

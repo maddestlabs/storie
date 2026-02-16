@@ -5,7 +5,7 @@
 
 import { BaseWidget, type WidgetConfig } from '../core/base-widget.js';
 import type { TerminalRenderer } from '../../terminal-renderer.js';
-import { ColorUtils } from '../../types.js';
+import { getTUIThemeDefaults } from './theme.js';
 import type { InputCoordinate } from '../core/types.js';
 
 export interface TUISliderConfig extends WidgetConfig {
@@ -109,11 +109,13 @@ export class TUISlider extends BaseWidget {
     
     const { x, y, width } = this.bounds;
     const style = this.getEffectiveStyle();
+
+    const defaults = getTUIThemeDefaults();
     
     // Get colors
-    const fg = style.fg ?? ColorUtils.rgb(150, 150, 150);
-    const bg = style.bg ?? ColorUtils.rgb(0, 0, 0);
-    const accentColor = style.accentColor ?? ColorUtils.rgb(100, 200, 255);
+    const fg = style.fg ?? defaults.slider.fg;
+    const bg = style.bg ?? defaults.slider.bg;
+    const accentColor = style.accentColor ?? defaults.slider.accent;
     
     // Draw label (first row)
     for (let i = 0; i < this.label.length && i < width; i++) {
@@ -142,7 +144,7 @@ export class TUISlider extends BaseWidget {
     const range = this.max - this.min;
     const normalizedPos = range > 0 ? (this.value - this.min) / range : 0;
     const handleX = x + 1 + Math.floor(normalizedPos * trackWidth);
-    const handleColor = this.dragging ? ColorUtils.rgb(255, 200, 0) : accentColor;
+    const handleColor = this.dragging ? defaults.slider.dragAccent : accentColor;
     renderer.setCell(buffer, handleX, trackY, '█', handleColor, bg);
     
     // Draw value (third row)

@@ -5,7 +5,7 @@
 
 import { BaseWidget, type WidgetConfig } from '../core/base-widget.js';
 import type { TerminalRenderer } from '../../terminal-renderer.js';
-import { ColorUtils } from '../../types.js';
+import { getTUIThemeDefaults } from './theme.js';
 
 export interface TUICheckboxConfig extends WidgetConfig {
   label: string;
@@ -76,10 +76,12 @@ export class TUICheckbox extends BaseWidget {
     
     const { x, y } = this.bounds;
     const style = this.getEffectiveStyle();
+
+    const defaults = getTUIThemeDefaults();
     
     // Get colors
-    const fg = style.fg ?? ColorUtils.rgb(200, 200, 200);
-    const bg = style.bg ?? ColorUtils.rgb(0, 0, 0);
+    const fg = style.fg ?? defaults.checkbox.fg;
+    const bg = style.bg ?? defaults.checkbox.bg;
     
     // Choose checkbox symbol based on focus
     let symbol: string;
