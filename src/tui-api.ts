@@ -119,6 +119,24 @@ export function createTUIAPI(
       }
       return tuiSystem.createSlider(config);
     },
+
+    /**
+     * Create a text field widget
+     *
+     * @example
+     * ```javascript
+     * const input = tui.createTextField({
+     *   bounds: { x: 2, y: 5, width: 30, height: 3 },
+     *   value: 'hello'
+     * });
+     * ```
+     */
+    createTextField(config: any) {
+      if (!tuiSystem) {
+        throw new Error('TUI system not initialized. Call tui.init() first.');
+      }
+      return tuiSystem.createTextField(config);
+    },
     
     /**
      * Update TUI with input state
@@ -156,6 +174,15 @@ export function createTUIAPI(
     handleKey(key: string, modifiers?: { shift?: boolean; ctrl?: boolean; alt?: boolean }) {
       if (!tuiSystem) return;
       tuiSystem.handleKey(key, modifiers);
+    },
+
+    /**
+     * Handle text input (printable characters)
+     * Call this in on:input when event.type === 'text'
+     */
+    handleText(text: string) {
+      if (!tuiSystem) return;
+      tuiSystem.handleText(text);
     },
     
     /**

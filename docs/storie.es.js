@@ -5,14 +5,14 @@ const ColorUtils = {
   /**
    * Create a color from RGB components (0-255)
    */
-  rgb(r, g, b) {
-    return (r & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | 255;
+  rgb(r2, g, b) {
+    return (r2 & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | 255;
   },
   /**
    * Create a color from RGBA components (0-255)
    */
-  rgba(r, g, b, a) {
-    return (r & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | a & 255;
+  rgba(r2, g, b, a) {
+    return (r2 & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | a & 255;
   },
   /**
    * Extract red component (0-255)
@@ -63,14 +63,14 @@ const ColorUtils = {
    * Convert to CSS color string
    */
   toCss(color) {
-    const r = color >>> 24 & 255;
+    const r2 = color >>> 24 & 255;
     const g = color >>> 16 & 255;
     const b = color >>> 8 & 255;
     const a = color & 255;
     if (a === 255) {
-      return `rgb(${r}, ${g}, ${b})`;
+      return `rgb(${r2}, ${g}, ${b})`;
     }
-    return `rgba(${r}, ${g}, ${b}, ${a / 255})`;
+    return `rgba(${r2}, ${g}, ${b}, ${a / 255})`;
   },
   /**
    * Blend two colors with alpha
@@ -83,10 +83,10 @@ const ColorUtils = {
     const dr = dst >>> 24 & 255;
     const dg = dst >>> 16 & 255;
     const db = dst >>> 8 & 255;
-    const r = Math.round(sr * alpha + dr * invAlpha);
+    const r2 = Math.round(sr * alpha + dr * invAlpha);
     const g = Math.round(sg * alpha + dg * invAlpha);
     const b = Math.round(sb * alpha + db * invAlpha);
-    return (r & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | 255;
+    return (r2 & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | 255;
   },
   /**
    * Convert from any color format to packed integer
@@ -98,11 +98,11 @@ const ColorUtils = {
       return color;
     }
     if (color && typeof color === "object" && "r" in color && "g" in color && "b" in color) {
-      const r = Math.round(color.r) & 255;
+      const r2 = Math.round(color.r) & 255;
       const g = Math.round(color.g) & 255;
       const b = Math.round(color.b) & 255;
       const a = color.a !== void 0 ? Math.round(color.a * 255) & 255 : 255;
-      return r << 24 | g << 16 | b << 8 | a;
+      return r2 << 24 | g << 16 | b << 8 | a;
     }
     return 4294967295;
   }
@@ -1615,8 +1615,8 @@ class Compositor {
    * This affects the “overall background” behind all layers.
    */
   setAutoClearColor(color) {
-    const [r, g, b, a] = ColorUtils.rgbaNorm(color);
-    this.autoClearValue = { r, g, b, a };
+    const [r2, g, b, a] = ColorUtils.rgbaNorm(color);
+    this.autoClearValue = { r: r2, g, b, a };
   }
   /**
    * Provide an external ShaderManager for applying a single active WGSL shader
@@ -1982,7 +1982,7 @@ class Compositor {
    * Clear the main canvas
    */
   clear(color = "#000000") {
-    const r = parseInt(color.slice(1, 3), 16) / 255;
+    const r2 = parseInt(color.slice(1, 3), 16) / 255;
     const g = parseInt(color.slice(3, 5), 16) / 255;
     const b = parseInt(color.slice(5, 7), 16) / 255;
     const commandEncoder = this.device.createCommandEncoder();
@@ -1990,7 +1990,7 @@ class Compositor {
     const renderPassDescriptor = {
       colorAttachments: [{
         view: textureView,
-        clearValue: { r, g, b, a: 1 },
+        clearValue: { r: r2, g, b, a: 1 },
         loadOp: "clear",
         storeOp: "store"
       }]
@@ -2093,23 +2093,23 @@ class Compositor {
     const ndcY = -(y / this.canvas.height) * 2;
     const originOffsetX = originX - 0.5;
     const originOffsetY = originY - 0.5;
-    const c = Math.cos(rotation);
+    const c2 = Math.cos(rotation);
     const s = Math.sin(rotation);
     const matrix = new Float32Array(16);
-    matrix[0] = c * scaleX;
+    matrix[0] = c2 * scaleX;
     matrix[1] = s * scaleX;
     matrix[2] = 0;
     matrix[3] = 0;
     matrix[4] = -s * scaleY;
-    matrix[5] = c * scaleY;
+    matrix[5] = c2 * scaleY;
     matrix[6] = 0;
     matrix[7] = 0;
     matrix[8] = 0;
     matrix[9] = 0;
     matrix[10] = 1;
     matrix[11] = 0;
-    matrix[12] = ndcX - originOffsetX * 2 * c * scaleX + originOffsetY * 2 * s * scaleY;
-    matrix[13] = ndcY - originOffsetX * 2 * s * scaleX - originOffsetY * 2 * c * scaleY;
+    matrix[12] = ndcX - originOffsetX * 2 * c2 * scaleX + originOffsetY * 2 * s * scaleY;
+    matrix[13] = ndcY - originOffsetX * 2 * s * scaleX - originOffsetY * 2 * c2 * scaleY;
     matrix[14] = 0;
     matrix[15] = 1;
     return matrix;
@@ -2461,7 +2461,7 @@ class Compositor {
 const universalThis = globalThis;
 const {
   Array: Array$2,
-  ArrayBuffer: ArrayBuffer$2,
+  ArrayBuffer: ArrayBuffer$3,
   Date: Date$1,
   FinalizationRegistry,
   Float32Array: Float32Array$1,
@@ -2478,7 +2478,7 @@ const {
   String: String$2,
   Symbol: Symbol$2,
   Uint8Array: Uint8Array$2,
-  WeakMap: WeakMap$2,
+  WeakMap: WeakMap$3,
   WeakSet: WeakSet2
 } = globalThis;
 const {
@@ -2546,12 +2546,12 @@ const {
   set: reflectSet
 } = Reflect$4;
 const { isArray, prototype: arrayPrototype } = Array$2;
-const { prototype: arrayBufferPrototype$2 } = ArrayBuffer$2;
+const { prototype: arrayBufferPrototype$2 } = ArrayBuffer$3;
 const { prototype: mapPrototype } = Map$1;
 const { prototype: regexpPrototype } = RegExp;
 const { prototype: setPrototype } = Set$1;
 const { prototype: stringPrototype } = String$2;
-const { prototype: weakmapPrototype } = WeakMap$2;
+const { prototype: weakmapPrototype } = WeakMap$3;
 const { prototype: weaksetPrototype } = WeakSet2;
 const { prototype: functionPrototype } = Function;
 const { prototype: promisePrototype } = Promise$1;
@@ -2761,13 +2761,13 @@ const {
   environmentOptionsListHas
 } = makeEnvironmentCaptor(localThis, true);
 const {
-  ArrayBuffer: ArrayBuffer$1,
+  ArrayBuffer: ArrayBuffer$2,
   Object: Object$2,
   Reflect: Reflect$2,
   Symbol: Symbol$1,
   TypeError: TypeError$2,
   Uint8Array: Uint8Array$1,
-  WeakMap: WeakMap$1,
+  WeakMap: WeakMap$2,
   // Capture structuredClone before it can be scuttled.
   structuredClone: optStructuredClone
   // eslint-disable-next-line no-restricted-globals
@@ -2775,7 +2775,7 @@ const {
 const { freeze: freeze$2, defineProperty: defineProperty$1, getPrototypeOf, getOwnPropertyDescriptor } = Object$2;
 const { apply, ownKeys: ownKeys$1 } = Reflect$2;
 const { toStringTag } = Symbol$1;
-const { prototype: arrayBufferPrototype$1 } = ArrayBuffer$1;
+const { prototype: arrayBufferPrototype$1 } = ArrayBuffer$2;
 const { slice, transfer: optTransfer } = arrayBufferPrototype$1;
 const { get: arrayBufferByteLength } = getOwnPropertyDescriptor(
   arrayBufferPrototype$1,
@@ -2801,7 +2801,7 @@ if (optTransfer) {
 } else {
   optArrayBufferTransfer = void 0;
 }
-const buffers = new WeakMap$1();
+const buffers = new WeakMap$2();
 for (const methodName of ["get", "has", "set"]) {
   defineProperty$1(buffers, methodName, { value: buffers[methodName] });
 }
@@ -2917,7 +2917,7 @@ if (optArrayBufferTransfer) {
 }
 const optTransferBufferToImmutable$1 = transferBufferToImmutable;
 const {
-  ArrayBuffer,
+  ArrayBuffer: ArrayBuffer$1,
   JSON: JSON$1,
   Object: Object$1,
   Reflect: Reflect$1
@@ -2926,7 +2926,7 @@ const {
 const optTransferBufferToImmutable = optTransferBufferToImmutable$1;
 const { getOwnPropertyDescriptors, defineProperties, defineProperty } = Object$1;
 const { ownKeys } = Reflect$1;
-const { prototype: arrayBufferPrototype } = ArrayBuffer;
+const { prototype: arrayBufferPrototype } = ArrayBuffer$1;
 const { stringify: stringify$1 } = JSON$1;
 const arrayBufferMethods = {
   /**
@@ -3061,7 +3061,7 @@ const bestEffortStringify = (payload, spaces = void 0) => {
   }
 };
 freeze$4(bestEffortStringify);
-const { Error: Error$1, TypeError: TypeError$1, WeakMap } = globalThis;
+const { Error: Error$1, TypeError: TypeError$1, WeakMap: WeakMap$1 } = globalThis;
 const { parse, stringify } = JSON;
 const { isSafeInteger: isSafeInteger$1 } = Number;
 const { freeze: freeze$1 } = Object;
@@ -3126,11 +3126,11 @@ const makeCacheMapKit = (capacity, options = {}) => {
         /** @type {any} */
         MaybeCtor
       );
-    } catch (err) {
+    } catch (err2) {
       const constructNewMap = () => new MaybeCtor();
       return constructNewMap;
     }
-  })(options.makeMap ?? WeakMap);
+  })(options.makeMap ?? WeakMap$1);
   const tag = (
     /** @type {any} */
     makeMap().clear === void 0 ? "WeakCacheMap" : "CacheMap"
@@ -3267,7 +3267,7 @@ const makeNoteLogArgsArrayKit = (errorsBudget = defaultLoggedErrorsBudget, argsP
   });
 };
 freeze(makeNoteLogArgsArrayKit);
-const declassifiers = new WeakMap$2();
+const declassifiers = new WeakMap$3();
 const quote = (payload, spaces = void 0) => {
   const result = freeze$4({
     toString: freeze$4(() => bestEffortStringify(payload, spaces))
@@ -3288,7 +3288,7 @@ const bare = (payload, spaces = void 0) => {
   return result;
 };
 freeze$4(bare);
-const hiddenDetailsMap = new WeakMap$2();
+const hiddenDetailsMap = new WeakMap$3();
 const getMessageString = ({ template, args }) => {
   const parts = [template[0]];
   for (let i = 0; i < args.length; i += 1) {
@@ -3352,17 +3352,17 @@ const getLogArgs = ({ template, args }) => {
   }
   return logArgs;
 };
-const hiddenMessageLogArgs = new WeakMap$2();
+const hiddenMessageLogArgs = new WeakMap$3();
 let errorTagNum = 0;
-const errorTags = new WeakMap$2();
-const tagError = (err, optErrorName = err.name) => {
-  let errorTag = weakmapGet(errorTags, err);
+const errorTags = new WeakMap$3();
+const tagError = (err2, optErrorName = err2.name) => {
+  let errorTag = weakmapGet(errorTags, err2);
   if (errorTag !== void 0) {
     return errorTag;
   }
   errorTagNum += 1;
   errorTag = `${optErrorName}#${errorTagNum}`;
-  weakmapSet(errorTags, err, errorTag);
+  weakmapSet(errorTags, err2, errorTag);
   return errorTag;
 };
 const sanitizeError = (error) => {
@@ -3441,7 +3441,7 @@ const makeError = (optDetails = redactedDetails`Assert failed`, errConstructor =
 };
 freeze$4(makeError);
 const { addLogArgs, takeLogArgsArray } = makeNoteLogArgsArrayKit();
-const hiddenNoteCallbackArrays = new WeakMap$2();
+const hiddenNoteCallbackArrays = new WeakMap$3();
 const note = (error, detailsNote) => {
   if (typeof detailsNote === "string") {
     detailsNote = redactedDetails([detailsNote]);
@@ -3674,7 +3674,7 @@ const cauterizeProperty = (obj, prop, known, subPath, { warn, error }) => {
   }
   try {
     delete obj[prop];
-  } catch (err) {
+  } catch (err2) {
     if (hasOwn(obj, prop)) {
       if (typeof obj === "function" && prop === "prototype") {
         obj.prototype = void 0;
@@ -3683,11 +3683,11 @@ const cauterizeProperty = (obj, prop, known, subPath, { warn, error }) => {
           return;
         }
       }
-      error(`failed to delete ${subPath}`, err);
+      error(`failed to delete ${subPath}`, err2);
     } else {
-      error(`deleting ${subPath} threw`, err);
+      error(`deleting ${subPath} threw`, err2);
     }
-    throw err;
+    throw err2;
   }
 };
 const constantProperties = {
@@ -6432,19 +6432,19 @@ const makeSafeEvaluator = ({
         identity
       )
     );
-    let err;
+    let err2;
     try {
       evalScopeKit.allowNextEvalToBeUnsafe();
       return apply$2(evaluate, globalObject, [source]);
     } catch (e) {
-      err = e;
+      err2 = e;
       throw e;
     } finally {
       const unsafeEvalWasStillExposed = "eval" in evalScope;
       delete evalScope.eval;
       if (unsafeEvalWasStillExposed) {
-        evalScopeKit.revoked = { err };
-        Fail$2`handler did not reset allowNextEvalToBeUnsafe ${err}`;
+        evalScopeKit.revoked = { err: err2 };
+        Fail$2`handler did not reset allowNextEvalToBeUnsafe ${err2}`;
       }
     }
   };
@@ -6779,7 +6779,7 @@ const makeRejectionHandlers = (reportReason) => {
   const removeReasonId = (reasonId) => {
     mapDelete(idToReason, reasonId);
   };
-  const promiseToReasonId = new WeakMap$2();
+  const promiseToReasonId = new WeakMap$3();
   const finalizeDroppedPromise = (heldReasonId) => {
     if (mapHas(idToReason, heldReasonId)) {
       const reason = mapGet(idToReason, heldReasonId);
@@ -7013,7 +7013,7 @@ const tameV8ErrorConstructor = (OriginalError, InitialError, errorTaming, stackF
     arrayMap(arrayFilter(sst, callSiteFilter), callSiteStringifier),
     ""
   );
-  const stackInfos = new WeakMap$2();
+  const stackInfos = new WeakMap$3();
   const tamedMethods2 = {
     // The optional `optFn` argument is for cutting off the bottom of
     // the stack --- for capturing the stack only above the topmost
@@ -7959,9 +7959,9 @@ const makeVirtualModuleInstance = (compartmentPrivateFields, moduleSource, compa
         localState.activated = true;
         try {
           moduleSource.execute(exportsTarget, compartment, resolvedImports);
-        } catch (err) {
-          localState.errorFromExecute = err;
-          throw err;
+        } catch (err2) {
+          localState.errorFromExecute = err2;
+          throw err2;
         }
       }
     }
@@ -8323,8 +8323,8 @@ const instantiate = (compartmentPrivateFields, moduleAliases2, moduleRecord) => 
   }
   return moduleInstance;
 };
-const moduleAliases = new WeakMap$2();
-const privateFields = new WeakMap$2();
+const moduleAliases = new WeakMap$3();
+const privateFields = new WeakMap$3();
 const InertCompartment = function Compartment2(_endowments = {}, _modules = {}, _options = {}) {
   throw TypeError$3(
     "Compartment.prototype.constructor is not a valid constructor."
@@ -8656,10 +8656,10 @@ const getAnonymousIntrinsics = () => {
       } })
     );
   }
-  const ab = new ArrayBuffer$2(0);
+  const ab = new ArrayBuffer$3(0);
   const iab = ab.sliceToImmutable();
   const iabProto = getPrototypeOf$1(iab);
-  if (iabProto !== ArrayBuffer$2.prototype) {
+  if (iabProto !== ArrayBuffer$3.prototype) {
     intrinsics["%ImmutableArrayBufferPrototype%"] = iabProto;
   }
   return intrinsics;
@@ -8810,7 +8810,7 @@ const shimArrayBufferTransfer = () => {
         throw TypeError$3(`transfer newLength if provided must be a number`);
       }
       if (newLength > oldLength) {
-        const result = new ArrayBuffer$2(newLength);
+        const result = new ArrayBuffer$3(newLength);
         const taOld = new Uint8Array$2(this);
         const taNew = new Uint8Array$2(result);
         typedArraySet(taNew, taOld);
@@ -9270,7 +9270,7 @@ class ScriptSandbox {
    * ```
    */
   createCompartment(documentId, frontmatter = {}) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     try {
       const scope = {
         ...frontmatter
@@ -9294,13 +9294,26 @@ class ScriptSandbox {
         layer: this.api.layer,
         key: this.api.key,
         mouse: this.api.mouse,
+        // Dropped file API (binary-safe)
+        drop: this.api.drop,
         // Theme API
         getStyle: this.api.getStyle,
         theme: this.api.theme,
         // Module API
         modules: this.api.modules,
         // Native Browser APIs
-        audio: this.api.audio,
+        audio: (() => {
+          const audioRef = this.api.audio;
+          if (!audioRef || typeof audioRef !== "object") return audioRef;
+          const audio = Object.create(audioRef);
+          if (typeof audioRef.loadSoundFromBlob === "function") {
+            audio.loadSoundFromBlob = (name) => audioRef.loadSoundFromBlob(name, documentId);
+          }
+          if (typeof audioRef.playBlob === "function") {
+            audio.playBlob = (name, options) => audioRef.playBlob(name, options, documentId);
+          }
+          return audio;
+        })(),
         canvas2d: this.api.canvas2d,
         webgl: this.api.webgl,
         webgpu: this.api.webgpu,
@@ -9329,6 +9342,8 @@ class ScriptSandbox {
         },
         // Embedded FIGlet fonts (document-scoped)
         figlet: ((_c = this.api.figlet) == null ? void 0 : _c.forDocument) ? this.api.figlet.forDocument(documentId) : this.api.figlet,
+        // Embedded STFXR presets (document-scoped)
+        stfxr: ((_d = this.api.stfxr) == null ? void 0 : _d.forDocument) ? this.api.stfxr.forDocument(documentId) : this.api.stfxr,
         // Convenience drawing helper (document-aware)
         drawFiglet: (x, y, fontName, text, fg, bg, options) => {
           const figletRef = this.api.figlet;
@@ -9367,7 +9382,7 @@ class ScriptSandbox {
           }
         },
         // Embedded ANSI art (document-scoped)
-        ansi: ((_d = this.api.ansi) == null ? void 0 : _d.forDocument) ? this.api.ansi.forDocument(documentId) : this.api.ansi,
+        ansi: ((_e = this.api.ansi) == null ? void 0 : _e.forDocument) ? this.api.ansi.forDocument(documentId) : this.api.ansi,
         // Convenience drawing helper (document-aware)
         drawAnsi: (x, y, name) => {
           const ansiRef = this.api.ansi;
@@ -9546,6 +9561,9 @@ class ScriptSandbox {
       }
       if (typeof scope.input === "function") {
         validHandlers.input = scope.input;
+      }
+      if (typeof scope.drop === "function") {
+        validHandlers.drop = scope.drop;
       }
       return Object.keys(validHandlers).length > 0 ? validHandlers : null;
     } catch (error) {
@@ -10574,10 +10592,10 @@ class ModuleLoader extends EventEmitter {
       console.log(`✓ Module loaded: ${name} v${module.version} (${Math.round(entry.loadTime)}ms)`);
       return module;
     } catch (error) {
-      const err = error;
-      this.emit("module:error", { name, error: err });
-      console.error(`✗ Failed to load module: ${name}`, err);
-      throw new Error(`Module load failed: ${name} - ${err.message}`);
+      const err2 = error;
+      this.emit("module:error", { name, error: err2 });
+      console.error(`✗ Failed to load module: ${name}`, err2);
+      throw new Error(`Module load failed: ${name} - ${err2.message}`);
     }
   }
   /**
@@ -10814,6 +10832,8 @@ class InputRouter {
     __publicField(this, "currentHoverWidget", null);
     __publicField(this, "currentPressedWidget", null);
     __publicField(this, "mousePressed", false);
+    // De-dupe for environments that emit both keydown (printable) and text events.
+    __publicField(this, "lastPrintableKeydownText", null);
     this.widgetManager = config.widgetManager;
   }
   /**
@@ -10843,6 +10863,9 @@ class InputRouter {
     if (mouseJustPressed && hoveredWidget) {
       this.currentPressedWidget = hoveredWidget;
       hoveredWidget.updateState(hoveredWidget.state.hovered, true, hoveredWidget.state.focused);
+      if (hoveredWidget.focusable) {
+        this.widgetManager.focus(hoveredWidget.id);
+      }
       hoveredWidget.emit({
         type: "click",
         widget: hoveredWidget.id,
@@ -10869,6 +10892,21 @@ class InputRouter {
       }
       return true;
     }
+    const focused = this.widgetManager.getFocused();
+    if (focused) {
+      const maybeHandleKey = focused.handleKey;
+      if (typeof maybeHandleKey === "function") {
+        const consumed = maybeHandleKey.call(focused, key, modifiers);
+        if (consumed) {
+          const ctrl = !!(modifiers == null ? void 0 : modifiers.ctrl);
+          const alt = !!(modifiers == null ? void 0 : modifiers.alt);
+          if (!ctrl && !alt && key.length === 1) {
+            this.lastPrintableKeydownText = { text: key, at: Date.now() };
+          }
+        }
+        if (consumed) return true;
+      }
+    }
     if (key === "ArrowDown" || key === "ArrowRight") {
       this.widgetManager.focusNext();
       return true;
@@ -10877,7 +10915,24 @@ class InputRouter {
       this.widgetManager.focusPrevious();
       return true;
     }
-    this.widgetManager.getFocused();
+    return false;
+  }
+  /**
+   * Handle text input for focused widget
+   */
+  handleText(text) {
+    if (this.lastPrintableKeydownText && text === this.lastPrintableKeydownText.text) {
+      const dt = Date.now() - this.lastPrintableKeydownText.at;
+      if (dt >= 0 && dt < 50) {
+        return true;
+      }
+    }
+    const focused = this.widgetManager.getFocused();
+    if (!focused) return false;
+    const maybeHandleText = focused.handleText;
+    if (typeof maybeHandleText === "function") {
+      return !!maybeHandleText.call(focused, text);
+    }
     return false;
   }
   /**
@@ -11039,6 +11094,12 @@ const FALLBACKS = {
     bg: ColorUtils.rgb(0, 0, 0),
     accent: ColorUtils.rgb(100, 200, 255),
     dragAccent: ColorUtils.rgb(255, 200, 0)
+  },
+  textfield: {
+    fg: ColorUtils.rgb(224, 224, 224),
+    bg: ColorUtils.rgb(0, 0, 0),
+    borderFg: ColorUtils.rgb(200, 200, 200),
+    cursor: ColorUtils.rgb(100, 200, 255)
   }
 };
 let defaults = { ...FALLBACKS };
@@ -11050,7 +11111,8 @@ function setTUIThemeDefaults(next) {
     label: { ...defaults.label, ...next.label },
     checkbox: { ...defaults.checkbox, ...next.checkbox },
     button: { ...defaults.button, ...next.button },
-    slider: { ...defaults.slider, ...next.slider }
+    slider: { ...defaults.slider, ...next.slider },
+    textfield: { ...defaults.textfield, ...next.textfield }
   };
 }
 function setTUIThemeFromStyles(getStyle) {
@@ -11080,6 +11142,12 @@ function setTUIThemeFromStyles(getStyle) {
       bg: base.bg ?? FALLBACKS.slider.bg,
       accent: accent.fg ?? FALLBACKS.slider.accent,
       dragAccent: warning.fg ?? FALLBACKS.slider.dragAccent
+    },
+    textfield: {
+      fg: base.fg ?? FALLBACKS.textfield.fg,
+      bg: surface.bg ?? base.bg ?? FALLBACKS.textfield.bg,
+      borderFg: border.fg ?? (base.fg ?? FALLBACKS.textfield.borderFg),
+      cursor: accent.fg ?? FALLBACKS.textfield.cursor
     }
   });
 }
@@ -11364,6 +11432,164 @@ class TUISlider extends BaseWidget {
     }
   }
 }
+class TUITextField extends BaseWidget {
+  constructor(config) {
+    super(config);
+    __publicField(this, "value");
+    __publicField(this, "cursorPos");
+    __publicField(this, "scrollOffset");
+    __publicField(this, "changedThisFrame", false);
+    this.value = config.value ?? "";
+    this.cursorPos = this.value.length;
+    this.scrollOffset = 0;
+    this.on("click", (ev) => {
+      var _a;
+      const clickX = typeof ((_a = ev.data) == null ? void 0 : _a.x) === "number" ? ev.data.x : null;
+      if (clickX === null) return;
+      const innerStartX = this.bounds.x + 1;
+      const innerWidth = Math.max(0, this.bounds.width - 2);
+      if (innerWidth <= 0) return;
+      const relX = Math.max(0, Math.min(innerWidth, clickX - innerStartX));
+      const target = this.scrollOffset + relX;
+      this.cursorPos = Math.max(0, Math.min(this.value.length, target));
+    });
+  }
+  getValue() {
+    return this.value;
+  }
+  setValue(next) {
+    this.value = next ?? "";
+    this.cursorPos = Math.max(0, Math.min(this.cursorPos, this.value.length));
+    this.scrollOffset = 0;
+  }
+  wasChanged() {
+    const result = this.changedThisFrame;
+    this.changedThisFrame = false;
+    return result;
+  }
+  handleText(text) {
+    if (!this.state.enabled || !this.state.visible) return false;
+    if (!this.state.focused) return false;
+    if (!text) return false;
+    const before = this.value.slice(0, this.cursorPos);
+    const after = this.value.slice(this.cursorPos);
+    this.value = before + text + after;
+    this.cursorPos += text.length;
+    this.markChanged();
+    return true;
+  }
+  handleKey(key, _modifiers) {
+    if (!this.state.enabled || !this.state.visible) return false;
+    if (!this.state.focused) return false;
+    const ctrl = !!(_modifiers == null ? void 0 : _modifiers.ctrl);
+    const alt = !!(_modifiers == null ? void 0 : _modifiers.alt);
+    switch (key) {
+      case "ArrowLeft":
+        if (this.cursorPos > 0) this.cursorPos -= 1;
+        return true;
+      case "ArrowRight":
+        if (this.cursorPos < this.value.length) this.cursorPos += 1;
+        return true;
+      case "Home":
+        this.cursorPos = 0;
+        return true;
+      case "End":
+        this.cursorPos = this.value.length;
+        return true;
+      case "Backspace":
+        if (this.cursorPos > 0) {
+          this.value = this.value.slice(0, this.cursorPos - 1) + this.value.slice(this.cursorPos);
+          this.cursorPos -= 1;
+          this.markChanged();
+        }
+        return true;
+      case "Delete":
+        if (this.cursorPos < this.value.length) {
+          this.value = this.value.slice(0, this.cursorPos) + this.value.slice(this.cursorPos + 1);
+          this.markChanged();
+        }
+        return true;
+      case "Enter":
+        return true;
+      default:
+        if (!ctrl && !alt && key.length === 1) {
+          const before = this.value.slice(0, this.cursorPos);
+          const after = this.value.slice(this.cursorPos);
+          this.value = before + key + after;
+          this.cursorPos += 1;
+          this.markChanged();
+          return true;
+        }
+        return false;
+    }
+  }
+  markChanged() {
+    this.changedThisFrame = true;
+    this.emit({
+      type: "change",
+      widget: this.id,
+      timestamp: Date.now(),
+      data: { value: this.value }
+    });
+  }
+  render(buffer, renderer) {
+    if (!this.state.visible) return;
+    const { x, y, width, height } = this.bounds;
+    const style = this.getEffectiveStyle();
+    const defaults2 = getTUIThemeDefaults();
+    const fg = style.fg ?? defaults2.textfield.fg;
+    const bg = style.bg ?? defaults2.textfield.bg;
+    const borderFg = style.borderColor ?? defaults2.textfield.borderFg;
+    const cursorAccent = style.accentColor ?? defaults2.textfield.cursor;
+    const rowMid = y + Math.floor(height / 2);
+    for (let row = 0; row < height; row++) {
+      for (let col = 0; col < width; col++) {
+        renderer.setCell(buffer, x + col, y + row, " ", fg, bg);
+      }
+    }
+    if (width >= 2 && height >= 2) {
+      const borderChars = this.state.focused ? { tl: "╔", tr: "╗", bl: "╚", br: "╝", h: "═", v: "║" } : { tl: "┌", tr: "┐", bl: "└", br: "┘", h: "─", v: "│" };
+      for (let col = 0; col < width; col++) {
+        const topChar = col === 0 ? borderChars.tl : col === width - 1 ? borderChars.tr : borderChars.h;
+        const botChar = col === 0 ? borderChars.bl : col === width - 1 ? borderChars.br : borderChars.h;
+        renderer.setCell(buffer, x + col, y, topChar, borderFg, bg);
+        renderer.setCell(buffer, x + col, y + height - 1, botChar, borderFg, bg);
+      }
+      for (let row = 1; row < height - 1; row++) {
+        renderer.setCell(buffer, x, y + row, borderChars.v, borderFg, bg);
+        renderer.setCell(buffer, x + width - 1, y + row, borderChars.v, borderFg, bg);
+      }
+    }
+    const innerWidth = Math.max(0, width - 2);
+    if (innerWidth <= 0) return;
+    const cursor = Math.max(0, Math.min(this.cursorPos, this.value.length));
+    if (cursor < this.scrollOffset) {
+      this.scrollOffset = cursor;
+    } else if (cursor > this.scrollOffset + innerWidth - 1) {
+      this.scrollOffset = cursor - innerWidth + 1;
+    }
+    this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, Math.max(0, this.value.length - innerWidth)));
+    const visibleText = this.value.slice(this.scrollOffset, this.scrollOffset + innerWidth);
+    for (let i = 0; i < visibleText.length && i < innerWidth; i++) {
+      renderer.setCell(buffer, x + 1 + i, rowMid, visibleText[i], fg, bg);
+    }
+    if (this.state.focused) {
+      const cursorX = x + 1 + (cursor - this.scrollOffset);
+      if (cursorX >= x + 1 && cursorX < x + width - 1) {
+        const localIdx = cursor - this.scrollOffset;
+        const ch = localIdx >= 0 && localIdx < visibleText.length ? visibleText[localIdx] : " ";
+        const caretFg = bg;
+        const caretBg = fg;
+        const same = caretFg === caretBg;
+        if (same) {
+          renderer.setCell(buffer, cursorX, rowMid, ch, bg, cursorAccent);
+        } else {
+          renderer.setCell(buffer, cursorX, rowMid, ch, caretFg, caretBg);
+        }
+      }
+    }
+  }
+}
 class TUISystem {
   constructor(renderer) {
     __publicField(this, "widgetManager");
@@ -11409,6 +11635,14 @@ class TUISystem {
     return slider;
   }
   /**
+   * Create a text field widget
+   */
+  createTextField(config) {
+    const textField = new TUITextField(config);
+    this.widgetManager.register(textField);
+    return textField;
+  }
+  /**
    * Update all widgets with current input state
    * Call this in your update loop
    */
@@ -11451,6 +11685,12 @@ class TUISystem {
     if (key === "Enter" || key === " ") {
       this.inputRouter.handleActivate();
     }
+  }
+  /**
+   * Handle text input (printable characters)
+   */
+  handleText(text) {
+    this.inputRouter.handleText(text);
   }
   /**
    * Render all visible widgets
@@ -11579,6 +11819,23 @@ function createTUIAPI(renderer, getCellBuffer, getStyle) {
       return tuiSystem.createSlider(config);
     },
     /**
+     * Create a text field widget
+     *
+     * @example
+     * ```javascript
+     * const input = tui.createTextField({
+     *   bounds: { x: 2, y: 5, width: 30, height: 3 },
+     *   value: 'hello'
+     * });
+     * ```
+     */
+    createTextField(config) {
+      if (!tuiSystem) {
+        throw new Error("TUI system not initialized. Call tui.init() first.");
+      }
+      return tuiSystem.createTextField(config);
+    },
+    /**
      * Update TUI with input state
      * Call this in on:update
      * 
@@ -11612,6 +11869,14 @@ function createTUIAPI(renderer, getCellBuffer, getStyle) {
     handleKey(key, modifiers) {
       if (!tuiSystem) return;
       tuiSystem.handleKey(key, modifiers);
+    },
+    /**
+     * Handle text input (printable characters)
+     * Call this in on:input when event.type === 'text'
+     */
+    handleText(text) {
+      if (!tuiSystem) return;
+      tuiSystem.handleText(text);
     },
     /**
      * Render all widgets
@@ -11772,6 +12037,7 @@ class GUISlider extends BaseWidget {
     __publicField(this, "step");
     __publicField(this, "dragging", false);
     __publicField(this, "sliderStyle");
+    __publicField(this, "dragOffsetX", 0);
     this.label = config.label ?? "";
     this.min = config.min ?? 0;
     this.max = config.max ?? 100;
@@ -11784,24 +12050,33 @@ class GUISlider extends BaseWidget {
       knobHoverColor: ((_d = config.sliderStyle) == null ? void 0 : _d.knobHoverColor) ?? { r: 120, g: 170, b: 220 }
     };
   }
-  handleDrag(mouseX, mouseY, mouseDown) {
+  handleDrag(mouseX, mouseY, mouseDown, charHeight = 0) {
     if (!this.state.visible) return;
     const { x, y, width, height } = this.bounds;
+    const labelH = this.label ? charHeight : 0;
+    const trackTopY = y + labelH;
+    const trackAreaH = Math.max(0, height - labelH);
     const knobWidth = 16;
     const range = this.max - this.min;
     const ratio = range > 0 ? (this.value - this.min) / range : 0;
     const knobX = x + ratio * (width - knobWidth);
-    const knobY = y;
-    const knobHeight = height;
+    const knobY = trackTopY;
+    const knobHeight = trackAreaH;
     const overKnob = mouseX >= knobX && mouseX < knobX + knobWidth && mouseY >= knobY && mouseY < knobY + knobHeight;
-    if (mouseDown && overKnob && !this.dragging) {
+    const overTrack = mouseX >= x && mouseX < x + width && mouseY >= trackTopY && mouseY < trackTopY + trackAreaH;
+    if (mouseDown && (overKnob || overTrack) && !this.dragging) {
       this.dragging = true;
+      if (overKnob) {
+        this.dragOffsetX = mouseX - knobX;
+      } else {
+        this.dragOffsetX = knobWidth / 2;
+      }
     }
     if (!mouseDown) {
       this.dragging = false;
     }
     if (this.dragging) {
-      const relativeX = Math.max(0, Math.min(width - knobWidth, mouseX - x));
+      const relativeX = Math.max(0, Math.min(width - knobWidth, mouseX - x - this.dragOffsetX));
       const newRatio = width - knobWidth > 0 ? relativeX / (width - knobWidth) : 0;
       const rawValue = this.min + newRatio * (this.max - this.min);
       this.value = Math.round(rawValue / this.step) * this.step;
@@ -11820,6 +12095,131 @@ class GUISlider extends BaseWidget {
   /**
    * Render method (rendering is handled by GUISystem)
    */
+  render() {
+  }
+}
+class GUITextField extends BaseWidget {
+  constructor(config) {
+    var _a, _b, _c, _d;
+    super(config);
+    __publicField(this, "placeholder");
+    __publicField(this, "textFieldStyle");
+    __publicField(this, "value");
+    __publicField(this, "cursorPos");
+    __publicField(this, "scrollOffset");
+    __publicField(this, "changedThisFrame", false);
+    __publicField(this, "charWidth", 10);
+    this.value = config.value ?? "";
+    this.cursorPos = this.value.length;
+    this.scrollOffset = 0;
+    this.placeholder = config.placeholder ?? "";
+    this.textFieldStyle = {
+      fg: ((_a = config.textFieldStyle) == null ? void 0 : _a.fg) ?? { r: 240, g: 240, b: 240 },
+      bg: ((_b = config.textFieldStyle) == null ? void 0 : _b.bg) ?? { r: 30, g: 30, b: 30, a: 0.95 },
+      borderColor: ((_c = config.textFieldStyle) == null ? void 0 : _c.borderColor) ?? { r: 90, g: 90, b: 90 },
+      focusBorderColor: ((_d = config.textFieldStyle) == null ? void 0 : _d.focusBorderColor) ?? { r: 120, g: 170, b: 220 }
+    };
+    this.on("click", (ev) => {
+      var _a2;
+      const clickX = typeof ((_a2 = ev.data) == null ? void 0 : _a2.x) === "number" ? ev.data.x : null;
+      if (clickX === null) return;
+      const padX = 8;
+      const innerX = this.bounds.x + padX;
+      const innerW = Math.max(0, this.bounds.width - padX * 2);
+      if (innerW <= 0) return;
+      const relPx = Math.max(0, Math.min(innerW, clickX - innerX));
+      const relChars = Math.floor(relPx / Math.max(1, this.charWidth));
+      const target = this.scrollOffset + relChars;
+      this.cursorPos = Math.max(0, Math.min(this.value.length, target));
+    });
+  }
+  updateMetrics(charWidth, charHeight) {
+    if (Number.isFinite(charWidth) && charWidth > 0) this.charWidth = charWidth;
+  }
+  getValue() {
+    return this.value;
+  }
+  setValue(next) {
+    this.value = next ?? "";
+    this.cursorPos = Math.max(0, Math.min(this.cursorPos, this.value.length));
+    this.scrollOffset = 0;
+  }
+  wasChanged() {
+    const result = this.changedThisFrame;
+    this.changedThisFrame = false;
+    return result;
+  }
+  handleText(text) {
+    if (!this.state.enabled || !this.state.visible) return false;
+    if (!this.state.focused) return false;
+    if (!text) return false;
+    const before = this.value.slice(0, this.cursorPos);
+    const after = this.value.slice(this.cursorPos);
+    this.value = before + text + after;
+    this.cursorPos += text.length;
+    this.markChanged();
+    return true;
+  }
+  handleKey(key, modifiers) {
+    if (!this.state.enabled || !this.state.visible) return false;
+    if (!this.state.focused) return false;
+    const ctrl = !!(modifiers == null ? void 0 : modifiers.ctrl);
+    const alt = !!(modifiers == null ? void 0 : modifiers.alt);
+    switch (key) {
+      case "ArrowLeft":
+        if (this.cursorPos > 0) this.cursorPos -= 1;
+        return true;
+      case "ArrowRight":
+        if (this.cursorPos < this.value.length) this.cursorPos += 1;
+        return true;
+      case "Home":
+        this.cursorPos = 0;
+        return true;
+      case "End":
+        this.cursorPos = this.value.length;
+        return true;
+      case "Backspace":
+        if (this.cursorPos > 0) {
+          this.value = this.value.slice(0, this.cursorPos - 1) + this.value.slice(this.cursorPos);
+          this.cursorPos -= 1;
+          this.markChanged();
+        }
+        return true;
+      case "Delete":
+        if (this.cursorPos < this.value.length) {
+          this.value = this.value.slice(0, this.cursorPos) + this.value.slice(this.cursorPos + 1);
+          this.markChanged();
+        }
+        return true;
+      case "Enter":
+        return true;
+      default:
+        if (!ctrl && !alt && key.length === 1) {
+          const before = this.value.slice(0, this.cursorPos);
+          const after = this.value.slice(this.cursorPos);
+          this.value = before + key + after;
+          this.cursorPos += 1;
+          this.markChanged();
+          return true;
+        }
+        return false;
+    }
+  }
+  getCursorInfo() {
+    return { cursorPos: this.cursorPos, scrollOffset: this.scrollOffset };
+  }
+  setScrollOffset(offset) {
+    this.scrollOffset = Math.max(0, offset | 0);
+  }
+  markChanged() {
+    this.changedThisFrame = true;
+    this.emit({
+      type: "change",
+      widget: this.id,
+      timestamp: Date.now(),
+      data: { value: this.value }
+    });
+  }
   render() {
   }
 }
@@ -11918,8 +12318,8 @@ function parseMarkdownLite(source) {
             const idx = seg.indexOf(":");
             if (idx > 0 && idx < seg.length - 1) {
               const k = seg.slice(0, idx);
-              const v = seg.slice(idx + 1);
-              md[k] = v;
+              const v2 = seg.slice(idx + 1);
+              md[k] = v2;
             }
           }
           if (Object.keys(md).length > 0) fenceMetadata = md;
@@ -12200,9 +12600,9 @@ class GUIMarkdownView extends BaseWidget {
     this.setScrollY(this.scrollY + deltaY);
   }
   popClickedLink() {
-    const v = this.clickedLink;
+    const v2 = this.clickedLink;
     this.clickedLink = null;
-    return v;
+    return v2;
   }
   computeLayout(metrics) {
     const key = `${this.bounds.x},${this.bounds.y},${this.bounds.width},${this.bounds.height}|${metrics.charW},${metrics.charH}|${this.scrollY}|${this.markdown.length}`;
@@ -12226,9 +12626,9 @@ class GUIMarkdownView extends BaseWidget {
   }
   hitTestLink(x, y) {
     if (!this.cachedLayout) return null;
-    for (const r of this.cachedLayout.linkRegions) {
-      if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) {
-        return r.url;
+    for (const r2 of this.cachedLayout.linkRegions) {
+      if (x >= r2.x && x < r2.x + r2.w && y >= r2.y && y < r2.y + r2.h) {
+        return r2.url;
       }
     }
     return null;
@@ -12410,6 +12810,14 @@ class GUISystem {
     return slider;
   }
   /**
+   * Create a text field widget
+   */
+  createTextField(config) {
+    const tf = new GUITextField(config);
+    this.widgetManager.register(tf);
+    return tf;
+  }
+  /**
    * Create a markdown view widget (flow layout inside bounds)
    */
   createMarkdownView(config) {
@@ -12443,7 +12851,11 @@ class GUISystem {
     this.inputRouter.update(inputCoord, mouseDown);
     const sliders = this.widgetManager.getAll().filter((w) => w instanceof GUISlider);
     for (const slider of sliders) {
-      slider.handleDrag(mouseX, mouseY, mouseDown);
+      slider.handleDrag(mouseX, mouseY, mouseDown, charHeight);
+    }
+    const textFields = this.widgetManager.getAll().filter((w) => w instanceof GUITextField);
+    for (const tf of textFields) {
+      tf.updateMetrics(charWidth, charHeight);
     }
   }
   /**
@@ -12476,6 +12888,12 @@ class GUISystem {
     }
   }
   /**
+   * Handle text input (printable characters)
+   */
+  handleText(text) {
+    this.inputRouter.handleText(text);
+  }
+  /**
    * Render all visible widgets
    * Call this in your render loop
    */
@@ -12491,8 +12909,8 @@ class GUISystem {
           if (handled === true) {
             continue;
           }
-        } catch (err) {
-          console.warn("gui.setWidgetRenderer callback threw; falling back to default widget rendering.", err);
+        } catch (err2) {
+          console.warn("gui.setWidgetRenderer callback threw; falling back to default widget rendering.", err2);
         }
       }
       if (widget instanceof GUIButton) {
@@ -12503,10 +12921,55 @@ class GUISystem {
         this.renderCheckbox(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUISlider) {
         this.renderSlider(widget, uiAPI, charWidth, charHeight);
+      } else if (widget instanceof GUITextField) {
+        this.renderTextField(widget, uiAPI, charWidth);
       } else if (widget instanceof GUIMarkdownView) {
         this.renderMarkdownView(widget, uiAPI, charWidth, charHeight);
       }
     }
+  }
+  renderTextField(tf, ui, charW) {
+    const { x, y, width, height } = tf.bounds;
+    const { fg, bg, borderColor, focusBorderColor } = tf.textFieldStyle;
+    ui.rect(x, y, width, height, bg);
+    const b = tf.state.focused ? 3 : 2;
+    const bc = tf.state.focused ? focusBorderColor : borderColor;
+    ui.rect(x, y, width, b, bc);
+    ui.rect(x, y + height - b, width, b, bc);
+    ui.rect(x, y, b, height, bc);
+    ui.rect(x + width - b, y, b, height, bc);
+    const padX = 8;
+    const innerX = x + padX;
+    const innerW = Math.max(0, width - padX * 2);
+    const maxChars = Math.max(0, Math.floor(innerW / Math.max(1, charW)));
+    const value = tf.getValue();
+    const { cursorPos, scrollOffset } = tf.getCursorInfo();
+    let scroll = scrollOffset;
+    if (cursorPos < scroll) scroll = cursorPos;
+    else if (cursorPos > scroll + maxChars - 1) scroll = cursorPos - maxChars + 1;
+    scroll = Math.max(0, Math.min(scroll, Math.max(0, value.length - maxChars)));
+    tf.setScrollOffset(scroll);
+    const visibleText = value.slice(scroll, scroll + maxChars);
+    const textY = y + height / 2;
+    if (ui.pushClipRect) ui.pushClipRect(innerX, y, innerW, height);
+    if (visibleText.length > 0) {
+      ui.text(visibleText, innerX, textY, fg);
+    } else if (tf.placeholder) {
+      ui.text(tf.placeholder, innerX, textY, fg);
+    }
+    if (tf.state.focused) {
+      const caretLocal = cursorPos - scroll;
+      const caretX = innerX + caretLocal * charW;
+      const caretW = charW;
+      const caretH = Math.max(2, height - 8);
+      const caretY = y + (height - caretH) / 2;
+      if (caretX >= innerX && caretX < innerX + innerW) {
+        ui.rect(caretX, caretY, caretW, caretH, fg);
+        const ch = caretLocal >= 0 && caretLocal < visibleText.length ? visibleText[caretLocal] : " ";
+        ui.text(ch, caretX, textY, bg);
+      }
+    }
+    if (ui.popClipRect) ui.popClipRect();
   }
   renderMarkdownView(view, ui, charW, charH) {
     view.renderToUI(ui, charW, charH);
@@ -12692,6 +13155,15 @@ function createGUIAPI(getMetrics) {
       return this._system.createSlider(config);
     },
     /**
+     * Create a text field widget
+     */
+    createTextField(config) {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      return this._system.createTextField(config);
+    },
+    /**
      * Create a markdown view widget (flow layout inside bounds)
      */
     createMarkdownView(config) {
@@ -12761,6 +13233,14 @@ function createGUIAPI(getMetrics) {
       this._system.handleKey(key, modifiers);
     },
     /**
+     * Handle text input (printable characters)
+     * Call this in on:input when event.type === 'text'
+     */
+    handleText(text) {
+      if (!this._system) return;
+      this._system.handleText(text);
+    },
+    /**
      * Render all widgets
      * Automatically called by the engine if the system is initialized
      */
@@ -12815,8 +13295,8 @@ function createGUIAPI(getMetrics) {
      * Color utilities
      */
     colors: {
-      rgb: (r, g, b) => ({ r, g, b }),
-      rgba: (r, g, b, a) => ({ r, g, b, a })
+      rgb: (r2, g, b) => ({ r: r2, g, b }),
+      rgba: (r2, g, b, a) => ({ r: r2, g, b, a })
     }
   };
   return api;
@@ -12995,8 +13475,8 @@ class WebGPUUIRenderer {
       this.clearColor = [0, 0, 0, 0];
       return;
     }
-    const [r, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color));
-    this.clearColor = [r, g, b, a];
+    const [r2, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color));
+    this.clearColor = [r2, g, b, a];
   }
   clearCommands() {
     this.rectCount = 0;
@@ -13082,13 +13562,13 @@ class WebGPUUIRenderer {
     const depthBefore = this.maskDepth;
     const clip = this.currentClip ? { x: this.currentClip.x, y: this.currentClip.y, w: this.currentClip.w, h: this.currentClip.h } : null;
     this.maskStack.push({ kind: "rect", x, y, w, h, radius: 0, clip, depthBeforePush: depthBefore });
-    const [r, g, b] = [0, 0, 0];
+    const [r2, g, b] = [0, 0, 0];
     const o = this.rectCount * 8;
     this.rectData[o + 0] = x;
     this.rectData[o + 1] = y;
     this.rectData[o + 2] = w;
     this.rectData[o + 3] = h;
-    this.rectData[o + 4] = r;
+    this.rectData[o + 4] = r2;
     this.rectData[o + 5] = g;
     this.rectData[o + 6] = b;
     this.rectData[o + 7] = 0;
@@ -13143,13 +13623,13 @@ class WebGPUUIRenderer {
     const depthAtPop = this.maskDepth;
     if (!top || top.kind === "rect") {
       const rect = top ?? { x: 0, y: 0, w: 0, h: 0, radius: 0, clip: null, depthBeforePush: this.maskDepth - 1 };
-      const [r, g, b] = [0, 0, 0, 0];
+      const [r2, g, b] = [0, 0, 0, 0];
       const o = this.rectCount * 8;
       this.rectData[o + 0] = rect.x;
       this.rectData[o + 1] = rect.y;
       this.rectData[o + 2] = rect.w;
       this.rectData[o + 3] = rect.h;
-      this.rectData[o + 4] = r;
+      this.rectData[o + 4] = r2;
       this.rectData[o + 5] = g;
       this.rectData[o + 6] = b;
       this.rectData[o + 7] = rect.radius;
@@ -13266,15 +13746,15 @@ class WebGPUUIRenderer {
     }
     this.clipStack.pop();
     let clip = null;
-    for (const r of this.clipStack) {
+    for (const r2 of this.clipStack) {
       if (!clip) {
-        clip = { x: r.x, y: r.y, w: r.w, h: r.h };
+        clip = { x: r2.x, y: r2.y, w: r2.w, h: r2.h };
         continue;
       }
-      const x1 = Math.max(clip.x, r.x);
-      const y1 = Math.max(clip.y, r.y);
-      const x2 = Math.min(clip.x + clip.w, r.x + r.w);
-      const y2 = Math.min(clip.y + clip.h, r.y + r.h);
+      const x1 = Math.max(clip.x, r2.x);
+      const y1 = Math.max(clip.y, r2.y);
+      const x2 = Math.min(clip.x + clip.w, r2.x + r2.w);
+      const y2 = Math.min(clip.y + clip.h, r2.y + r2.h);
       clip = { x: x1, y: y1, w: Math.max(0, x2 - x1), h: Math.max(0, y2 - y1) };
     }
     this.currentClip = clip;
@@ -13282,13 +13762,13 @@ class WebGPUUIRenderer {
   rect(x, y, w, h, color) {
     if (w <= 0 || h <= 0) return;
     if (this.rectCount >= 4096) return;
-    const [r, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color));
+    const [r2, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color));
     const o = this.rectCount * 8;
     this.rectData[o + 0] = x;
     this.rectData[o + 1] = y;
     this.rectData[o + 2] = w;
     this.rectData[o + 3] = h;
-    this.rectData[o + 4] = r;
+    this.rectData[o + 4] = r2;
     this.rectData[o + 5] = g;
     this.rectData[o + 6] = b;
     this.rectData[o + 7] = a;
@@ -13299,7 +13779,7 @@ class WebGPUUIRenderer {
   }
   text(text, x, y, color) {
     if (!text) return;
-    const [r, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color));
+    const [r2, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color));
     const charW = this.atlas.getCharWidth();
     const charH = this.atlas.getCharHeight();
     const start = this.textCount;
@@ -13312,7 +13792,7 @@ class WebGPUUIRenderer {
       this.textData[o + 1] = y;
       this.textData[o + 2] = charW;
       this.textData[o + 3] = charH;
-      this.textData[o + 4] = r;
+      this.textData[o + 4] = r2;
       this.textData[o + 5] = g;
       this.textData[o + 6] = b;
       this.textData[o + 7] = a;
@@ -13376,14 +13856,14 @@ class WebGPUUIRenderer {
     if (this.imageCount >= 4096) return;
     if (!this.imageBindGroups.has(imageId)) return;
     const tint = (options == null ? void 0 : options.tint) ?? { r: 255, g: 255, b: 255, a: 1 };
-    const [r, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(tint));
+    const [r2, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(tint));
     const uv = (options == null ? void 0 : options.uv) ?? { u: 0, v: 0, w: 1, h: 1 };
     const o = this.imageCount * 12;
     this.imageData[o + 0] = x;
     this.imageData[o + 1] = y;
     this.imageData[o + 2] = w;
     this.imageData[o + 3] = h;
-    this.imageData[o + 4] = r;
+    this.imageData[o + 4] = r2;
     this.imageData[o + 5] = g;
     this.imageData[o + 6] = b;
     this.imageData[o + 7] = a;
@@ -14691,19 +15171,19 @@ function vec3Add(a, b) {
 function vec3Sub(a, b) {
   return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
 }
-function vec3Scale(v, s) {
-  return { x: v.x * s, y: v.y * s, z: v.z * s };
+function vec3Scale(v2, s) {
+  return { x: v2.x * s, y: v2.y * s, z: v2.z * s };
 }
 function vec3Dot(a, b) {
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
-function vec3Length(v) {
-  return Math.sqrt(vec3Dot(v, v));
+function vec3Length(v2) {
+  return Math.sqrt(vec3Dot(v2, v2));
 }
-function vec3Normalize(v) {
-  const len = vec3Length(v);
+function vec3Normalize(v2) {
+  const len = vec3Length(v2);
   if (len <= 1e-8) return { x: 0, y: 0, z: 0 };
-  return { x: v.x / len, y: v.y / len, z: v.z / len };
+  return { x: v2.x / len, y: v2.y / len, z: v2.z / len };
 }
 function mat4TransformVec4(m, x, y, z, w) {
   return {
@@ -14713,14 +15193,14 @@ function mat4TransformVec4(m, x, y, z, w) {
     w: m[3] * x + m[7] * y + m[11] * z + m[15] * w
   };
 }
-function mat4TransformPoint(m, v) {
-  const r = mat4TransformVec4(m, v.x, v.y, v.z, 1);
-  const invW = r.w !== 0 ? 1 / r.w : 1;
-  return { x: r.x * invW, y: r.y * invW, z: r.z * invW };
+function mat4TransformPoint(m, v2) {
+  const r2 = mat4TransformVec4(m, v2.x, v2.y, v2.z, 1);
+  const invW = r2.w !== 0 ? 1 / r2.w : 1;
+  return { x: r2.x * invW, y: r2.y * invW, z: r2.z * invW };
 }
-function mat4TransformDirection(m, v) {
-  const r = mat4TransformVec4(m, v.x, v.y, v.z, 0);
-  return { x: r.x, y: r.y, z: r.z };
+function mat4TransformDirection(m, v2) {
+  const r2 = mat4TransformVec4(m, v2.x, v2.y, v2.z, 0);
+  return { x: r2.x, y: r2.y, z: r2.z };
 }
 function mat4Invert(a) {
   const out = new Float32Array(16);
@@ -14826,33 +15306,33 @@ function mat4Translate(x, y, z) {
   return m;
 }
 function mat4RotateX(angle) {
-  const c = Math.cos(angle);
+  const c2 = Math.cos(angle);
   const s = Math.sin(angle);
   const m = mat4Identity();
-  m[5] = c;
+  m[5] = c2;
   m[6] = s;
   m[9] = -s;
-  m[10] = c;
+  m[10] = c2;
   return m;
 }
 function mat4RotateY(angle) {
-  const c = Math.cos(angle);
+  const c2 = Math.cos(angle);
   const s = Math.sin(angle);
   const m = mat4Identity();
-  m[0] = c;
+  m[0] = c2;
   m[2] = -s;
   m[8] = s;
-  m[10] = c;
+  m[10] = c2;
   return m;
 }
 function mat4RotateZ(angle) {
-  const c = Math.cos(angle);
+  const c2 = Math.cos(angle);
   const s = Math.sin(angle);
   const m = mat4Identity();
-  m[0] = c;
+  m[0] = c2;
   m[1] = s;
   m[4] = -s;
-  m[5] = c;
+  m[5] = c2;
   return m;
 }
 function mat4Scale(x, y, z) {
@@ -15776,8 +16256,8 @@ function renderFigletLines(font, text, _opts = {}) {
 }
 function renderFigletCharLines(font, ch) {
   const height = Math.max(0, font.height | 0);
-  const c = String(ch ?? " ").slice(0, 1);
-  const cp = c.codePointAt(0) ?? 32;
+  const c2 = String(ch ?? " ").slice(0, 1);
+  const cp = c2.codePointAt(0) ?? 32;
   const fig = font.chars.get(cp) ?? font.chars.get(32);
   if (!fig) return new Array(height).fill("");
   const out = new Array(height);
@@ -15794,8 +16274,8 @@ function clampByte(n) {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(255, n | 0));
 }
-function packRgb(r, g, b) {
-  return ColorUtils.rgb(clampByte(r), clampByte(g), clampByte(b));
+function packRgb(r2, g, b) {
+  return ColorUtils.rgb(clampByte(r2), clampByte(g), clampByte(b));
 }
 const ANSI_16 = [
   packRgb(0, 0, 0),
@@ -15836,12 +16316,12 @@ function xterm256ToColor(n) {
   if (idx < 0) return ANSI_16[0];
   if (idx < 16) return ANSI_16[idx];
   if (idx >= 16 && idx <= 231) {
-    const v = idx - 16;
-    const r = Math.floor(v / 36);
-    const g = Math.floor(v % 36 / 6);
-    const b = v % 6;
+    const v2 = idx - 16;
+    const r2 = Math.floor(v2 / 36);
+    const g = Math.floor(v2 % 36 / 6);
+    const b = v2 % 6;
     const steps = [0, 95, 135, 175, 215, 255];
-    return packRgb(steps[r], steps[g], steps[b]);
+    return packRgb(steps[r2], steps[g], steps[b]);
   }
   if (idx >= 232 && idx <= 255) {
     const gray = 8 + (idx - 232) * 10;
@@ -15850,8 +16330,8 @@ function xterm256ToColor(n) {
   return ANSI_16[7];
 }
 function isDigit(ch) {
-  const c = ch.charCodeAt(0);
-  return c >= 48 && c <= 57;
+  const c2 = ch.charCodeAt(0);
+  return c2 >= 48 && c2 <= 57;
 }
 function tryParseSGRAt(text, i, allowBracket) {
   if (i >= text.length) return null;
@@ -15951,20 +16431,20 @@ function applySGR(params, state, defaults2) {
       if (mode === 5) {
         const idx = params[k + 2];
         if (typeof idx === "number") {
-          const c = xterm256ToColor(idx);
-          if (isFg) state.fg = c;
-          else state.bg = c;
+          const c2 = xterm256ToColor(idx);
+          if (isFg) state.fg = c2;
+          else state.bg = c2;
           k += 3;
           continue;
         }
       } else if (mode === 2) {
-        const r = params[k + 2];
+        const r2 = params[k + 2];
         const g = params[k + 3];
         const b = params[k + 4];
-        if (typeof r === "number" && typeof g === "number" && typeof b === "number") {
-          const c = packRgb(r, g, b);
-          if (isFg) state.fg = c;
-          else state.bg = c;
+        if (typeof r2 === "number" && typeof g === "number" && typeof b === "number") {
+          const c2 = packRgb(r2, g, b);
+          if (isFg) state.fg = c2;
+          else state.bg = c2;
           k += 5;
           continue;
         }
@@ -16031,19 +16511,458 @@ function parseAnsiToRuns(text, opts) {
   }
   return { lines, width, height: lines.length };
 }
-function clamp(v, min, max) {
-  return Math.max(min, Math.min(max, v));
-}
-function toSeed(seed) {
-  if (seed === void 0) return Math.random() * 4294967295 >>> 0;
-  if (typeof seed === "number" && Number.isFinite(seed)) return seed >>> 0;
-  const s = String(seed);
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
+const SFX_PRESET_NAMES = ["coin", "zap", "boom", "jump", "1up", "lose", "hurt", "blip"];
+const v = (name) => ({ kind: "var", name });
+const r = (min, max) => ({ kind: "rand", min, max });
+const c = (values2) => ({ kind: "choice", values: values2 });
+const mul = (a, b) => ({ kind: "mul", a, b });
+const add = (a, b) => ({ kind: "add", a, b });
+const sub = (a, b) => ({ kind: "sub", a, b });
+const SFX_PRESETS = {
+  blip: {
+    vars: {
+      type: c(["square", "triangle"]),
+      base: r(600, 1200),
+      atk: r(2e-3, 0.01),
+      rel: r(0.05, 0.12)
+    },
+    nodes: [
+      { kind: "oscVoice", id: "v", oscType: v("type"), freqHz: v("base"), gain: 1, stopAfter: 0.2 }
+    ],
+    edges: [{ from: "v", to: "out" }],
+    events: [
+      { kind: "envAR", node: "v", attack: v("atk"), release: v("rel"), peak: 0.6 }
+    ]
+  },
+  coin: {
+    vars: {
+      type: c(["square", "triangle"]),
+      f1: r(900, 1400),
+      f2: mul(v("f1"), r(1.25, 1.7)),
+      rel1: r(0.08, 0.16),
+      rel2: r(0.06, 0.14)
+    },
+    nodes: [
+      { kind: "oscVoice", id: "a", oscType: v("type"), freqHz: v("f1"), gain: 1, stopAfter: 0.25 },
+      { kind: "oscVoice", id: "b", oscType: v("type"), freqHz: v("f2"), gain: 0.8, stopAfter: 0.25 }
+    ],
+    edges: [
+      { from: "a", to: "out" },
+      { from: "b", to: "out" }
+    ],
+    events: [
+      { kind: "envAR", node: "a", attack: 2e-3, release: v("rel1"), peak: 0.5 },
+      { kind: "envAR", node: "b", attack: 2e-3, release: v("rel2"), peak: 0.4 }
+    ]
+  },
+  jump: {
+    vars: {
+      type: c(["square", "sawtooth", "triangle"]),
+      start: r(250, 420),
+      end: mul(v("start"), r(1.8, 2.8)),
+      dur: r(0.1, 0.18)
+    },
+    nodes: [
+      { kind: "oscVoice", id: "v", oscType: v("type"), freqHz: v("start"), gain: 1, stopAfter: add(v("dur"), 0.12) }
+    ],
+    edges: [{ from: "v", to: "out" }],
+    events: [
+      { kind: "freqDrop", node: "v", startHz: v("start"), endHz: v("end"), duration: v("dur") },
+      { kind: "envAR", node: "v", attack: 2e-3, release: add(v("dur"), 0.05), peak: 0.55 }
+    ]
+  },
+  zap: {
+    vars: {
+      type: c(["sawtooth", "square"]),
+      start: r(900, 2200),
+      end: r(90, 260),
+      dur: r(0.08, 0.18),
+      lp: r(1200, 5e3),
+      q: r(0.3, 2.5)
+    },
+    nodes: [
+      { kind: "oscVoice", id: "v", oscType: v("type"), freqHz: v("start"), gain: 1, stopAfter: add(v("dur"), 0.15) },
+      { kind: "filter", id: "f", filterType: "lowpass", freqHz: v("lp"), q: v("q") }
+    ],
+    edges: [
+      { from: "v", to: "f" },
+      { from: "f", to: "out" }
+    ],
+    events: [
+      { kind: "freqDrop", node: "v", startHz: v("start"), endHz: v("end"), duration: v("dur") },
+      { kind: "envAR", node: "v", attack: 1e-3, release: add(v("dur"), 0.06), peak: 0.45 }
+    ]
+  },
+  hurt: {
+    vars: {
+      type: c(["square", "sawtooth"]),
+      start: r(380, 720),
+      end: r(80, 140),
+      dur: r(0.18, 0.28),
+      bp: r(1200, 2600),
+      q: r(2, 8)
+    },
+    nodes: [
+      { kind: "oscVoice", id: "v", oscType: v("type"), freqHz: v("start"), gain: 1, stopAfter: add(v("dur"), 0.18) },
+      { kind: "noiseVoice", id: "n", duration: 0.12, gain: 0.15, stopAfter: 0.2 },
+      { kind: "filter", id: "nf", filterType: "bandpass", freqHz: v("bp"), q: v("q") }
+    ],
+    edges: [
+      { from: "v", to: "out" },
+      { from: "n", to: "nf" },
+      { from: "nf", to: "out" }
+    ],
+    events: [
+      { kind: "freqDrop", node: "v", startHz: v("start"), endHz: v("end"), duration: v("dur") },
+      { kind: "envAR", node: "v", attack: 2e-3, release: add(v("dur"), 0.06), peak: 0.55 },
+      { kind: "envAR", node: "n", attack: 1e-3, release: 0.1, peak: 0.18 }
+    ]
+  },
+  lose: {
+    vars: {
+      type: c(["square", "triangle"]),
+      start: r(520, 900),
+      end: r(110, 200),
+      dur: r(0.35, 0.55)
+    },
+    nodes: [
+      { kind: "oscVoice", id: "v", oscType: v("type"), freqHz: v("start"), gain: 1, stopAfter: add(v("dur"), 0.25) }
+    ],
+    edges: [{ from: "v", to: "out" }],
+    events: [
+      { kind: "freqDrop", node: "v", startHz: v("start"), endHz: v("end"), duration: v("dur") },
+      { kind: "envADSR", node: "v", attack: 3e-3, decay: 0.12, sustain: 0.45, release: 0.18, peak: 0.6, hold: sub(v("dur"), 0.12) }
+    ]
+  },
+  "1up": {
+    vars: {
+      type: c(["square", "triangle"]),
+      base: r(440, 620),
+      step: r(0.08, 0.11)
+    },
+    nodes: [
+      { kind: "oscVoice", id: "v", oscType: v("type"), freqHz: v("base"), gain: 1, stopAfter: add(mul(v("step"), 4), 0.12) }
+    ],
+    edges: [{ from: "v", to: "out" }],
+    events: [
+      { kind: "envADSR", node: "v", attack: 2e-3, decay: 0.06, sustain: 0.8, release: 0.1, peak: 0.5, hold: mul(v("step"), 3) },
+      { kind: "freqSequence", node: "v", baseHz: v("base"), multipliers: [1, 1.26, 1.5, 2], stepDur: v("step") }
+    ]
+  },
+  boom: {
+    vars: {
+      dur: r(0.45, 0.75),
+      thStart: r(55, 90),
+      thEnd: r(25, 40),
+      bp: r(120, 380),
+      bpQ: r(0.7, 2.2),
+      lp: r(800, 1800),
+      lpQ: r(0.2, 1.1)
+    },
+    nodes: [
+      { kind: "oscVoice", id: "th", oscType: "sine", freqHz: v("thStart"), gain: 1, stopAfter: add(v("dur"), 0.2) },
+      { kind: "noiseVoice", id: "n", duration: v("dur"), gain: 0.25, stopAfter: add(v("dur"), 0.05) },
+      { kind: "filter", id: "bp", filterType: "bandpass", freqHz: v("bp"), q: v("bpQ") },
+      { kind: "filter", id: "lp", filterType: "lowpass", freqHz: v("lp"), q: v("lpQ") }
+    ],
+    edges: [
+      { from: "th", to: "out" },
+      { from: "n", to: "bp" },
+      { from: "bp", to: "lp" },
+      { from: "lp", to: "out" }
+    ],
+    events: [
+      { kind: "freqDrop", node: "th", startHz: v("thStart"), endHz: v("thEnd"), duration: mul(v("dur"), 0.6) },
+      { kind: "envAR", node: "th", attack: 2e-3, release: v("dur"), peak: 0.65 },
+      { kind: "envAR", node: "n", attack: 1e-3, release: v("dur"), peak: 0.5 }
+    ]
   }
-  return h >>> 0;
+};
+function isPlainObject(v2) {
+  if (typeof v2 !== "object" || v2 === null) return false;
+  const proto = Object.getPrototypeOf(v2);
+  return proto === Object.prototype || proto === null;
+}
+function err(path, msg) {
+  throw new Error(`[stfxr] ${path}: ${msg}`);
+}
+function parseExpr(v2, path) {
+  if (typeof v2 === "number") {
+    if (!Number.isFinite(v2)) err(path, "number must be finite");
+    return v2;
+  }
+  if (typeof v2 === "string") return v2;
+  if (!isPlainObject(v2)) err(path, "expected number | string | expr object");
+  const kind = v2.kind;
+  if (typeof kind !== "string") err(path, "expr.kind must be a string");
+  switch (kind) {
+    case "var": {
+      const name = v2.name;
+      if (typeof name !== "string" || !name) err(path, "var.name must be a non-empty string");
+      return { kind: "var", name };
+    }
+    case "rand": {
+      const min = v2.min;
+      const max = v2.max;
+      if (typeof min !== "number" || !Number.isFinite(min)) err(path, "rand.min must be a finite number");
+      if (typeof max !== "number" || !Number.isFinite(max)) err(path, "rand.max must be a finite number");
+      return { kind: "rand", min, max };
+    }
+    case "choice": {
+      const values2 = v2.values;
+      if (!Array.isArray(values2) || values2.length === 0) err(path, "choice.values must be a non-empty array");
+      const out = [];
+      for (let i = 0; i < values2.length; i++) {
+        const it = values2[i];
+        if (typeof it === "number") {
+          if (!Number.isFinite(it)) err(`${path}.values[${i}]`, "number must be finite");
+          out.push(it);
+        } else if (typeof it === "string") {
+          out.push(it);
+        } else {
+          err(`${path}.values[${i}]`, "must be number or string");
+        }
+      }
+      return { kind: "choice", values: out };
+    }
+    case "add":
+    case "sub":
+    case "mul":
+    case "div": {
+      const a = parseExpr(v2.a, `${path}.a`);
+      const b = parseExpr(v2.b, `${path}.b`);
+      return { kind, a, b };
+    }
+    default:
+      err(path, `unknown expr.kind "${kind}"`);
+  }
+}
+function parseEdge(v2, path) {
+  if (!isPlainObject(v2)) err(path, "edge must be an object");
+  const from = v2.from;
+  const to = v2.to;
+  if (typeof from !== "string" || !from) err(`${path}.from`, "must be a non-empty string");
+  if (typeof to !== "string" || !to) err(`${path}.to`, "must be a non-empty string");
+  return { from, to };
+}
+function parseNode(v2, path) {
+  if (!isPlainObject(v2)) err(path, "node must be an object");
+  const kind = v2.kind;
+  const id = v2.id;
+  if (typeof kind !== "string") err(`${path}.kind`, "must be a string");
+  if (typeof id !== "string" || !id) err(`${path}.id`, "must be a non-empty string");
+  switch (kind) {
+    case "oscVoice":
+      return {
+        kind,
+        id,
+        oscType: parseExpr(v2.oscType, `${path}.oscType`),
+        freqHz: parseExpr(v2.freqHz, `${path}.freqHz`),
+        gain: parseExpr(v2.gain, `${path}.gain`),
+        stopAfter: v2.stopAfter === void 0 ? void 0 : parseExpr(v2.stopAfter, `${path}.stopAfter`)
+      };
+    case "noiseVoice":
+      return {
+        kind,
+        id,
+        noiseType: v2.noiseType === void 0 ? void 0 : parseExpr(v2.noiseType, `${path}.noiseType`),
+        duration: parseExpr(v2.duration, `${path}.duration`),
+        gain: parseExpr(v2.gain, `${path}.gain`),
+        crushBits: v2.crushBits === void 0 ? void 0 : parseExpr(v2.crushBits, `${path}.crushBits`),
+        holdHz: v2.holdHz === void 0 ? void 0 : parseExpr(v2.holdHz, `${path}.holdHz`),
+        stopAfter: v2.stopAfter === void 0 ? void 0 : parseExpr(v2.stopAfter, `${path}.stopAfter`)
+      };
+    case "filter":
+      return {
+        kind,
+        id,
+        filterType: parseExpr(v2.filterType, `${path}.filterType`),
+        freqHz: parseExpr(v2.freqHz, `${path}.freqHz`),
+        q: parseExpr(v2.q, `${path}.q`),
+        gain: v2.gain === void 0 ? void 0 : parseExpr(v2.gain, `${path}.gain`)
+      };
+    case "waveshaper":
+      return {
+        kind,
+        id,
+        curve: parseExpr(v2.curve, `${path}.curve`),
+        amount: v2.amount === void 0 ? void 0 : parseExpr(v2.amount, `${path}.amount`),
+        oversample: v2.oversample === void 0 ? void 0 : parseExpr(v2.oversample, `${path}.oversample`)
+      };
+    case "lfo":
+      return {
+        kind,
+        id,
+        oscType: parseExpr(v2.oscType, `${path}.oscType`),
+        freqHz: parseExpr(v2.freqHz, `${path}.freqHz`),
+        gain: parseExpr(v2.gain, `${path}.gain`),
+        stopAfter: v2.stopAfter === void 0 ? void 0 : parseExpr(v2.stopAfter, `${path}.stopAfter`)
+      };
+    case "gain":
+      return {
+        kind,
+        id,
+        gain: parseExpr(v2.gain, `${path}.gain`)
+      };
+    default:
+      err(path, `unknown node.kind "${kind}"`);
+  }
+}
+function parseEvent(v2, path) {
+  if (!isPlainObject(v2)) err(path, "event must be an object");
+  const kind = v2.kind;
+  if (typeof kind !== "string") err(`${path}.kind`, "must be a string");
+  const node = v2.node;
+  if (typeof node !== "string" || !node) err(`${path}.node`, "must be a non-empty string");
+  const atRaw = v2.at;
+  const at = atRaw === void 0 ? void 0 : parseExpr(atRaw, `${path}.at`);
+  switch (kind) {
+    case "envAR":
+      return {
+        kind,
+        node,
+        attack: parseExpr(v2.attack, `${path}.attack`),
+        release: parseExpr(v2.release, `${path}.release`),
+        peak: parseExpr(v2.peak, `${path}.peak`),
+        at
+      };
+    case "envADSR":
+      return {
+        kind,
+        node,
+        attack: parseExpr(v2.attack, `${path}.attack`),
+        decay: parseExpr(v2.decay, `${path}.decay`),
+        sustain: parseExpr(v2.sustain, `${path}.sustain`),
+        release: parseExpr(v2.release, `${path}.release`),
+        peak: parseExpr(v2.peak, `${path}.peak`),
+        hold: parseExpr(v2.hold, `${path}.hold`),
+        at
+      };
+    case "freqDrop":
+      return {
+        kind,
+        node,
+        startHz: parseExpr(v2.startHz, `${path}.startHz`),
+        endHz: parseExpr(v2.endHz, `${path}.endHz`),
+        duration: parseExpr(v2.duration, `${path}.duration`),
+        at
+      };
+    case "freqSequence": {
+      const multipliers = v2.multipliers;
+      if (!Array.isArray(multipliers) || multipliers.length === 0) err(`${path}.multipliers`, "must be a non-empty number array");
+      const out = [];
+      for (let i = 0; i < multipliers.length; i++) {
+        const m = multipliers[i];
+        if (typeof m !== "number" || !Number.isFinite(m)) err(`${path}.multipliers[${i}]`, "must be a finite number");
+        out.push(m);
+      }
+      return {
+        kind,
+        node,
+        baseHz: parseExpr(v2.baseHz, `${path}.baseHz`),
+        multipliers: out,
+        stepDur: parseExpr(v2.stepDur, `${path}.stepDur`),
+        at
+      };
+    }
+    default:
+      err(path, `unknown event.kind "${kind}"`);
+  }
+}
+function parseSfxGraphPreset(value) {
+  if (!isPlainObject(value)) err("$", "preset must be an object");
+  const root = value.preset !== void 0 ? value.preset : value;
+  if (!isPlainObject(root)) err("$.preset", "must be an object");
+  const nodesRaw = root.nodes;
+  const edgesRaw = root.edges;
+  const eventsRaw = root.events;
+  const varsRaw = root.vars;
+  if (!Array.isArray(nodesRaw)) err("$.nodes", "must be an array");
+  if (!Array.isArray(edgesRaw)) err("$.edges", "must be an array");
+  const nodes = nodesRaw.map((n, i) => parseNode(n, `$.nodes[${i}]`));
+  const edges = edgesRaw.map((e, i) => parseEdge(e, `$.edges[${i}]`));
+  let events;
+  if (eventsRaw !== void 0) {
+    if (!Array.isArray(eventsRaw)) err("$.events", "must be an array");
+    events = eventsRaw.map((ev, i) => parseEvent(ev, `$.events[${i}]`));
+  }
+  let vars;
+  if (varsRaw !== void 0) {
+    if (!isPlainObject(varsRaw)) err("$.vars", "must be an object");
+    const out = /* @__PURE__ */ Object.create(null);
+    for (const [k, v2] of Object.entries(varsRaw)) {
+      if (k === "__proto__" || k === "prototype" || k === "constructor") continue;
+      out[k] = parseExpr(v2, `$.vars.${k}`);
+    }
+    vars = out;
+  }
+  return { vars, nodes, edges, events };
+}
+function parseStfxrDefinition(value) {
+  if (!isPlainObject(value)) err("$", "stfxr definition must be an object");
+  if (value.nodes !== void 0 || value.preset !== void 0) {
+    return { kind: "preset", preset: parseSfxGraphPreset(value) };
+  }
+  const base = value.base;
+  if (typeof base !== "string" || !base.trim()) err("$.base", "must be a non-empty string");
+  const patchRaw = value.patch;
+  const patch = {};
+  if (patchRaw !== void 0) {
+    if (!isPlainObject(patchRaw)) err("$.patch", "must be an object");
+    const varsRaw = patchRaw.vars;
+    if (varsRaw !== void 0) {
+      if (!isPlainObject(varsRaw)) err("$.patch.vars", "must be an object");
+      const out = /* @__PURE__ */ Object.create(null);
+      for (const [k, v2] of Object.entries(varsRaw)) {
+        if (k === "__proto__" || k === "prototype" || k === "constructor") continue;
+        out[k] = parseExpr(v2, `$.patch.vars.${k}`);
+      }
+      patch.vars = out;
+    }
+    const nodesRaw = patchRaw.nodes;
+    if (nodesRaw !== void 0) {
+      if (!Array.isArray(nodesRaw)) err("$.patch.nodes", "must be an array");
+      patch.nodes = nodesRaw.map((n, i) => parseNode(n, `$.patch.nodes[${i}]`));
+    }
+    const edgesRaw = patchRaw.edges;
+    if (edgesRaw !== void 0) {
+      if (!Array.isArray(edgesRaw)) err("$.patch.edges", "must be an array");
+      patch.edges = edgesRaw.map((e, i) => parseEdge(e, `$.patch.edges[${i}]`));
+    }
+    const edgesAddRaw = patchRaw.edgesAdd;
+    if (edgesAddRaw !== void 0) {
+      if (!Array.isArray(edgesAddRaw)) err("$.patch.edgesAdd", "must be an array");
+      patch.edgesAdd = edgesAddRaw.map((e, i) => parseEdge(e, `$.patch.edgesAdd[${i}]`));
+    }
+    const edgesRemoveRaw = patchRaw.edgesRemove;
+    if (edgesRemoveRaw !== void 0) {
+      if (!Array.isArray(edgesRemoveRaw)) err("$.patch.edgesRemove", "must be an array");
+      patch.edgesRemove = edgesRemoveRaw.map((e, i) => parseEdge(e, `$.patch.edgesRemove[${i}]`));
+    }
+    const eventsRaw = patchRaw.events;
+    if (eventsRaw !== void 0) {
+      if (!Array.isArray(eventsRaw)) err("$.patch.events", "must be an array");
+      patch.events = eventsRaw.map((ev, i) => parseEvent(ev, `$.patch.events[${i}]`));
+    }
+    const eventsAddRaw = patchRaw.eventsAdd;
+    if (eventsAddRaw !== void 0) {
+      if (!Array.isArray(eventsAddRaw)) err("$.patch.eventsAdd", "must be an array");
+      patch.eventsAdd = eventsAddRaw.map((ev, i) => parseEvent(ev, `$.patch.eventsAdd[${i}]`));
+    }
+  }
+  return { kind: "derived", base: base.trim(), patch };
+}
+function parseStfxrDefinitionJson(jsonText) {
+  let v2;
+  try {
+    v2 = JSON.parse(jsonText);
+  } catch (e) {
+    throw new Error(`[stfxr] Invalid JSON: ${String((e == null ? void 0 : e.message) ?? e)}`);
+  }
+  return parseStfxrDefinition(v2);
+}
+function clamp(v2, min, max) {
+  return Math.max(min, Math.min(max, v2));
 }
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -16061,18 +16980,63 @@ function randRange(rng, min, max) {
 function randChoice(rng, choices) {
   return choices[Math.floor(rng() * choices.length)];
 }
+function hashStr32(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+class ExprEvaluator {
+  constructor(rng, vars) {
+    __publicField(this, "rng");
+    __publicField(this, "vars");
+    __publicField(this, "cache", /* @__PURE__ */ new Map());
+    this.rng = rng;
+    this.vars = vars ?? {};
+  }
+  eval(expr) {
+    if (typeof expr === "number" || typeof expr === "string") return expr;
+    switch (expr.kind) {
+      case "var": {
+        const k = expr.name;
+        if (this.cache.has(k)) return this.cache.get(k);
+        const vexpr = this.vars[k];
+        if (vexpr === void 0) return 0;
+        const v2 = this.eval(vexpr);
+        this.cache.set(k, v2);
+        return v2;
+      }
+      case "rand":
+        return randRange(this.rng, expr.min, expr.max);
+      case "choice":
+        return randChoice(this.rng, expr.values);
+      case "add":
+        return Number(this.eval(expr.a)) + Number(this.eval(expr.b));
+      case "sub":
+        return Number(this.eval(expr.a)) - Number(this.eval(expr.b));
+      case "mul":
+        return Number(this.eval(expr.a)) * Number(this.eval(expr.b));
+      case "div": {
+        const b = Number(this.eval(expr.b));
+        return b === 0 ? 0 : Number(this.eval(expr.a)) / b;
+      }
+    }
+  }
+}
 function envAR(gainParam, t0, attack, release, peak) {
   const a = Math.max(5e-4, attack);
-  const r = Math.max(2e-3, release);
+  const r2 = Math.max(2e-3, release);
   gainParam.cancelScheduledValues(t0);
   gainParam.setValueAtTime(1e-5, t0);
   gainParam.exponentialRampToValueAtTime(Math.max(1e-5, peak), t0 + a);
-  gainParam.exponentialRampToValueAtTime(1e-5, t0 + a + r);
+  gainParam.exponentialRampToValueAtTime(1e-5, t0 + a + r2);
 }
 function envADSR(gainParam, t0, attack, decay, sustain, release, peak, hold) {
   const a = Math.max(5e-4, attack);
   const d = Math.max(1e-3, decay);
-  const r = Math.max(2e-3, release);
+  const r2 = Math.max(2e-3, release);
   const sus = clamp(sustain, 0, 1);
   const pk = Math.max(1e-5, peak);
   const tA = t0 + a;
@@ -16083,7 +17047,7 @@ function envADSR(gainParam, t0, attack, decay, sustain, release, peak, hold) {
   gainParam.exponentialRampToValueAtTime(pk, tA);
   gainParam.exponentialRampToValueAtTime(Math.max(1e-5, pk * sus), tD);
   gainParam.setValueAtTime(Math.max(1e-5, pk * sus), tH);
-  gainParam.exponentialRampToValueAtTime(1e-5, tH + r);
+  gainParam.exponentialRampToValueAtTime(1e-5, tH + r2);
 }
 function scheduleFreqDrop(freqParam, t0, startHz, endHz, duration) {
   const d = Math.max(0.01, duration);
@@ -16091,18 +17055,35 @@ function scheduleFreqDrop(freqParam, t0, startHz, endHz, duration) {
   freqParam.setValueAtTime(Math.max(1, startHz), t0);
   freqParam.exponentialRampToValueAtTime(Math.max(1, endHz), t0 + d);
 }
-function createNoiseSource(ctx, duration, seed) {
-  const frames = Math.max(1, Math.floor(duration * ctx.sampleRate));
-  const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-  const rng = mulberry32(seed ^ 2654435769);
-  for (let i = 0; i < frames; i++) {
-    data[i] = rng() * 2 - 1;
+function makeWaveshaperCurve(name, amount, samples = 1024) {
+  const n = Math.max(32, Math.min(16384, samples | 0));
+  const a = Number.isFinite(amount) ? Math.max(0, amount) : 1;
+  const curve = new Float32Array(n);
+  const kind = String(name || "softClip");
+  for (let i = 0; i < n; i++) {
+    const x = i / (n - 1) * 2 - 1;
+    let y = x;
+    if (kind === "hardClip") {
+      const t = Math.max(1e-4, 1 / (1 + a));
+      y = clamp(x, -t, t) / t;
+    } else if (kind === "tanh") {
+      const k = 1 + a * 3;
+      y = Math.tanh(k * x);
+    } else if (kind === "atan") {
+      const k = 1 + a * 6;
+      y = 2 / Math.PI * Math.atan(k * x);
+    } else if (kind === "fold") {
+      const k = 1 + a * 2;
+      const v2 = x * k;
+      const folded = Math.abs((v2 + 1) % 4 - 2) - 1;
+      y = clamp(folded, -1, 1);
+    } else {
+      const k = 1 + a * 8;
+      y = (1 + k) * x / (1 + k * Math.abs(x));
+    }
+    curve[i] = clamp(y, -1, 1);
   }
-  const src = ctx.createBufferSource();
-  src.buffer = buffer;
-  src.loop = false;
-  return src;
+  return curve;
 }
 function safeConnect(node, dest) {
   try {
@@ -16110,30 +17091,168 @@ function safeConnect(node, dest) {
   } catch {
   }
 }
-function getSfxPresetNames() {
-  return ["coin", "zap", "boom", "jump", "1up", "lose", "hurt", "blip"];
+function createNoiseSource(ctx, duration, seed, opts) {
+  const frames = Math.max(1, Math.floor(duration * ctx.sampleRate));
+  const buffer = getOrCreateNoiseBuffer(ctx, frames, seed, opts);
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.loop = false;
+  return src;
 }
-function sfxSnippet(name, seed, volume) {
-  const seedPart = seed === void 0 ? "" : `, ${JSON.stringify(seed)}`;
-  const optPart = volume === void 0 ? "" : `, { volume: ${volume} }`;
-  return `audio.sfx.play(${JSON.stringify(name)}${seedPart}${optPart})`;
+class LruCache {
+  constructor(maxBytes, bytesFor) {
+    __publicField(this, "map", /* @__PURE__ */ new Map());
+    __publicField(this, "maxBytes");
+    __publicField(this, "bytesFor");
+    __publicField(this, "currentBytes", 0);
+    this.maxBytes = Math.max(0, maxBytes | 0);
+    this.bytesFor = bytesFor;
+  }
+  get(key) {
+    const v2 = this.map.get(key);
+    if (v2 === void 0) return void 0;
+    this.map.delete(key);
+    this.map.set(key, v2);
+    return v2;
+  }
+  set(key, value) {
+    const existing = this.map.get(key);
+    if (existing !== void 0) {
+      this.currentBytes -= this.bytesFor(existing);
+      this.map.delete(key);
+    }
+    this.map.set(key, value);
+    this.currentBytes += this.bytesFor(value);
+    this.evictIfNeeded();
+  }
+  evictIfNeeded() {
+    if (this.maxBytes <= 0) return;
+    while (this.currentBytes > this.maxBytes && this.map.size > 1) {
+      const oldestKey = this.map.keys().next().value;
+      const oldest = this.map.get(oldestKey);
+      this.map.delete(oldestKey);
+      if (oldest !== void 0) this.currentBytes -= this.bytesFor(oldest);
+    }
+  }
 }
-function playSfx(ctx, name, seedIn, options = {}) {
-  ctx.resume().catch(() => {
-  });
-  const seed = toSeed(seedIn);
+const NOISE_CACHE_MAX_BYTES = 2 * 1024 * 1024;
+const noiseCacheByContext = /* @__PURE__ */ new WeakMap();
+function getNoiseCache(ctx) {
+  const existing = noiseCacheByContext.get(ctx);
+  if (existing) return existing;
+  const cache = new LruCache(NOISE_CACHE_MAX_BYTES, (e) => e.bytes);
+  noiseCacheByContext.set(ctx, cache);
+  return cache;
+}
+function estimateAudioBufferBytes(buffer) {
+  const frames = buffer.length;
+  const channels = buffer.numberOfChannels;
+  return Math.max(0, frames * channels * 4);
+}
+function clampInt(v2, min, max) {
+  const n = Math.floor(v2);
+  if (!Number.isFinite(n)) return min;
+  return Math.max(min, Math.min(max, n));
+}
+function generateWhiteNoise(data, seed) {
   const rng = mulberry32(seed);
+  for (let i = 0; i < data.length; i++) data[i] = rng() * 2 - 1;
+}
+function generatePinkNoise(data, seed) {
+  const rng = mulberry32(seed);
+  let b0 = 0;
+  let b1 = 0;
+  let b2 = 0;
+  let b3 = 0;
+  let b4 = 0;
+  let b5 = 0;
+  let b6 = 0;
+  for (let i = 0; i < data.length; i++) {
+    const white = rng() * 2 - 1;
+    b0 = 0.99886 * b0 + white * 0.0555179;
+    b1 = 0.99332 * b1 + white * 0.0750759;
+    b2 = 0.969 * b2 + white * 0.153852;
+    b3 = 0.8665 * b3 + white * 0.3104856;
+    b4 = 0.55 * b4 + white * 0.5329522;
+    b5 = -0.7616 * b5 - white * 0.016898;
+    const pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362;
+    b6 = white * 0.115926;
+    data[i] = clamp(pink * 0.11, -1, 1);
+  }
+}
+function generateBrownNoise(data, seed) {
+  const rng = mulberry32(seed);
+  let last = 0;
+  for (let i = 0; i < data.length; i++) {
+    const white = rng() * 2 - 1;
+    last = last + white * 0.02;
+    last = clamp(last, -1, 1);
+    data[i] = last;
+  }
+}
+function applyBitcrush(data, sampleRate, crushBits, holdHz) {
+  const bits = clampInt(crushBits, 1, 16);
+  const levels = Math.max(2, 1 << bits);
+  const step = 2 / (levels - 1);
+  const hz = Math.max(1, holdHz);
+  const holdSamples = clampInt(sampleRate / hz, 1, Math.max(1, data.length));
+  let i = 0;
+  while (i < data.length) {
+    const x = data[i];
+    const q2 = Math.round((x + 1) / step) * step - 1;
+    const qq = clamp(q2, -1, 1);
+    const end = Math.min(data.length, i + holdSamples);
+    for (let j = i; j < end; j++) data[j] = qq;
+    i = end;
+  }
+}
+function getOrCreateNoiseBuffer(ctx, frames, seed, opts) {
+  const noiseType = String((opts == null ? void 0 : opts.noiseType) ?? "white");
+  const crushBits = opts == null ? void 0 : opts.crushBits;
+  const holdHz = opts == null ? void 0 : opts.holdHz;
+  const crushPart = noiseType === "bitcrush" ? `|b${(crushBits ?? 6) | 0}|h${Math.floor(holdHz ?? 900)}` : "";
+  const key = `${ctx.sampleRate}|${frames}|${seed >>> 0}|${noiseType}${crushPart}`;
+  const cache = getNoiseCache(ctx);
+  const hit = cache.get(key);
+  if (hit) return hit.buffer;
+  const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  if (noiseType === "pink") {
+    generatePinkNoise(data, seed);
+  } else if (noiseType === "brown") {
+    generateBrownNoise(data, seed);
+  } else {
+    generateWhiteNoise(data, seed);
+    if (noiseType === "bitcrush") {
+      applyBitcrush(data, ctx.sampleRate, Number.isFinite(crushBits) ? Number(crushBits) : 6, Number.isFinite(holdHz) ? Number(holdHz) : 900);
+    }
+  }
+  cache.set(key, { buffer, bytes: estimateAudioBufferBytes(buffer) });
+  return buffer;
+}
+function safeConnectParam(node, param) {
+  try {
+    node.connect(param);
+  } catch {
+  }
+}
+function playSfxGraph(ctx, preset, seed, options = {}) {
+  var _a, _b, _c, _d, _e, _f, _g;
+  const rng = mulberry32(seed);
+  const evalr = new ExprEvaluator(rng, preset.vars);
   const t0 = ctx.currentTime + (options.when ?? 0);
   const vol = clamp(options.volume ?? 0.8, 0, 2);
   const outGain = ctx.createGain();
   outGain.gain.value = vol;
   safeConnect(outGain, ctx.destination);
-  const nodesToStop = [];
+  const nodes = /* @__PURE__ */ new Map();
+  nodes.set("out", { id: "out", kind: "out", input: outGain, output: outGain, params: { gain: outGain.gain } });
+  const stoppables = [];
   const stopAll = (when = 0) => {
     const t = ctx.currentTime + when;
-    for (const n of nodesToStop) {
+    for (const s of stoppables) {
       try {
-        n.stop(t);
+        s.stop(t);
       } catch {
       }
     }
@@ -16144,160 +17263,315 @@ function playSfx(ctx, name, seedIn, options = {}) {
     } catch {
     }
   };
-  const addOsc = (type, freqHz, gain) => {
-    const osc = ctx.createOscillator();
-    osc.type = type;
-    osc.frequency.value = Math.max(1, freqHz);
-    const g = ctx.createGain();
-    g.gain.value = gain;
-    safeConnect(osc, g);
-    safeConnect(g, outGain);
-    osc.start(t0);
-    nodesToStop.push(osc);
-    return { osc, g };
-  };
-  const addNoise = (duration, gain) => {
-    const src = createNoiseSource(ctx, duration, seed);
-    const g = ctx.createGain();
-    g.gain.value = gain;
-    safeConnect(src, g);
-    safeConnect(g, outGain);
-    src.start(t0);
-    nodesToStop.push(src);
-    return { src, g };
-  };
-  const addFilter = (input, type, freqHz, q2) => {
-    const f = ctx.createBiquadFilter();
-    f.type = type;
-    f.frequency.value = Math.max(10, freqHz);
-    f.Q.value = Math.max(1e-4, q2);
-    safeConnect(input, f);
-    return f;
-  };
-  switch (name) {
-    case "blip": {
-      const base = randRange(rng, 600, 1200);
-      const type = randChoice(rng, ["square", "triangle"]);
-      const { osc, g } = addOsc(type, base, 1);
-      envAR(g.gain, t0, randRange(rng, 2e-3, 0.01), randRange(rng, 0.05, 0.12), 0.6);
-      osc.stop(t0 + 0.2);
-      break;
-    }
-    case "coin": {
-      const type = randChoice(rng, ["square", "triangle"]);
-      const f1 = randRange(rng, 900, 1400);
-      const f2 = f1 * randRange(rng, 1.25, 1.7);
-      const a = addOsc(type, f1, 1);
-      const b = addOsc(type, f2, 0.8);
-      envAR(a.g.gain, t0, 2e-3, randRange(rng, 0.08, 0.16), 0.5);
-      envAR(b.g.gain, t0, 2e-3, randRange(rng, 0.06, 0.14), 0.4);
-      a.osc.stop(t0 + 0.25);
-      b.osc.stop(t0 + 0.25);
-      break;
-    }
-    case "jump": {
-      const type = randChoice(rng, ["square", "sawtooth", "triangle"]);
-      const start = randRange(rng, 250, 420);
-      const end = start * randRange(rng, 1.8, 2.8);
-      const dur = randRange(rng, 0.1, 0.18);
-      const { osc, g } = addOsc(type, start, 1);
-      scheduleFreqDrop(osc.frequency, t0, start, end, dur);
-      envAR(g.gain, t0, 2e-3, dur + 0.05, 0.55);
-      osc.stop(t0 + dur + 0.12);
-      break;
-    }
-    case "zap": {
-      const type = randChoice(rng, ["sawtooth", "square"]);
-      const start = randRange(rng, 900, 2200);
-      const end = randRange(rng, 90, 260);
-      const dur = randRange(rng, 0.08, 0.18);
-      const { osc, g } = addOsc(type, start, 1);
-      const filter = addFilter(g, "lowpass", randRange(rng, 1200, 5e3), randRange(rng, 0.3, 2.5));
-      try {
-        g.disconnect();
-      } catch {
+  for (const node of preset.nodes) {
+    if (nodes.has(node.id)) continue;
+    if (node.kind === "oscVoice") {
+      const osc = ctx.createOscillator();
+      osc.type = String(evalr.eval(node.oscType));
+      osc.frequency.value = Math.max(1, Number(evalr.eval(node.freqHz)));
+      const g = ctx.createGain();
+      g.gain.value = Number(evalr.eval(node.gain));
+      safeConnect(osc, g);
+      osc.start(t0);
+      const stopAfter = node.stopAfter !== void 0 ? Number(evalr.eval(node.stopAfter)) : void 0;
+      if (stopAfter !== void 0 && Number.isFinite(stopAfter) && stopAfter > 0) {
+        osc.stop(t0 + stopAfter);
       }
-      safeConnect(g, filter);
-      safeConnect(filter, outGain);
-      scheduleFreqDrop(osc.frequency, t0, start, end, dur);
-      envAR(g.gain, t0, 1e-3, dur + 0.06, 0.45);
-      osc.stop(t0 + dur + 0.15);
-      break;
+      const rt = {
+        id: node.id,
+        kind: node.kind,
+        output: g,
+        input: g,
+        osc,
+        params: {
+          gain: g.gain,
+          freqHz: osc.frequency,
+          frequency: osc.frequency
+        },
+        stop: (t) => {
+          try {
+            osc.stop(t);
+          } catch {
+          }
+        }
+      };
+      nodes.set(node.id, rt);
+      stoppables.push({ stop: rt.stop });
+      continue;
     }
-    case "hurt": {
-      const type = randChoice(rng, ["square", "sawtooth"]);
-      const start = randRange(rng, 380, 720);
-      const end = randRange(rng, 80, 140);
-      const dur = randRange(rng, 0.18, 0.28);
-      const { osc, g } = addOsc(type, start, 1);
-      scheduleFreqDrop(osc.frequency, t0, start, end, dur);
-      const noise = addNoise(0.12, 0.15);
-      const nf = addFilter(noise.g, "bandpass", randRange(rng, 1200, 2600), randRange(rng, 2, 8));
-      try {
-        noise.g.disconnect();
-      } catch {
+    if (node.kind === "lfo") {
+      const osc = ctx.createOscillator();
+      osc.type = String(evalr.eval(node.oscType));
+      osc.frequency.value = Math.max(0.01, Number(evalr.eval(node.freqHz)));
+      const g = ctx.createGain();
+      g.gain.value = Number(evalr.eval(node.gain));
+      safeConnect(osc, g);
+      osc.start(t0);
+      const stopAfter = node.stopAfter !== void 0 ? Number(evalr.eval(node.stopAfter)) : void 0;
+      if (stopAfter !== void 0 && Number.isFinite(stopAfter) && stopAfter > 0) {
+        osc.stop(t0 + stopAfter);
       }
-      safeConnect(noise.g, nf);
-      safeConnect(nf, outGain);
-      envAR(g.gain, t0, 2e-3, dur + 0.06, 0.55);
-      envAR(noise.g.gain, t0, 1e-3, 0.1, 0.18);
-      osc.stop(t0 + dur + 0.18);
-      noise.src.stop(t0 + 0.2);
-      break;
+      const rt = {
+        id: node.id,
+        kind: node.kind,
+        output: g,
+        input: g,
+        osc,
+        params: {
+          gain: g.gain,
+          freqHz: osc.frequency,
+          frequency: osc.frequency
+        },
+        stop: (t) => {
+          try {
+            osc.stop(t);
+          } catch {
+          }
+        }
+      };
+      nodes.set(node.id, rt);
+      stoppables.push({ stop: rt.stop });
+      continue;
     }
-    case "lose": {
-      const type = randChoice(rng, ["square", "triangle"]);
-      const start = randRange(rng, 520, 900);
-      const end = randRange(rng, 110, 200);
-      const dur = randRange(rng, 0.35, 0.55);
-      const { osc, g } = addOsc(type, start, 1);
-      scheduleFreqDrop(osc.frequency, t0, start, end, dur);
-      envADSR(g.gain, t0, 3e-3, 0.12, 0.45, 0.18, 0.6, dur - 0.12);
-      osc.stop(t0 + dur + 0.25);
-      break;
+    if (node.kind === "noiseVoice") {
+      const duration = Math.max(1e-3, Number(evalr.eval(node.duration)));
+      const gain = Number(evalr.eval(node.gain));
+      const noiseType = node.noiseType !== void 0 ? String(evalr.eval(node.noiseType)) : "white";
+      const crushBits = node.crushBits !== void 0 ? Number(evalr.eval(node.crushBits)) : void 0;
+      const holdHz = node.holdHz !== void 0 ? Number(evalr.eval(node.holdHz)) : void 0;
+      const nodeSeed = (seed ^ hashStr32(node.id) ^ 2654435769) >>> 0;
+      const src = createNoiseSource(ctx, duration, nodeSeed, { noiseType, crushBits, holdHz });
+      const g = ctx.createGain();
+      g.gain.value = gain;
+      safeConnect(src, g);
+      src.start(t0);
+      const stopAfter = node.stopAfter !== void 0 ? Number(evalr.eval(node.stopAfter)) : duration;
+      if (Number.isFinite(stopAfter) && stopAfter > 0) {
+        try {
+          src.stop(t0 + stopAfter);
+        } catch {
+        }
+      }
+      const rt = {
+        id: node.id,
+        kind: node.kind,
+        output: g,
+        input: g,
+        src,
+        params: { gain: g.gain },
+        stop: (t) => {
+          try {
+            src.stop(t);
+          } catch {
+          }
+        }
+      };
+      nodes.set(node.id, rt);
+      stoppables.push({ stop: rt.stop });
+      continue;
     }
-    case "1up": {
-      const type = randChoice(rng, ["square", "triangle"]);
-      const base = randRange(rng, 440, 620);
-      const intervals = [1, 1.26, 1.5, 2];
-      const stepDur = randRange(rng, 0.08, 0.11);
-      const { osc, g } = addOsc(type, base, 1);
-      envADSR(g.gain, t0, 2e-3, 0.06, 0.8, 0.1, 0.5, stepDur * (intervals.length - 1));
-      intervals.forEach((k, i) => {
-        const t = t0 + i * stepDur;
-        osc.frequency.setValueAtTime(Math.max(1, base * k), t);
+    if (node.kind === "filter") {
+      const f = ctx.createBiquadFilter();
+      f.type = String(evalr.eval(node.filterType));
+      f.frequency.value = Math.max(10, Number(evalr.eval(node.freqHz)));
+      f.Q.value = Math.max(1e-4, Number(evalr.eval(node.q)));
+      if (node.gain !== void 0) {
+        const g = Number(evalr.eval(node.gain));
+        if (Number.isFinite(g)) f.gain.value = g;
+      }
+      nodes.set(node.id, {
+        id: node.id,
+        kind: node.kind,
+        input: f,
+        output: f,
+        params: {
+          freqHz: f.frequency,
+          frequency: f.frequency,
+          q: f.Q,
+          gain: f.gain
+        }
       });
-      osc.stop(t0 + stepDur * intervals.length + 0.12);
-      break;
+      continue;
     }
-    case "boom": {
-      const dur = randRange(rng, 0.45, 0.75);
-      const thump = addOsc("sine", randRange(rng, 55, 90), 1);
-      scheduleFreqDrop(thump.osc.frequency, t0, thump.osc.frequency.value, randRange(rng, 25, 40), dur * 0.6);
-      envAR(thump.g.gain, t0, 2e-3, dur, 0.65);
-      thump.osc.stop(t0 + dur + 0.2);
-      const noise = addNoise(dur, 0.25);
-      const bp = addFilter(noise.g, "bandpass", randRange(rng, 120, 380), randRange(rng, 0.7, 2.2));
-      const lp = addFilter(bp, "lowpass", randRange(rng, 800, 1800), randRange(rng, 0.2, 1.1));
-      try {
-        noise.g.disconnect();
-      } catch {
+    if (node.kind === "waveshaper") {
+      const ws = ctx.createWaveShaper();
+      const curveName = String(evalr.eval(node.curve));
+      const amount = node.amount !== void 0 ? Number(evalr.eval(node.amount)) : 1;
+      ws.curve = makeWaveshaperCurve(curveName, amount);
+      const os = node.oversample !== void 0 ? String(evalr.eval(node.oversample)) : "none";
+      ws.oversample = os === "2x" || os === "4x" ? os : "none";
+      nodes.set(node.id, { id: node.id, kind: node.kind, input: ws, output: ws });
+      continue;
+    }
+    if (node.kind === "gain") {
+      const g = ctx.createGain();
+      g.gain.value = Number(evalr.eval(node.gain));
+      nodes.set(node.id, { id: node.id, kind: node.kind, input: g, output: g, params: { gain: g.gain } });
+      continue;
+    }
+  }
+  for (const e of preset.edges) {
+    const from = nodes.get(e.from);
+    if (!from) continue;
+    const toStr = String(e.to);
+    const dot = toStr.lastIndexOf(".");
+    if (dot > 0 && dot < toStr.length - 1) {
+      const toId = toStr.slice(0, dot);
+      const paramName = toStr.slice(dot + 1);
+      const toNode = nodes.get(toId);
+      const param = (_a = toNode == null ? void 0 : toNode.params) == null ? void 0 : _a[paramName];
+      if (param) {
+        safeConnectParam(from.output, param);
+        continue;
       }
-      safeConnect(noise.g, bp);
-      safeConnect(bp, lp);
-      safeConnect(lp, outGain);
-      envAR(noise.g.gain, t0, 1e-3, dur, 0.5);
-      noise.src.stop(t0 + dur + 0.05);
-      break;
     }
-    default: {
-      const { osc, g } = addOsc("square", 880, 1);
-      envAR(g.gain, t0, 2e-3, 0.09, 0.45);
-      osc.stop(t0 + 0.2);
-      break;
+    const to = nodes.get(e.to);
+    if (!to) continue;
+    const dest = to.input ?? to.output;
+    safeConnect(from.output, dest);
+  }
+  for (const ev of preset.events ?? []) {
+    const at = ev.at !== void 0 ? Number(evalr.eval(ev.at)) : 0;
+    const t = t0 + Math.max(0, at);
+    if (ev.kind === "envAR") {
+      const node = nodes.get(ev.node);
+      const p = (_b = node == null ? void 0 : node.params) == null ? void 0 : _b.gain;
+      if (!p) continue;
+      envAR(p, t, Number(evalr.eval(ev.attack)), Number(evalr.eval(ev.release)), Number(evalr.eval(ev.peak)));
+      continue;
+    }
+    if (ev.kind === "envADSR") {
+      const node = nodes.get(ev.node);
+      const p = (_c = node == null ? void 0 : node.params) == null ? void 0 : _c.gain;
+      if (!p) continue;
+      envADSR(
+        p,
+        t,
+        Number(evalr.eval(ev.attack)),
+        Number(evalr.eval(ev.decay)),
+        Number(evalr.eval(ev.sustain)),
+        Number(evalr.eval(ev.release)),
+        Number(evalr.eval(ev.peak)),
+        Number(evalr.eval(ev.hold))
+      );
+      continue;
+    }
+    if (ev.kind === "freqDrop") {
+      const node = nodes.get(ev.node);
+      const p = ((_d = node == null ? void 0 : node.params) == null ? void 0 : _d.freqHz) ?? ((_e = node == null ? void 0 : node.params) == null ? void 0 : _e.frequency);
+      if (!p) continue;
+      scheduleFreqDrop(p, t, Number(evalr.eval(ev.startHz)), Number(evalr.eval(ev.endHz)), Number(evalr.eval(ev.duration)));
+      continue;
+    }
+    if (ev.kind === "freqSequence") {
+      const node = nodes.get(ev.node);
+      const p = ((_f = node == null ? void 0 : node.params) == null ? void 0 : _f.freqHz) ?? ((_g = node == null ? void 0 : node.params) == null ? void 0 : _g.frequency);
+      if (!p) continue;
+      const base = Math.max(1, Number(evalr.eval(ev.baseHz)));
+      const step = Math.max(1e-3, Number(evalr.eval(ev.stepDur)));
+      for (let i = 0; i < ev.multipliers.length; i++) {
+        const hz = Math.max(1, base * ev.multipliers[i]);
+        p.setValueAtTime(hz, t + i * step);
+      }
+      continue;
     }
   }
   return { stop: stopAll };
+}
+function estimateSfxGraphDurationSeconds(preset, seed, tailSeconds = 0.06) {
+  var _a;
+  const rng = mulberry32(seed);
+  const evalr = new ExprEvaluator(rng, preset.vars);
+  let end = 0;
+  for (const node of preset.nodes ?? []) {
+    if (node.kind === "oscVoice") {
+      const stopAfter = node.stopAfter !== void 0 ? Number(evalr.eval(node.stopAfter)) : NaN;
+      if (Number.isFinite(stopAfter) && stopAfter > end) end = stopAfter;
+      continue;
+    }
+    if (node.kind === "noiseVoice") {
+      const duration = Math.max(1e-3, Number(evalr.eval(node.duration)));
+      const stopAfter = node.stopAfter !== void 0 ? Number(evalr.eval(node.stopAfter)) : duration;
+      const nEnd = Number.isFinite(stopAfter) && stopAfter > 0 ? stopAfter : duration;
+      if (nEnd > end) end = nEnd;
+      continue;
+    }
+  }
+  for (const ev of preset.events ?? []) {
+    const at = ev.at !== void 0 ? Number(evalr.eval(ev.at)) : 0;
+    const t = Math.max(0, Number.isFinite(at) ? at : 0);
+    if (ev.kind === "envAR") {
+      const a = Math.max(0, Number(evalr.eval(ev.attack)));
+      const r2 = Math.max(0, Number(evalr.eval(ev.release)));
+      end = Math.max(end, t + a + r2);
+      continue;
+    }
+    if (ev.kind === "envADSR") {
+      const a = Math.max(0, Number(evalr.eval(ev.attack)));
+      const d = Math.max(0, Number(evalr.eval(ev.decay)));
+      const h = Math.max(0, Number(evalr.eval(ev.hold)));
+      const r2 = Math.max(0, Number(evalr.eval(ev.release)));
+      end = Math.max(end, t + a + d + h + r2);
+      continue;
+    }
+    if (ev.kind === "freqDrop") {
+      const d = Math.max(0, Number(evalr.eval(ev.duration)));
+      end = Math.max(end, t + d);
+      continue;
+    }
+    if (ev.kind === "freqSequence") {
+      const step = Math.max(0, Number(evalr.eval(ev.stepDur)));
+      const steps = Math.max(0, ((_a = ev.multipliers) == null ? void 0 : _a.length) ?? 0);
+      end = Math.max(end, t + step * steps);
+      continue;
+    }
+  }
+  const tail = Math.max(0, tailSeconds);
+  const total = end + tail;
+  if (!Number.isFinite(total) || total <= 0) return 0.5;
+  return total;
+}
+async function bakeSfxGraphBuffer(liveCtx, preset, seed, options = {}) {
+  const sampleRate = liveCtx.sampleRate;
+  const channels = Math.max(1, Math.min(8, (options.channels ?? 2) | 0));
+  const tail = options.tailSeconds ?? 0.06;
+  const maxSeconds = options.maxSeconds ?? 10;
+  const estimated = estimateSfxGraphDurationSeconds(preset, seed, tail);
+  const seconds = clamp(options.seconds ?? estimated, 0.03, Math.max(0.03, maxSeconds));
+  const frames = Math.max(1, Math.ceil(seconds * sampleRate));
+  const offline = new OfflineAudioContext(channels, frames, sampleRate);
+  playSfxGraph(offline, preset, seed, { volume: options.volume ?? 1, when: 0 });
+  return await offline.startRendering();
+}
+function toSfxSeed(seed) {
+  if (seed === void 0) return Math.random() * 4294967295 >>> 0;
+  if (typeof seed === "number" && Number.isFinite(seed)) return seed >>> 0;
+  const s = String(seed);
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+function getSfxPresetNames() {
+  return [...SFX_PRESET_NAMES];
+}
+function sfxSnippet(name, seed, volume) {
+  const seedPart = seed === void 0 ? "" : `, ${JSON.stringify(seed)}`;
+  const optPart = volume === void 0 ? "" : `, { volume: ${volume} }`;
+  return `audio.sfx.play(${JSON.stringify(name)}${seedPart}${optPart})`;
+}
+function playSfx(ctx, name, seedIn, options = {}) {
+  ctx.resume().catch(() => {
+  });
+  const seed = toSfxSeed(seedIn);
+  const preset = SFX_PRESETS[name];
+  if (!preset) {
+    const fallback = SFX_PRESETS.blip;
+    return playSfxGraph(ctx, fallback, seed, options);
+  }
+  return playSfxGraph(ctx, preset, seed, options);
 }
 class StorieEngine {
   constructor(canvas, config = {}) {
@@ -16361,6 +17635,10 @@ class StorieEngine {
     // Documents
     __publicField(this, "documents", /* @__PURE__ */ new Map());
     __publicField(this, "activeDocumentId", null);
+    // Dropped-file handling (binary-safe)
+    __publicField(this, "lastDroppedFile", null);
+    __publicField(this, "dropHandlingCleanup", null);
+    __publicField(this, "maxDropBytes", 10 * 1024 * 1024);
     // Canvas viewport (reserved for future use)
     // private viewportX: number = 0;
     // private viewportY: number = 0;
@@ -16372,6 +17650,8 @@ class StorieEngine {
     this.canvas = canvas;
     this.width = config.width || 80;
     this.height = config.height || 24;
+    const configuredMaxDropBytes = typeof config.maxDropBytes === "number" ? config.maxDropBytes : 10 * 1024 * 1024;
+    this.maxDropBytes = configuredMaxDropBytes > 0 ? configuredMaxDropBytes : Infinity;
     this.camera3D = createCamera3D();
     this.currentTheme = getTheme("neotopia");
     this.styleSheet = applyTheme(this.currentTheme);
@@ -16550,6 +17830,44 @@ class StorieEngine {
       const doc = engine.documents.get(docId);
       return doc && doc._ansiStore ? doc._ansiStore : null;
     };
+    const getStfxrStore = (documentId) => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId);
+      return doc && doc._stfxrStore ? doc._stfxrStore : null;
+    };
+    const MAX_STFXR_BAKED_BYTES = 16 * 1024 * 1024;
+    const estimateAudioBufferBytes2 = (buffer) => {
+      const frames = buffer.length;
+      const channels = buffer.numberOfChannels;
+      return Math.max(0, frames * channels * 4);
+    };
+    const getStfxrBakedStore = (documentId) => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId);
+      if (!doc) return null;
+      if (!doc._stfxrBakedStore) doc._stfxrBakedStore = /* @__PURE__ */ new Map();
+      return doc._stfxrBakedStore;
+    };
+    const evictStfxrBakedIfNeeded = (store) => {
+      let total = 0;
+      for (const e of store.values()) total += e.bytes;
+      if (total <= MAX_STFXR_BAKED_BYTES) return;
+      while (total > MAX_STFXR_BAKED_BYTES && store.size > 1) {
+        const oldestKey = store.keys().next().value;
+        const oldest = store.get(oldestKey);
+        store.delete(oldestKey);
+        if (oldest) total -= oldest.bytes;
+      }
+    };
+    const clonePreset = (preset) => {
+      try {
+        if (typeof structuredClone === "function") return structuredClone(preset);
+      } catch {
+      }
+      return JSON.parse(JSON.stringify(preset));
+    };
     const estimateBase64Bytes = (b64) => {
       const s = b64.replace(/\s+/g, "");
       const padding = s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0;
@@ -16595,12 +17913,12 @@ class StorieEngine {
       const out = new Uint8Array(est);
       for (let i = 0; i < est; i++) {
         const byteStr = clean.slice(i * 2, i * 2 + 2);
-        const v = Number.parseInt(byteStr, 16);
-        if (!Number.isFinite(v) || Number.isNaN(v)) {
+        const v2 = Number.parseInt(byteStr, 16);
+        if (!Number.isFinite(v2) || Number.isNaN(v2)) {
           console.warn("[blob] Hex decode failed: invalid byte");
           return void 0;
         }
-        out[i] = v & 255;
+        out[i] = v2 & 255;
       }
       return out;
     };
@@ -16609,6 +17927,72 @@ class StorieEngine {
     };
     const decodeBlobToBytes = (entry) => {
       return entry.encoding === "hex" ? decodeHexToBytes(entry.data) : decodeBase64ToBytes(entry.data);
+    };
+    const getUIBlobAudioCache = (documentId) => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId);
+      if (!doc) return null;
+      if (!doc._uiBlobAudioCache) {
+        doc._uiBlobAudioCache = {
+          resolved: /* @__PURE__ */ new Map(),
+          inFlight: /* @__PURE__ */ new Map(),
+          failed: /* @__PURE__ */ new Set()
+        };
+      }
+      return doc._uiBlobAudioCache;
+    };
+    const toExactArrayBuffer = (bytes) => {
+      const ab = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(ab).set(bytes);
+      return ab;
+    };
+    const loadAudioFromBlobInternal = async (name, documentId) => {
+      const store = getBlobStore(documentId);
+      if (!store) return null;
+      const entry = store.get(String(name));
+      if (!entry) return null;
+      if (!entry.bytes) {
+        entry.bytes = decodeBlobToBytes(entry);
+      }
+      if (!entry.bytes) return null;
+      const mime = String(entry.mime ?? "");
+      if (mime && !mime.startsWith("audio/")) {
+        console.warn(`[audio.loadSoundFromBlob] Blob "${String(name)}" has non-audio mime "${mime}"; attempting decode anyway.`);
+      }
+      try {
+        const ab = toExactArrayBuffer(entry.bytes);
+        return await engine.audioContext.decodeAudioData(ab);
+      } catch (e) {
+        console.warn(`[audio.loadSoundFromBlob] Failed to decode audio blob "${String(name)}":`, e);
+        return null;
+      }
+    };
+    const loadSoundFromBlobCached = async (name, documentId) => {
+      const key = String(name ?? "");
+      if (!key) return null;
+      const cache = getUIBlobAudioCache(documentId);
+      if (!cache) return await loadAudioFromBlobInternal(key, documentId);
+      const resolved = cache.resolved.get(key);
+      if (resolved) return resolved;
+      if (cache.failed.has(key)) return null;
+      const inFlight = cache.inFlight.get(key);
+      if (inFlight) return await inFlight;
+      const promise = loadAudioFromBlobInternal(key, documentId).then((buf) => {
+        cache.inFlight.delete(key);
+        if (buf) {
+          cache.resolved.set(key, buf);
+        } else {
+          cache.failed.add(key);
+        }
+        return buf;
+      }).catch((_e) => {
+        cache.inFlight.delete(key);
+        cache.failed.add(key);
+        return null;
+      });
+      cache.inFlight.set(key, promise);
+      return await promise;
     };
     const getUIBlobImageCache = (documentId) => {
       const docId = engine.activeDocumentId;
@@ -16739,6 +18123,38 @@ class StorieEngine {
         },
         down: (button = 0) => this.input.isMouseDown(button),
         clicked: (button = 0) => this.input.isMouseClicked(button)
+      },
+      // Dropped file API (binary-safe; populated by engine.installDropHandling())
+      drop: {
+        has: () => !!engine.lastDroppedFile,
+        name: () => {
+          var _a;
+          return ((_a = engine.lastDroppedFile) == null ? void 0 : _a.name) ?? "";
+        },
+        size: () => {
+          var _a;
+          return ((_a = engine.lastDroppedFile) == null ? void 0 : _a.size) ?? 0;
+        },
+        mime: () => {
+          var _a;
+          return ((_a = engine.lastDroppedFile) == null ? void 0 : _a.mime) ?? "";
+        },
+        bytes: () => {
+          var _a;
+          return ((_a = engine.lastDroppedFile) == null ? void 0 : _a.bytes) ?? null;
+        },
+        text: (encoding = "utf-8") => {
+          var _a;
+          const bytes = (_a = engine.lastDroppedFile) == null ? void 0 : _a.bytes;
+          if (!bytes) return null;
+          try {
+            const decoder = new TextDecoder(encoding);
+            return decoder.decode(bytes);
+          } catch (e) {
+            console.warn("[drop] Text decode failed:", e);
+            return null;
+          }
+        }
       },
       // Retained-mode TUI API
       tui: createTUIAPI(
@@ -17008,6 +18424,204 @@ class StorieEngine {
           if (!entry) return null;
           if (!entry.lines) entry.lines = String(entry.text ?? "").split(/\r?\n/);
           return entry.lines;
+        }
+      },
+      // Seeded SFX graph presets embedded in markdown (from ```stfxr name:... seed:...)
+      stfxr: {
+        forDocument: (documentId) => {
+          const docId = String(documentId);
+          return {
+            list: () => {
+              const store = getStfxrStore(docId);
+              if (!store) return [];
+              return Array.from(store.keys());
+            },
+            has: (name) => {
+              const store = getStfxrStore(docId);
+              if (!store) return false;
+              return store.has(String(name));
+            },
+            get: (name) => {
+              const store = getStfxrStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              return clonePreset(entry.preset);
+            },
+            play: (name, seed, options) => {
+              const store = getStfxrStore(docId);
+              const entry = store == null ? void 0 : store.get(String(name));
+              if (!entry) return { stop: () => {
+              } };
+              engine.audioContext.resume().catch(() => {
+              });
+              const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
+              return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, options);
+            },
+            bake: async (name, seed, options) => {
+              const store = getStfxrStore(docId);
+              const entry = store == null ? void 0 : store.get(String(name));
+              if (!entry) return "";
+              const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
+              const sampleRate = engine.audioContext.sampleRate;
+              const id = String((options == null ? void 0 : options.id) ?? `stfxr:${String(name)}:${resolvedSeed >>> 0}:${sampleRate}`);
+              const bakedStore = getStfxrBakedStore(docId);
+              if (!bakedStore) return "";
+              if (bakedStore.has(id)) return id;
+              const buffer = await bakeSfxGraphBuffer(engine.audioContext, entry.preset, resolvedSeed, {
+                seconds: options == null ? void 0 : options.seconds,
+                maxSeconds: options == null ? void 0 : options.maxSeconds
+              });
+              bakedStore.set(id, {
+                id,
+                name: String(name),
+                seed: resolvedSeed >>> 0,
+                sampleRate,
+                seconds: buffer.length / sampleRate,
+                buffer,
+                bytes: estimateAudioBufferBytes2(buffer),
+                createdAt: Date.now()
+              });
+              evictStfxrBakedIfNeeded(bakedStore);
+              return id;
+            },
+            playBaked: (id, options) => {
+              const bakedStore = getStfxrBakedStore(docId);
+              const entry = bakedStore == null ? void 0 : bakedStore.get(String(id));
+              if (!entry) return { stop: () => {
+              } };
+              engine.audioContext.resume().catch(() => {
+              });
+              const src = engine.audioContext.createBufferSource();
+              const gain = engine.audioContext.createGain();
+              src.buffer = entry.buffer;
+              src.playbackRate.value = (options == null ? void 0 : options.playbackRate) ?? 1;
+              gain.gain.value = (options == null ? void 0 : options.volume) ?? 1;
+              src.connect(gain);
+              gain.connect(engine.audioContext.destination);
+              const t0 = engine.audioContext.currentTime + ((options == null ? void 0 : options.when) ?? 0);
+              try {
+                src.start(t0);
+              } catch {
+              }
+              return {
+                stop: (when) => {
+                  const t = engine.audioContext.currentTime + (when ?? 0);
+                  try {
+                    src.stop(t);
+                  } catch {
+                  }
+                }
+              };
+            },
+            bakedList: () => {
+              const bakedStore = getStfxrBakedStore(docId);
+              if (!bakedStore) return [];
+              return Array.from(bakedStore.keys());
+            },
+            snippet: (name, seed, volume) => {
+              const store = getStfxrStore(docId);
+              const entry = store == null ? void 0 : store.get(String(name));
+              const seedPart = (seed ?? (entry == null ? void 0 : entry.defaultSeed)) === void 0 ? "" : `, ${JSON.stringify(seed ?? (entry == null ? void 0 : entry.defaultSeed))}`;
+              const optPart = volume === void 0 ? "" : `, { volume: ${volume} }`;
+              return `stfxr.play(${JSON.stringify(String(name))}${seedPart}${optPart})`;
+            }
+          };
+        },
+        list: () => {
+          const store = getStfxrStore();
+          if (!store) return [];
+          return Array.from(store.keys());
+        },
+        has: (name) => {
+          const store = getStfxrStore();
+          if (!store) return false;
+          return store.has(String(name));
+        },
+        get: (name) => {
+          const store = getStfxrStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          return clonePreset(entry.preset);
+        },
+        play: (name, seed, options) => {
+          const store = getStfxrStore();
+          const entry = store == null ? void 0 : store.get(String(name));
+          if (!entry) return { stop: () => {
+          } };
+          engine.audioContext.resume().catch(() => {
+          });
+          const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
+          return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, options);
+        },
+        bake: async (name, seed, options) => {
+          const store = getStfxrStore();
+          const entry = store == null ? void 0 : store.get(String(name));
+          if (!entry) return "";
+          const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
+          const sampleRate = engine.audioContext.sampleRate;
+          const id = String((options == null ? void 0 : options.id) ?? `stfxr:${String(name)}:${resolvedSeed >>> 0}:${sampleRate}`);
+          const bakedStore = getStfxrBakedStore();
+          if (!bakedStore) return "";
+          if (bakedStore.has(id)) return id;
+          const buffer = await bakeSfxGraphBuffer(engine.audioContext, entry.preset, resolvedSeed, {
+            seconds: options == null ? void 0 : options.seconds,
+            maxSeconds: options == null ? void 0 : options.maxSeconds
+          });
+          bakedStore.set(id, {
+            id,
+            name: String(name),
+            seed: resolvedSeed >>> 0,
+            sampleRate,
+            seconds: buffer.length / sampleRate,
+            buffer,
+            bytes: estimateAudioBufferBytes2(buffer),
+            createdAt: Date.now()
+          });
+          evictStfxrBakedIfNeeded(bakedStore);
+          return id;
+        },
+        playBaked: (id, options) => {
+          const bakedStore = getStfxrBakedStore();
+          const entry = bakedStore == null ? void 0 : bakedStore.get(String(id));
+          if (!entry) return { stop: () => {
+          } };
+          engine.audioContext.resume().catch(() => {
+          });
+          const src = engine.audioContext.createBufferSource();
+          const gain = engine.audioContext.createGain();
+          src.buffer = entry.buffer;
+          src.playbackRate.value = (options == null ? void 0 : options.playbackRate) ?? 1;
+          gain.gain.value = (options == null ? void 0 : options.volume) ?? 1;
+          src.connect(gain);
+          gain.connect(engine.audioContext.destination);
+          const t0 = engine.audioContext.currentTime + ((options == null ? void 0 : options.when) ?? 0);
+          try {
+            src.start(t0);
+          } catch {
+          }
+          return {
+            stop: (when) => {
+              const t = engine.audioContext.currentTime + (when ?? 0);
+              try {
+                src.stop(t);
+              } catch {
+              }
+            }
+          };
+        },
+        bakedList: () => {
+          const bakedStore = getStfxrBakedStore();
+          if (!bakedStore) return [];
+          return Array.from(bakedStore.keys());
+        },
+        snippet: (name, seed, volume) => {
+          const store = getStfxrStore();
+          const entry = store == null ? void 0 : store.get(String(name));
+          const seedPart = (seed ?? (entry == null ? void 0 : entry.defaultSeed)) === void 0 ? "" : `, ${JSON.stringify(seed ?? (entry == null ? void 0 : entry.defaultSeed))}`;
+          const optPart = volume === void 0 ? "" : `, { volume: ${volume} }`;
+          return `stfxr.play(${JSON.stringify(String(name))}${seedPart}${optPart})`;
         }
       },
       // Embedded FIGlet fonts (from ```figlet name:...)
@@ -17415,6 +19029,13 @@ class StorieEngine {
           const arrayBuffer = await response.arrayBuffer();
           return await this.audioContext.decodeAudioData(arrayBuffer);
         },
+        /**
+         * Decode an embedded ```blob block into an AudioBuffer.
+         * Intended for small SFX (WAV/MP3). Returns null on failure.
+         */
+        loadSoundFromBlob: async (name, documentId) => {
+          return await loadSoundFromBlobCached(name, documentId);
+        },
         playBuffer: (buffer, options = {}) => {
           const source = this.audioContext.createBufferSource();
           const gain = this.audioContext.createGain();
@@ -17425,6 +19046,29 @@ class StorieEngine {
           source.connect(gain);
           gain.connect(this.audioContext.destination);
           source.start();
+          return source;
+        },
+        /**
+         * Convenience: decode and play an embedded audio blob by name.
+         * Returns the started AudioBufferSourceNode, or null if decode fails.
+         */
+        playBlob: async (name, options = {}, documentId) => {
+          const buffer = await loadSoundFromBlobCached(String(name ?? ""), documentId);
+          if (!buffer) return null;
+          const source = this.audioContext.createBufferSource();
+          const gain = this.audioContext.createGain();
+          source.buffer = buffer;
+          source.loop = options.loop || false;
+          source.playbackRate.value = options.playbackRate || 1;
+          gain.gain.value = options.volume !== void 0 ? options.volume : 1;
+          source.connect(gain);
+          gain.connect(options.destination ?? this.audioContext.destination);
+          const when = typeof options.when === "number" && Number.isFinite(options.when) ? options.when : this.audioContext.currentTime;
+          try {
+            source.start(when);
+          } catch {
+            source.start();
+          }
           return source;
         },
         // === RAW API SHORTCUTS (Use same AudioContext) ===
@@ -18239,7 +19883,7 @@ class StorieEngine {
    * Load a markdown document and execute its code with lifecycle hooks
    */
   async loadMarkdown(documentId, markdown) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     try {
       console.log(`Loading document: ${documentId}`);
       const parsed = await parseMarkdown(markdown);
@@ -18387,6 +20031,121 @@ class StorieEngine {
           console.log(`  Found ${ansiStore.size} ansi block(s)`);
         }
       }
+      const stfxrStore = /* @__PURE__ */ new Map();
+      const stfxrPending = /* @__PURE__ */ new Map();
+      for (const b of parsed.codeBlocks) {
+        if (b.lang !== "stfxr") continue;
+        const name = String(((_f = b.metadata) == null ? void 0 : _f.name) ?? "").trim();
+        if (!name) {
+          console.warn(`  [stfxr] Skipping unnamed stfxr block at lines ${b.startLine + 1}-${b.endLine + 1}`);
+          continue;
+        }
+        const seedRaw = String(((_g = b.metadata) == null ? void 0 : _g.seed) ?? "").trim();
+        let defaultSeed = void 0;
+        if (seedRaw) {
+          const n = Number(seedRaw);
+          defaultSeed = Number.isFinite(n) ? n : seedRaw;
+        }
+        try {
+          const def = parseStfxrDefinitionJson(String(b.code ?? ""));
+          if (def.kind === "preset") {
+            if (stfxrStore.has(name) || stfxrPending.has(name)) {
+              console.warn(`  [stfxr] Duplicate name "${name}"; last one wins.`);
+            }
+            stfxrStore.set(name, { name, preset: def.preset, defaultSeed });
+          } else {
+            if (stfxrStore.has(name) || stfxrPending.has(name)) {
+              console.warn(`  [stfxr] Duplicate name "${name}"; last one wins.`);
+            }
+            stfxrPending.set(name, {
+              name,
+              base: def.base,
+              patch: def.patch,
+              defaultSeed,
+              startLine: b.startLine,
+              endLine: b.endLine
+            });
+          }
+        } catch (e) {
+          console.warn(`  [stfxr] Failed to parse stfxr block for "${name}" at lines ${b.startLine + 1}-${b.endLine + 1}:`, e);
+          continue;
+        }
+      }
+      const clonePreset = (preset) => {
+        try {
+          if (typeof structuredClone === "function") return structuredClone(preset);
+        } catch {
+        }
+        return JSON.parse(JSON.stringify(preset));
+      };
+      const sameEdge = (a, b) => a.from === b.from && a.to === b.to;
+      const resolveBasePreset = (base) => {
+        const asBuiltIn = base;
+        if (SFX_PRESETS[asBuiltIn]) return SFX_PRESETS[asBuiltIn];
+        const entry = stfxrStore.get(base);
+        return entry ? entry.preset : null;
+      };
+      if (stfxrPending.size > 0) {
+        const maxPasses = stfxrPending.size + 4;
+        for (let pass = 0; pass < maxPasses && stfxrPending.size > 0; pass++) {
+          let progressed = false;
+          for (const [name, pending] of Array.from(stfxrPending.entries())) {
+            const basePreset = resolveBasePreset(pending.base);
+            if (!basePreset) continue;
+            const base = clonePreset(basePreset);
+            const patch = pending.patch ?? {};
+            if (patch.vars) {
+              base.vars = { ...base.vars ?? {}, ...patch.vars ?? {} };
+            }
+            if (Array.isArray(patch.nodes) && patch.nodes.length > 0) {
+              const out = [...base.nodes ?? []];
+              const indexById = /* @__PURE__ */ new Map();
+              for (let i = 0; i < out.length; i++) indexById.set(out[i].id, i);
+              for (const n of patch.nodes) {
+                const idx = indexById.get(n.id);
+                if (idx === void 0) {
+                  indexById.set(n.id, out.length);
+                  out.push(n);
+                } else {
+                  out[idx] = n;
+                }
+              }
+              base.nodes = out;
+            }
+            if (Array.isArray(patch.edges)) {
+              base.edges = [...patch.edges];
+            }
+            if (Array.isArray(patch.edgesRemove) && patch.edgesRemove.length > 0) {
+              base.edges = (base.edges ?? []).filter((e) => !patch.edgesRemove.some((r2) => sameEdge(e, r2)));
+            }
+            if (Array.isArray(patch.edgesAdd) && patch.edgesAdd.length > 0) {
+              const edges = [...base.edges ?? []];
+              for (const e of patch.edgesAdd) {
+                if (!edges.some((x) => sameEdge(x, e))) edges.push(e);
+              }
+              base.edges = edges;
+            }
+            if (Array.isArray(patch.events)) {
+              base.events = [...patch.events];
+            }
+            if (Array.isArray(patch.eventsAdd) && patch.eventsAdd.length > 0) {
+              base.events = [...base.events ?? [], ...patch.eventsAdd];
+            }
+            stfxrStore.set(name, { name, preset: base, defaultSeed: pending.defaultSeed });
+            stfxrPending.delete(name);
+            progressed = true;
+          }
+          if (!progressed) break;
+        }
+        for (const pending of stfxrPending.values()) {
+          console.warn(
+            `  [stfxr] Could not resolve base "${pending.base}" for "${pending.name}" at lines ${pending.startLine + 1}-${pending.endLine + 1}`
+          );
+        }
+      }
+      if (stfxrStore.size > 0) {
+        console.log(`  Found ${stfxrStore.size} stfxr block(s)`);
+      }
       if (jsBlocks.length === 0) {
         console.warn("  No JavaScript code blocks found");
         return false;
@@ -18396,10 +20155,11 @@ class StorieEngine {
       const updateBlocks = [];
       const renderBlocks = [];
       const inputBlocks = [];
+      const dropBlocks = [];
       const globalBlocks = [];
       const enterBlocksBySection = /* @__PURE__ */ new Map();
       for (const block of jsBlocks) {
-        const hook = (_f = block.metadata) == null ? void 0 : _f.on;
+        const hook = (_h = block.metadata) == null ? void 0 : _h.on;
         if (hook === "init") {
           initBlocks.push(block.code);
         } else if (hook === "update") {
@@ -18408,6 +20168,8 @@ class StorieEngine {
           renderBlocks.push(block.code);
         } else if (hook === "input") {
           inputBlocks.push(block.code);
+        } else if (hook === "drop") {
+          dropBlocks.push(block.code);
         } else if (hook === "enter") {
           const sectionIdx = this.findSectionIndexForLine(parsed.sections, block.startLine);
           if (sectionIdx !== null) {
@@ -18426,11 +20188,11 @@ class StorieEngine {
         this.sandbox.executeCodeBlock(documentId, code);
       }
       let currentScope = this.sandbox.getScope(documentId) || {};
-      let scopeVarNames = Object.keys(currentScope).filter((k) => !["init", "update", "render", "input"].includes(k));
+      let scopeVarNames = Object.keys(currentScope).filter((k) => !["init", "update", "render", "input", "drop", "__enterHandlers"].includes(k));
       if (scopeVarNames.length > 0 && globalBlocks.length > 0) {
         console.log(`  Re-executing global blocks to create closures for ${scopeVarNames.length} variables`);
         const exports$1 = scopeVarNames.map((k) => `  try { scope.${k} = ${k}; } catch (e) {}`).join("\n");
-        const apiParams = "term, termCanvas, layer, key, mouse, tui, gui, getStyle, theme, modules, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY, termWidth, termHeight, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, canvas3D";
+        const apiParams = "term, termCanvas, layer, key, mouse, drop, tui, gui, getStyle, theme, modules, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY, termWidth, termHeight, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, canvas3D";
         for (const code of globalBlocks) {
           const wrappedCode = `(function(${apiParams}) {
 ${code}
@@ -18440,13 +20202,14 @@ ${exports$1}
         }
       }
       currentScope = this.sandbox.getScope(documentId) || {};
-      scopeVarNames = Object.keys(currentScope).filter((k) => !["init", "update", "render", "input"].includes(k));
+      scopeVarNames = Object.keys(currentScope).filter((k) => !["init", "update", "render", "input", "drop", "__enterHandlers"].includes(k));
       console.log(`  Scope variables:`, scopeVarNames);
       console.log(`  Scope values:`, scopeVarNames.map((k) => `${k}=${JSON.stringify(currentScope[k])}`).join(", "));
       const hasInit = typeof currentScope.init === "function";
       const hasUpdate = typeof currentScope.update === "function";
       const hasRender = typeof currentScope.render === "function";
       const hasInput = typeof currentScope.input === "function";
+      const hasDrop = typeof currentScope.drop === "function";
       const importVars = scopeVarNames.length > 0 ? `  let {${scopeVarNames.join(", ")}} = scope;` : "";
       const captureVars = scopeVarNames.length > 0 ? `  const __scopeBefore = {${scopeVarNames.map((k) => `${k}: scope.${k}`).join(", ")}};` : "";
       const exportVars = scopeVarNames.length > 0 ? scopeVarNames.map((k) => `  if (scope.${k} === __scopeBefore.${k}) { scope.${k} = ${k}; }`).join("\n") : "";
@@ -18494,6 +20257,16 @@ ${exportVars}
 };`;
         this.sandbox.executeCodeBlock(documentId, inputCode, true);
       }
+      if (!hasDrop && dropBlocks.length > 0) {
+        console.log(`  Creating drop handler from ${dropBlocks.length} blocks with ${scopeVarNames.length} imports`);
+        const dropCode = `scope.drop = function(file) {
+${importVars}
+${captureVars}
+${dropBlocks.join("\n\n")}
+${exportVars}
+};`;
+        this.sandbox.executeCodeBlock(documentId, dropCode, true);
+      }
       if (enterBlocksBySection.size > 0) {
         const pieces = [];
         pieces.push(`scope.__enterHandlers = scope.__enterHandlers || {};`);
@@ -18519,12 +20292,15 @@ ${exportVars}
         id: documentId,
         handlers,
         sections: parsed.sections,
+        metadata: parsed.metadata,
         _parsedMarkdown: parsed,
         // Store for deferred shader registration
         _blobStore: blobStore,
         _asciiStore: asciiStore,
         _figletStore: figletStore,
-        _ansiStore: ansiStore
+        _ansiStore: ansiStore,
+        _stfxrStore: stfxrStore,
+        _stfxrBakedStore: /* @__PURE__ */ new Map()
       });
       if (!this.activeDocumentId) {
         this.activeDocumentId = documentId;
@@ -18533,7 +20309,8 @@ ${exportVars}
         init: typeof (handlers == null ? void 0 : handlers.init),
         update: typeof (handlers == null ? void 0 : handlers.update),
         render: typeof (handlers == null ? void 0 : handlers.render),
-        input: typeof (handlers == null ? void 0 : handlers.input)
+        input: typeof (handlers == null ? void 0 : handlers.input),
+        drop: typeof (handlers == null ? void 0 : handlers.drop)
       });
       if (handlers.init) {
         console.log("  Calling init handler");
@@ -18933,23 +20710,23 @@ ${content}`.trim();
     if (!s.startsWith("#")) return null;
     const h = s.slice(1);
     if (!(h.length === 6 || h.length === 8)) return null;
-    const r = Number.parseInt(h.slice(0, 2), 16);
+    const r2 = Number.parseInt(h.slice(0, 2), 16);
     const g = Number.parseInt(h.slice(2, 4), 16);
     const b = Number.parseInt(h.slice(4, 6), 16);
     const a = h.length === 8 ? Number.parseInt(h.slice(6, 8), 16) : 255;
-    if (![r, g, b, a].every(Number.isFinite)) return null;
-    return (r & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | a & 255;
+    if (![r2, g, b, a].every(Number.isFinite)) return null;
+    return (r2 & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | a & 255;
   }
   resolveCanvas3DSectionBackground() {
-    const v = this.canvas3DConfig.sectionBackground;
-    if (v === void 0 || v === null || v === "surface") {
+    const v2 = this.canvas3DConfig.sectionBackground;
+    if (v2 === void 0 || v2 === null || v2 === "surface") {
       return this.getStyle("surface").bg;
     }
-    if (typeof v === "number") {
-      return v;
+    if (typeof v2 === "number") {
+      return v2;
     }
-    if (typeof v === "string") {
-      const trimmed = v.trim();
+    if (typeof v2 === "string") {
+      const trimmed = v2.trim();
       if (!trimmed) {
         return this.getStyle("surface").bg;
       }
@@ -18988,7 +20765,7 @@ ${content}`.trim();
           return this.getStyle("surface").bg;
       }
     }
-    return ColorUtils.from(v);
+    return ColorUtils.from(v2);
   }
   ensure3DSectionTexturesWebGPUUI(device) {
     if (!(this.renderer instanceof WebGPURenderer)) return;
@@ -19099,11 +20876,11 @@ ${content}`.trim();
       }
       if (borderEnabled && borderWidth > 0) {
         const bw = Math.max(1, borderWidth);
-        const c = borderStyle.fg;
-        ui.rect(0, 0, widthPx, bw, c);
-        ui.rect(0, heightPx - bw, widthPx, bw, c);
-        ui.rect(0, 0, bw, heightPx, c);
-        ui.rect(widthPx - bw, 0, bw, heightPx, c);
+        const c2 = borderStyle.fg;
+        ui.rect(0, 0, widthPx, bw, c2);
+        ui.rect(0, heightPx - bw, widthPx, bw, c2);
+        ui.rect(0, 0, bw, heightPx, c2);
+        ui.rect(widthPx - bw, 0, bw, heightPx, c2);
       }
       ui.flushTo(texture, widthPx, heightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
       layout.texture = texture;
@@ -19217,18 +20994,18 @@ ${content}`.trim();
     const dy = Math.abs(y2 - y1);
     const sx = x1 < x2 ? 1 : -1;
     const sy = y1 < y2 ? 1 : -1;
-    let err = dx - dy;
+    let err2 = dx - dy;
     let x = x1, y = y1;
     while (true) {
       layer.plot(x, y, char, fg, bg);
       if (x === x2 && y === y2) break;
-      const e2 = 2 * err;
+      const e2 = 2 * err2;
       if (e2 > -dy) {
-        err -= dy;
+        err2 -= dy;
         x += sx;
       }
       if (e2 < dx) {
-        err += dx;
+        err2 += dx;
         y += sy;
       }
     }
@@ -19316,6 +21093,120 @@ ${content}`.trim();
     this.canvas.addEventListener("contextmenu", (e) => e.preventDefault());
     this.canvas.tabIndex = 0;
     this.canvas.focus();
+  }
+  isTruthyDropTarget(value) {
+    if (value === true) return true;
+    if (value === false || value === null || value === void 0) return false;
+    if (typeof value === "number") return value !== 0;
+    if (typeof value === "string") {
+      const v2 = value.trim().toLowerCase();
+      return v2 === "true" || v2 === "yes" || v2 === "1" || v2 === "on";
+    }
+    return !!value;
+  }
+  /**
+   * Returns true if the active document opts into generic file drops.
+   * Uses frontmatter `dropTarget: true` (tStorie parity).
+   */
+  isDropTargetEnabled() {
+    var _a;
+    const doc = this.getActiveDocument();
+    if (!doc) return false;
+    const fromDoc = (_a = doc.metadata) == null ? void 0 : _a.dropTarget;
+    if (fromDoc !== void 0) return this.isTruthyDropTarget(fromDoc);
+    const scope = this.sandbox.getScope(doc.id);
+    return this.isTruthyDropTarget(scope == null ? void 0 : scope.dropTarget);
+  }
+  isMarkdownFile(file) {
+    const name = String((file == null ? void 0 : file.name) ?? "").toLowerCase();
+    const type = String((file == null ? void 0 : file.type) ?? "").toLowerCase();
+    if (name.endsWith(".md") || name.endsWith(".markdown")) return true;
+    if (type.includes("text/markdown")) return true;
+    return false;
+  }
+  dispatchDroppedFile(payload) {
+    var _a;
+    this.lastDroppedFile = payload;
+    const doc = this.getActiveDocument();
+    if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.drop)) return;
+    try {
+      doc.handlers.drop(payload);
+    } catch (error) {
+      console.error("Error in drop handler:", error);
+    }
+  }
+  async handleDroppedFile(file) {
+    if (!file) return;
+    if (Number.isFinite(this.maxDropBytes) && file.size > this.maxDropBytes) {
+      console.warn(
+        `[drop] Ignoring dropped file "${file.name}" (${file.size} bytes) over maxDropBytes=${this.maxDropBytes}`
+      );
+      return;
+    }
+    if (!this.isDropTargetEnabled()) {
+      if (this.isMarkdownFile(file)) {
+        const markdown = await file.text();
+        await this.loadMarkdown(file.name || "dropped.md", markdown);
+      }
+      return;
+    }
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    const payload = {
+      name: file.name || "dropped",
+      size: bytes.byteLength,
+      mime: file.type || "application/octet-stream",
+      bytes,
+      lastModified: file.lastModified
+    };
+    this.dispatchDroppedFile(payload);
+  }
+  async handleDropEvent(e) {
+    const dt = e.dataTransfer;
+    if (!dt) return;
+    const files = dt.files;
+    if (files && files.length > 0) {
+      await this.handleDroppedFile(files[0]);
+      return;
+    }
+    const text = dt.getData("text/markdown") || dt.getData("text/plain");
+    if (text && !this.isDropTargetEnabled()) {
+      await this.loadMarkdown("dropped", text);
+    }
+  }
+  /**
+   * Install DOM drag/drop listeners.
+   * Behavior:
+   * - If active doc has `dropTarget: true`: pass dropped files to `on:drop` / `scope.drop`.
+   * - Otherwise: dropped markdown loads as a new story.
+   */
+  installDropHandling(element = document.body) {
+    if (this.dropHandlingCleanup) return this.dropHandlingCleanup;
+    const prevent = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onDragOver = (e) => {
+      prevent(e);
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    };
+    const onDrop = (e) => {
+      prevent(e);
+      void this.handleDropEvent(e);
+    };
+    element.addEventListener("dragenter", prevent);
+    element.addEventListener("dragover", onDragOver);
+    element.addEventListener("dragleave", prevent);
+    element.addEventListener("drop", onDrop);
+    const cleanup = () => {
+      element.removeEventListener("dragenter", prevent);
+      element.removeEventListener("dragover", onDragOver);
+      element.removeEventListener("dragleave", prevent);
+      element.removeEventListener("drop", onDrop);
+      if (this.dropHandlingCleanup === cleanup) this.dropHandlingCleanup = null;
+    };
+    this.dropHandlingCleanup = cleanup;
+    return cleanup;
   }
   /**
    * Handle keyboard events for on:input
@@ -19467,25 +21358,25 @@ ${content}`.trim();
         continue;
       }
       const u = hitLocal.x + 0.5;
-      const v = 0.5 - hitLocal.y;
+      const v2 = 0.5 - hitLocal.y;
       const hitWorld = mat4TransformPoint(model, hitLocal);
       const dist = vec3Length(vec3Sub(hitWorld, nearWorld));
       if (!best || dist < best.dist) {
-        best = { layout, dist, u, v };
+        best = { layout, dist, u, v: v2 };
       }
     }
     return best ? { layout: best.layout, u: best.u, v: best.v } : null;
   }
-  hitTest3DLinkAtUV(sectionIndex, u, v) {
+  hitTest3DLinkAtUV(sectionIndex, u, v2) {
     const dims = this.sectionTextureCache.get(sectionIndex);
     const regions = this.sectionLinkRegionsCache.get(sectionIndex);
     if (!dims || !regions || regions.length === 0) return null;
     const xPx = u * dims.width;
-    const yPx = v * dims.height;
+    const yPx = v2 * dims.height;
     for (let i = 0; i < regions.length; i++) {
-      const r = regions[i];
-      if (xPx >= r.x && xPx <= r.x + r.w && yPx >= r.y && yPx <= r.y + r.h) {
-        return { linkIndex: i, region: r };
+      const r2 = regions[i];
+      if (xPx >= r2.x && xPx <= r2.x + r2.w && yPx >= r2.y && yPx <= r2.y + r2.h) {
+        return { linkIndex: i, region: r2 };
       }
     }
     return null;
@@ -19494,13 +21385,13 @@ ${content}`.trim();
     const dims = this.sectionTextureCache.get(sectionIndex);
     const regions = this.sectionLinkRegionsCache.get(sectionIndex);
     if (!dims || !regions) return null;
-    const r = regions[linkIndex];
-    if (!r) return null;
+    const r2 = regions[linkIndex];
+    if (!r2) return null;
     return {
-      uMin: r.x / dims.width,
-      vMin: r.y / dims.height,
-      uMax: (r.x + r.w) / dims.width,
-      vMax: (r.y + r.h) / dims.height
+      uMin: r2.x / dims.width,
+      vMin: r2.y / dims.height,
+      uMax: (r2.x + r2.w) / dims.width,
+      vMax: (r2.y + r2.h) / dims.height
     };
   }
   activateFocused3DLink() {
@@ -19731,8 +21622,8 @@ ${content}`.trim();
       { x: 0.5, y: 0.5, z: 0 },
       { x: -0.5, y: 0.5, z: 0 }
     ];
-    const clips = corners.map((c) => {
-      const world = mat4TransformPoint(model, c);
+    const clips = corners.map((c2) => {
+      const world = mat4TransformPoint(model, c2);
       return mat4TransformVec4(viewProj, world.x, world.y, world.z, 1);
     });
     const all = (pred) => clips.every(pred);
@@ -19762,11 +21653,11 @@ ${content}`.trim();
       if (!dims || !regions || regions.length === 0) continue;
       const model = this.get3DCardModelMatrix(layout);
       for (let i = 0; i < regions.length; i++) {
-        const r = regions[i];
-        const u = (r.x + r.w * 0.5) / dims.width;
-        const v = (r.y + r.h * 0.5) / dims.height;
+        const r2 = regions[i];
+        const u = (r2.x + r2.w * 0.5) / dims.width;
+        const v2 = (r2.y + r2.h * 0.5) / dims.height;
         const xLocal = u - 0.5;
-        const yLocal = 0.5 - v;
+        const yLocal = 0.5 - v2;
         const world = mat4TransformPoint(model, { x: xLocal, y: yLocal, z: 0 });
         const clip = mat4TransformVec4(viewProj, world.x, world.y, world.z, 1);
         if (clip.w <= 1e-6) continue;
@@ -19775,7 +21666,7 @@ ${content}`.trim();
         if (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1) continue;
         const screenX = (ndcX * 0.5 + 0.5) * canvasW;
         const screenY = (1 - (ndcY * 0.5 + 0.5)) * canvasH;
-        out.push({ sectionIndex: layout.sectionIndex, linkIndex: i, region: r, screenX, screenY });
+        out.push({ sectionIndex: layout.sectionIndex, linkIndex: i, region: r2, screenX, screenY });
       }
     }
     out.sort((a, b) => a.screenY - b.screenY || a.screenX - b.screenX);
@@ -19827,8 +21718,8 @@ ${content}`.trim();
     this.documents.clear();
     this.activeDocumentId = null;
     if (this.audioContext.state !== "closed") {
-      this.audioContext.close().catch((err) => {
-        console.warn("Error closing AudioContext:", err);
+      this.audioContext.close().catch((err2) => {
+        console.warn("Error closing AudioContext:", err2);
       });
     }
     if (this.offscreenCanvas2D && this.offscreenCanvas2D.parentElement) {

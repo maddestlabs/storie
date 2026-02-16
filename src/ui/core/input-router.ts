@@ -20,6 +20,9 @@ export class InputRouter {
   private currentHoverWidget: BaseWidget | null = null;
   private currentPressedWidget: BaseWidget | null = null;
   private mousePressed: boolean = false;
+
+  // De-dupe for environments that emit both keydown (printable) and text events.
+  private lastPrintableKeydownText: { text: string; at: number } | null = null;
   
   constructor(config: InputRouterConfig) {
     this.widgetManager = config.widgetManager;
@@ -62,6 +65,11 @@ export class InputRouter {
       this.currentPressedWidget = hoveredWidget;
       hoveredWidget.updateState(hoveredWidget.state.hovered, true, hoveredWidget.state.focused);
 
+      // Focus on click
+      if (hoveredWidget.focusable) {
+        this.widgetManager.focus(hoveredWidget.id);
+      }
+
       // Match tStorie semantics: treat a press on a widget as a click.
       // This makes buttons/checkboxes respond immediately and avoids relying on
       // observing the release in a later update.
@@ -97,6 +105,23 @@ export class InputRouter {
       }
       return true; // Consumed
     }
+
+    // Give focused widget first chance to consume keys
+    const focused = this.widgetManager.getFocused();
+    if (focused) {
+      const maybeHandleKey = (focused as any).handleKey;
+      if (typeof maybeHandleKey === 'function') {
+        const consumed = maybeHandleKey.call(focused, key, modifiers);
+        if (consumed) {
+          const ctrl = !!modifiers?.ctrl;
+          const alt = !!modifiers?.alt;
+          if (!ctrl && !alt && key.length === 1) {
+            this.lastPrintableKeydownText = { text: key, at: Date.now() };
+          }
+        }
+        if (consumed) return true;
+      }
+    }
     
     // Handle arrow key navigation
     if (key === 'ArrowDown' || key === 'ArrowRight') {
@@ -108,15 +133,29 @@ export class InputRouter {
       this.widgetManager.focusPrevious();
       return true;
     }
-    
-    // Pass to focused widget (for future extension)
-    const focused = this.widgetManager.getFocused();
-    if (focused) {
-      // Widgets can handle their own keys in the future
-      // For now, just return false
-    }
-    
+
     return false; // Not consumed
+  }
+
+  /**
+   * Handle text input for focused widget
+   */
+  handleText(text: string): boolean {
+    // If we just inserted the same printable char via keydown, ignore the text event.
+    if (this.lastPrintableKeydownText && text === this.lastPrintableKeydownText.text) {
+      const dt = Date.now() - this.lastPrintableKeydownText.at;
+      if (dt >= 0 && dt < 50) {
+        return true;
+      }
+    }
+
+    const focused = this.widgetManager.getFocused();
+    if (!focused) return false;
+    const maybeHandleText = (focused as any).handleText;
+    if (typeof maybeHandleText === 'function') {
+      return !!maybeHandleText.call(focused, text);
+    }
+    return false;
   }
   
   /**

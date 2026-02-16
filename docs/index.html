@@ -431,6 +431,11 @@ This demo showcases:
           fontFamily: fontFamily,
           fontSize: fontSize
         });
+
+        // Enable drag-and-drop behavior:
+        // - default: dropped markdown loads as a new story
+        // - if active story has frontmatter `dropTarget: true`: pass-through to on:drop
+        engine.installDropHandling(document.body);
         
         console.log(`✓ S|torie engine initialized (${gridWidth}x${gridHeight})`);
         

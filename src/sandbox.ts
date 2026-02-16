@@ -113,6 +113,16 @@ export interface SandboxAPI {
     down: (button?: number) => boolean;
     clicked: (button?: number) => boolean;
   };
+
+  // Drop API (binary-safe)
+  drop: {
+    has: () => boolean;
+    name: () => string;
+    size: () => number;
+    mime: () => string;
+    bytes: () => Uint8Array | null;
+    text: (encoding?: string) => string | null;
+  };
   
   // Theme API
   getStyle: (name: string) => NamedStyle;
@@ -152,7 +162,13 @@ export interface SandboxAPI {
     // Helpers
     playTone: (frequency: number, duration: number, volume?: number) => { osc: OscillatorNode; gain: GainNode };
     loadSound: (url: string) => Promise<AudioBuffer>;
+    loadSoundFromBlob: (name: string, documentId?: string) => Promise<AudioBuffer | null>;
     playBuffer: (buffer: AudioBuffer, options?: { loop?: boolean; volume?: number; playbackRate?: number }) => AudioBufferSourceNode;
+    playBlob: (
+      name: string,
+      options?: { loop?: boolean; volume?: number; playbackRate?: number; when?: number; destination?: AudioNode },
+      documentId?: string
+    ) => Promise<AudioBufferSourceNode | null>;
     // Raw API shortcuts
     createOscillator: () => OscillatorNode;
     createGain: () => GainNode;
@@ -384,6 +400,42 @@ export interface SandboxAPI {
 
   // Convenience drawing helper for ANSI assets
   drawAnsi: (x: number, y: number, name: string) => void;
+
+  // Seeded SFX graph presets embedded in markdown (from ```stfxr name:... seed:...)
+  stfxr: {
+    forDocument?: (documentId: string) => {
+      list: () => string[];
+      has: (name: string) => boolean;
+      get: (name: string) => any | null;
+      play: (name: string, seed?: number | string, options?: { volume?: number; when?: number }) => { stop: (when?: number) => void };
+      bake: (
+        name: string,
+        seed?: number | string,
+        options?: { id?: string; seconds?: number; maxSeconds?: number }
+      ) => Promise<string>;
+      playBaked: (
+        id: string,
+        options?: { volume?: number; when?: number; playbackRate?: number }
+      ) => { stop: (when?: number) => void };
+      bakedList: () => string[];
+      snippet: (name: string, seed?: number | string, volume?: number) => string;
+    };
+    list: () => string[];
+    has: (name: string) => boolean;
+    get: (name: string) => any | null;
+    play: (name: string, seed?: number | string, options?: { volume?: number; when?: number }) => { stop: (when?: number) => void };
+    bake: (
+      name: string,
+      seed?: number | string,
+      options?: { id?: string; seconds?: number; maxSeconds?: number }
+    ) => Promise<string>;
+    playBaked: (
+      id: string,
+      options?: { volume?: number; when?: number; playbackRate?: number }
+    ) => { stop: (when?: number) => void };
+    bakedList: () => string[];
+    snippet: (name: string, seed?: number | string, volume?: number) => string;
+  };
   
   // 3D Canvas API
   canvas3D: {
@@ -518,6 +570,9 @@ export class ScriptSandbox {
         layer: this.api.layer,
         key: this.api.key,
         mouse: this.api.mouse,
+
+        // Dropped file API (binary-safe)
+        drop: this.api.drop,
         
         // Theme API
         getStyle: this.api.getStyle,
@@ -527,7 +582,18 @@ export class ScriptSandbox {
         modules: this.api.modules,
         
         // Native Browser APIs
-        audio: this.api.audio,
+          audio: (() => {
+            const audioRef: any = (this.api as any).audio;
+            if (!audioRef || typeof audioRef !== 'object') return audioRef;
+            const audio = Object.create(audioRef);
+            if (typeof audioRef.loadSoundFromBlob === 'function') {
+              audio.loadSoundFromBlob = (name: string) => audioRef.loadSoundFromBlob(name, documentId);
+            }
+            if (typeof audioRef.playBlob === 'function') {
+              audio.playBlob = (name: string, options?: any) => audioRef.playBlob(name, options, documentId);
+            }
+            return audio;
+          })(),
         canvas2d: this.api.canvas2d,
         webgl: this.api.webgl,
         webgpu: this.api.webgpu,
@@ -564,6 +630,9 @@ export class ScriptSandbox {
 
         // Embedded FIGlet fonts (document-scoped)
         figlet: (this.api as any).figlet?.forDocument ? (this.api as any).figlet.forDocument(documentId) : (this.api as any).figlet,
+
+        // Embedded STFXR presets (document-scoped)
+        stfxr: (this.api as any).stfxr?.forDocument ? (this.api as any).stfxr.forDocument(documentId) : (this.api as any).stfxr,
 
         // Convenience drawing helper (document-aware)
         drawFiglet: (x: number, y: number, fontName: string, text: string, fg?: any, bg?: any, options?: { vertical?: boolean; letterSpacing?: number }) => {
@@ -800,6 +869,9 @@ export class ScriptSandbox {
       }
       if (typeof scope.input === 'function') {
         validHandlers.input = scope.input;
+      }
+      if (typeof (scope as any).drop === 'function') {
+        (validHandlers as any).drop = (scope as any).drop;
       }
       
       return Object.keys(validHandlers).length > 0 ? validHandlers : null;

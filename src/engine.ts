@@ -48,11 +48,13 @@ import {
   type Canvas3DConfig
 } from './canvas3d.js';
 import type { ModuleResolverConfig } from './modules/types.js';
-import type { UserScript, Color, InputEvent, ThemeColors, ThemeStyleSheet, NamedStyle } from './types.js';
+import type { UserScript, Color, InputEvent, ThemeColors, ThemeStyleSheet, NamedStyle, DroppedFile } from './types.js';
 import { KEY } from './types.js';
 import { ColorUtils } from './types.js';
 import type { SandboxAPI } from './sandbox.js';
-import { getSfxPresetNames, playSfx, sfxSnippet } from './audio/sfx.js';
+import { getSfxPresetNames, playSfx, sfxSnippet, toSfxSeed } from './audio/sfx.js';
+import { bakeSfxGraphBuffer, parseStfxrDefinitionJson, playSfxGraph, type SfxGraphPreset } from './audio/sfx-graph.js';
+import { SFX_PRESETS, type SfxPresetName } from './audio/sfx-presets.js';
 
 export interface EngineConfig {
   width?: number;
@@ -60,6 +62,11 @@ export interface EngineConfig {
   fontFamily?: string;
   fontSize?: number;
   preferWebGPU?: boolean; // Default true
+  /**
+   * Maximum number of bytes allowed for a single dropped file.
+   * Default: 10MB. Set <= 0 to disable the limit.
+   */
+  maxDropBytes?: number;
   modules?: ModuleResolverConfig; // Module loader configuration
 }
 
@@ -161,6 +168,11 @@ export class StorieEngine {
   // Documents
   private documents: Map<string, UserScript> = new Map();
   private activeDocumentId: string | null = null;
+
+  // Dropped-file handling (binary-safe)
+  private lastDroppedFile: DroppedFile | null = null;
+  private dropHandlingCleanup: (() => void) | null = null;
+  private maxDropBytes: number = 10 * 1024 * 1024;
   
   // Canvas viewport (reserved for future use)
   // private viewportX: number = 0;
@@ -177,6 +189,9 @@ export class StorieEngine {
     this.canvas = canvas;
     this.width = config.width || 80;
     this.height = config.height || 24;
+
+    const configuredMaxDropBytes = typeof config.maxDropBytes === 'number' ? config.maxDropBytes : 10 * 1024 * 1024;
+    this.maxDropBytes = configuredMaxDropBytes > 0 ? configuredMaxDropBytes : Infinity;
 
     // Camera state should exist even before WebGPU initializes so user code can
     // configure it during on:init without worrying about timing.
@@ -422,6 +437,64 @@ export class StorieEngine {
       return (doc && doc._ansiStore) ? (doc._ansiStore as Map<string, any>) : null;
     };
 
+    const getStfxrStore = (documentId?: string): Map<string, { name: string; preset: SfxGraphPreset; defaultSeed?: number | string }> | null => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId) as any;
+      return (doc && doc._stfxrStore) ? (doc._stfxrStore as Map<string, any>) : null;
+    };
+
+    type StfxrBakedEntry = {
+      id: string;
+      name: string;
+      seed: number;
+      sampleRate: number;
+      seconds: number;
+      buffer: AudioBuffer;
+      bytes: number;
+      createdAt: number;
+    };
+
+    const MAX_STFXR_BAKED_BYTES = 16 * 1024 * 1024; // per document (roughly)
+
+    const estimateAudioBufferBytes = (buffer: AudioBuffer): number => {
+      const frames = buffer.length;
+      const channels = buffer.numberOfChannels;
+      return Math.max(0, frames * channels * 4);
+    };
+
+    const getStfxrBakedStore = (documentId?: string): Map<string, StfxrBakedEntry> | null => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId) as any;
+      if (!doc) return null;
+      if (!doc._stfxrBakedStore) doc._stfxrBakedStore = new Map();
+      return doc._stfxrBakedStore as Map<string, StfxrBakedEntry>;
+    };
+
+    const evictStfxrBakedIfNeeded = (store: Map<string, StfxrBakedEntry>) => {
+      let total = 0;
+      for (const e of store.values()) total += e.bytes;
+      if (total <= MAX_STFXR_BAKED_BYTES) return;
+      // Evict oldest insertions first.
+      while (total > MAX_STFXR_BAKED_BYTES && store.size > 1) {
+        const oldestKey = store.keys().next().value as string;
+        const oldest = store.get(oldestKey);
+        store.delete(oldestKey);
+        if (oldest) total -= oldest.bytes;
+      }
+    };
+
+    const clonePreset = (preset: SfxGraphPreset): SfxGraphPreset => {
+      try {
+        // @ts-ignore - structuredClone exists in modern browsers.
+        if (typeof structuredClone === 'function') return structuredClone(preset);
+      } catch {
+        // ignore
+      }
+      return JSON.parse(JSON.stringify(preset)) as SfxGraphPreset;
+    };
+
     const estimateBase64Bytes = (b64: string): number => {
       const s = b64.replace(/\s+/g, '');
       const padding = s.endsWith('==') ? 2 : s.endsWith('=') ? 1 : 0;
@@ -494,6 +567,94 @@ export class StorieEngine {
 
     const decodeBlobToBytes = (entry: { encoding: 'base64' | 'hex'; data: string }): Uint8Array | undefined => {
       return entry.encoding === 'hex' ? decodeHexToBytes(entry.data) : decodeBase64ToBytes(entry.data);
+    };
+
+    type UIBlobAudioCache = {
+      resolved: Map<string, AudioBuffer>;
+      inFlight: Map<string, Promise<AudioBuffer | null>>;
+      failed: Set<string>;
+    };
+
+    const getUIBlobAudioCache = (documentId?: string): UIBlobAudioCache | null => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId) as any;
+      if (!doc) return null;
+
+      if (!doc._uiBlobAudioCache) {
+        doc._uiBlobAudioCache = {
+          resolved: new Map<string, AudioBuffer>(),
+          inFlight: new Map<string, Promise<AudioBuffer | null>>(),
+          failed: new Set<string>()
+        } satisfies UIBlobAudioCache;
+      }
+      return doc._uiBlobAudioCache as UIBlobAudioCache;
+    };
+
+    const toExactArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
+      // Important: .buffer may include extra bytes (or be a SharedArrayBuffer); copy to a fresh ArrayBuffer.
+      const ab = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(ab).set(bytes);
+      return ab;
+    };
+
+    const loadAudioFromBlobInternal = async (name: string, documentId?: string): Promise<AudioBuffer | null> => {
+      const store = getBlobStore(documentId);
+      if (!store) return null;
+      const entry = store.get(String(name));
+      if (!entry) return null;
+
+      if (!entry.bytes) {
+        entry.bytes = decodeBlobToBytes(entry);
+      }
+      if (!entry.bytes) return null;
+
+      const mime = String(entry.mime ?? '');
+      if (mime && !mime.startsWith('audio/')) {
+        // Not a hard error: decodeAudioData sniffs content in most browsers.
+        console.warn(`[audio.loadSoundFromBlob] Blob "${String(name)}" has non-audio mime "${mime}"; attempting decode anyway.`);
+      }
+
+      try {
+        const ab = toExactArrayBuffer(entry.bytes);
+        return await engine.audioContext.decodeAudioData(ab);
+      } catch (e) {
+        console.warn(`[audio.loadSoundFromBlob] Failed to decode audio blob "${String(name)}":`, e);
+        return null;
+      }
+    };
+
+    const loadSoundFromBlobCached = async (name: string, documentId?: string): Promise<AudioBuffer | null> => {
+      const key = String(name ?? '');
+      if (!key) return null;
+
+      const cache = getUIBlobAudioCache(documentId);
+      if (!cache) return await loadAudioFromBlobInternal(key, documentId);
+
+      const resolved = cache.resolved.get(key);
+      if (resolved) return resolved;
+      if (cache.failed.has(key)) return null;
+      const inFlight = cache.inFlight.get(key);
+      if (inFlight) return await inFlight;
+
+      const promise = loadAudioFromBlobInternal(key, documentId)
+        .then((buf) => {
+          cache.inFlight.delete(key);
+          if (buf) {
+            cache.resolved.set(key, buf);
+          } else {
+            cache.failed.add(key);
+          }
+          return buf;
+        })
+        .catch((_e) => {
+          cache.inFlight.delete(key);
+          cache.failed.add(key);
+          return null;
+        });
+
+      cache.inFlight.set(key, promise);
+      return await promise;
     };
 
     type UIBlobImageCache = {
@@ -639,6 +800,26 @@ export class StorieEngine {
         },
         down: (button = 0) => this.input.isMouseDown(button),
         clicked: (button = 0) => this.input.isMouseClicked(button)
+      },
+
+      // Dropped file API (binary-safe; populated by engine.installDropHandling())
+      drop: {
+        has: () => !!engine.lastDroppedFile,
+        name: () => engine.lastDroppedFile?.name ?? '',
+        size: () => engine.lastDroppedFile?.size ?? 0,
+        mime: () => engine.lastDroppedFile?.mime ?? '',
+        bytes: () => engine.lastDroppedFile?.bytes ?? null,
+        text: (encoding: string = 'utf-8') => {
+          const bytes = engine.lastDroppedFile?.bytes;
+          if (!bytes) return null;
+          try {
+            const decoder = new TextDecoder(encoding);
+            return decoder.decode(bytes);
+          } catch (e) {
+            console.warn('[drop] Text decode failed:', e);
+            return null;
+          }
+        }
       },
 
       // Retained-mode TUI API
@@ -915,6 +1096,222 @@ export class StorieEngine {
           if (!entry) return null;
           if (!entry.lines) entry.lines = String(entry.text ?? '').split(/\r?\n/);
           return entry.lines;
+        }
+      },
+
+      // Seeded SFX graph presets embedded in markdown (from ```stfxr name:... seed:...)
+      stfxr: {
+        forDocument: (documentId: string) => {
+          const docId = String(documentId);
+          return {
+            list: () => {
+              const store = getStfxrStore(docId);
+              if (!store) return [];
+              return Array.from(store.keys());
+            },
+            has: (name: string) => {
+              const store = getStfxrStore(docId);
+              if (!store) return false;
+              return store.has(String(name));
+            },
+            get: (name: string) => {
+              const store = getStfxrStore(docId);
+              if (!store) return null;
+              const entry = store.get(String(name));
+              if (!entry) return null;
+              return clonePreset(entry.preset);
+            },
+            play: (
+              name: string,
+              seed?: number | string,
+              options?: { volume?: number; when?: number }
+            ) => {
+              const store = getStfxrStore(docId);
+              const entry = store?.get(String(name));
+              if (!entry) return { stop: () => {} };
+              engine.audioContext.resume().catch(() => {});
+              const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
+              return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, options);
+            },
+            bake: async (
+              name: string,
+              seed?: number | string,
+              options?: { id?: string; seconds?: number; maxSeconds?: number }
+            ) => {
+              const store = getStfxrStore(docId);
+              const entry = store?.get(String(name));
+              if (!entry) return '';
+              const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
+              const sampleRate = engine.audioContext.sampleRate;
+              const id = String(options?.id ?? `stfxr:${String(name)}:${resolvedSeed >>> 0}:${sampleRate}`);
+
+              const bakedStore = getStfxrBakedStore(docId);
+              if (!bakedStore) return '';
+              if (bakedStore.has(id)) return id;
+
+              const buffer = await bakeSfxGraphBuffer(engine.audioContext, entry.preset, resolvedSeed, {
+                seconds: options?.seconds,
+                maxSeconds: options?.maxSeconds
+              });
+              bakedStore.set(id, {
+                id,
+                name: String(name),
+                seed: resolvedSeed >>> 0,
+                sampleRate,
+                seconds: buffer.length / sampleRate,
+                buffer,
+                bytes: estimateAudioBufferBytes(buffer),
+                createdAt: Date.now()
+              });
+              evictStfxrBakedIfNeeded(bakedStore);
+              return id;
+            },
+            playBaked: (
+              id: string,
+              options?: { volume?: number; when?: number; playbackRate?: number }
+            ) => {
+              const bakedStore = getStfxrBakedStore(docId);
+              const entry = bakedStore?.get(String(id));
+              if (!entry) return { stop: () => {} };
+              engine.audioContext.resume().catch(() => {});
+
+              const src = engine.audioContext.createBufferSource();
+              const gain = engine.audioContext.createGain();
+              src.buffer = entry.buffer;
+              src.playbackRate.value = options?.playbackRate ?? 1;
+              gain.gain.value = options?.volume ?? 1;
+              src.connect(gain);
+              gain.connect(engine.audioContext.destination);
+
+              const t0 = engine.audioContext.currentTime + (options?.when ?? 0);
+              try {
+                src.start(t0);
+              } catch {
+                // ignore
+              }
+
+              return {
+                stop: (when?: number) => {
+                  const t = engine.audioContext.currentTime + (when ?? 0);
+                  try {
+                    src.stop(t);
+                  } catch {
+                    // ignore
+                  }
+                }
+              };
+            },
+            bakedList: () => {
+              const bakedStore = getStfxrBakedStore(docId);
+              if (!bakedStore) return [];
+              return Array.from(bakedStore.keys());
+            },
+            snippet: (name: string, seed?: number | string, volume?: number) => {
+              const store = getStfxrStore(docId);
+              const entry = store?.get(String(name));
+              const seedPart = (seed ?? entry?.defaultSeed) === undefined ? '' : `, ${JSON.stringify(seed ?? entry?.defaultSeed)}`;
+              const optPart = volume === undefined ? '' : `, { volume: ${volume} }`;
+              return `stfxr.play(${JSON.stringify(String(name))}${seedPart}${optPart})`;
+            }
+          };
+        },
+        list: () => {
+          const store = getStfxrStore();
+          if (!store) return [];
+          return Array.from(store.keys());
+        },
+        has: (name: string) => {
+          const store = getStfxrStore();
+          if (!store) return false;
+          return store.has(String(name));
+        },
+        get: (name: string) => {
+          const store = getStfxrStore();
+          if (!store) return null;
+          const entry = store.get(String(name));
+          if (!entry) return null;
+          return clonePreset(entry.preset);
+        },
+        play: (name: string, seed?: number | string, options?: { volume?: number; when?: number }) => {
+          const store = getStfxrStore();
+          const entry = store?.get(String(name));
+          if (!entry) return { stop: () => {} };
+          engine.audioContext.resume().catch(() => {});
+          const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
+          return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, options);
+        },
+        bake: async (name: string, seed?: number | string, options?: { id?: string; seconds?: number; maxSeconds?: number }) => {
+          const store = getStfxrStore();
+          const entry = store?.get(String(name));
+          if (!entry) return '';
+          const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
+          const sampleRate = engine.audioContext.sampleRate;
+          const id = String(options?.id ?? `stfxr:${String(name)}:${resolvedSeed >>> 0}:${sampleRate}`);
+
+          const bakedStore = getStfxrBakedStore();
+          if (!bakedStore) return '';
+          if (bakedStore.has(id)) return id;
+
+          const buffer = await bakeSfxGraphBuffer(engine.audioContext, entry.preset, resolvedSeed, {
+            seconds: options?.seconds,
+            maxSeconds: options?.maxSeconds
+          });
+          bakedStore.set(id, {
+            id,
+            name: String(name),
+            seed: resolvedSeed >>> 0,
+            sampleRate,
+            seconds: buffer.length / sampleRate,
+            buffer,
+            bytes: estimateAudioBufferBytes(buffer),
+            createdAt: Date.now()
+          });
+          evictStfxrBakedIfNeeded(bakedStore);
+          return id;
+        },
+        playBaked: (id: string, options?: { volume?: number; when?: number; playbackRate?: number }) => {
+          const bakedStore = getStfxrBakedStore();
+          const entry = bakedStore?.get(String(id));
+          if (!entry) return { stop: () => {} };
+          engine.audioContext.resume().catch(() => {});
+
+          const src = engine.audioContext.createBufferSource();
+          const gain = engine.audioContext.createGain();
+          src.buffer = entry.buffer;
+          src.playbackRate.value = options?.playbackRate ?? 1;
+          gain.gain.value = options?.volume ?? 1;
+          src.connect(gain);
+          gain.connect(engine.audioContext.destination);
+
+          const t0 = engine.audioContext.currentTime + (options?.when ?? 0);
+          try {
+            src.start(t0);
+          } catch {
+            // ignore
+          }
+
+          return {
+            stop: (when?: number) => {
+              const t = engine.audioContext.currentTime + (when ?? 0);
+              try {
+                src.stop(t);
+              } catch {
+                // ignore
+              }
+            }
+          };
+        },
+        bakedList: () => {
+          const bakedStore = getStfxrBakedStore();
+          if (!bakedStore) return [];
+          return Array.from(bakedStore.keys());
+        },
+        snippet: (name: string, seed?: number | string, volume?: number) => {
+          const store = getStfxrStore();
+          const entry = store?.get(String(name));
+          const seedPart = (seed ?? entry?.defaultSeed) === undefined ? '' : `, ${JSON.stringify(seed ?? entry?.defaultSeed)}`;
+          const optPart = volume === undefined ? '' : `, { volume: ${volume} }`;
+          return `stfxr.play(${JSON.stringify(String(name))}${seedPart}${optPart})`;
         }
       },
 
@@ -1362,6 +1759,14 @@ export class StorieEngine {
           const arrayBuffer = await response.arrayBuffer();
           return await this.audioContext.decodeAudioData(arrayBuffer);
         },
+
+        /**
+         * Decode an embedded ```blob block into an AudioBuffer.
+         * Intended for small SFX (WAV/MP3). Returns null on failure.
+         */
+        loadSoundFromBlob: async (name: string, documentId?: string): Promise<AudioBuffer | null> => {
+          return await loadSoundFromBlobCached(name, documentId);
+        },
         
         playBuffer: (buffer: AudioBuffer, options: {
           loop?: boolean;
@@ -1381,6 +1786,47 @@ export class StorieEngine {
           source.start();
           
           return source; // User can stop/modify
+        },
+
+        /**
+         * Convenience: decode and play an embedded audio blob by name.
+         * Returns the started AudioBufferSourceNode, or null if decode fails.
+         */
+        playBlob: async (
+          name: string,
+          options: {
+            loop?: boolean;
+            volume?: number;
+            playbackRate?: number;
+            when?: number;
+            destination?: AudioNode;
+          } = {},
+          documentId?: string
+        ): Promise<AudioBufferSourceNode | null> => {
+          const buffer = await loadSoundFromBlobCached(String(name ?? ''), documentId);
+          if (!buffer) return null;
+
+          const source = this.audioContext.createBufferSource();
+          const gain = this.audioContext.createGain();
+
+          source.buffer = buffer;
+          source.loop = options.loop || false;
+          source.playbackRate.value = options.playbackRate || 1.0;
+          gain.gain.value = options.volume !== undefined ? options.volume : 1.0;
+
+          source.connect(gain);
+          gain.connect(options.destination ?? this.audioContext.destination);
+
+          const when = (typeof options.when === 'number' && Number.isFinite(options.when))
+            ? options.when
+            : this.audioContext.currentTime;
+          try {
+            source.start(when);
+          } catch {
+            // Fallback: start immediately.
+            source.start();
+          }
+          return source;
         },
         
         // === RAW API SHORTCUTS (Use same AudioContext) ===
@@ -2515,6 +2961,145 @@ export class StorieEngine {
           console.log(`  Found ${ansiStore.size} ansi block(s)`);
         }
       }
+
+      // Build STFXR store (```stfxr name:... seed:...)
+      const stfxrStore = new Map<string, { name: string; preset: SfxGraphPreset; defaultSeed?: number | string }>();
+      const stfxrPending = new Map<string, { name: string; base: string; patch: any; defaultSeed?: number | string; startLine: number; endLine: number }>();
+      for (const b of parsed.codeBlocks) {
+        if (b.lang !== 'stfxr') continue;
+        const name = String(b.metadata?.name ?? '').trim();
+        if (!name) {
+          console.warn(`  [stfxr] Skipping unnamed stfxr block at lines ${b.startLine + 1}-${b.endLine + 1}`);
+          continue;
+        }
+
+        const seedRaw = String(b.metadata?.seed ?? '').trim();
+        let defaultSeed: number | string | undefined = undefined;
+        if (seedRaw) {
+          const n = Number(seedRaw);
+          defaultSeed = Number.isFinite(n) ? n : seedRaw;
+        }
+
+        try {
+          const def = parseStfxrDefinitionJson(String(b.code ?? ''));
+          if (def.kind === 'preset') {
+            if (stfxrStore.has(name) || stfxrPending.has(name)) {
+              console.warn(`  [stfxr] Duplicate name "${name}"; last one wins.`);
+            }
+            stfxrStore.set(name, { name, preset: def.preset, defaultSeed });
+          } else {
+            if (stfxrStore.has(name) || stfxrPending.has(name)) {
+              console.warn(`  [stfxr] Duplicate name "${name}"; last one wins.`);
+            }
+            stfxrPending.set(name, {
+              name,
+              base: def.base,
+              patch: def.patch,
+              defaultSeed,
+              startLine: b.startLine,
+              endLine: b.endLine
+            });
+          }
+        } catch (e) {
+          console.warn(`  [stfxr] Failed to parse stfxr block for "${name}" at lines ${b.startLine + 1}-${b.endLine + 1}:`, e);
+          continue;
+        }
+      }
+
+      const clonePreset = (preset: SfxGraphPreset): SfxGraphPreset => {
+        try {
+          // @ts-ignore
+          if (typeof structuredClone === 'function') return structuredClone(preset);
+        } catch {
+          // ignore
+        }
+        return JSON.parse(JSON.stringify(preset)) as SfxGraphPreset;
+      };
+
+      const sameEdge = (a: { from: string; to: string }, b: { from: string; to: string }) => a.from === b.from && a.to === b.to;
+
+      const resolveBasePreset = (base: string): SfxGraphPreset | null => {
+        const asBuiltIn = base as SfxPresetName;
+        if ((SFX_PRESETS as any)[asBuiltIn]) return (SFX_PRESETS as any)[asBuiltIn] as SfxGraphPreset;
+        const entry = stfxrStore.get(base);
+        return entry ? entry.preset : null;
+      };
+
+      // Resolve derived presets (base + patch). We allow base to refer to a built-in
+      // audio.sfx preset name or another stfxr preset in this document.
+      if (stfxrPending.size > 0) {
+        const maxPasses = stfxrPending.size + 4;
+        for (let pass = 0; pass < maxPasses && stfxrPending.size > 0; pass++) {
+          let progressed = false;
+          for (const [name, pending] of Array.from(stfxrPending.entries())) {
+            const basePreset = resolveBasePreset(pending.base);
+            if (!basePreset) continue;
+
+            const base = clonePreset(basePreset);
+            const patch = pending.patch ?? {};
+
+            // Vars merge
+            if (patch.vars) {
+              base.vars = { ...(base.vars ?? {}), ...(patch.vars ?? {}) };
+            }
+
+            // Node upsert (by id)
+            if (Array.isArray(patch.nodes) && patch.nodes.length > 0) {
+              const out = [...(base.nodes ?? [])];
+              const indexById = new Map<string, number>();
+              for (let i = 0; i < out.length; i++) indexById.set(out[i]!.id, i);
+              for (const n of patch.nodes) {
+                const idx = indexById.get(n.id);
+                if (idx === undefined) {
+                  indexById.set(n.id, out.length);
+                  out.push(n);
+                } else {
+                  out[idx] = n;
+                }
+              }
+              base.nodes = out;
+            }
+
+            // Edges replace / remove / add
+            if (Array.isArray(patch.edges)) {
+              base.edges = [...patch.edges];
+            }
+            if (Array.isArray(patch.edgesRemove) && patch.edgesRemove.length > 0) {
+              base.edges = (base.edges ?? []).filter(e => !patch.edgesRemove.some((r: any) => sameEdge(e, r)));
+            }
+            if (Array.isArray(patch.edgesAdd) && patch.edgesAdd.length > 0) {
+              const edges = [...(base.edges ?? [])];
+              for (const e of patch.edgesAdd) {
+                if (!edges.some(x => sameEdge(x, e))) edges.push(e);
+              }
+              base.edges = edges;
+            }
+
+            // Events replace / append
+            if (Array.isArray(patch.events)) {
+              base.events = [...patch.events];
+            }
+            if (Array.isArray(patch.eventsAdd) && patch.eventsAdd.length > 0) {
+              base.events = [...(base.events ?? []), ...patch.eventsAdd];
+            }
+
+            stfxrStore.set(name, { name, preset: base, defaultSeed: pending.defaultSeed });
+            stfxrPending.delete(name);
+            progressed = true;
+          }
+          if (!progressed) break;
+        }
+
+        for (const pending of stfxrPending.values()) {
+          console.warn(
+            `  [stfxr] Could not resolve base "${pending.base}" for "${pending.name}" at lines ${pending.startLine + 1}-${pending.endLine + 1}`
+          );
+        }
+      }
+
+      if (stfxrStore.size > 0) {
+        console.log(`  Found ${stfxrStore.size} stfxr block(s)`);
+      }
       
       if (jsBlocks.length === 0) {
         console.warn('  No JavaScript code blocks found');
@@ -2529,6 +3114,7 @@ export class StorieEngine {
       const updateBlocks: string[] = [];
       const renderBlocks: string[] = [];
       const inputBlocks: string[] = [];
+      const dropBlocks: string[] = [];
       const globalBlocks: string[] = [];
 
       // Section-scoped enter hooks
@@ -2545,6 +3131,8 @@ export class StorieEngine {
           renderBlocks.push(block.code);
         } else if (hook === 'input') {
           inputBlocks.push(block.code);
+        } else if (hook === 'drop') {
+          dropBlocks.push(block.code);
         } else if (hook === 'enter') {
           const sectionIdx = this.findSectionIndexForLine(parsed.sections, block.startLine);
           if (sectionIdx !== null) {
@@ -2570,7 +3158,7 @@ export class StorieEngine {
       
       // Get current scope after first execution
       let currentScope = this.sandbox.getScope(documentId) || {};
-      let scopeVarNames = Object.keys(currentScope).filter(k => !['init', 'update', 'render', 'input'].includes(k));
+      let scopeVarNames = Object.keys(currentScope).filter(k => !['init', 'update', 'render', 'input', 'drop', '__enterHandlers'].includes(k));
       
       // Second pass: re-execute UNtransformed with exports to create proper closures
       // This allows functions to reference variables in their closure
@@ -2582,7 +3170,7 @@ export class StorieEngine {
         const exports = scopeVarNames.map(k => `  try { scope.${k} = ${k}; } catch (e) {}` ).join('\n');
         
         // Pass API globals as IIFE parameters so they're accessible inside the function
-        const apiParams = 'term, termCanvas, layer, key, mouse, tui, gui, getStyle, theme, modules, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY, termWidth, termHeight, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, canvas3D';
+        const apiParams = 'term, termCanvas, layer, key, mouse, drop, tui, gui, getStyle, theme, modules, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY, termWidth, termHeight, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, canvas3D';
         
         for (const code of globalBlocks) {
           const wrappedCode = `(function(${apiParams}) {
@@ -2597,7 +3185,7 @@ ${exports}
       currentScope = this.sandbox.getScope(documentId) || {};
       
       // Get all non-handler variables from scope
-      scopeVarNames = Object.keys(currentScope).filter(k => !['init', 'update', 'render', 'input'].includes(k));
+      scopeVarNames = Object.keys(currentScope).filter(k => !['init', 'update', 'render', 'input', 'drop', '__enterHandlers'].includes(k));
       console.log(`  Scope variables:`, scopeVarNames);
       console.log(`  Scope values:`, scopeVarNames.map(k => `${k}=${JSON.stringify(currentScope[k])}`).join(', '));
       
@@ -2606,6 +3194,7 @@ ${exports}
       const hasUpdate = typeof currentScope.update === 'function';
       const hasRender = typeof currentScope.render === 'function';
       const hasInput = typeof currentScope.input === 'function';
+      const hasDrop = typeof (currentScope as any).drop === 'function';
       
       // Build import/export statements for handlers
       // Import scope variables at handler start, export them back at handler end
@@ -2674,6 +3263,17 @@ ${exportVars}
         this.sandbox.executeCodeBlock(documentId, inputCode, true);
       }
 
+      if (!hasDrop && dropBlocks.length > 0) {
+        console.log(`  Creating drop handler from ${dropBlocks.length} blocks with ${scopeVarNames.length} imports`);
+        const dropCode = `scope.drop = function(file) {
+${importVars}
+${captureVars}
+${dropBlocks.join('\n\n')}
+${exportVars}
+};`;
+        this.sandbox.executeCodeBlock(documentId, dropCode, true);
+      }
+
       // Create section-scoped enter handlers (invoked by 3D navigation when a section becomes current).
       if (enterBlocksBySection.size > 0) {
         const pieces: string[] = [];
@@ -2705,11 +3305,14 @@ ${exportVars}
         id: documentId,
         handlers,
         sections: parsed.sections,
+        metadata: parsed.metadata,
         _parsedMarkdown: parsed,  // Store for deferred shader registration
         _blobStore: blobStore,
         _asciiStore: asciiStore,
         _figletStore: figletStore,
-        _ansiStore: ansiStore
+        _ansiStore: ansiStore,
+        _stfxrStore: stfxrStore,
+        _stfxrBakedStore: new Map()
       } as any);
       
       // Set as active if first document
@@ -2720,7 +3323,8 @@ ${exportVars}
         init: typeof handlers?.init,
         update: typeof handlers?.update,
         render: typeof handlers?.render,
-        input: typeof handlers?.input
+        input: typeof handlers?.input,
+        drop: typeof (handlers as any)?.drop
       });
       
       
@@ -3729,6 +4333,145 @@ ${exportVars}
     // Ensure canvas can receive keyboard events
     this.canvas.tabIndex = 0;
     this.canvas.focus();
+  }
+
+  private isTruthyDropTarget(value: any): boolean {
+    if (value === true) return true;
+    if (value === false || value === null || value === undefined) return false;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') {
+      const v = value.trim().toLowerCase();
+      return v === 'true' || v === 'yes' || v === '1' || v === 'on';
+    }
+    return !!value;
+  }
+
+  /**
+   * Returns true if the active document opts into generic file drops.
+   * Uses frontmatter `dropTarget: true` (tStorie parity).
+   */
+  isDropTargetEnabled(): boolean {
+    const doc = this.getActiveDocument();
+    if (!doc) return false;
+
+    // Prefer parsed frontmatter captured at load time when available.
+    const fromDoc = (doc as any).metadata?.dropTarget;
+    if (fromDoc !== undefined) return this.isTruthyDropTarget(fromDoc);
+
+    // Fallback: read from the persistent scope (frontmatter is seeded into scope).
+    const scope = this.sandbox.getScope(doc.id);
+    return this.isTruthyDropTarget((scope as any)?.dropTarget);
+  }
+
+  private isMarkdownFile(file: File): boolean {
+    const name = String(file?.name ?? '').toLowerCase();
+    const type = String((file as any)?.type ?? '').toLowerCase();
+    if (name.endsWith('.md') || name.endsWith('.markdown')) return true;
+    if (type.includes('text/markdown')) return true;
+    return false;
+  }
+
+  private dispatchDroppedFile(payload: DroppedFile): void {
+    this.lastDroppedFile = payload;
+
+    const doc = this.getActiveDocument();
+    if (!doc?.handlers?.drop) return;
+
+    try {
+      doc.handlers.drop(payload);
+    } catch (error) {
+      console.error('Error in drop handler:', error);
+    }
+  }
+
+  private async handleDroppedFile(file: File): Promise<void> {
+    if (!file) return;
+
+    if (Number.isFinite(this.maxDropBytes) && file.size > this.maxDropBytes) {
+      console.warn(
+        `[drop] Ignoring dropped file "${file.name}" (${file.size} bytes) over maxDropBytes=${this.maxDropBytes}`
+      );
+      return;
+    }
+
+    if (!this.isDropTargetEnabled()) {
+      // Default behavior: dropped markdown loads as a new story.
+      if (this.isMarkdownFile(file)) {
+        const markdown = await file.text();
+        await this.loadMarkdown(file.name || 'dropped.md', markdown);
+      }
+      return;
+    }
+
+    // Pass-through behavior: apps/demos opt in and receive raw bytes.
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    const payload: DroppedFile = {
+      name: file.name || 'dropped',
+      size: bytes.byteLength,
+      mime: file.type || 'application/octet-stream',
+      bytes,
+      lastModified: (file as any).lastModified
+    };
+    this.dispatchDroppedFile(payload);
+  }
+
+  private async handleDropEvent(e: DragEvent): Promise<void> {
+    const dt = e.dataTransfer;
+    if (!dt) return;
+
+    const files = dt.files;
+    if (files && files.length > 0) {
+      await this.handleDroppedFile(files[0]);
+      return;
+    }
+
+    // Text drops (e.g. dragging a selection) follow default behavior.
+    const text = dt.getData('text/markdown') || dt.getData('text/plain');
+    if (text && !this.isDropTargetEnabled()) {
+      await this.loadMarkdown('dropped', text);
+    }
+  }
+
+  /**
+   * Install DOM drag/drop listeners.
+   * Behavior:
+   * - If active doc has `dropTarget: true`: pass dropped files to `on:drop` / `scope.drop`.
+   * - Otherwise: dropped markdown loads as a new story.
+   */
+  installDropHandling(element: HTMLElement = document.body): () => void {
+    if (this.dropHandlingCleanup) return this.dropHandlingCleanup;
+
+    const prevent = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const onDragOver = (e: DragEvent) => {
+      prevent(e);
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    };
+
+    const onDrop = (e: DragEvent) => {
+      prevent(e);
+      void this.handleDropEvent(e);
+    };
+
+    element.addEventListener('dragenter', prevent);
+    element.addEventListener('dragover', onDragOver);
+    element.addEventListener('dragleave', prevent);
+    element.addEventListener('drop', onDrop);
+
+    const cleanup = () => {
+      element.removeEventListener('dragenter', prevent);
+      element.removeEventListener('dragover', onDragOver);
+      element.removeEventListener('dragleave', prevent);
+      element.removeEventListener('drop', onDrop);
+      if (this.dropHandlingCleanup === cleanup) this.dropHandlingCleanup = null;
+    };
+
+    this.dropHandlingCleanup = cleanup;
+    return cleanup;
   }
 
   /**

@@ -58,18 +58,24 @@ const sld = gui.createSlider({
   value: 50
 });
 
+const input = gui.createTextField({
+  bounds: { x: 20, y: 270, width: 400, height: 44 },
+  value: 'Type here',
+  placeholder: 'Type here'
+});
+
 const status = gui.createLabel({
-  bounds: { x: 20, y: 270, width: 600, height: 30 },
+  bounds: { x: 20, y: 330, width: 600, height: 30 },
   text: 'Status: Ready'
 });
 
 const debugLabel = gui.createLabel({
-  bounds: { x: 20, y: 310, width: 600, height: 30 },
+  bounds: { x: 20, y: 370, width: 600, height: 30 },
   text: 'Debug: ...'
 });
 
 // Store widget references in persistent state
-widgets = { title, btn, chk, sld, status, debugLabel };
+widgets = { title, btn, chk, sld, input, status, debugLabel };
 ```
 
 ```js on:input
@@ -84,6 +90,11 @@ if (event.type === 'keydown') {
     ctrl: (event.mods || []).includes('ctrl'),
     alt: (event.mods || []).includes('alt')
   });
+}
+
+if (event.type === 'text') {
+  lastEvent = `text: ${event.text}`;
+  gui.handleText(event.text);
 }
 
 if (event.type === 'mouse') {
@@ -124,6 +135,10 @@ if (widgets.chk.wasToggled()) {
 
 // Read slider value
 const volume = widgets.sld.getValue();
+
+if (widgets.input.wasChanged()) {
+  widgets.status.setText(`Input = "${widgets.input.getValue()}"`);
+}
 
 // Check if mouse is over button (for debugging)
 const btnBounds = widgets.btn.bounds;

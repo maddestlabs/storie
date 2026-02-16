@@ -31,6 +31,8 @@ export class GUISlider extends BaseWidget {
     knobColor: Color;
     knobHoverColor: Color;
   };
+
+  private dragOffsetX: number = 0;
   
   constructor(config: GUISliderConfig) {
     super(config);
@@ -48,26 +50,43 @@ export class GUISlider extends BaseWidget {
     };
   }
   
-  handleDrag(mouseX: number, mouseY: number, mouseDown: boolean): void {
+  handleDrag(mouseX: number, mouseY: number, mouseDown: boolean, charHeight: number = 0): void {
     if (!this.state.visible) return;
     
     const { x, y, width, height } = this.bounds;
+
+    // Match GUISystem.renderSlider layout: label consumes one charHeight row.
+    const labelH = this.label ? charHeight : 0;
+    const trackTopY = y + labelH;
+    const trackAreaH = Math.max(0, height - labelH);
     
     // Calculate knob position and size
     const knobWidth = 16;
     const range = this.max - this.min;
     const ratio = range > 0 ? (this.value - this.min) / range : 0;
     const knobX = x + ratio * (width - knobWidth);
-    const knobY = y;
-    const knobHeight = height;
+    const knobY = trackTopY;
+    const knobHeight = trackAreaH;
     
-    // Check if mouse is over the knob specifically (not the entire slider)
+    // Check if mouse is over the knob specifically
     const overKnob = mouseX >= knobX && mouseX < knobX + knobWidth &&
                      mouseY >= knobY && mouseY < knobY + knobHeight;
+
+    // Also allow click anywhere in the track area to start dragging.
+    // Track area is the slider bounds minus the optional label row.
+    const overTrack = mouseX >= x && mouseX < x + width &&
+              mouseY >= trackTopY && mouseY < trackTopY + trackAreaH;
     
-    // Start dragging only when clicking on the knob
-    if (mouseDown && overKnob && !this.dragging) {
+    // Start dragging when clicking on knob OR anywhere on track
+    if (mouseDown && (overKnob || overTrack) && !this.dragging) {
       this.dragging = true;
+
+      // Keep knob anchored under pointer during drag
+      if (overKnob) {
+        this.dragOffsetX = mouseX - knobX;
+      } else {
+        this.dragOffsetX = knobWidth / 2;
+      }
     }
     
     // Stop dragging when mouse is released
@@ -78,7 +97,7 @@ export class GUISlider extends BaseWidget {
     // Update value while dragging
     if (this.dragging) {
       // Calculate value from mouse position
-      const relativeX = Math.max(0, Math.min(width - knobWidth, mouseX - x));
+      const relativeX = Math.max(0, Math.min(width - knobWidth, mouseX - x - this.dragOffsetX));
       const newRatio = (width - knobWidth) > 0 ? relativeX / (width - knobWidth) : 0;
       const rawValue = this.min + newRatio * (this.max - this.min);
       this.value = Math.round(rawValue / this.step) * this.step;

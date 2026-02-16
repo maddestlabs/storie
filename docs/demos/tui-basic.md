@@ -32,17 +32,18 @@ tui.init();
 const title = tui.createLabel({ bounds: { x: 2, y: 1, width: 70, height: 1 }, text: 'TUI Widgets Demo (Storie)' });
 const btn = tui.createButton({ bounds: { x: 2, y: 3, width: 26, height: 3 }, label: 'Click Me' });
 const chk = tui.createCheckbox({ bounds: { x: 2, y: 7, width: 40, height: 1 }, label: 'Enable Feature' });
+const input = tui.createTextField({ bounds: { x: 2, y: 9, width: 40, height: 3 }, value: 'Type here' });
 const sld = tui.createSlider({
-  bounds: { x: 2, y: 9, width: 30, height: 3 },
+  bounds: { x: 2, y: 13, width: 30, height: 3 },
   label: 'Volume',
   min: 0,
   max: 100,
   value: 50
 });
-const status = tui.createLabel({ bounds: { x: 2, y: 13, width: 80, height: 1 }, text: 'Status: Ready' });
+const status = tui.createLabel({ bounds: { x: 2, y: 17, width: 80, height: 1 }, text: 'Status: Ready' });
 
 // Store widget references in persistent state
-widgets = { title, btn, chk, sld, status };
+widgets = { title, btn, chk, input, sld, status };
 ```
 
 ```js on:input
@@ -57,6 +58,11 @@ if (event.type === 'keydown') {
     ctrl: (event.mods || []).includes('ctrl'),
     alt: (event.mods || []).includes('alt')
   });
+}
+
+if (event.type === 'text') {
+  lastEvent = `text: ${event.text}`;
+  tui.handleText(event.text);
 }
 
 if (event.type === 'mouse') {
@@ -91,6 +97,10 @@ if (widgets.btn.wasClicked()) {
 if (widgets.chk.wasToggled()) {
   const checkedState = widgets.chk.isChecked() ? 'enabled' : 'disabled';
   widgets.status.setText(`Status: Feature ${checkedState}`);
+}
+
+if (widgets.input.wasChanged()) {
+  widgets.status.setText(`Status: Input = "${widgets.input.getValue()}"`);
 }
 
 // Keep title showing slider value.

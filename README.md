@@ -5,34 +5,26 @@ The abominal little engine that probably shouldn't. Build stuff using Markdown w
 Check it out: [Intro](https://maddestlabs.github.io/storie/)
 
 Demos:
-- [slides.md](https://maddestlabs.github.io/storie/?content=slides) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/slides.md)
 - [her.md](https://maddestlabs.github.io/storie/?content=her) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/her.md)
 - [depths.md](https://maddestlabs.github.io/storie/?content=depths&font=Courier+Prime) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/depths.md)
-- [minesweeper.md](https://maddestlabs.github.io/storie?content=minesweeper) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/minesweeper.md)
-- [toxiclock.md](https://maddestlabs.github.io/storie?content=toxiclock) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/toxiclock.md)
 
 Core examples:
-- [dungen.md](https://maddestlabs.github.io/storie/?content=dungen) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/dungen.md)
 - [edit.md](https://maddestlabs.github.io/storie?content=edit) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/edit.md)
 - [hexview.md](https://maddestlabs.github.io/storie?content=hexview) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/hexview.md)
-- [events.md](https://maddestlabs.github.io/storie?content=events) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/events.md)
-- [tui.md](https://maddestlabs.github.io/storie?content=tui) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/tui.md)
+- [tui-basic.md](https://maddestlabs.github.io/storie?content=tui-basic) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/tui-basic.md)
 
 Gist Example:
 - [storie_rainclock.md](https://maddestlabs.github.io/storie/?content=863a4175989370857ccd67cb5492ac11&shader=crt&font=Zeyada) | [Source Gist](https://gist.github.com/R3V1Z3/863a4175989370857ccd67cb5492ac11)
 
 The engine is built around GitHub features. No installation needed. Just create a new repo from the S|torie template, update index.md with your own content and it'll auto-compile for the web. Enable GitHub Pages and you'll see that content served live within moments. GitHub Actions take care of the full compilation process.
 
-## Why S|torie?
+## Features
 
-It's just something the author always wanted and it's now being shared freely.
-
-Necessities:
 - Able to empower a robust audio/node graph (WebAudio)
 - Supports fragment shaders for GPU-powered visual FX (WebGPU)
 - Supports compute shaders for GPU-powered calculations (WebGPU)
-- Cross-platform (WASM + Tauri/WGPU for native)
-- Under 1MB file size on the web (WASM + WebGPU + WebAudio)
+- Cross-platform (Web + Tauri/WGPU for native)
+- Under 1MB file size on the web
 
 We want to provide for creation of apps and games that require nothing external. So the engine needs to provide primitives for drawing, creating sound, generating procedural content, etc.
 

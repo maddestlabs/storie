@@ -218,17 +218,27 @@ export interface InputEvent {
   mods?: string[];  // ['shift', 'ctrl', 'alt', 'meta']
 }
 
+export interface DroppedFile {
+  name: string;
+  size: number;
+  mime: string;
+  bytes: Uint8Array;
+  lastModified?: number;
+}
+
 export interface UserHandlers {
   init?: () => void;
   update?: (delta: number) => void;
   render?: () => void;
   input?: (event: InputEvent) => boolean;  // Returns true to continue, false to quit
+  drop?: (file: DroppedFile) => void;
 }
 
 export interface UserScript {
   id: string;
   handlers: UserHandlers;
   sections: Section[];
+  metadata?: Record<string, any>;
 }
 
 export interface InputState {

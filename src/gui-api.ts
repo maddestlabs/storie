@@ -108,6 +108,16 @@ export function createGUIAPI(getMetrics: () => { charWidth: number; charHeight: 
     },
 
     /**
+     * Create a text field widget
+     */
+    createTextField(config: any) {
+      if (!this._system) {
+        throw new Error('GUI system not initialized. Call gui.init() first.');
+      }
+      return this._system.createTextField(config);
+    },
+
+    /**
      * Create a markdown view widget (flow layout inside bounds)
      */
     createMarkdownView(config: any) {
@@ -179,6 +189,15 @@ export function createGUIAPI(getMetrics: () => { charWidth: number; charHeight: 
     handleKey(key: string, modifiers?: { shift?: boolean; ctrl?: boolean; alt?: boolean }) {
       if (!this._system) return;
       this._system.handleKey(key, modifiers);
+    },
+
+    /**
+     * Handle text input (printable characters)
+     * Call this in on:input when event.type === 'text'
+     */
+    handleText(text: string) {
+      if (!this._system) return;
+      this._system.handleText(text);
     },
     
     /**

@@ -11,6 +11,7 @@ import { GUIButton, type GUIButtonConfig } from './button.js';
 import { GUILabel, type GUILabelConfig } from './label.js';
 import { GUICheckbox, type GUICheckboxConfig } from './checkbox.js';
 import { GUISlider, type GUISliderConfig } from './slider.js';
+import { GUITextField, type GUITextFieldConfig } from './textfield.js';
 import { GUIMarkdownView, type GUIMarkdownViewConfig } from './markdown-view.js';
 import { GUILayoutContainer, type GUILayoutContainerConfig } from './layout-container.js';
 import type { Draw2D, WidgetDrawInfo, WidgetDrawInfoCommon } from '../draw2d.js';
@@ -107,6 +108,15 @@ export class GUISystem {
   }
 
   /**
+   * Create a text field widget
+   */
+  createTextField(config: GUITextFieldConfig): GUITextField {
+    const tf = new GUITextField(config);
+    this.widgetManager.register(tf);
+    return tf;
+  }
+
+  /**
    * Create a markdown view widget (flow layout inside bounds)
    */
   createMarkdownView(config: GUIMarkdownViewConfig): GUIMarkdownView {
@@ -149,7 +159,13 @@ export class GUISystem {
     // Update sliders (for drag behavior)
     const sliders = this.widgetManager.getAll().filter(w => w instanceof GUISlider) as GUISlider[];
     for (const slider of sliders) {
-      slider.handleDrag(mouseX, mouseY, mouseDown);
+      slider.handleDrag(mouseX, mouseY, mouseDown, charHeight);
+    }
+
+    // Update text field metrics (for caret placement/scroll)
+    const textFields = this.widgetManager.getAll().filter(w => w instanceof GUITextField) as GUITextField[];
+    for (const tf of textFields) {
+      tf.updateMetrics(charWidth, charHeight);
     }
   }
 
@@ -189,6 +205,13 @@ export class GUISystem {
       }
     }
   }
+
+  /**
+   * Handle text input (printable characters)
+   */
+  handleText(text: string): void {
+    this.inputRouter.handleText(text);
+  }
   
   /**
    * Render all visible widgets
@@ -223,10 +246,72 @@ export class GUISystem {
         this.renderCheckbox(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUISlider) {
         this.renderSlider(widget, uiAPI, charWidth, charHeight);
+      } else if (widget instanceof GUITextField) {
+        this.renderTextField(widget, uiAPI, charWidth);
       } else if (widget instanceof GUIMarkdownView) {
         this.renderMarkdownView(widget, uiAPI, charWidth, charHeight);
       }
     }
+  }
+
+  private renderTextField(tf: GUITextField, ui: Draw2D, charW: number): void {
+    const { x, y, width, height } = tf.bounds;
+    const { fg, bg, borderColor, focusBorderColor } = tf.textFieldStyle;
+
+    // Background
+    ui.rect(x, y, width, height, bg);
+
+    // Border (thicker when focused)
+    const b = tf.state.focused ? 3 : 2;
+    const bc = tf.state.focused ? focusBorderColor : borderColor;
+    ui.rect(x, y, width, b, bc);
+    ui.rect(x, y + height - b, width, b, bc);
+    ui.rect(x, y, b, height, bc);
+    ui.rect(x + width - b, y, b, height, bc);
+
+    const padX = 8;
+    const innerX = x + padX;
+    const innerW = Math.max(0, width - padX * 2);
+    const maxChars = Math.max(0, Math.floor(innerW / Math.max(1, charW)));
+
+    const value = tf.getValue();
+    const { cursorPos, scrollOffset } = tf.getCursorInfo();
+
+    // Keep cursor visible (compute desired scroll and store back onto widget)
+    let scroll = scrollOffset;
+    if (cursorPos < scroll) scroll = cursorPos;
+    else if (cursorPos > scroll + maxChars - 1) scroll = cursorPos - maxChars + 1;
+    scroll = Math.max(0, Math.min(scroll, Math.max(0, value.length - maxChars)));
+    tf.setScrollOffset(scroll);
+
+    const visibleText = value.slice(scroll, scroll + maxChars);
+    const textY = y + height / 2;
+
+    // Optional clip to inner region (if backend supports it)
+    if (ui.pushClipRect) ui.pushClipRect(innerX, y, innerW, height);
+
+    if (visibleText.length > 0) {
+      ui.text(visibleText, innerX, textY, fg);
+    } else if (tf.placeholder) {
+      ui.text(tf.placeholder, innerX, textY, fg);
+    }
+
+    // Caret: invert by drawing a filled rect and re-drawing the character.
+    if (tf.state.focused) {
+      const caretLocal = cursorPos - scroll;
+      const caretX = innerX + caretLocal * charW;
+      const caretW = charW;
+      const caretH = Math.max(2, height - 8);
+      const caretY = y + (height - caretH) / 2;
+
+      if (caretX >= innerX && caretX < innerX + innerW) {
+        ui.rect(caretX, caretY, caretW, caretH, fg);
+        const ch = caretLocal >= 0 && caretLocal < visibleText.length ? visibleText[caretLocal] : ' ';
+        ui.text(ch, caretX, textY, bg);
+      }
+    }
+
+    if (ui.popClipRect) ui.popClipRect();
   }
 
   private renderMarkdownView(view: GUIMarkdownView, ui: Draw2D, charW: number, charH: number): void {
@@ -367,6 +452,7 @@ export type {
   GUILabelConfig,
   GUICheckboxConfig,
   GUISliderConfig,
+  GUITextFieldConfig,
   GUIMarkdownViewConfig,
   GUILayoutContainerConfig
 };
