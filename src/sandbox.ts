@@ -753,6 +753,12 @@ export class ScriptSandbox {
 
         // Document metadata (read-only)
         doc: (this.api as any).doc,
+
+        // Host Sync info (read-only)
+        host: (this.api as any).host,
+
+        // Shared scene state (synced host -> client)
+        scene: (this.api as any).scene,
         
         // Theme API
         getStyle: this.api.getStyle,

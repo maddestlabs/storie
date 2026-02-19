@@ -9323,6 +9323,10 @@ class ScriptSandbox {
         drop: this.api.drop,
         // Document metadata (read-only)
         doc: this.api.doc,
+        // Host Sync info (read-only)
+        host: this.api.host,
+        // Shared scene state (synced host -> client)
+        scene: this.api.scene,
         // Theme API
         getStyle: this.api.getStyle,
         theme: this.api.theme,

@@ -33,6 +33,14 @@ Notes:
 const navRule = { scope: 'global', levels: 1, includeHidden: false };
 let slideFill = 0.92;
 
+function cleanSectionTitle(title) {
+  const s = String(title ?? '');
+  // Strip trailing section directive JSON like:  Slide 4 ... {"x":"0",...}
+  const idx = s.lastIndexOf(' {"');
+  if (idx >= 0 && s.trimEnd().endsWith('}')) return s.slice(0, idx);
+  return s;
+}
+
 function gotoSlide(i) {
   canvas3D.nav.goto(i, { ...navRule, fill: slideFill });
 }
@@ -50,6 +58,41 @@ function prevSlide() {
 canvas3D.enable();
 canvas3D.controls.setEnabled(false);
 canvas3D.links.setKeyHandlingEnabled(false);
+
+// Host overlay panel (GUI layer renders above the 3D layer).
+if (host.isHost) {
+  gui.init();
+
+  const panelW = 420;
+  const panelH = 380;
+
+  const panel = gui.createContainer({ bounds: { x: 0, y: 0, width: panelW, height: panelH }, padding: 12, gap: 6, alignX: 'stretch' });
+  const title = gui.createLabel({ bounds: { x: 0, y: 0, width: panelW, height: 26 }, text: 'Canvas3D Slides (Host)', align: 'left' });
+
+  const slidesLbl = gui.createLabel({ bounds: { x: 0, y: 0, width: panelW, height: 22 }, text: 'Slides: --', align: 'left' });
+  const keysLbl = gui.createLabel({ bounds: { x: 0, y: 0, width: panelW, height: 22 }, text: 'Next/Prev: Space/PageDown/N | Shift+Space/PageUp/P', align: 'left' });
+  const overviewLbl = gui.createLabel({ bounds: { x: 0, y: 0, width: panelW, height: 22 }, text: 'Overview: off (O)', align: 'left' });
+  const revealLbl = gui.createLabel({ bounds: { x: 0, y: 0, width: panelW, height: 22 }, text: 'Reveal: 0 ([ / ] / 0)', align: 'left' });
+
+  const indexHdr = gui.createLabel({ bounds: { x: 0, y: 0, width: panelW, height: 22 }, text: 'Index (press 1-9):', align: 'left' });
+  const indexLabels = [];
+  for (let i = 0; i < 9; i++) {
+    indexLabels.push(gui.createLabel({ bounds: { x: 0, y: 0, width: panelW, height: 22 }, text: '', align: 'left' }));
+  }
+
+  panel
+    .add(title)
+    .add(slidesLbl)
+    .add(keysLbl)
+    .add(overviewLbl)
+    .add(revealLbl)
+    .add(indexHdr);
+  for (const lbl of indexLabels) panel.add(lbl);
+
+  panel.layout();
+
+  scope.__hostHud = { panel, panelW, panelH, slidesLbl, overviewLbl, revealLbl, indexLabels };
+}
 
 // Make the camera motion feel like a slide deck.
 canvas3D.camera.setEaseSpeed(0.10, 0.16);
@@ -112,75 +155,40 @@ if (key.pressed('-') || key.pressed('_')) {
   slideFill = Math.max(0.70, Math.min(0.98, slideFill - 0.02));
   gotoSlide(canvas3D.nav.cursor(navRule) ?? 0);
 }
-```
 
-```javascript on:render
-// Host HUD as a top-left terminal "panel" (surface + border).
-// (Avoid clearing — the 3D layer is separate and we don’t want to stomp other layers.)
-const base = getStyle('default');
-const surface = getStyle('surface');
-const border = getStyle('border');
-const heading = getStyle('heading');
-const dim = getStyle('dim');
+// Keep host HUD pinned top-right + updated.
+if (host.isHost && scope.__hostHud?.panel) {
+  const hud = scope.__hostHud;
+  const c = canvas3D.nav.cursor(navRule);
+  const total = canvas3D.nav.count(navRule);
+  const list = canvas3D.nav.list(navRule);
+  const idx = c === null ? -1 : (list[c] ?? -1);
+  const outline = doc.outline();
 
-const c = canvas3D.nav.cursor(navRule);
-const total = canvas3D.nav.count(navRule);
-const list = canvas3D.nav.list(navRule);
-const idx = c === null ? -1 : (list[c] ?? -1);
-const outline = doc.outline();
+  hud.slidesLbl.setText(`Slides: ${c === null ? 0 : (c + 1)}/${total} (section ${idx})`);
+  hud.overviewLbl.setText(`Overview: ${canvas3D.overview.enabled ? 'ON' : 'off'} (O)`);
+  hud.revealLbl.setText(`Reveal: ${scene.revealStep} ([ / ] / 0)`);
 
-const lines = [];
-lines.push(host.isHost ? 'Canvas3D Slides (Host)' : 'Canvas3D Slides');
-lines.push(`Slides: ${c === null ? 0 : (c + 1)}/${total} (section ${idx})`);
-lines.push(`Next: Space/PageDown/N | Prev: Shift+Space/PageUp/P | Home/End`);
-lines.push(`Overview: ${canvas3D.overview.enabled ? 'ON' : 'off'} (O)`);
-lines.push(`Reveal: ${scene.revealStep} ${host.isHost ? '([ / ] / 0)' : ''}`);
-lines.push('');
-lines.push('Index (press 1-9):');
+  const max = Math.min(9, list.length);
+  for (let i = 0; i < 9; i++) {
+    if (i >= max) {
+      hud.indexLabels[i].setText('');
+      continue;
+    }
+    const sectionIndex = list[i];
+    const rawTitle = outline[sectionIndex]?.title ?? `Section ${sectionIndex}`;
+    const title = cleanSectionTitle(rawTitle);
+    const marker = c === i ? '>' : ' ';
+    hud.indexLabels[i].setText(`${marker} ${i + 1}. ${title}`);
+  }
 
-const max = Math.min(9, list.length);
-for (let i = 0; i < max; i++) {
-  const sectionIndex = list[i];
-  const title = outline[sectionIndex]?.title ?? `Section ${sectionIndex}`;
-  const marker = c === i ? '>' : ' ';
-  lines.push(`${marker} ${i + 1}. ${title}`);
-}
-
-const panelX = 0;
-const panelY = 0;
-const padX = 1;
-const padY = 1;
-const maxLineLen = lines.reduce((m, s) => Math.max(m, String(s ?? '').length), 0);
-const contentW = Math.max(10, maxLineLen);
-
-const panelW = Math.max(12, Math.min(termWidth, contentW + padX * 2 + 2));
-const panelH = Math.max(6, Math.min(termHeight, lines.length + padY * 2 + 2));
-
-const innerW = Math.max(0, panelW - 2);
-const innerH = Math.max(0, panelH - 2);
-
-// Borders
-term.write(panelX, panelY, `┌${'─'.repeat(Math.max(0, panelW - 2))}┐`, border.fg, surface.bg);
-for (let row = 0; row < innerH; row++) {
-  term.write(panelX, panelY + 1 + row, '│', border.fg, surface.bg);
-  term.write(panelX + 1, panelY + 1 + row, ' '.repeat(innerW), surface.fg, surface.bg);
-  term.write(panelX + panelW - 1, panelY + 1 + row, '│', border.fg, surface.bg);
-}
-term.write(panelX, panelY + panelH - 1, `└${'─'.repeat(Math.max(0, panelW - 2))}┘`, border.fg, surface.bg);
-
-// Text
-const textX = panelX + 1 + padX;
-const textY = panelY + 1 + padY;
-const textW = Math.max(0, panelW - 2 - padX * 2);
-
-for (let i = 0; i < lines.length; i++) {
-  const y = textY + i;
-  if (y >= panelY + panelH - 1) break;
-  const raw = String(lines[i] ?? '');
-  const clipped = raw.length > textW ? raw.slice(0, Math.max(0, textW - 1)) + '…' : raw;
-
-  const style = (i === 0) ? heading : (raw.endsWith(':') ? dim : base);
-  term.write(textX, y, clipped.padEnd(textW, ' '), style.fg, surface.bg);
+  const w = hud.panelW;
+  const h = hud.panelH;
+  const margin = 12;
+  const cw = ui?.metrics?.canvasWidth ?? 800;
+  const x = Math.max(0, cw - w - margin);
+  const y = margin;
+  hud.panel.setBounds({ x, y, width: w, height: h }, true);
 }
 ```
 
