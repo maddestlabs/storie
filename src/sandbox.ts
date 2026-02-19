@@ -129,6 +129,34 @@ export interface SandboxAPI {
   doc: {
     sectionsFlat: () => Array<{ index: number; title: string; level: number }>;
     sectionCount: () => number;
+    outline: () => Array<{
+      index: number;
+      title: string;
+      level: number;
+      parentIndex: number | null;
+      firstChildIndex: number | null;
+      lastDescendantIndex: number;
+    }>;
+  };
+
+  // Host Sync info (read-only)
+  host: {
+    enabled: boolean;
+    role: 'host' | 'client' | null;
+    isHost: boolean;
+    isClient: boolean;
+    transport: 'broadcast' | 'websocket' | null;
+    channel: string | null;
+  };
+
+  // Shared scene state (synced host -> client)
+  scene: {
+    sectionIndex: number | null;
+    revealStep: number;
+    getState: () => { sectionIndex: number | null; revealStep: number };
+    setRevealStep: (n: number) => void;
+    nextRevealStep: () => void;
+    resetRevealStep: () => void;
   };
   
   // Theme API
@@ -548,6 +576,53 @@ export interface SandboxAPI {
     currentSection: number | null;
     controls: {
       setEnabled: (enabled: boolean) => void;
+      enabled: boolean;
+    };
+
+    links: {
+      setKeyHandlingEnabled: (enabled: boolean) => void;
+      keyHandlingEnabled: boolean;
+    };
+
+    nav: {
+      list: (rule?: {
+        scope?: 'global' | 'subtree' | 'siblings';
+        depth?: 'descendants' | 'children';
+        root?: 'current' | number;
+        levels?: 'any' | number | { min?: number; max?: number };
+        includeHidden?: boolean;
+        includeNonNavigable?: boolean;
+        includeSelf?: boolean;
+      }) => number[];
+      count: (rule?: Parameters<SandboxAPI['canvas3D']['nav']['list']>[0]) => number;
+      cursor: (rule?: Parameters<SandboxAPI['canvas3D']['nav']['list']>[0]) => number | null;
+      goto: (
+        index: number,
+        rule?: Parameters<SandboxAPI['canvas3D']['nav']['list']>[0] & {
+          wrap?: boolean;
+          mode?: 'fit' | 'focus';
+          fill?: number;
+          distance?: number;
+        }
+      ) => void;
+      next: (rule?: Parameters<SandboxAPI['canvas3D']['nav']['goto']>[1]) => void;
+      prev: (rule?: Parameters<SandboxAPI['canvas3D']['nav']['goto']>[1]) => void;
+    };
+
+    overview: {
+      setEnabled: (
+        enabled: boolean,
+        options?: {
+          columns?: number;
+          padding?: number;
+          depth?: number;
+          fill?: number;
+          includeHidden?: boolean;
+          includeNonNavigable?: boolean;
+          levels?: 'any' | number | { min?: number; max?: number };
+        }
+      ) => void;
+      toggle: (options?: Parameters<SandboxAPI['canvas3D']['overview']['setEnabled']>[1]) => void;
       enabled: boolean;
     };
     camera: {

@@ -1,8 +1,8 @@
 ---
 name: "Audio Beats → Lyric Sections (Drop MP3)"
-theme: "solardark"
+theme: "neonopia"
 dropTarget: true
-shaders: "handcam+blurgradual+lightvignette"
+shaders: "handcam+bloom+lightvignette+crt"
 
 # Lyric section selection
 lyricLevel: 1

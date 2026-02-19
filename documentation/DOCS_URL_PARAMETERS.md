@@ -10,6 +10,76 @@ Add a `?content=` parameter to the URL:
 https://yoursite.com/?content=SOURCE
 ```
 
+## Host Sync (Host/Client)
+
+Storie can optionally sync *navigation state* (e.g. the current Canvas3D section) across two windows:
+
+- **Host** window: you control navigation
+- **Client** window: follows along (audience / player)
+
+This is implemented at the engine level using `BroadcastChannel` (same-origin, same browser/profile). It does **not** expose raw network primitives to sandboxed scripts.
+
+### Parameters
+
+Preferred (short) form:
+
+- `role=host|client` (presence implies host sync is enabled)
+- `channel=<id>` shared channel identifier
+- `token=<secret>` shared secret token (required)
+- `transport=broadcast` (optional; default). `websocket` reserved for future.
+
+Compatibility (long) form (still accepted):
+
+- `host=1` (or `host=true`) enables host sync
+- `hostRole=host|client`
+- `hostTransport=broadcast`
+- `hostChannel=<id>`
+- `hostToken=<secret>`
+
+Backwards compatibility: older `present*` parameters are also still accepted for now.
+
+### Quick start (two windows)
+
+1. Open a host window:
+
+        - `?role=host`
+
+        If `channel`/`token` are not provided, Storie generates them and logs a **Client join URL** to the browser console.
+
+2. Open the client window using that join URL, then move it to the projector/second monitor.
+
+### Notes
+
+- Keep the client URL private: anyone with the `channel` + `token` can inject navigation events.
+- This currently syncs *section navigation* (focused section) and intentionally does not provide a general-purpose messaging channel.
+- When `role=client`, Storie treats the window as an *audience/presentation view* by default: it suppresses keyboard/mouse navigation input and hides the terminal layer once the Canvas3D (3D) layer is active (to keep projector windows clean).
+
+### Script access
+
+User scripts can detect which window they’re running in:
+
+```js
+if (host.isHost) {
+        term.write(0, 0, 'Host controls here');
+}
+```
+
+Available fields: `host.enabled`, `host.role`, `host.isHost`, `host.isClient`, `host.transport`, `host.channel`.
+
+Shared scene state (synced host -> client):
+
+```js
+// Host-only: advance staged reveals
+if (host.isHost && key.pressed(']')) scene.nextRevealStep();
+
+// Client: react to reveal step
+if (scene.revealStep >= 1) {
+        // show extra info / remove fog / reveal clue
+}
+```
+
+Available fields: `scene.sectionIndex`, `scene.revealStep`, plus host-only mutators `scene.setRevealStep(n)`, `scene.nextRevealStep()`, `scene.resetRevealStep()`.
+
 ## Supported Sources
 
 ### 1. GitHub Gists 🌐

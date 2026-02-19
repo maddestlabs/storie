@@ -102,6 +102,23 @@ canvas3D.controls.setEnabled(true)
 canvas3D.controls.enabled
 ```
 
+#### Built-in 3D Link Key Handling
+
+When 3D Canvas is enabled, Storie also provides built-in keyboard navigation for
+**3D link focus + activation** (Tab/Enter/Arrow keys). This is convenient for
+docs where you want keyboard-accessible link navigation.
+
+For slide decks / presenter apps, you may want to disable this so your document
+can own those keys.
+
+```javascript
+// Disable Canvas3D's built-in Tab/Enter/Arrow handling
+canvas3D.links.setKeyHandlingEnabled(false)
+
+// Check current state
+console.log(canvas3D.links.keyHandlingEnabled)
+```
+
 #### Camera Control
 
 ```javascript
@@ -198,6 +215,63 @@ Use section links with automatic camera focus:
 ```javascript
 // In each section's on:enter handler
 canvas3D.camera.focusOnSection(sectionIndex, 80);
+```
+
+### Slide Deck Navigation
+
+If you want to treat sections as “slides”, use `canvas3D.nav`.
+
+It’s outline-based (powered by `doc.outline()`), so you can choose what “next”
+means: next H1, next heading of any level, next within the current subtree,
+next sibling, etc.
+
+```javascript
+// Presenter-friendly: disable Canvas3D’s Tab/Enter/Arrow link navigation
+// so your document can own those keys.
+canvas3D.links.setKeyHandlingEnabled(false);
+
+// Global slide deck: H1 only
+const h1Slides = { scope: 'global', levels: 1, includeHidden: false };
+
+// Jump to slide cursor 0 (first)
+canvas3D.nav.goto(0, { ...h1Slides, fill: 0.92 });
+
+// Next / previous
+canvas3D.nav.next({ ...h1Slides, fill: 0.92 });
+canvas3D.nav.prev({ ...h1Slides, fill: 0.92 });
+
+// Next heading of any level (global)
+canvas3D.nav.next({ scope: 'global', levels: 'any', fill: 0.92 });
+
+// Navigate "under the current heading" (descendants of the current section)
+canvas3D.nav.next({ scope: 'subtree', root: 'current', depth: 'descendants', levels: 'any', fill: 0.92 });
+
+// Read state
+console.log('count', canvas3D.nav.count(h1Slides));
+console.log('cursor', canvas3D.nav.cursor(h1Slides));
+console.log('indices', canvas3D.nav.list(h1Slides));
+```
+
+### Overview Grid (Thumbnails)
+
+For a PowerPoint-style “all slides at once” view, you can enable the **overview grid**.
+
+This is intended to be *host-only* when using Host Sync: client/audience windows ignore
+overview calls.
+
+```javascript
+// Toggle grid overview on/off
+canvas3D.overview.toggle({ levels: 'any' });
+
+// Or explicitly enable with options
+canvas3D.overview.setEnabled(true, {
+  levels: 'any',
+  columns: 6,
+  fill: 0.92
+});
+
+// Disable and return to the last focused slide
+canvas3D.overview.setEnabled(false);
 ```
 
 ### Circular Layout

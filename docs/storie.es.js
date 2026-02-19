@@ -316,6 +316,7 @@ class InputManager {
   constructor(canvas) {
     __publicField(this, "state");
     __publicField(this, "canvas");
+    __publicField(this, "enabled", true);
     this.canvas = canvas;
     this.state = {
       keys: /* @__PURE__ */ new Map(),
@@ -330,16 +331,19 @@ class InputManager {
   }
   setupEventListeners() {
     window.addEventListener("keydown", (e) => {
+      if (!this.enabled) return;
       if (!this.state.keys.get(e.key)) {
         this.state.keysPressed.add(e.key);
       }
       this.state.keys.set(e.key, true);
     });
     window.addEventListener("keyup", (e) => {
+      if (!this.enabled) return;
       this.state.keys.set(e.key, false);
       this.state.keysReleased.add(e.key);
     });
     this.canvas.addEventListener("mousemove", (e) => {
+      if (!this.enabled) return;
       const rect = this.canvas.getBoundingClientRect();
       const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
       const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;
@@ -347,6 +351,10 @@ class InputManager {
       this.state.mouseY = (e.clientY - rect.top) * scaleY;
     });
     this.canvas.addEventListener("mousedown", (e) => {
+      if (!this.enabled) {
+        e.preventDefault();
+        return;
+      }
       const rect = this.canvas.getBoundingClientRect();
       const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
       const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;
@@ -357,6 +365,10 @@ class InputManager {
       e.preventDefault();
     });
     this.canvas.addEventListener("mouseup", (e) => {
+      if (!this.enabled) {
+        e.preventDefault();
+        return;
+      }
       const rect = this.canvas.getBoundingClientRect();
       const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 1;
       const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 1;
@@ -368,6 +380,19 @@ class InputManager {
     this.canvas.addEventListener("contextmenu", (e) => {
       e.preventDefault();
     });
+  }
+  setEnabled(enabled) {
+    this.enabled = !!enabled;
+    if (!this.enabled) {
+      this.state.keys.clear();
+      this.state.keysPressed.clear();
+      this.state.keysReleased.clear();
+      this.state.mouseButtons.clear();
+      this.state.mouseButtonsClicked.clear();
+    }
+  }
+  isEnabled() {
+    return this.enabled;
   }
   isKeyDown(key) {
     return this.state.keys.get(key) || false;
@@ -19125,6 +19150,282 @@ function playSfx(ctx, name, seedIn, options = {}) {
   }
   return playSfxGraph(ctx, preset, seed, options);
 }
+function randomId(bytes) {
+  try {
+    const a = new Uint8Array(bytes);
+    crypto.getRandomValues(a);
+    let out = "";
+    for (const b of a) out += b.toString(16).padStart(2, "0");
+    return out;
+  } catch {
+    return Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2);
+  }
+}
+class BroadcastChannelDriver {
+  constructor(channelName, token, maxMessageBytes) {
+    __publicField(this, "bc", null);
+    __publicField(this, "cb", null);
+    this.channelName = channelName;
+    this.token = token;
+    this.maxMessageBytes = maxMessageBytes;
+  }
+  start() {
+    if (this.bc) return;
+    if (typeof BroadcastChannel === "undefined") {
+      throw new Error("BroadcastChannel not available");
+    }
+    const bc = new BroadcastChannel(this.channelName);
+    bc.onmessage = (ev) => {
+      var _a;
+      const data = ev == null ? void 0 : ev.data;
+      if (!data || typeof data !== "object") return;
+      try {
+        const approx = JSON.stringify(data);
+        if (approx.length > this.maxMessageBytes) return;
+      } catch {
+        return;
+      }
+      const msg = data;
+      if (msg.v !== 1) return;
+      if (typeof msg.token !== "string" || msg.token !== this.token) return;
+      if (typeof msg.kind !== "string") return;
+      (_a = this.cb) == null ? void 0 : _a.call(this, msg);
+    };
+    this.bc = bc;
+  }
+  stop() {
+    if (!this.bc) return;
+    try {
+      this.bc.close();
+    } catch {
+    }
+    this.bc = null;
+  }
+  send(msg) {
+    if (!this.bc) return;
+    if (msg.v !== 1) return;
+    if (msg.token !== this.token) return;
+    try {
+      const approx = JSON.stringify(msg);
+      if (approx.length > this.maxMessageBytes) return;
+    } catch {
+      return;
+    }
+    this.bc.postMessage(msg);
+  }
+  onMessage(cb) {
+    this.cb = cb;
+  }
+}
+class HostSync {
+  constructor(cfg) {
+    __publicField(this, "driver", null);
+    __publicField(this, "connected", false);
+    __publicField(this, "clientId");
+    __publicField(this, "lastSendAtMs", 0);
+    __publicField(this, "sendBurst", 0);
+    __publicField(this, "onGoto", null);
+    __publicField(this, "onScene", null);
+    this.cfg = cfg;
+    this.clientId = cfg.clientId ?? randomId(8);
+  }
+  getSessionInfo() {
+    return {
+      enabled: this.cfg.enabled,
+      role: this.cfg.role,
+      transport: this.cfg.transport,
+      channelId: this.cfg.channelId,
+      token: this.cfg.token,
+      clientId: this.clientId
+    };
+  }
+  isConnected() {
+    return this.connected;
+  }
+  start() {
+    if (!this.cfg.enabled) return;
+    if (this.driver) return;
+    const channelName = `storie:host:${this.cfg.channelId}`;
+    const maxMessageBytes = 16 * 1024;
+    if (this.cfg.transport === "broadcast") {
+      this.driver = new BroadcastChannelDriver(channelName, this.cfg.token, maxMessageBytes);
+    } else {
+      throw new Error("WebSocket transport not implemented yet");
+    }
+    this.driver.onMessage((msg) => {
+      var _a, _b;
+      if (msg.kind === "hello") {
+        this.connected = true;
+        return;
+      }
+      if (msg.kind === "goto") {
+        this.connected = true;
+        if (msg.from === this.clientId) return;
+        (_a = this.onGoto) == null ? void 0 : _a.call(this, {
+          sectionIndex: msg.sectionIndex,
+          mode: msg.mode,
+          fill: msg.fill,
+          distance: msg.distance
+        });
+        return;
+      }
+      if (msg.kind === "scene") {
+        this.connected = true;
+        if (msg.from === this.clientId) return;
+        const revealStep = Number.isFinite(msg.revealStep) ? Math.max(0, Math.floor(msg.revealStep)) : 0;
+        (_b = this.onScene) == null ? void 0 : _b.call(this, {
+          sectionIndex: msg.sectionIndex,
+          mode: msg.mode,
+          fill: msg.fill,
+          distance: msg.distance,
+          revealStep
+        });
+      }
+    });
+    this.driver.start();
+    this.sendHello();
+  }
+  stop() {
+    var _a;
+    (_a = this.driver) == null ? void 0 : _a.stop();
+    this.driver = null;
+    this.connected = false;
+  }
+  onGotoSection(cb) {
+    this.onGoto = cb;
+  }
+  onSceneState(cb) {
+    this.onScene = cb;
+  }
+  sendHello() {
+    this.send({
+      v: 1,
+      kind: "hello",
+      token: this.cfg.token,
+      from: this.clientId,
+      ts: Date.now()
+    });
+  }
+  sendGotoSectionFit(sectionIndex, fill = 0.9) {
+    this.send({
+      v: 1,
+      kind: "goto",
+      token: this.cfg.token,
+      from: this.clientId,
+      ts: Date.now(),
+      sectionIndex,
+      mode: "fit",
+      fill
+    });
+  }
+  sendSceneFit(sectionIndex, revealStep, fill = 0.9) {
+    this.send({
+      v: 1,
+      kind: "scene",
+      token: this.cfg.token,
+      from: this.clientId,
+      ts: Date.now(),
+      sectionIndex,
+      mode: "fit",
+      fill,
+      revealStep: Math.max(0, Math.floor(revealStep))
+    });
+  }
+  send(msg) {
+    if (!this.driver) return;
+    const now = performance.now();
+    if (now - this.lastSendAtMs > 1e3) {
+      this.lastSendAtMs = now;
+      this.sendBurst = 0;
+    }
+    this.sendBurst++;
+    if (this.sendBurst > 20) return;
+    this.driver.send(msg);
+  }
+}
+function parseHostParams(search) {
+  try {
+    const qs = new URLSearchParams(search);
+    const roleRaw = qs.get("role");
+    const transportRaw = qs.get("transport");
+    const channel = qs.get("channel");
+    const tokenRaw = qs.get("token");
+    const hostEnabled = qs.get("host") === "1" || qs.get("host") === "true";
+    const hostRoleRaw = qs.get("hostRole");
+    const hostTransportRaw = qs.get("hostTransport");
+    const hostChannel = qs.get("hostChannel");
+    const hostToken = qs.get("hostToken");
+    const presentEnabled = qs.get("present") === "1" || qs.get("present") === "true";
+    const presentRoleRaw = qs.get("presentRole");
+    const presentTransportRaw = qs.get("presentTransport");
+    const presentChannel = qs.get("presentChannel");
+    const presentToken = qs.get("presentToken");
+    const enabled = hostEnabled || presentEnabled || roleRaw !== null || channel !== null || tokenRaw !== null || transportRaw !== null || hostRoleRaw !== null || hostChannel !== null || hostToken !== null || hostTransportRaw !== null || presentRoleRaw !== null || presentChannel !== null || presentToken !== null || presentTransportRaw !== null;
+    const roleCandidate = (roleRaw || hostRoleRaw || presentRoleRaw || "client").toLowerCase();
+    const role = roleCandidate === "host" || roleCandidate === "presenter" ? "host" : "client";
+    const transportCandidate = (transportRaw || hostTransportRaw || presentTransportRaw || "broadcast").toLowerCase();
+    const transport = transportCandidate === "websocket" ? "websocket" : "broadcast";
+    const channelId = channel || hostChannel || presentChannel;
+    const token = tokenRaw || hostToken || presentToken;
+    return { enabled, role, transport, channelId, token };
+  } catch {
+    return { enabled: false, role: "client", transport: "broadcast", channelId: null, token: null };
+  }
+}
+function makeClientJoinUrl(args) {
+  const u = new URL(args.url.toString());
+  u.searchParams.set("role", args.role);
+  u.searchParams.set("channel", args.channelId);
+  u.searchParams.set("token", args.token);
+  if (args.transport !== "broadcast") {
+    u.searchParams.set("transport", args.transport);
+  } else {
+    u.searchParams.delete("transport");
+  }
+  u.searchParams.delete("host");
+  u.searchParams.delete("hostRole");
+  u.searchParams.delete("hostTransport");
+  u.searchParams.delete("hostChannel");
+  u.searchParams.delete("hostToken");
+  u.searchParams.delete("present");
+  u.searchParams.delete("presentRole");
+  u.searchParams.delete("presentTransport");
+  u.searchParams.delete("presentChannel");
+  u.searchParams.delete("presentToken");
+  return u.toString();
+}
+function createHostSessionIds() {
+  return {
+    channelId: randomId(8),
+    token: randomId(16)
+  };
+}
+function parseThemeOverride(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  const parts = s.split(/[+\s]+/g).map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 7 && parts.every((p) => /^[0-9a-fA-F]{6}$/.test(p))) {
+    const toRGBA = (hex) => {
+      const rgb = parseInt(hex, 16) >>> 0;
+      return ((rgb & 16777215) << 8 | 255) >>> 0;
+    };
+    const theme = {
+      bg: toRGBA(parts[0]),
+      bgAlt: toRGBA(parts[1]),
+      fg: toRGBA(parts[2]),
+      fgAlt: toRGBA(parts[3]),
+      accent1: toRGBA(parts[4]),
+      accent2: toRGBA(parts[5]),
+      accent3: toRGBA(parts[6])
+    };
+    return { theme, label: "custom" };
+  }
+  const name = s.toLowerCase().replace(/['"]/g, "");
+  if (Object.prototype.hasOwnProperty.call(THEMES, name)) {
+    return { theme: getTheme(name), label: name };
+  }
+  return null;
+}
 class StorieEngine {
   constructor(canvas, config = {}) {
     // Core systems
@@ -19164,6 +19465,9 @@ class StorieEngine {
     __publicField(this, "canvas3DLayoutCallback", null);
     // 3D interaction state (hover + basic navigation controls)
     __publicField(this, "canvas3DControlsEnabled", false);
+    // 3D link navigation key handling (Tab/Enter/Arrow keys). When disabled,
+    // user documents can implement their own keybindings (e.g. slide decks).
+    __publicField(this, "canvas3DLinkKeyHandlingEnabled", true);
     __publicField(this, "mouseLookActive", false);
     __publicField(this, "mouseLookLastX", 0);
     __publicField(this, "mouseLookLastY", 0);
@@ -19174,9 +19478,20 @@ class StorieEngine {
     // 3D section texture rasterization cache
     __publicField(this, "sectionTextureCache", /* @__PURE__ */ new Map());
     __publicField(this, "sectionLinkRegionsCache", /* @__PURE__ */ new Map());
+    // Host sync (engine-level, transport pluggable)
+    __publicField(this, "hostSync", null);
+    // When host sync role is `client`, treat this window as display-only.
+    // We keep the terminal visible until the WebGPU 3D layer exists to avoid a blank screen during startup.
+    __publicField(this, "hostAudienceView", false);
+    // Shared scene state (synced host -> client). Kept intentionally small.
+    __publicField(this, "sceneState", {
+      sectionIndex: null,
+      revealStep: 0
+    });
     // Theme system
     __publicField(this, "currentTheme");
     __publicField(this, "styleSheet");
+    __publicField(this, "themeOverrideFromUrl", null);
     // Timing
     __publicField(this, "frameCount", 0);
     __publicField(this, "elapsedTime", 0);
@@ -19187,6 +19502,11 @@ class StorieEngine {
     // Documents
     __publicField(this, "documents", /* @__PURE__ */ new Map());
     __publicField(this, "activeDocumentId", null);
+    __publicField(this, "outlineCache", null);
+    // Canvas3D Overview (host-only)
+    __publicField(this, "canvas3DOverviewEnabled", false);
+    __publicField(this, "canvas3DOverviewSavedTransforms", null);
+    __publicField(this, "pendingCanvas3DOverview", null);
     // Dropped-file handling (binary-safe)
     __publicField(this, "lastDroppedFile", null);
     __publicField(this, "dropHandlingCleanup", null);
@@ -19203,13 +19523,15 @@ class StorieEngine {
     __publicField(this, "height");
     // Canvas reference for event listeners
     __publicField(this, "canvas");
+    var _a;
     this.canvas = canvas;
     this.width = config.width || 80;
     this.height = config.height || 24;
     const configuredMaxDropBytes = typeof config.maxDropBytes === "number" ? config.maxDropBytes : 50 * 1024 * 1024;
     this.maxDropBytes = configuredMaxDropBytes > 0 ? configuredMaxDropBytes : Infinity;
     this.camera3D = createCamera3D();
-    this.currentTheme = getTheme("neotopia");
+    this.themeOverrideFromUrl = this.readThemeOverrideFromUrl();
+    this.currentTheme = ((_a = this.themeOverrideFromUrl) == null ? void 0 : _a.theme) ?? getTheme("neotopia");
     this.styleSheet = applyTheme(this.currentTheme);
     this.audioContext = new AudioContext();
     this.layers = new LayerStack(this.width, this.height);
@@ -19237,14 +19559,283 @@ class StorieEngine {
     const api = this.createUserAPI();
     this.api = api;
     this.sandbox = new ScriptSandbox(api);
+    this.initHostSync(config.host ?? config.presentation);
     this.setupEventListeners();
     console.log("✓ S|torie engine initialized");
     console.log(`  Grid: ${this.width}x${this.height}`);
     console.log(`  Renderer: ${this.renderer.constructor.name}`);
-    console.log(`  Theme: neotopia (default)`);
+    console.log(
+      `  Theme: ${this.themeOverrideFromUrl ? `${this.themeOverrideFromUrl.label} (url override)` : "neotopia (default)"}`
+    );
     console.log(`  Modules: ready for dynamic loading`);
     console.log("  Audio: Web Audio API ready");
     console.log("  Canvas2D: lazy (created on first use)");
+  }
+  applyThemeColors(theme, label, source) {
+    this.currentTheme = theme;
+    this.styleSheet = applyTheme(this.currentTheme);
+    try {
+      if (this.api) {
+        this.api.theme = this.currentTheme;
+      }
+    } catch {
+    }
+    this.layers.clearAll(this.currentTheme.bg);
+    if (source === "url") {
+      console.log(`  Theme: ${label} (url override)`);
+    } else if (source === "frontmatter") {
+      console.log(`  Theme: ${label}`);
+    }
+  }
+  readThemeOverrideFromUrl() {
+    if (typeof window === "undefined" || typeof URLSearchParams === "undefined") return null;
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const themeParam = urlParams.get("theme");
+      if (!themeParam) return null;
+      const override = parseThemeOverride(themeParam);
+      if (!override) {
+        console.warn(`[theme] Unknown theme override in URL; ignoring:`, themeParam);
+        return null;
+      }
+      return override;
+    } catch {
+      return null;
+    }
+  }
+  updateAudienceViewLayers() {
+    if (!this.hostAudienceView) return;
+    if (!this.compositor) return;
+    const has3DLayer = !!this.compositor.layers.get("3d");
+    const shouldHideTerminal = this.canvas3DEnabled && has3DLayer;
+    if (this.compositor.layers.get("terminal")) {
+      this.compositor.updateLayer("terminal", { enabled: !shouldHideTerminal });
+    }
+  }
+  applyPendingCanvas3DOverview() {
+    if (!this.pendingCanvas3DOverview) return;
+    const p = this.pendingCanvas3DOverview;
+    this.pendingCanvas3DOverview = null;
+    this.setCanvas3DOverviewEnabled(p.enabled, p.options);
+  }
+  setCanvas3DOverviewEnabled(enabled, options) {
+    var _a, _b, _c, _d;
+    if (this.hostAudienceView) return;
+    if (!this.section3DLayouts || this.section3DLayouts.length === 0 || !this.camera3D) {
+      this.pendingCanvas3DOverview = { enabled: !!enabled, options };
+      return;
+    }
+    const nextEnabled = !!enabled;
+    if (nextEnabled && !this.canvas3DOverviewEnabled) {
+      this.canvas3DOverviewSavedTransforms = this.section3DLayouts.map((l) => ({
+        position: { ...l.transform.position },
+        rotation: { ...l.transform.rotation },
+        scale: { ...l.transform.scale }
+      }));
+    }
+    if (!nextEnabled && this.canvas3DOverviewEnabled) {
+      if (this.canvas3DOverviewSavedTransforms) {
+        for (let i = 0; i < Math.min(this.canvas3DOverviewSavedTransforms.length, this.section3DLayouts.length); i++) {
+          const saved = this.canvas3DOverviewSavedTransforms[i];
+          const layout = this.section3DLayouts[i];
+          if (!layout) continue;
+          layout.transform.position = { ...saved.position };
+          layout.transform.rotation = { ...saved.rotation };
+          layout.transform.scale = { ...saved.scale };
+        }
+      }
+      this.canvas3DOverviewSavedTransforms = null;
+      this.canvas3DOverviewEnabled = false;
+      this.refocus3DForCurrentViewport();
+      return;
+    }
+    if (!nextEnabled) return;
+    this.canvas3DOverviewEnabled = true;
+    const includeHidden = !!(options == null ? void 0 : options.includeHidden);
+    const includeNonNavigable = !!(options == null ? void 0 : options.includeNonNavigable);
+    const padding = Number.isFinite((options == null ? void 0 : options.padding) ?? NaN) ? options.padding : 20;
+    const depth = Number.isFinite((options == null ? void 0 : options.depth) ?? NaN) ? options.depth : this.canvas3DConfig.defaultDepth;
+    const fill = Number.isFinite((options == null ? void 0 : options.fill) ?? NaN) ? options.fill : 0.9;
+    const levels = (options == null ? void 0 : options.levels) ?? "any";
+    const nodes = this.getOutlineNodes();
+    if (nodes.length === 0) return;
+    const levelsPred = (() => {
+      if (levels === "any") return (_n) => true;
+      if (typeof levels === "number" && Number.isFinite(levels)) return (n) => n.level === levels;
+      if (levels && typeof levels === "object") {
+        const min = typeof levels.min === "number" ? levels.min : 1;
+        const max = typeof levels.max === "number" ? levels.max : 6;
+        return (n) => n.level >= min && n.level <= max;
+      }
+      return (_n) => true;
+    })();
+    const candidates = nodes.filter((n) => levelsPred(n)).map((n) => n.index).filter((i) => {
+      const layout = this.section3DLayouts[i];
+      if (!layout) return false;
+      if (!includeHidden && layout.visible === false) return false;
+      if (!includeNonNavigable && layout.navigable === false) return false;
+      return true;
+    });
+    if (candidates.length === 0) return;
+    const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
+    const autoCols = Math.max(1, Math.ceil(Math.sqrt(candidates.length * Math.max(0.5, Math.min(3, aspect)))));
+    const cols = Number.isFinite((options == null ? void 0 : options.columns) ?? NaN) ? Math.max(1, Math.floor(options.columns)) : autoCols;
+    const rows = Math.max(1, Math.ceil(candidates.length / cols));
+    let maxWorldW = 1;
+    let maxWorldH = 1;
+    for (const idx of candidates) {
+      const l = this.section3DLayouts[idx];
+      if (!l) continue;
+      maxWorldW = Math.max(maxWorldW, l.width * (((_a = l.transform.scale) == null ? void 0 : _a.x) ?? 1));
+      maxWorldH = Math.max(maxWorldH, l.height * (((_b = l.transform.scale) == null ? void 0 : _b.y) ?? 1));
+    }
+    const stepX = maxWorldW + padding;
+    const stepY = maxWorldH + padding;
+    const xCenter = (cols - 1) / 2;
+    const yCenter = (rows - 1) / 2;
+    for (let i = 0; i < candidates.length; i++) {
+      const idx = candidates[i];
+      const layout = this.section3DLayouts[idx];
+      if (!layout) continue;
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const x = (col - xCenter) * stepX;
+      const y = -(row - yCenter) * stepY;
+      layout.transform.position = { x, y, z: depth };
+      layout.transform.rotation = { x: 0, y: 0, z: 0 };
+    }
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const idx of candidates) {
+      const l = this.section3DLayouts[idx];
+      if (!l) continue;
+      const w = l.width * (((_c = l.transform.scale) == null ? void 0 : _c.x) ?? 1);
+      const h = l.height * (((_d = l.transform.scale) == null ? void 0 : _d.y) ?? 1);
+      minX = Math.min(minX, l.transform.position.x - w / 2);
+      maxX = Math.max(maxX, l.transform.position.x + w / 2);
+      minY = Math.min(minY, l.transform.position.y - h / 2);
+      maxY = Math.max(maxY, l.transform.position.y + h / 2);
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minY) || !Number.isFinite(maxY)) return;
+    const worldWidth = Math.max(1e-6, maxX - minX);
+    const worldHeight = Math.max(1e-6, maxY - minY);
+    const safeAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
+    const safeFill = Math.max(0.05, Math.min(0.99, fill));
+    const vFov = this.camera3D.fov;
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * safeAspect);
+    const distForHeight = worldHeight / 2 / (Math.tan(vFov / 2) * safeFill);
+    const distForWidth = worldWidth / 2 / (Math.tan(hFov / 2) * safeFill);
+    const distance2 = Math.max(distForHeight, distForWidth);
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    setCameraTarget(
+      this.camera3D,
+      { x: centerX, y: centerY, z: depth + distance2 },
+      { x: 0, y: 0, z: 0 }
+    );
+  }
+  initHostSync(cfg) {
+    if (typeof window === "undefined" || typeof URL === "undefined") return;
+    const url = new URL(window.location.href);
+    const parsed = parseHostParams(url.search);
+    const enabled = (cfg == null ? void 0 : cfg.enabled) ?? parsed.enabled;
+    if (!enabled) return;
+    const role = ((cfg == null ? void 0 : cfg.role) ?? parsed.role) || "client";
+    const transport = ((cfg == null ? void 0 : cfg.transport) ?? parsed.transport) || "broadcast";
+    let channelId = (cfg == null ? void 0 : cfg.channelId) ?? parsed.channelId;
+    let token = (cfg == null ? void 0 : cfg.token) ?? parsed.token;
+    if (role === "host" && (!channelId || !token)) {
+      const ids = createHostSessionIds();
+      channelId = ids.channelId;
+      token = ids.token;
+      try {
+        const joinUrl = makeClientJoinUrl({
+          url,
+          role: "client",
+          transport,
+          channelId,
+          token
+        });
+        console.log("[host] Host session created");
+        console.log("[host] Client join URL (role/channel/token):", joinUrl);
+      } catch {
+      }
+    }
+    if (!channelId || !token) {
+      console.warn("[host] Missing channel/token (client cannot connect)");
+      return;
+    }
+    try {
+      const sync = new HostSync({
+        enabled: true,
+        role,
+        transport,
+        channelId,
+        token
+      });
+      this.hostSync = sync;
+      this.hostAudienceView = role === "client";
+      if (this.hostAudienceView) {
+        this.input.setEnabled(false);
+        this.canvas3DControlsEnabled = false;
+        this.canvas3DLinkKeyHandlingEnabled = false;
+        this.mouseLookActive = false;
+      } else {
+        this.input.setEnabled(true);
+      }
+      sync.onGotoSection((args) => {
+        var _a;
+        this.canvas3DEnabled = true;
+        if ((_a = this.compositor) == null ? void 0 : _a.layers.get("3d")) {
+          this.compositor.updateLayer("3d", { enabled: true });
+        }
+        this.updateAudienceViewLayers();
+        if (args.mode === "focus") {
+          this.request3DCameraFocus({
+            kind: "focus",
+            sectionIndex: args.sectionIndex,
+            distance: typeof args.distance === "number" ? args.distance : 50
+          });
+        } else {
+          this.request3DCameraFocus({
+            kind: "fit",
+            sectionIndex: args.sectionIndex,
+            fill: typeof args.fill === "number" ? args.fill : 0.9
+          });
+        }
+      });
+      sync.onSceneState((args) => {
+        var _a;
+        this.canvas3DEnabled = true;
+        if ((_a = this.compositor) == null ? void 0 : _a.layers.get("3d")) {
+          this.compositor.updateLayer("3d", { enabled: true });
+        }
+        this.sceneState.sectionIndex = args.sectionIndex;
+        this.sceneState.revealStep = Math.max(0, Math.floor(args.revealStep));
+        this.updateAudienceViewLayers();
+        if (args.mode === "focus") {
+          this.request3DCameraFocus({
+            kind: "focus",
+            sectionIndex: args.sectionIndex,
+            distance: typeof args.distance === "number" ? args.distance : 50
+          });
+        } else {
+          this.request3DCameraFocus({
+            kind: "fit",
+            sectionIndex: args.sectionIndex,
+            fill: typeof args.fill === "number" ? args.fill : 0.9
+          });
+        }
+      });
+      sync.start();
+      const info = sync.getSessionInfo();
+      console.log(`[host] Connected: ${info.transport}/${info.role} channel=${info.channelId}`);
+    } catch (error) {
+      console.warn("[host] Failed to start host sync:", error);
+      this.hostSync = null;
+    }
   }
   /**
    * Initialize Canvas 2D API with offscreen canvas for user drawing
@@ -19295,6 +19886,7 @@ class StorieEngine {
     if (!terminalTexture) {
       console.warn("[Compositor] Terminal render texture not ready yet; will attach on first render/resize");
     }
+    this.updateAudienceViewLayers();
     console.log("✓ Compositor initialized (terminal layer)");
   }
   ensureWebGPUUI() {
@@ -19725,6 +20317,80 @@ class StorieEngine {
           const d = engine.getActiveDocument();
           if (!d) return 0;
           return flattenSections(d.sections).length;
+        },
+        outline: () => {
+          return engine.getOutlineNodes();
+        }
+      },
+      // Shared scene state (read-only on clients; host can write).
+      scene: {
+        get sectionIndex() {
+          return engine.sceneState.sectionIndex;
+        },
+        get revealStep() {
+          return engine.sceneState.revealStep;
+        },
+        getState: () => ({ ...engine.sceneState }),
+        setRevealStep: (n) => {
+          if (engine.hostAudienceView) return;
+          const next = Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+          if (engine.sceneState.revealStep === next) return;
+          engine.sceneState.revealStep = next;
+          const h = engine.hostSync;
+          if (h && h.getSessionInfo().role === "host") {
+            const idx = engine.sceneState.sectionIndex;
+            if (typeof idx === "number") {
+              h.sendSceneFit(idx, engine.sceneState.revealStep, 0.9);
+            }
+          }
+        },
+        nextRevealStep: () => {
+          if (engine.hostAudienceView) return;
+          const next = (engine.sceneState.revealStep ?? 0) + 1;
+          const n = Number.isFinite(next) ? Math.max(0, Math.floor(next)) : 0;
+          if (engine.sceneState.revealStep === n) return;
+          engine.sceneState.revealStep = n;
+          const h = engine.hostSync;
+          if (h && h.getSessionInfo().role === "host") {
+            const idx = engine.sceneState.sectionIndex;
+            if (typeof idx === "number") {
+              h.sendSceneFit(idx, engine.sceneState.revealStep, 0.9);
+            }
+          }
+        },
+        resetRevealStep: () => {
+          if (engine.hostAudienceView) return;
+          if (engine.sceneState.revealStep === 0) return;
+          engine.sceneState.revealStep = 0;
+          const h = engine.hostSync;
+          if (h && h.getSessionInfo().role === "host") {
+            const idx = engine.sceneState.sectionIndex;
+            if (typeof idx === "number") {
+              h.sendSceneFit(idx, engine.sceneState.revealStep, 0.9);
+            }
+          }
+        }
+      },
+      // Host Sync info (read-only). Useful for host/client-specific UI.
+      // Note: we intentionally do NOT expose the shared token to scripts.
+      host: {
+        get enabled() {
+          return !!engine.hostSync;
+        },
+        get role() {
+          return engine.hostSync ? engine.hostSync.getSessionInfo().role : null;
+        },
+        get isHost() {
+          return engine.hostSync ? engine.hostSync.getSessionInfo().role === "host" : false;
+        },
+        get isClient() {
+          return engine.hostSync ? engine.hostSync.getSessionInfo().role === "client" : false;
+        },
+        get transport() {
+          return engine.hostSync ? engine.hostSync.getSessionInfo().transport : null;
+        },
+        get channel() {
+          return engine.hostSync ? engine.hostSync.getSessionInfo().channelId : null;
         }
       },
       // Retained-mode TUI API
@@ -21374,6 +22040,7 @@ class StorieEngine {
           if ((_a = engine.compositor) == null ? void 0 : _a.layers.get("3d")) {
             engine.compositor.updateLayer("3d", { enabled: true });
           }
+          engine.updateAudienceViewLayers();
           return engine.canvas3DRenderer !== null;
         },
         disable: () => {
@@ -21382,6 +22049,7 @@ class StorieEngine {
           if ((_a = engine.compositor) == null ? void 0 : _a.layers.get("3d")) {
             engine.compositor.updateLayer("3d", { enabled: false });
           }
+          engine.updateAudienceViewLayers();
           console.log("3D Canvas mode disabled");
         },
         get enabled() {
@@ -21397,6 +22065,146 @@ class StorieEngine {
           },
           get enabled() {
             return engine.canvas3DControlsEnabled;
+          }
+        },
+        // Built-in 3D link navigation (Tab/Enter/Arrow). Disable this to let
+        // documents own those keys (e.g. presenter/slide mode).
+        links: {
+          setKeyHandlingEnabled: (enabled) => {
+            engine.canvas3DLinkKeyHandlingEnabled = !!enabled;
+          },
+          get keyHandlingEnabled() {
+            return engine.canvas3DLinkKeyHandlingEnabled;
+          }
+        },
+        // Outline-based navigation helpers.
+        // Provides flexible “next/prev” semantics (global, subtree, siblings, level filters).
+        nav: /* @__PURE__ */ (() => {
+          const clamp2 = (n, min, max) => Math.max(min, Math.min(max, n));
+          const asBool = (v2) => !!v2;
+          const levelsPredicate = (levels) => {
+            if (levels === void 0 || levels === "any") return (_n) => true;
+            if (typeof levels === "number" && Number.isFinite(levels)) return (n) => n.level === levels;
+            if (levels && typeof levels === "object") {
+              const min = typeof levels.min === "number" ? levels.min : 1;
+              const max = typeof levels.max === "number" ? levels.max : 6;
+              return (n) => n.level >= min && n.level <= max;
+            }
+            return (_n) => true;
+          };
+          const resolveRootIndex = (root) => {
+            if (root === void 0 || root === null || root === "current") {
+              const cur = engine.current3DSectionIndex;
+              return typeof cur === "number" ? cur : null;
+            }
+            if (typeof root === "number" && Number.isFinite(root)) return root;
+            return null;
+          };
+          const list = (rule) => {
+            const nodes = engine.getOutlineNodes();
+            if (nodes.length === 0) return [];
+            const scope = (rule == null ? void 0 : rule.scope) ?? "global";
+            const depth = (rule == null ? void 0 : rule.depth) ?? "descendants";
+            const includeHidden = asBool(rule == null ? void 0 : rule.includeHidden);
+            const includeNonNavigable = asBool(rule == null ? void 0 : rule.includeNonNavigable);
+            const includeSelf = asBool(rule == null ? void 0 : rule.includeSelf);
+            const pred = levelsPredicate(rule == null ? void 0 : rule.levels);
+            let candidateIndices = [];
+            if (scope === "global") {
+              candidateIndices = nodes.map((n) => n.index);
+            } else {
+              const rootIndex = resolveRootIndex(rule == null ? void 0 : rule.root);
+              if (rootIndex === null || rootIndex < 0 || rootIndex >= nodes.length) return [];
+              const rootNode = nodes[rootIndex];
+              if (!rootNode) return [];
+              if (scope === "subtree") {
+                if (depth === "children") {
+                  candidateIndices = nodes.filter((n) => n.parentIndex === rootIndex).map((n) => n.index);
+                } else {
+                  const start = includeSelf ? rootIndex : rootIndex + 1;
+                  const end = rootNode.lastDescendantIndex;
+                  candidateIndices = [];
+                  for (let i = start; i <= end && i < nodes.length; i++) candidateIndices.push(i);
+                }
+              } else {
+                const parent = rootNode.parentIndex;
+                candidateIndices = nodes.filter((n) => n.parentIndex === parent).map((n) => n.index).filter((i) => includeSelf ? true : i !== rootIndex);
+              }
+            }
+            candidateIndices = candidateIndices.filter((i) => {
+              const n = nodes[i];
+              return !!n && pred(n);
+            });
+            if (engine.section3DLayouts && engine.section3DLayouts.length > 0) {
+              candidateIndices = candidateIndices.filter((i) => {
+                const layout = engine.section3DLayouts[i];
+                if (!layout) return true;
+                if (!includeHidden && layout.visible === false) return false;
+                if (!includeNonNavigable && layout.navigable === false) return false;
+                return true;
+              });
+            }
+            return candidateIndices;
+          };
+          const count = (rule) => list(rule).length;
+          const cursor = (rule) => {
+            const candidates = list(rule);
+            if (candidates.length === 0) return null;
+            const current = engine.current3DSectionIndex;
+            if (typeof current !== "number") return 0;
+            const exact = candidates.indexOf(current);
+            if (exact >= 0) return exact;
+            let prev2 = -1;
+            for (let i = 0; i < candidates.length; i++) {
+              if (candidates[i] < current) prev2 = i;
+              else break;
+            }
+            return prev2 >= 0 ? prev2 : 0;
+          };
+          const goto = (index, rule) => {
+            const candidates = list(rule);
+            if (candidates.length === 0) return;
+            const wrap = asBool(rule == null ? void 0 : rule.wrap);
+            let i = Math.floor(index);
+            if (wrap) {
+              const m = candidates.length;
+              i = (i % m + m) % m;
+            } else {
+              i = clamp2(i, 0, candidates.length - 1);
+            }
+            const sectionIndex = candidates[i];
+            const mode = (rule == null ? void 0 : rule.mode) === "focus" ? "focus" : "fit";
+            if (mode === "focus") {
+              const distance2 = typeof (rule == null ? void 0 : rule.distance) === "number" ? rule.distance : 80;
+              engine.request3DCameraFocus({ kind: "focus", sectionIndex, distance: distance2 });
+            } else {
+              const fill = typeof (rule == null ? void 0 : rule.fill) === "number" ? rule.fill : 0.9;
+              engine.request3DCameraFocus({ kind: "fit", sectionIndex, fill });
+            }
+          };
+          const next = (rule) => {
+            const i = cursor(rule);
+            if (i === null) return;
+            goto(i + 1, rule);
+          };
+          const prev = (rule) => {
+            const i = cursor(rule);
+            if (i === null) return;
+            goto(i - 1, rule);
+          };
+          return { list, count, cursor, goto, next, prev };
+        })(),
+        // PowerPoint-like overview mode (host-only): lays out candidate sections in a grid
+        // and fits the camera to show them all.
+        overview: {
+          setEnabled: (enabled, options) => {
+            engine.setCanvas3DOverviewEnabled(enabled, options);
+          },
+          toggle: (options) => {
+            engine.setCanvas3DOverviewEnabled(!engine.canvas3DOverviewEnabled, options);
+          },
+          get enabled() {
+            return engine.canvas3DOverviewEnabled;
           }
         },
         // Camera controls
@@ -21645,13 +22453,13 @@ class StorieEngine {
         console.log(`  Created 3D layouts for ${this.section3DLayouts.length} sections`);
         this.applyPending3DCameraFocus();
         this.applyCanvas3DLayoutCallback(parsed.sections);
+        this.applyPendingCanvas3DOverview();
       }
-      if (parsed.metadata.theme) {
+      if (this.themeOverrideFromUrl) {
+        this.applyThemeColors(this.themeOverrideFromUrl.theme, this.themeOverrideFromUrl.label, "url");
+      } else if (parsed.metadata.theme) {
         const themeName = String(parsed.metadata.theme).toLowerCase().replace(/['"]/g, "");
-        this.currentTheme = getTheme(themeName);
-        this.styleSheet = applyTheme(this.currentTheme);
-        console.log(`  Theme: ${themeName}`);
-        this.layers.clearAll(this.currentTheme.bg);
+        this.applyThemeColors(getTheme(themeName), themeName, "frontmatter");
       }
       if (parsed.metadata.shaders) {
         const shadersStr = String(parsed.metadata.shaders);
@@ -21914,7 +22722,7 @@ class StorieEngine {
       if (scopeVarNames.length > 0 && globalBlocks.length > 0) {
         console.log(`  Re-executing global blocks to create closures for ${scopeVarNames.length} variables`);
         const exports$1 = scopeVarNames.map((k) => `  try { scope.${k} = ${k}; } catch (e) {}`).join("\n");
-        const apiParams = "term, termCanvas, layer, key, mouse, drop, tui, gui, getStyle, theme, modules, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY, termWidth, termHeight, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, canvas3D";
+        const apiParams = "term, termCanvas, layer, key, mouse, drop, doc, host, scene, tui, gui, getStyle, theme, modules, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY, termWidth, termHeight, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, canvas3D";
         for (const code of globalBlocks) {
           const wrappedCode = `(function(${apiParams}) {
 ${code}
@@ -22010,6 +22818,7 @@ ${exportVars}
         console.error("  Failed to extract handlers");
         return false;
       }
+      this.outlineCache = null;
       this.documents.set(documentId, {
         id: documentId,
         handlers,
@@ -22125,6 +22934,7 @@ ${exportVars}
                   blendMode: "normal"
                   // Normal blend (not multiply)
                 });
+                this.updateAudienceViewLayers();
               } else {
                 console.warn("✗ Failed to register 3D layer");
               }
@@ -22135,6 +22945,7 @@ ${exportVars}
                   this.section3DLayouts = layouts;
                   this.applyPending3DCameraFocus();
                   this.applyCanvas3DLayoutCallback(anyDocData._parsedMarkdown.sections);
+                  this.applyPendingCanvas3DOverview();
                   console.log(`✓ Created ${layouts.length} 3D section layouts for document ${docId}`);
                 } else {
                 }
@@ -23015,9 +23826,16 @@ ${content}`.trim();
    */
   handleKeyEvent(e, action) {
     var _a, _b;
+    if (this.hostAudienceView) {
+      const k = e.key;
+      if (k === " " || k === "Tab" || k === "Enter" || k === "ArrowUp" || k === "ArrowDown" || k === "ArrowLeft" || k === "ArrowRight" || k === "PageUp" || k === "PageDown" || k === "Home" || k === "End") {
+        e.preventDefault();
+      }
+      return;
+    }
     const doc = this.getActiveDocument();
     let handledBy3D = false;
-    if (action === "press" && this.canvas3DEnabled && this.camera3D) {
+    if (action === "press" && this.canvas3DEnabled && this.camera3D && this.canvas3DLinkKeyHandlingEnabled) {
       if (e.key === "Tab") {
         this.move3DLinkFocus(e.shiftKey ? -1 : 1);
         handledBy3D = true;
@@ -23065,6 +23883,10 @@ ${content}`.trim();
    */
   handleMouseEvent(e, action) {
     var _a;
+    if (this.hostAudienceView) {
+      e.preventDefault();
+      return;
+    }
     const doc = this.getActiveDocument();
     const rect = this.canvas.getBoundingClientRect();
     const cssX = e.clientX - rect.left;
@@ -23317,6 +24139,13 @@ ${content}`.trim();
   setCurrent3DSection(sectionIndex) {
     if (this.current3DSectionIndex === sectionIndex) return;
     this.current3DSectionIndex = sectionIndex;
+    this.sceneState.sectionIndex = sectionIndex;
+    this.sceneState.revealStep = 0;
+    const h = this.hostSync;
+    if (h && h.getSessionInfo().role === "host") {
+      h.sendGotoSectionFit(sectionIndex, 0.9);
+      h.sendSceneFit(sectionIndex, this.sceneState.revealStep, 0.9);
+    }
     this.runSectionEnterHandlers(sectionIndex);
   }
   runSectionEnterHandlers(sectionIndex) {
@@ -23346,6 +24175,38 @@ ${content}`.trim();
       return slugify(title) === want;
     });
     return exact ? exact.sectionIndex : null;
+  }
+  getOutlineNodes() {
+    const d = this.getActiveDocument();
+    if (!d) return [];
+    if (this.outlineCache && this.outlineCache.documentId === d.id) return this.outlineCache.nodes;
+    const nodes = [];
+    const walk = (section, parentIndex) => {
+      const idx = nodes.length;
+      const node = {
+        index: idx,
+        title: String((section == null ? void 0 : section.title) ?? ""),
+        level: Number((section == null ? void 0 : section.level) ?? 1),
+        parentIndex,
+        firstChildIndex: null,
+        lastDescendantIndex: idx
+      };
+      nodes.push(node);
+      const children = Array.isArray(section == null ? void 0 : section.children) ? section.children : [];
+      if (children.length > 0) {
+        node.firstChildIndex = nodes.length;
+        for (const child of children) {
+          walk(child, idx);
+        }
+      }
+      node.lastDescendantIndex = nodes.length - 1;
+    };
+    const roots = Array.isArray(d.sections) ? d.sections : [];
+    for (const s of roots) {
+      walk(s, null);
+    }
+    this.outlineCache = { documentId: d.id, nodes };
+    return nodes;
   }
   findSectionIndexForLine(sections, line) {
     let sectionIndex = 0;
@@ -23482,6 +24343,7 @@ ${content}`.trim();
    */
   handleMouseMoveEvent(e) {
     var _a;
+    if (this.hostAudienceView) return;
     const doc = this.getActiveDocument();
     if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) return;
     const rect = this.canvas.getBoundingClientRect();

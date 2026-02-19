@@ -7,6 +7,7 @@ import type { InputState } from './types.js';
 export class InputManager {
   private state: InputState;
   private canvas: HTMLCanvasElement;
+  private enabled: boolean = true;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -26,6 +27,7 @@ export class InputManager {
   private setupEventListeners(): void {
     // Keyboard events
     window.addEventListener('keydown', (e) => {
+      if (!this.enabled) return;
       if (!this.state.keys.get(e.key)) {
         this.state.keysPressed.add(e.key);
       }
@@ -33,12 +35,14 @@ export class InputManager {
     });
 
     window.addEventListener('keyup', (e) => {
+      if (!this.enabled) return;
       this.state.keys.set(e.key, false);
       this.state.keysReleased.add(e.key);
     });
 
     // Mouse events
     this.canvas.addEventListener('mousemove', (e) => {
+      if (!this.enabled) return;
       const rect = this.canvas.getBoundingClientRect();
       // Convert from CSS pixels (clientX/clientY) into canvas pixel coordinates.
       // This keeps input aligned when the canvas is scaled (DPR, CSS sizing).
@@ -49,6 +53,10 @@ export class InputManager {
     });
 
     this.canvas.addEventListener('mousedown', (e) => {
+      if (!this.enabled) {
+        e.preventDefault();
+        return;
+      }
       // Ensure click uses current coordinates even if mousemove didn't fire.
       const rect = this.canvas.getBoundingClientRect();
       const scaleX = rect.width > 0 ? (this.canvas.width / rect.width) : 1;
@@ -61,6 +69,10 @@ export class InputManager {
     });
 
     this.canvas.addEventListener('mouseup', (e) => {
+      if (!this.enabled) {
+        e.preventDefault();
+        return;
+      }
       const rect = this.canvas.getBoundingClientRect();
       const scaleX = rect.width > 0 ? (this.canvas.width / rect.width) : 1;
       const scaleY = rect.height > 0 ? (this.canvas.height / rect.height) : 1;
@@ -74,6 +86,23 @@ export class InputManager {
     this.canvas.addEventListener('contextmenu', (e) => {
       e.preventDefault();
     });
+  }
+
+  setEnabled(enabled: boolean): void {
+    this.enabled = !!enabled;
+
+    if (!this.enabled) {
+      // Avoid sticky keys/buttons when switching into a locked mode.
+      this.state.keys.clear();
+      this.state.keysPressed.clear();
+      this.state.keysReleased.clear();
+      this.state.mouseButtons.clear();
+      this.state.mouseButtonsClicked.clear();
+    }
+  }
+
+  isEnabled(): boolean {
+    return this.enabled;
   }
 
   isKeyDown(key: string): boolean {
