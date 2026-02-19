@@ -58,19 +58,25 @@ const sld = gui.createSlider({
   value: 50
 });
 
-const input = gui.createTextField({
-  bounds: { x: 20, y: 270, width: 400, height: 44 },
-  value: 'Type here',
-  placeholder: 'Type here'
-});
+const input = (typeof gui.createTextEditor === 'function')
+  ? gui.createTextEditor({
+      bounds: { x: 20, y: 270, width: 400, height: 120 },
+      value: 'Type here\nSecond line',
+      placeholder: 'Type here'
+    })
+  : gui.createTextField({
+      bounds: { x: 20, y: 270, width: 400, height: 44 },
+      value: 'Type here',
+      placeholder: 'Type here'
+    });
 
 const status = gui.createLabel({
-  bounds: { x: 20, y: 330, width: 600, height: 30 },
+  bounds: { x: 20, y: 410, width: 600, height: 30 },
   text: 'Status: Ready'
 });
 
 const debugLabel = gui.createLabel({
-  bounds: { x: 20, y: 370, width: 600, height: 30 },
+  bounds: { x: 20, y: 450, width: 600, height: 30 },
   text: 'Debug: ...'
 });
 
@@ -88,7 +94,8 @@ if (event.type === 'keydown') {
   gui.handleKey(event.key, {
     shift: (event.mods || []).includes('shift'),
     ctrl: (event.mods || []).includes('ctrl'),
-    alt: (event.mods || []).includes('alt')
+    alt: (event.mods || []).includes('alt'),
+    meta: (event.mods || []).includes('meta')
   });
 }
 
@@ -137,7 +144,8 @@ if (widgets.chk.wasToggled()) {
 const volume = widgets.sld.getValue();
 
 if (widgets.input.wasChanged()) {
-  widgets.status.setText(`Input = "${widgets.input.getValue()}"`);
+  const safe = String(widgets.input.getValue()).replace(/\n/g, '\\n');
+  widgets.status.setText(`Input = "${safe}"`);
 }
 
 // Check if mouse is over button (for debugging)

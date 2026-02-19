@@ -56,7 +56,30 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
 - **`wgsl fragment:name`** - Fragment/pixel shaders for post-processing
 - **`wgsl compute:name`** - Compute shaders for GPU computation
-- **`wgsl vertex:name`** - Vertex shaders (less common, usually embedded in fragment shaders)
+- **`wgsl vertex:name`** - Vertex shaders (optional; can be paired with a fragment shader)
+
+### Vertex + Fragment Pairing (Render Shaders)
+
+For post-processing / full-screen effects, Storie compiles a **render pipeline** from a **fragment shader** plus a **vertex shader**.
+
+- The pipeline is **referenced and activated by name** (e.g. `shader.setActive('crt')`).
+- A custom vertex shader is provided by adding a separate WGSL block with the **same name**:
+
+```markdown
+\`\`\`wgsl vertex:crt
+// provides @vertex fn vertexMain(...)
+\`\`\`
+
+\`\`\`wgsl fragment:crt
+// provides @fragment fn fragmentMain(...)
+\`\`\`
+```
+
+Notes:
+
+- If the `fragment:NAME` block already contains `@vertex fn vertexMain(...)`, Storie uses that and ignores any separate vertex block.
+- If no vertex shader is supplied, Storie injects a default passthrough vertex shader so **fragment-only** shaders continue to work.
+- Pairing is done by the **shared block name**, and the render pipeline is compiled when the **fragment** shader is registered.
 
 ## Magic Blocks + WGSL
 

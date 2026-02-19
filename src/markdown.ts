@@ -4,7 +4,7 @@
  */
 
 import type { Section, CodeBlock, MarkdownDocument, BlobBlock, BlobEncoding } from './types.js';
-import { expandMagicBlocks } from './magic.js';
+import { expandMagicBlocks, decompressString } from './magic.js';
 import { extractWGSLBlocks } from './wgsl-parser.js';
 
 interface HeadingMatch {
@@ -23,7 +23,25 @@ export async function parseMarkdown(source: string): Promise<MarkdownDocument> {
   // Step 3: Extract normal markdown elements
   const sections = extractSections(expandedSource);
   const codeBlocks = extractCodeBlocks(expandedSource);
-  const blobBlocks = extractBlobBlocks(codeBlocks);
+  let blobBlocks = extractBlobBlocks(codeBlocks);
+  // Blob-level magic decompression: ```blob ... magic
+  // If present, the blob payload is treated as base64(deflate-raw(utf8(text)))
+  // and decompressed here so downstream blob decoding remains synchronous.
+  if (blobBlocks.length > 0 && blobBlocks.some(b => !!b.magic)) {
+    blobBlocks = await Promise.all(
+      blobBlocks.map(async (b) => {
+        if (!b.magic) return b;
+        const compressed = String(b.data ?? '').replace(/\s+/g, '');
+        if (!compressed) return b;
+        const decompressed = await decompressString(compressed);
+        if (!decompressed) {
+          console.warn(`[blob] Magic decompression failed for blob "${b.name}" (${b.encoding}); keeping original payload`);
+          return b;
+        }
+        return { ...b, data: decompressed };
+      })
+    );
+  }
   const metadata = extractFrontmatter(expandedSource);
 
   return {
@@ -37,6 +55,13 @@ export async function parseMarkdown(source: string): Promise<MarkdownDocument> {
 
 function extractBlobBlocks(codeBlocks: CodeBlock[]): BlobBlock[] {
   const out: BlobBlock[] = [];
+
+  const isTruthy = (v: any): boolean => {
+    if (v === true) return true;
+    if (v === false || v === null || v === undefined) return false;
+    const s = String(v).trim().toLowerCase();
+    return s === 'true' || s === '1' || s === 'yes' || s === 'on' || s === 'magic';
+  };
 
   for (const block of codeBlocks) {
     if (block.lang !== 'blob') continue;
@@ -59,6 +84,7 @@ function extractBlobBlocks(codeBlocks: CodeBlock[]): BlobBlock[] {
       mime,
       encoding,
       data: block.code,
+      magic: isTruthy(block.metadata?.magic),
       startLine: block.startLine,
       endLine: block.endLine
     });
@@ -197,12 +223,20 @@ function extractCodeBlocks(source: string): CodeBlock[] {
         const lang = parts[0] || 'text';
         const metadata: Record<string, string> = {};
         
-        // Parse metadata like "on:init" or "key:value"
+        // Parse metadata like "on:init" or "key:value".
+        // Also support bare flags like "magic" (stored as "true").
         for (let j = 1; j < parts.length; j++) {
-          const pair = parts[j].split(':');
-          if (pair.length === 2) {
-            metadata[pair[0]] = pair[1];
+          const token = parts[j] ?? '';
+          if (!token) continue;
+          const idx = token.indexOf(':');
+          if (idx > 0) {
+            const k = token.slice(0, idx);
+            const v = token.slice(idx + 1);
+            if (k) metadata[k] = v;
+            continue;
           }
+          // Bare flag
+          metadata[token] = 'true';
         }
         
         currentBlock = {

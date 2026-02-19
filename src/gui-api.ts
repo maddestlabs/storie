@@ -4,12 +4,17 @@
  */
 
 import { GUISystem } from './ui/gui/index.js';
+import { GUITextField } from './ui/gui/textfield.js';
+import { GUITextEditor } from './ui/gui/texteditor.js';
 
 /**
  * Create GUI API for sandbox compartment
  * This gets exposed to user JavaScript code
  */
-export function createGUIAPI(getMetrics: () => { charWidth: number; charHeight: number }) {
+export function createGUIAPI(
+  getMetrics: () => { charWidth: number; charHeight: number },
+  isTrustedUserInput?: () => boolean
+) {
   // Store GUI system in the API object itself to avoid closure issues with SES
   const api: any = {
     _system: null as GUISystem | null,
@@ -118,6 +123,16 @@ export function createGUIAPI(getMetrics: () => { charWidth: number; charHeight: 
     },
 
     /**
+     * Create a text editor widget (multi-line)
+     */
+    createTextEditor(config: any) {
+      if (!this._system) {
+        throw new Error('GUI system not initialized. Call gui.init() first.');
+      }
+      return this._system.createTextEditor(config);
+    },
+
+    /**
      * Create a markdown view widget (flow layout inside bounds)
      */
     createMarkdownView(config: any) {
@@ -188,7 +203,55 @@ export function createGUIAPI(getMetrics: () => { charWidth: number; charHeight: 
      */
     handleKey(key: string, modifiers?: { shift?: boolean; ctrl?: boolean; alt?: boolean }) {
       if (!this._system) return;
-      this._system.handleKey(key, modifiers);
+
+      const trusted = () => {
+        try {
+          return typeof isTrustedUserInput === 'function' ? !!isTrustedUserInput() : false;
+        } catch {
+          return false;
+        }
+      };
+
+      const canClipboard = () => (typeof navigator !== 'undefined' && !!(navigator as any).clipboard);
+
+      const sanitizeClipboardText = (text: string, multiline: boolean): string => {
+        let s = String(text ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        s = s.replace(/[\x00-\x08\x0B-\x1F\x7F\x1B]/g, '');
+        if (!multiline) s = s.replace(/\n+/g, ' ');
+        const maxChars = 64 * 1024;
+        if (s.length > maxChars) s = s.slice(0, maxChars);
+        return s;
+      };
+
+      const mods: any = modifiers ?? {};
+      const ctrl = !!mods.ctrl;
+      const meta = !!mods.meta;
+      const lower = String(key ?? '').toLowerCase();
+
+      if ((ctrl || meta) && trusted() && canClipboard()) {
+        const focused = this._system.getWidgetManager().getFocused();
+        const isTextLike = focused && (focused instanceof GUITextField || focused instanceof GUITextEditor);
+
+        if (isTextLike && lower === 'v') {
+          void (navigator as any).clipboard.readText()
+            .then((clipText: string) => {
+              if (!this._system) return;
+              const multiline = focused instanceof GUITextEditor;
+              const safe = sanitizeClipboardText(clipText, multiline);
+              if (safe) this._system.handleText(safe);
+            })
+            .catch(() => void 0);
+          return;
+        }
+
+        if (isTextLike && lower === 'c') {
+          const value = typeof (focused as any).getValue === 'function' ? String((focused as any).getValue() ?? '') : '';
+          void (navigator as any).clipboard.writeText(value).catch(() => void 0);
+          return;
+        }
+      }
+
+      this._system.handleKey(key, modifiers as any);
     },
 
     /**

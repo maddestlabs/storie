@@ -12,6 +12,23 @@ import {
   getCameraProjectionMatrix,
   mat4Multiply
 } from './canvas3d.js';
+import { ColorUtils, type Color } from './types.js';
+
+type Canvas3DBackgroundConfig = {
+  enabled: boolean;
+  /** Procedural layer chain, e.g. ['ruledlines','paper'] */
+  chain: string[];
+  paperColor: Color;
+  lineColor: Color;
+  /** Coordinate scale applied to projected coords before sampling. */
+  scale: number;
+  /** Line spacing in world units (after scale). */
+  spacing: number;
+  /** Thickness as a fraction of spacing (0..0.5). */
+  thickness: number;
+  /** Noise strength for the 'paper' layer (0..1). */
+  noiseStrength: number;
+};
 
 export class Canvas3DRenderer {
   private device: GPUDevice;
@@ -24,6 +41,8 @@ export class Canvas3DRenderer {
   private sampler: GPUSampler | null = null;
   private uniformStride: number = 256;
   private uniformCapacity: number = 0;
+
+  private backgroundTexture: GPUTexture | null = null;
   
   // Render to offscreen texture (for compositor)
   private renderTexture: GPUTexture | null = null;
@@ -66,6 +85,19 @@ export class Canvas3DRenderer {
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge'
     });
+
+    // 1x1 transparent texture for full-screen paper pass.
+    this.backgroundTexture = this.device.createTexture({
+      size: { width: 1, height: 1 },
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+    });
+    this.device.queue.writeTexture(
+      { texture: this.backgroundTexture },
+      new Uint8Array([0, 0, 0, 0]),
+      { bytesPerRow: 4 },
+      { width: 1, height: 1 }
+    );
     
     // Create depth texture
     this.createDepthTexture();
@@ -99,6 +131,15 @@ export class Canvas3DRenderer {
           mvpMatrix: mat4x4<f32>,
           params0: vec4<f32>,
           params1: vec4<f32>,
+          paperColor: vec4<f32>,
+          lineColor: vec4<f32>,
+          // x=scale, y=spacing, z=thicknessFrac, w=enabled
+          paperParams: vec4<f32>,
+          cameraPos: vec4<f32>,
+          cameraRight: vec4<f32>,
+          cameraUp: vec4<f32>,
+          // x=hasRuledLines, y=hasPaperNoise, z=noiseStrength, w=reserved
+          bgFlags: vec4<f32>,
         };
         
         @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -122,13 +163,78 @@ export class Canvas3DRenderer {
           output.uv = input.uv;
           return output;
         }
+
+        fn paperCoordFromScreenUv(uv: vec2<f32>) -> vec2<f32> {
+          // Linear, camera-oriented background mapping.
+          // Uses camera right/up (projected into XY) so the paper rotates with
+          // the camera/section yaw, without ray-plane perspective warping.
+          // params1: x=viewW, y=viewH
+          let viewW = uniforms.params1.x;
+          let viewH = uniforms.params1.y;
+          let delta = (uv - vec2<f32>(0.5, 0.5)) * vec2<f32>(viewW, viewH);
+          let rightXY = uniforms.cameraRight.xy;
+          let upXY = uniforms.cameraUp.xy;
+          return uniforms.cameraPos.xy + rightXY * delta.x + upXY * delta.y;
+        }
+
+        fn hash21(p: vec2<f32>) -> f32 {
+          // Simple, stable hash (no sin/cos) for paper grain.
+          let x = dot(p, vec2<f32>(127.1, 311.7));
+          let y = dot(p, vec2<f32>(269.5, 183.3));
+          let h = fract(sin(x) * 43758.5453 + sin(y) * 12345.6789);
+          return h;
+        }
+
+        fn sampleBackgroundAt(coordIn: vec2<f32>) -> vec4<f32> {
+          let enabled = uniforms.paperParams.w;
+          if (enabled < 0.5) {
+            return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+          }
+
+          let scale = uniforms.paperParams.x;
+          let spacing = max(0.0001, uniforms.paperParams.y);
+          let thickness = clamp(uniforms.paperParams.z, 0.0, 0.5);
+
+          let coord = coordIn * scale;
+
+          // Base paper
+          var rgb = uniforms.paperColor.rgb;
+
+          // Optional paper grain
+          if (uniforms.bgFlags.y > 0.5) {
+            let s = clamp(uniforms.bgFlags.z, 0.0, 1.0);
+            let n = hash21(floor(coord * 8.0));
+            let grain = (n - 0.5) * 2.0; // -1..1
+            rgb = clamp(rgb + vec3<f32>(grain) * (0.08 * s), vec3<f32>(0.0), vec3<f32>(1.0));
+          }
+
+          // Optional ruled lines
+          if (uniforms.bgFlags.x > 0.5) {
+            let y = coord.y;
+            let phase = fract(y / spacing);
+            let mask = select(0.0, 1.0, phase < thickness);
+            let t = mask * uniforms.lineColor.a;
+            rgb = mix(rgb, uniforms.lineColor.rgb, t);
+          }
+
+          return vec4<f32>(rgb, 1.0);
+        }
         
         @fragment
         fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
           let texColor = textureSample(textureData, textureSampler, input.uv);
+          let isBackground = uniforms.params0.x < 0.0;
+          var outColor = texColor;
+
+          // Full-screen paper pass only (no per-card paper).
+          if (isBackground && uniforms.paperParams.w > 0.5) {
+            let coord = paperCoordFromScreenUv(input.uv);
+            outColor = sampleBackgroundAt(coord);
+          }
+
           // params0.z is full-card hover flag (1 = hovered)
           if (uniforms.params0.z > 0.5) {
-            return vec4<f32>(vec3<f32>(1.0) - texColor.rgb, texColor.a);
+            return vec4<f32>(vec3<f32>(1.0) - outColor.rgb, outColor.a);
           }
           // params0.w is highlight flag (1 = enabled)
           if (uniforms.params0.w > 0.5) {
@@ -137,10 +243,10 @@ export class Canvas3DRenderer {
             let umax = uniforms.params1.z;
             let vmax = uniforms.params1.w;
             if (input.uv.x >= umin && input.uv.x <= umax && input.uv.y >= vmin && input.uv.y <= vmax) {
-              return vec4<f32>(vec3<f32>(1.0) - texColor.rgb, texColor.a);
+              return vec4<f32>(vec3<f32>(1.0) - outColor.rgb, outColor.a);
             }
           }
-          return texColor;
+          return outColor;
         }
       `
     });
@@ -275,13 +381,19 @@ export class Canvas3DRenderer {
   /**
    * Render all 3D sections
    */
-  render(camera: Camera3D, layouts: Section3DLayout[], hoveredSectionIndex: number | null = null): void {
+  render(
+    camera: Camera3D,
+    layouts: Section3DLayout[],
+    hoveredSectionIndex: number | null = null,
+    background?: Canvas3DBackgroundConfig
+  ): void {
     if (!this.renderPipeline || !this.vertexBuffer || !this.indexBuffer || !this.renderTexture) {
       console.warn('Canvas3DRenderer not fully initialized');
       return;
     }
 
-    this.ensureUniformBufferCapacity(layouts.length);
+    const paperEnabled = !!background?.enabled;
+    this.ensureUniformBufferCapacity(layouts.length + (paperEnabled ? 1 : 0));
     if (!this.uniformBuffer || !this.sampler) {
       console.warn('Canvas3DRenderer not fully initialized');
       return;
@@ -325,6 +437,78 @@ export class Canvas3DRenderer {
     const viewMatrix = getCameraViewMatrix(camera);
     const projectionMatrix = getCameraProjectionMatrix(camera, aspect);
     const viewProjectionMatrix = mat4Multiply(projectionMatrix, viewMatrix);
+
+    const paperColor = paperEnabled ? ColorUtils.rgbaNorm(background!.paperColor) : [0, 0, 0, 0];
+    const lineColor = paperEnabled ? ColorUtils.rgbaNorm(background!.lineColor) : [0, 0, 0, 0];
+    const paperParams = paperEnabled
+      ? [
+          Number.isFinite(background!.scale) ? background!.scale : 1,
+          Number.isFinite(background!.spacing) ? background!.spacing : 1,
+          Number.isFinite(background!.thickness) ? background!.thickness : 0.06,
+          1,
+        ]
+      : [0, 0, 0, 0];
+
+    const chain = paperEnabled ? (background!.chain || []) : [];
+    const hasRuledLines = chain.some(s => s === 'ruledlines' || s === 'ruled-lines' || s === 'ruled_lines');
+    const hasPaper = chain.some(s => s === 'paper');
+    const noiseStrength = paperEnabled ? (Number.isFinite(background!.noiseStrength) ? background!.noiseStrength : 0.06) : 0;
+    const bgFlags = paperEnabled ? [hasRuledLines ? 1 : 0, hasPaper ? 1 : 0, noiseStrength, 0] : [0, 0, 0, 0];
+
+    const cameraPos = new Float32Array([
+      camera.position.x,
+      camera.position.y,
+      camera.position.z,
+      1,
+    ]);
+
+    // Camera basis in world space from view matrix (column-major lookAt).
+    // Right = first column, Up = second column.
+    const cameraRight = new Float32Array([viewMatrix[0], viewMatrix[4], viewMatrix[8], 0]);
+    const cameraUp = new Float32Array([viewMatrix[1], viewMatrix[5], viewMatrix[9], 0]);
+
+    // Full-screen paper background pass (drawn into the 3D layer).
+    if (paperEnabled) {
+      if (!this.backgroundTexture) {
+        console.warn('Canvas3DRenderer missing backgroundTexture');
+      } else {
+        const uniformOffset = 0;
+        // Map local quad (-0.5..0.5) to clip-space (-1..1).
+        const mvp = new Float32Array([
+          2, 0, 0, 0,
+          0, 2, 0, 0,
+          0, 0, 1, 0,
+          0, 0, 0, 1,
+        ]);
+
+        // Background mode is signaled via params0.x < 0.
+        const params0 = new Float32Array([-1, -1, 0, 0]);
+
+        // Use camera Z as a rough view distance; this makes uv->world scale
+        // respond to zooming and keeps the paper stable during easing.
+        const dist = Math.max(1, Math.abs(camera.position.z));
+        const viewH = 2 * dist * Math.tan(camera.fov * 0.5);
+        const viewW = viewH * aspect;
+        const params1 = new Float32Array([viewW, viewH, dist, 0]);
+
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 0, mvp);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 96, new Float32Array(paperColor));
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 112, new Float32Array(lineColor));
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array(paperParams));
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, new Float32Array(bgFlags));
+
+        const bindGroup = this.createBindGroupForTexture(this.backgroundTexture, uniformOffset);
+        if (bindGroup) {
+          pass.setBindGroup(0, bindGroup);
+          pass.drawIndexed(6);
+        }
+      }
+    }
     
     // Render each visible section
     let drawnCount = 0;
@@ -370,7 +554,8 @@ export class Canvas3DRenderer {
       }
       
       // Update this section's uniform slice.
-      const uniformOffset = i * this.uniformStride;
+      const uniformIndex = paperEnabled ? (i + 1) : i;
+      const uniformOffset = uniformIndex * this.uniformStride;
 
       // MVP matrix at offset +0
       this.device.queue.writeBuffer(
@@ -381,7 +566,7 @@ export class Canvas3DRenderer {
         mvpMatrix.byteLength
       );
       
-      // Params at offset +64 (after mat4): xy=logical size, z=hover flag
+      // Params at offset +64: xy=logical size, z=hover flag
       const hover = hoveredSectionIndex !== null && layout.sectionIndex === hoveredSectionIndex ? 1.0 : 0.0;
       const rect = layout.highlightUvRect;
       const highlightEnabled = rect ? 1.0 : 0.0;
@@ -392,9 +577,18 @@ export class Canvas3DRenderer {
         ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax])
         : new Float32Array([0, 0, 0, 0]);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
+
+      // Paper uniforms (used only for background pass; set disabled for cards)
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 96, new Float32Array(paperColor));
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 112, new Float32Array(lineColor));
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array([0, 0, 0, 0]));
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, new Float32Array([0, 0, 0, 0]));
       
       // Create bind group for this section (texture + uniforms)
-      const bindGroup = this.createSectionBindGroup(layout, uniformOffset);
+      const bindGroup = this.createBindGroupForTexture(layout.texture, uniformOffset);
       if (!bindGroup) continue;
       
       pass.setBindGroup(0, bindGroup);
@@ -414,15 +608,15 @@ export class Canvas3DRenderer {
   /**
    * Create bind group for a section (texture sampling)
    */
-  private createSectionBindGroup(layout: Section3DLayout, uniformOffset: number): GPUBindGroup | null {
-    if (!layout.texture || !this.renderPipeline || !this.uniformBuffer || !this.sampler) return null;
+  private createBindGroupForTexture(texture: GPUTexture, uniformOffset: number): GPUBindGroup | null {
+    if (!this.renderPipeline || !this.uniformBuffer || !this.sampler) return null;
     
     return this.device.createBindGroup({
       layout: this.renderPipeline.getBindGroupLayout(0),
       entries: [
         {
           binding: 0,
-          resource: { buffer: this.uniformBuffer, offset: uniformOffset, size: 96 }
+          resource: { buffer: this.uniformBuffer, offset: uniformOffset, size: 208 }
         },
         {
           binding: 1,
@@ -430,7 +624,7 @@ export class Canvas3DRenderer {
         },
         {
           binding: 2,
-          resource: layout.texture.createView()
+          resource: texture.createView()
         }
       ]
     });
@@ -467,5 +661,6 @@ export class Canvas3DRenderer {
     this.uniformBuffer?.destroy();
     this.depthTexture?.destroy();
     this.renderTexture?.destroy();
+    this.backgroundTexture?.destroy();
   }
 }

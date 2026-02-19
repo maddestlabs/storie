@@ -83,12 +83,17 @@ export interface Canvas3DConfig {
    * Supported values:
    * - Theme key strings: 'bg', 'bgAlt', 'fg', 'fgAlt', 'accent1', 'accent2', 'accent3'
    * - Special string: 'surface' (uses the theme stylesheet's `surface.bg`)
+  * - Special string: 'ruledlines' (seamless procedural ruled-paper background, computed in the 3D shader)
+  * - Special chain syntax (Canvas3D): 'ruledlines+paper' (apply multiple procedural background layers)
+   * - Special string: 'ruledlines-baked' (draws ruled-paper into the per-section texture; non-seamless across cards)
    * - Hex strings: '#RRGGBB' or '#RRGGBBAA'
    * - Packed color: 0xRRGGBBAA
    * - Legacy object: { r, g, b, a? } where a is 0..1
    */
   sectionBackground?:
     | 'surface'
+    | 'ruledlines'
+    | 'ruledlines-baked'
     | 'bg'
     | 'bgAlt'
     | 'fg'

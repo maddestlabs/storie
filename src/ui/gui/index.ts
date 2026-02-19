@@ -12,6 +12,7 @@ import { GUILabel, type GUILabelConfig } from './label.js';
 import { GUICheckbox, type GUICheckboxConfig } from './checkbox.js';
 import { GUISlider, type GUISliderConfig } from './slider.js';
 import { GUITextField, type GUITextFieldConfig } from './textfield.js';
+import { GUITextEditor, type GUITextEditorConfig } from './texteditor.js';
 import { GUIMarkdownView, type GUIMarkdownViewConfig } from './markdown-view.js';
 import { GUILayoutContainer, type GUILayoutContainerConfig } from './layout-container.js';
 import type { Draw2D, WidgetDrawInfo, WidgetDrawInfoCommon } from '../draw2d.js';
@@ -117,6 +118,15 @@ export class GUISystem {
   }
 
   /**
+   * Create a text editor widget (multi-line)
+   */
+  createTextEditor(config: GUITextEditorConfig): GUITextEditor {
+    const editor = new GUITextEditor(config);
+    this.widgetManager.register(editor);
+    return editor;
+  }
+
+  /**
    * Create a markdown view widget (flow layout inside bounds)
    */
   createMarkdownView(config: GUIMarkdownViewConfig): GUIMarkdownView {
@@ -166,6 +176,12 @@ export class GUISystem {
     const textFields = this.widgetManager.getAll().filter(w => w instanceof GUITextField) as GUITextField[];
     for (const tf of textFields) {
       tf.updateMetrics(charWidth, charHeight);
+    }
+
+    // Update text editor metrics
+    const textEditors = this.widgetManager.getAll().filter(w => w instanceof GUITextEditor) as GUITextEditor[];
+    for (const ed of textEditors) {
+      ed.updateMetrics(charWidth, charHeight);
     }
   }
 
@@ -248,6 +264,8 @@ export class GUISystem {
         this.renderSlider(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUITextField) {
         this.renderTextField(widget, uiAPI, charWidth);
+      } else if (widget instanceof GUITextEditor) {
+        this.renderTextEditor(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUIMarkdownView) {
         this.renderMarkdownView(widget, uiAPI, charWidth, charHeight);
       }
@@ -308,6 +326,83 @@ export class GUISystem {
         ui.rect(caretX, caretY, caretW, caretH, fg);
         const ch = caretLocal >= 0 && caretLocal < visibleText.length ? visibleText[caretLocal] : ' ';
         ui.text(ch, caretX, textY, bg);
+      }
+    }
+
+    if (ui.popClipRect) ui.popClipRect();
+  }
+
+  private renderTextEditor(ed: GUITextEditor, ui: Draw2D, charW: number, charH: number): void {
+    const { x, y, width, height } = ed.bounds;
+    const { fg, bg, borderColor, focusBorderColor } = ed.textEditorStyle;
+
+    // Background
+    ui.rect(x, y, width, height, bg);
+
+    // Border (thicker when focused)
+    const b = ed.state.focused ? 3 : 2;
+    const bc = ed.state.focused ? focusBorderColor : borderColor;
+    ui.rect(x, y, width, b, bc);
+    ui.rect(x, y + height - b, width, b, bc);
+    ui.rect(x, y, b, height, bc);
+    ui.rect(x + width - b, y, b, height, bc);
+
+    const padX = 8;
+    const padY = 8;
+    const innerX = x + padX;
+    const innerY = y + padY;
+    const innerW = Math.max(0, width - padX * 2);
+    const innerH = Math.max(0, height - padY * 2);
+    const maxCols = Math.max(0, Math.floor(innerW / Math.max(1, charW)));
+    const maxRows = Math.max(0, Math.floor(innerH / Math.max(1, charH)));
+
+    const info = ed.getCursorInfo();
+    const lineCount = ed.getLineCount();
+    const maxLineLen = ed.getMaxLineLength();
+
+    // Keep cursor visible
+    let scrollX = info.scrollX;
+    let scrollY = info.scrollY;
+    if (info.cursorRow < scrollY) scrollY = info.cursorRow;
+    else if (info.cursorRow > scrollY + maxRows - 1) scrollY = info.cursorRow - maxRows + 1;
+    scrollY = Math.max(0, Math.min(scrollY, Math.max(0, lineCount - maxRows)));
+
+    if (info.cursorCol < scrollX) scrollX = info.cursorCol;
+    else if (info.cursorCol > scrollX + maxCols - 1) scrollX = info.cursorCol - maxCols + 1;
+    scrollX = Math.max(0, Math.min(scrollX, Math.max(0, maxLineLen - maxCols)));
+
+    ed.setScroll(scrollX, scrollY);
+
+    if (ui.pushClipRect) ui.pushClipRect(innerX, innerY, innerW, innerH);
+
+    const value = ed.getValue();
+    if (value.length === 0 && ed.placeholder) {
+      ui.text(ed.placeholder, innerX, innerY, fg);
+    } else {
+      for (let row = 0; row < maxRows; row++) {
+        const lineIdx = scrollY + row;
+        if (lineIdx >= lineCount) break;
+        const line = ed.getLine(lineIdx);
+        const visible = line.slice(scrollX, scrollX + maxCols);
+        if (!visible) continue;
+        const textY = innerY + row * charH;
+        ui.text(visible, innerX, textY, fg);
+      }
+    }
+
+    // Caret
+    if (ed.state.focused) {
+      const caretRow = info.cursorRow - scrollY;
+      const caretCol = info.cursorCol - scrollX;
+      if (caretRow >= 0 && caretRow < maxRows && caretCol >= 0 && caretCol < maxCols) {
+        const caretX = innerX + caretCol * charW;
+        const caretY = innerY + caretRow * charH;
+
+        ui.rect(caretX, caretY, charW, charH, fg);
+
+        const line = ed.getLine(info.cursorRow);
+        const ch = info.cursorCol < line.length ? line[info.cursorCol] : ' ';
+        ui.text(ch, caretX, caretY, bg);
       }
     }
 
@@ -443,16 +538,24 @@ export class GUISystem {
   getWidgets() {
     return this.widgetManager.getAll();
   }
+
+  /**
+   * Get widget manager (for advanced usage)
+   */
+  getWidgetManager(): WidgetManager {
+    return this.widgetManager;
+  }
 }
 
 // Re-export widget types for convenience
-export { GUIButton, GUILabel, GUICheckbox, GUISlider, GUIMarkdownView, GUILayoutContainer };
+export { GUIButton, GUILabel, GUICheckbox, GUISlider, GUITextField, GUITextEditor, GUIMarkdownView, GUILayoutContainer };
 export type {
   GUIButtonConfig,
   GUILabelConfig,
   GUICheckboxConfig,
   GUISliderConfig,
   GUITextFieldConfig,
+  GUITextEditorConfig,
   GUIMarkdownViewConfig,
   GUILayoutContainerConfig
 };

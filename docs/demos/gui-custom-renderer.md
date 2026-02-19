@@ -11,6 +11,46 @@ A minimal demo showing how to override retained-mode widget drawing with `gui.se
 
 ## Game Code
 
+## Embedded Icon (PNG)
+
+```blob name:favicon mime:image/png enc:base64
+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
+```
+
 ```js
 let widgets = null;
 let mouseDownLeft = false;
@@ -29,7 +69,7 @@ gui.init();
 // Kick off a one-time icon load.
 // (We keep it promise-based so init doesn't need to be async.)
 iconLoading = true;
-ui.loadImage('/favicon.png')
+ui.loadImageFromBlob('favicon')
   .then((id) => { iconId = id; })
   .catch(() => { iconId = null; })
   .finally(() => { iconLoading = false; });

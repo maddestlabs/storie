@@ -150,7 +150,7 @@ export function describeShader(shader: WGSLShader): string {
 
 /**
  * Extract WGSL shader blocks from markdown source
- * Syntax: ```wgsl fragment:shaderName or ```wgsl compute:shaderName
+ * Syntax: ```wgsl fragment:shaderName or ```wgsl vertex:shaderName or ```wgsl compute:shaderName
  */
 export function extractWGSLBlocks(source: string): WGSLShader[] {
   const lines = source.split('\n');
@@ -161,7 +161,7 @@ export function extractWGSLBlocks(source: string): WGSLShader[] {
     const line = lines[i];
     const trimmed = line.trim();
 
-    // Check for WGSL block start: ```wgsl fragment:name or ```wgsl compute:name
+    // Check for WGSL block start: ```wgsl fragment:name / vertex:name / compute:name
     if (trimmed.startsWith('```wgsl')) {
       // Parse the marker line to extract type and name
       const markerParts = trimmed.substring(7).trim().split(':');

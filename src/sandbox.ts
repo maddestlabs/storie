@@ -123,6 +123,13 @@ export interface SandboxAPI {
     bytes: () => Uint8Array | null;
     text: (encoding?: string) => string | null;
   };
+
+  // Document metadata API (read-only)
+  // Indices match Canvas3D's depth-first section layout order.
+  doc: {
+    sectionsFlat: () => Array<{ index: number; title: string; level: number }>;
+    sectionCount: () => number;
+  };
   
   // Theme API
   getStyle: (name: string) => NamedStyle;
@@ -161,14 +168,110 @@ export interface SandboxAPI {
     context: AudioContext;
     // Helpers
     playTone: (frequency: number, duration: number, volume?: number) => { osc: OscillatorNode; gain: GainNode };
-    loadSound: (url: string) => Promise<AudioBuffer>;
+    loadSoundFromDrop: () => Promise<AudioBuffer | null>;
     loadSoundFromBlob: (name: string, documentId?: string) => Promise<AudioBuffer | null>;
     playBuffer: (buffer: AudioBuffer, options?: { loop?: boolean; volume?: number; playbackRate?: number }) => AudioBufferSourceNode;
+    playDrop: (options?: { loop?: boolean; volume?: number; playbackRate?: number; when?: number; destination?: AudioNode }) => Promise<AudioBufferSourceNode | null>;
     playBlob: (
       name: string,
       options?: { loop?: boolean; volume?: number; playbackRate?: number; when?: number; destination?: AudioNode },
       documentId?: string
     ) => Promise<AudioBufferSourceNode | null>;
+
+    // Offline analysis helpers
+    peaksFromBuffer: (
+      buffer: AudioBuffer,
+      options?: {
+        windowMs?: number;
+        smoothMs?: number;
+        minGapMs?: number;
+        thresholdMul?: number;
+        minThreshold?: number;
+        compressPow?: number;
+        minProminence?: number;
+      }
+    ) => {
+      peaks: number[];
+      envelopeHz: number;
+      envelope: Float32Array;
+      threshold: number;
+    };
+
+    beatsFromBuffer: (
+      buffer: AudioBuffer,
+      options?: {
+        bpmMin?: number;
+        bpmMax?: number;
+        envelopeHz?: number;
+        smoothMs?: number;
+        meter?: number;
+        onsetMode?: 'energy' | 'spectralFlux';
+        fftSize?: number;
+        fftWindow?: 'hann' | 'none';
+      }
+    ) => {
+      bpm: number;
+      confidence: number;
+      meter: number;
+      periodSec: number;
+      offsetSec: number;
+      beats: number[];
+      downbeats: number[];
+      envelopeHz: number;
+      envelope: Float32Array;
+    };
+
+    beatState: (
+      analysis: {
+        bpm: number;
+        confidence: number;
+        meter: number;
+        periodSec: number;
+        offsetSec: number;
+        beats: number[];
+        downbeats: number[];
+        envelopeHz: number;
+        envelope: Float32Array;
+      },
+      timeSec: number,
+      prevTimeSec?: number
+    ) => {
+      bpm: number;
+      meter: number;
+      periodSec: number;
+      offsetSec: number;
+      timeSec: number;
+      beatIndex: number;
+      beatInBar: number;
+      barIndex: number;
+      beatFloat: number;
+      beatPhase: number;
+      barPhase: number;
+      nextBeatSec: number;
+      nextDownbeatSec: number;
+      isBeatEdge: boolean;
+      isDownbeatEdge: boolean;
+    };
+
+    // Realtime FFT/analyser helper for visualizers
+    fft: {
+      createAnalyser: (options?: {
+        fftSize?: number;
+        smoothing?: number;
+        minDecibels?: number;
+        maxDecibels?: number;
+      }) => {
+        analyser: AnalyserNode;
+        binHz: () => number;
+        connectFrom: (node: AudioNode) => any;
+        connectTo: (node: AudioNode) => any;
+        getFrequencyBytes: () => Uint8Array;
+        getFrequencyFloats: () => Float32Array;
+        getTimeDomainBytes: () => Uint8Array;
+        getTimeDomainFloats: () => Float32Array;
+        getBands: (bands: Array<{ fromHz: number; toHz: number }>) => number[];
+      };
+    };
     // Raw API shortcuts
     createOscillator: () => OscillatorNode;
     createGain: () => GainNode;
@@ -213,7 +316,6 @@ export interface SandboxAPI {
     drawLine: (x1: number, y1: number, x2: number, y2: number, color: string, lineWidth?: number) => void;
     drawImage: (image: HTMLImageElement | ImageBitmap | HTMLCanvasElement, x: number, y: number, w?: number, h?: number) => void;
     text: (text: string, x: number, y: number, color: string, font?: string) => void;
-    loadImage: (url: string) => Promise<HTMLImageElement>;
     // Properties
     width: number;
     height: number;
@@ -573,6 +675,9 @@ export class ScriptSandbox {
 
         // Dropped file API (binary-safe)
         drop: this.api.drop,
+
+        // Document metadata (read-only)
+        doc: (this.api as any).doc,
         
         // Theme API
         getStyle: this.api.getStyle,
@@ -582,6 +687,17 @@ export class ScriptSandbox {
         modules: this.api.modules,
         
         // Native Browser APIs
+        // Note: SES Compartments do not automatically inherit host globals.
+        // Explicitly endow safe built-ins needed by user docs/demos.
+        CompressionStream: (globalThis as any).CompressionStream,
+        DecompressionStream: (globalThis as any).DecompressionStream,
+        TextEncoder: (globalThis as any).TextEncoder,
+        TextDecoder: (globalThis as any).TextDecoder,
+        Response: (globalThis as any).Response,
+        // Bind to the host global to avoid "Illegal invocation" in some runtimes.
+        atob: (s: string) => (globalThis as any).atob(s),
+        btoa: (s: string) => (globalThis as any).btoa(s),
+
           audio: (() => {
             const audioRef: any = (this.api as any).audio;
             if (!audioRef || typeof audioRef !== 'object') return audioRef;

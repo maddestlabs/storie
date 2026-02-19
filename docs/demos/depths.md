@@ -1,10 +1,10 @@
 ---
 title: "Depths Beckon"
 author: "Maddest Labs"
-theme: "solarlight"
+theme: "solardark"
 fontsize: 22
-shaders: "ruledlines+paper+lightvignette"
 font: "Courier+Prime"
+shaders: "lightvignette"
 ---
 
 ```javascript on:init
@@ -15,11 +15,11 @@ canvas3D.config.setDefaults({
   defaultSectionHeight: 24,       // Default height
   autoLayoutSpacing: 150,         // Spacing between auto-laid-out sections (world units)
   sectionBorderEnabled: false,     // Draw a border around each section card
-  sectionBackground: 'bg',   // Section card background: 'surface' | 'bg' | 'bgAlt' | 'accent1' | '#RRGGBB' | 0xRRGGBBAA
+  sectionBackground: 'paper+ruledlines',   // Section card background: 'surface' | 'ruledlines' | 'bg' | 'bgAlt' | 'accent1' | '#RRGGBB' | 0xRRGGBBAA
 });
 canvas3D.camera.setPosition(0, 0, 250);
 canvas3D.camera.setRotation(0, 10, 0.5);
-canvas3D.camera.setEaseSpeed(0.08, 0.12);
+canvas3D.camera.setEaseSpeed(0.018, 0.012);
 canvas3D.camera.focusOnSection(0, 50);
 ```
 
@@ -61,7 +61,7 @@ hasTorch = true
 torchQuality = "bright"
 ```
 
-# Hall of Statues
+# Hall of Statues {"rotate-x": "17"}
 ⠀
 You step into a vast hall supported by crumbling pillars. **Three stone statues** stand guard, each depicting a different warrior from a forgotten age. Their hollow eyes seem to follow you as you move.
 ⠀

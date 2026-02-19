@@ -296,6 +296,99 @@ async function initWebGPUShaderSystem(shaderCodes) {
     function applyCoordinateTransform(transformName, uv, shaderUniforms, resolution) {
       if (!transformName) return { uv, inside: true };
 
+      // Waver mapping: uv -> contentUV (matches docs/shaders/waver.wgsl.js)
+      if (transformName === 'waver') {
+        const t = Number(window.shaderSystem?.currentTime ?? window.shaderSystem?.lastTime ?? 0);
+        // Prefer using the same time value the render loop uses, when available.
+        // Fallback to performance-based seconds.
+        const time = Number.isFinite(t) && t !== 0 ? t : (performance.now() - (window.shaderSystem?.startTime || performance.now())) / 1000;
+
+        const resX = Math.max(1, Number(resolution?.x ?? resolution?.[0] ?? terminalCanvas.width ?? 1));
+        const resY = Math.max(1, Number(resolution?.y ?? resolution?.[1] ?? terminalCanvas.height ?? 1));
+        const minRes = Math.max(1, Math.min(resX, resY));
+
+        const panPx = shaderUniforms?.panPx || shaderUniforms?.panPX || [0, 0];
+        const tiltPx = shaderUniforms?.tiltPx || shaderUniforms?.tiltPX || [0, 0];
+        const zoom = Number(shaderUniforms?.zoom ?? 1.1);
+        const panSpeed = Number(shaderUniforms?.panSpeed ?? 0.22);
+        const rollPx = Number(shaderUniforms?.rollPx ?? 1.0);
+        const rollSpeed = Number(shaderUniforms?.rollSpeed ?? 0.14);
+        const tiltSpeed = Number(shaderUniforms?.tiltSpeed ?? 0.11);
+        const tiltWobble = Number(shaderUniforms?.tiltWobble ?? 0.35);
+        const perspective = Math.max(0.2, Number(shaderUniforms?.perspective ?? 1.35));
+
+        const panWaveX = Math.sin(time * panSpeed) + 0.35 * Math.sin(time * panSpeed * 0.41 + 1.7);
+        const panWaveY = Math.sin(time * panSpeed * 0.91 + 0.8) + 0.35 * Math.sin(time * panSpeed * 0.33 + 2.3);
+        const panUvX = (panWaveX * Number(panPx?.[0] ?? 0)) / resX;
+        const panUvY = (panWaveY * Number(panPx?.[1] ?? 0)) / resY;
+
+        const rollWave = Math.sin(time * rollSpeed) + 0.25 * Math.sin(time * rollSpeed * 0.37 + 0.9);
+        const rollAngle = rollWave * (rollPx * 2.0 / minRes);
+        const c = Math.cos(rollAngle);
+        const s = Math.sin(rollAngle);
+
+        const tiltWaveX = Math.sin(time * tiltSpeed + 1.1);
+        const tiltWaveY = Math.sin(time * tiltSpeed * 0.83 + 2.4);
+        const wobbleX = Math.sin(time * tiltSpeed * 1.77 + 0.2);
+        const wobbleY = Math.sin(time * tiltSpeed * 1.53 + 1.9);
+        const tiltX = (tiltWaveX + wobbleX * tiltWobble) * Number(tiltPx?.[0] ?? 0);
+        const tiltY = (tiltWaveY + wobbleY * tiltWobble) * Number(tiltPx?.[1] ?? 0);
+        const tiltAngleX = (tiltY * 2.0) / resY;
+        const tiltAngleY = (tiltX * 2.0) / resX;
+
+        // Apply the same mapping as WGSL: outputUV -> contentUV
+        let px = uv.x - 0.5;
+        let py = uv.y - 0.5;
+
+        const z = Math.max(1e-6, zoom);
+        px /= z;
+        py /= z;
+
+        px -= panUvX;
+        py -= panUvY;
+
+        // Roll
+        const rx = c * px - s * py;
+        const ry = s * px + c * py;
+        px = rx;
+        py = ry;
+
+        // Tilt with perspective
+        let vx = px;
+        let vy = py;
+        let vz = 1.0 / perspective;
+
+        // rotateX
+        {
+          const cx = Math.cos(tiltAngleX);
+          const sx = Math.sin(tiltAngleX);
+          const ny = cx * vy - sx * vz;
+          const nz = sx * vy + cx * vz;
+          vy = ny;
+          vz = nz;
+        }
+
+        // rotateY
+        {
+          const cy = Math.cos(tiltAngleY);
+          const sy = Math.sin(tiltAngleY);
+          const nx = cy * vx + sy * vz;
+          const nz = -sy * vx + cy * vz;
+          vx = nx;
+          vz = nz;
+        }
+
+        const invZ = 1.0 / Math.max(0.2, vz);
+        const contentX = vx * invZ + 0.5;
+        const contentY = vy * invZ + 0.5;
+        const inside = contentX >= 0 && contentX <= 1 && contentY >= 0 && contentY <= 1;
+
+        return {
+          uv: { x: clamp01(contentX), y: clamp01(contentY) },
+          inside
+        };
+      }
+
       // CRT mapping: screen UV -> content UV (matches docs/shaders/crt.js + WGSL port)
       if (transformName === 'crt') {
         const curveStrength = Number(shaderUniforms?.curveStrength ?? 0);
@@ -786,6 +879,7 @@ function renderWebGPUShaderChain() {
     
     // Update uniforms for each shader that needs them
     const currentTime = (performance.now() - system.startTime) / 1000.0;
+    system.lastTime = currentTime;
     
     for (let i = 0; i < system.pipelines.length; i++) {
       const shader = system.pipelines[i];

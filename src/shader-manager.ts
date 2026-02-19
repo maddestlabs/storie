@@ -6,6 +6,7 @@
  */
 
 import type { WGSLShader } from './types.js';
+import { parseWGSLShader } from './wgsl-parser.js';
 
 interface CompiledShader {
   metadata: WGSLShader;
@@ -21,6 +22,26 @@ interface ShaderRenderResources {
   vertexBuffer: GPUBuffer;
   sampler: GPUSampler;
 }
+
+const DEFAULT_VERTEX_WGSL = `
+struct DefaultVertexIn {
+  @location(0) pos: vec2f,
+  @location(1) uv: vec2f,
+};
+
+struct DefaultVertexOut {
+  @builtin(position) position: vec4f,
+  @location(0) uv: vec2f,
+};
+
+@vertex
+fn vertexMain(input: DefaultVertexIn) -> DefaultVertexOut {
+  var out: DefaultVertexOut;
+  out.position = vec4f(input.pos, 0.0, 1.0);
+  out.uv = input.uv;
+  return out;
+}
+`;
 
 /**
  * ShaderManager - Compile and apply WGSL shaders to textures
@@ -39,6 +60,9 @@ export class ShaderManager {
   private activeShader: string | null = null;
   
   private initialized: boolean = false;
+
+  // Support pairing `wgsl vertex:name` + `wgsl fragment:name`
+  private pendingVertexShaders: Map<string, WGSLShader> = new Map();
 
   constructor(device: GPUDevice, format?: GPUTextureFormat) {
     this.device = device;
@@ -92,20 +116,33 @@ export class ShaderManager {
     try {
       console.log(`[ShaderManager] Compiling shader: ${shader.name} (${shader.kind})`);
       
-      // Only support fragment shaders for now
+      // Support vertex shaders only as a paired stage for a fragment shader.
+      if (shader.kind === 'vertex') {
+        this.pendingVertexShaders.set(shader.name, shader);
+        console.log(`[ShaderManager] Stored pending vertex shader: ${shader.name}`);
+        return true;
+      }
+
+      // Only render pipelines (fragment) are supported here.
       if (shader.kind !== 'fragment') {
-        console.warn(`[ShaderManager] Only fragment shaders supported, got: ${shader.kind}`);
+        console.warn(`[ShaderManager] Only fragment render shaders supported, got: ${shader.kind}`);
         return false;
       }
+
+      // If we have a pending vertex stage for this name, merge it.
+      const pendingVertex = this.pendingVertexShaders.get(shader.name);
+      const mergedCode = this.buildRenderModuleCode(shader.code, pendingVertex?.code);
+      const mergedShader = parseWGSLShader(shader.name, mergedCode);
+      mergedShader.kind = 'fragment';
       
       // Create shader module
       const module = this.device.createShaderModule({
-        code: shader.code,
+        code: mergedShader.code,
         label: shader.name
       });
       
       // Calculate uniform buffer layout
-      const uniformLayout = this.calculateUniformLayout(shader);
+      const uniformLayout = this.calculateUniformLayout(mergedShader);
       const uniformBufferSize = this.calculateUniformBufferSize(uniformLayout);
       
       // Create uniform buffer
@@ -131,7 +168,8 @@ export class ShaderManager {
           },
           {
             binding: 2,
-            visibility: GPUShaderStage.FRAGMENT,
+            // Allow vertex shaders to use time/resolution/custom uniforms too.
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
             buffer: { type: 'uniform' }
           }
         ]
@@ -173,7 +211,7 @@ export class ShaderManager {
       
       // Store compiled shader
       const compiled: CompiledShader = {
-        metadata: shader,
+        metadata: mergedShader,
         module,
         pipeline,
         uniformBuffer,
@@ -183,14 +221,19 @@ export class ShaderManager {
       };
       
       // Initialize default uniform values
-      for (const uniformName of shader.uniforms) {
+      for (const uniformName of mergedShader.uniforms) {
         compiled.uniformValues.set(uniformName, 0);
       }
       
       this.shaders.set(shader.name, compiled);
       
       console.log(`[ShaderManager] ✓ Shader compiled: ${shader.name}`);
-      console.log(`[ShaderManager]   Uniforms: ${shader.uniforms.join(', ') || 'none'}`);
+      console.log(`[ShaderManager]   Uniforms: ${mergedShader.uniforms.join(', ') || 'none'}`);
+
+      // Clear pending vertex shader once consumed.
+      if (pendingVertex) {
+        this.pendingVertexShaders.delete(shader.name);
+      }
       
       return true;
       
@@ -198,6 +241,70 @@ export class ShaderManager {
       console.error(`[ShaderManager] Failed to compile shader ${shader.name}:`, error);
       return false;
     }
+  }
+
+  /**
+   * Register a set of WGSL shaders in one pass.
+   * This enables pairing `wgsl vertex:name` + `wgsl fragment:name` within a document.
+   */
+  async registerShaders(shaders: WGSLShader[]): Promise<void> {
+    if (!Array.isArray(shaders) || shaders.length === 0) return;
+
+    // First, store any vertex shaders so fragment compilation can consume them.
+    for (const s of shaders) {
+      if (s?.kind === 'vertex') {
+        await this.registerShader(s);
+      }
+    }
+
+    // Then, compile fragments.
+    for (const s of shaders) {
+      if (s?.kind === 'fragment') {
+        await this.registerShader(s);
+      }
+    }
+
+    // Finally, attempt to register anything else (compute etc) for future expansion.
+    for (const s of shaders) {
+      if (!s) continue;
+      if (s.kind !== 'vertex' && s.kind !== 'fragment') {
+        await this.registerShader(s);
+      }
+    }
+  }
+
+  private buildRenderModuleCode(fragmentCode: string, vertexCode?: string): string {
+    const frag = String(fragmentCode ?? '');
+    const vert = String(vertexCode ?? '');
+
+    const hasFragment = this.hasFragmentMain(frag) || this.hasFragmentMain(vert);
+    if (!hasFragment) {
+      // Let WebGPU validation surface the actual issue too, but give a clearer log.
+      console.warn('[ShaderManager] WGSL shader is missing fragmentMain(); cannot compile render pipeline');
+    }
+
+    // If fragment already includes a vertex stage, prefer it.
+    if (this.hasVertexMain(frag)) {
+      return frag;
+    }
+
+    // If a separate vertex stage exists, concatenate.
+    if (this.hasVertexMain(vert)) {
+      return `${vert}\n\n${frag}`;
+    }
+
+    // Fragment-only shaders: inject a default passthrough vertex shader.
+    return `${DEFAULT_VERTEX_WGSL}\n\n${frag}`;
+  }
+
+  private hasVertexMain(code: string): boolean {
+    const src = String(code ?? '');
+    return src.includes('@vertex') && /fn\s+vertexMain\s*\(/.test(src);
+  }
+
+  private hasFragmentMain(code: string): boolean {
+    const src = String(code ?? '');
+    return src.includes('@fragment') && /fn\s+fragmentMain\s*\(/.test(src);
   }
 
   /**

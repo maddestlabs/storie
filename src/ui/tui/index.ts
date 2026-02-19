@@ -13,6 +13,7 @@ import { TUILabel, type TUILabelConfig } from './label.js';
 import { TUICheckbox, type TUICheckboxConfig } from './checkbox.js';
 import { TUISlider, type TUISliderConfig } from './slider.js';
 import { TUITextField, type TUITextFieldConfig } from './textfield.js';
+import { TUITextEditor, type TUITextEditorConfig } from './texteditor.js';
 
 /**
  * Main TUI system that manages terminal-based UI
@@ -74,6 +75,15 @@ export class TUISystem {
     const textField = new TUITextField(config);
     this.widgetManager.register(textField);
     return textField;
+  }
+
+  /**
+   * Create a text editor widget (multi-line)
+   */
+  createTextEditor(config: TUITextEditorConfig): TUITextEditor {
+    const editor = new TUITextEditor(config);
+    this.widgetManager.register(editor);
+    return editor;
   }
   
   /**
@@ -177,5 +187,12 @@ export class TUISystem {
 }
 
 // Re-export widget types for convenience
-export type { TUIButtonConfig, TUILabelConfig, TUICheckboxConfig, TUISliderConfig, TUITextFieldConfig };
-export { TUIButton, TUILabel, TUICheckbox, TUISlider, TUITextField };
+export type {
+  TUIButtonConfig,
+  TUILabelConfig,
+  TUICheckboxConfig,
+  TUISliderConfig,
+  TUITextFieldConfig,
+  TUITextEditorConfig
+};
+export { TUIButton, TUILabel, TUICheckbox, TUISlider, TUITextField, TUITextEditor };

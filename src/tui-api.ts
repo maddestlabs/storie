@@ -7,6 +7,8 @@ import { TUISystem } from './ui/tui/index.js';
 import { ColorUtils } from './types.js';
 import type { TerminalRenderer } from './terminal-renderer.js';
 import { setTUIThemeFromStyles } from './ui/tui/theme.js';
+import { TUITextField } from './ui/tui/textfield.js';
+import { TUITextEditor } from './ui/tui/texteditor.js';
 
 /**
  * Create TUI API for sandbox compartment
@@ -15,9 +17,38 @@ import { setTUIThemeFromStyles } from './ui/tui/theme.js';
 export function createTUIAPI(
   renderer: TerminalRenderer,
   getCellBuffer: () => any[][],
-  getStyle?: (name: string) => any
+  getStyle?: (name: string) => any,
+  isTrustedUserInput?: () => boolean
 ) {
   let tuiSystem: TUISystem | null = null;
+
+  const trusted = () => {
+    try {
+      return typeof isTrustedUserInput === 'function' ? !!isTrustedUserInput() : false;
+    } catch {
+      return false;
+    }
+  };
+
+  const canClipboard = () => (typeof navigator !== 'undefined' && !!(navigator as any).clipboard);
+
+  const sanitizeClipboardText = (text: string, multiline: boolean): string => {
+    // Normalize newlines.
+    let s = String(text ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+    // Remove ESC and most C0 controls (keep \n and \t).
+    s = s.replace(/[\x00-\x08\x0B-\x1F\x7F\x1B]/g, '');
+
+    if (!multiline) {
+      // Single-line fields should not receive literal newlines.
+      s = s.replace(/\n+/g, ' ');
+    }
+
+    // Basic size cap (avoid megabyte pastes hanging the UI).
+    const maxChars = 64 * 1024;
+    if (s.length > maxChars) s = s.slice(0, maxChars);
+    return s;
+  };
   
   return {
     /**
@@ -137,6 +168,24 @@ export function createTUIAPI(
       }
       return tuiSystem.createTextField(config);
     },
+
+    /**
+     * Create a text editor widget (multi-line)
+     *
+     * @example
+     * ```javascript
+     * const editor = tui.createTextEditor({
+     *   bounds: { x: 2, y: 5, width: 40, height: 8 },
+     *   value: 'hello\nworld'
+     * });
+     * ```
+     */
+    createTextEditor(config: any) {
+      if (!tuiSystem) {
+        throw new Error('TUI system not initialized. Call tui.init() first.');
+      }
+      return tuiSystem.createTextEditor(config);
+    },
     
     /**
      * Update TUI with input state
@@ -173,7 +222,39 @@ export function createTUIAPI(
      */
     handleKey(key: string, modifiers?: { shift?: boolean; ctrl?: boolean; alt?: boolean }) {
       if (!tuiSystem) return;
-      tuiSystem.handleKey(key, modifiers);
+
+      const mods: any = modifiers ?? {};
+      const ctrl = !!mods.ctrl;
+      const meta = !!mods.meta;
+      const lower = String(key ?? '').toLowerCase();
+
+      // Clipboard handling is host-owned and gesture-gated.
+      if ((ctrl || meta) && trusted() && canClipboard()) {
+        const focused = tuiSystem.getWidgetManager().getFocused();
+        const isTextLike = focused && (focused instanceof TUITextField || focused instanceof TUITextEditor);
+
+        if (isTextLike && lower === 'v') {
+          // Paste into focused text widget.
+          void (navigator as any).clipboard.readText()
+            .then((clipText: string) => {
+              if (!tuiSystem) return;
+              const multiline = focused instanceof TUITextEditor;
+              const safe = sanitizeClipboardText(clipText, multiline);
+              if (safe) tuiSystem.handleText(safe);
+            })
+            .catch(() => void 0);
+          return;
+        }
+
+        if (isTextLike && lower === 'c') {
+          // Copy full value for now (selection can be added later).
+          const value = typeof (focused as any).getValue === 'function' ? String((focused as any).getValue() ?? '') : '';
+          void (navigator as any).clipboard.writeText(value).catch(() => void 0);
+          return;
+        }
+      }
+
+      tuiSystem.handleKey(key, modifiers as any);
     },
 
     /**

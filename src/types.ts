@@ -186,6 +186,11 @@ export interface BlobBlock {
   mime: string;
   encoding: BlobEncoding;
   data: string; // encoded payload (e.g. base64), whitespace allowed
+  /**
+   * If true, `data` is a base64-encoded, deflate-raw compressed UTF-8 string.
+   * It will be decompressed during markdown parsing.
+   */
+  magic?: boolean;
   startLine: number;
   endLine: number;
 }

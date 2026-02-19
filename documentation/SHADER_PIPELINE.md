@@ -1,294 +1,441 @@
-# Shader Pipeline Implementation Summary
+# Shader Pipeline Architecture
 
-## What Was Implemented
+## Overview
 
-### Phase 5: Shader Pipeline System
+The Shader Pipeline system enables chaining WGSL (WebGPU Shading Language) post-processing effects to create complex visual styles. It's inspired by the original tstorie engine's shader chain system and leverages the existing WGSL shader library.
 
-Building on the compositor foundation (Phases 1-4), we've implemented a WebGPU shader pipeline system that allows chaining WGSL post-processing effects.
+## Architecture
 
-## New Components
+### Components
 
-### 1. ShaderPipeline Class (`src/shader-pipeline.ts`)
-
-A complete GPU-accelerated shader chain system:
-
-**Core Features:**
-- ✅ **Effect Registration**: Register WGSL shaders from config objects
-- ✅ **Dynamic Loading**: Load shaders from `.wgsl.js` modules
-- ✅ **Pipeline Building**: Chain multiple effects sequentially
-- ✅ **Multi-Stage Rendering**: Each effect renders to intermediate texture
-- ✅ **Uniform Management**: Update effect parameters dynamically
-- ✅ **Texture Ping-Pong**: GPU-only processing, no CPU readback
-
-**Key Methods:**
-```typescript
-class ShaderPipeline {
-  async init(): Promise<void>
-  registerEffect(name: string, config: ShaderConfig): void
-  async loadEffect(name: string, url: string): Promise<void>
-  async buildPipeline(effectNames: string[]): Promise<void>
-  apply(inputTexture: GPUTexture): GPUTexture
-  setUniform(effectName: string, uniformName: string, value: number | number[]): void
-  getEffects(): string[]
-  hasEffect(name: string): boolean
-}
+```
+┌─────────────────────────────────────────────────┐
+│             StorieEngine (API)                   │
+│  - User-facing compositor methods                │
+│  - loadEffect(), buildPipeline(), setUniform()   │
+└───────────────────┬─────────────────────────────┘
+                    │
+┌───────────────────▼─────────────────────────────┐
+│             Compositor                           │
+│  - Manages layers & compositing                  │
+│  - Owns ShaderPipeline instance                 │
+│  - Exposes pipeline control                      │
+└───────────────────┬─────────────────────────────┘
+                    │
+┌───────────────────▼─────────────────────────────┐
+│          ShaderPipeline                          │
+│  - Loads and compiles WGSL shaders              │
+│  - Builds multi-stage render pipelines          │
+│  - Manages ping-pong textures                   │
+│  - Applies effects sequentially                 │
+└───────────────────┬─────────────────────────────┘
+                    │
+                    │  Loads from
+                    ▼
+┌─────────────────────────────────────────────────┐
+│      WGSL Shader Library                         │
+│  /docs/shaders/wgsl/*.wgsl.js                   │
+│  - bloom, scanlines, crt, blur, vignette, etc.  │
+│  - Each exports getShaderConfig()               │
+└─────────────────────────────────────────────────┘
 ```
 
-**Architecture:**
-- Each shader stage compiles to a `GPURenderPipeline`
-- Stages maintain their own output texture and uniform buffer
-- Pipeline execution creates bind groups dynamically
-- Fullscreen quad vertex buffer for texture mapping
-- Standard binding layout: texture (0), sampler (1), uniforms (2)
+### Data Flow
 
-### 2. Compositor Integration
-
-**Updated Components:**
-- `src/compositor.ts`: Added ShaderPipeline instance and methods
-- `src/engine.ts`: Exposed pipeline API to user scripts
-- `src/sandbox.ts`: Updated SandboxAPI type with pipeline methods
-
-**New Compositor Methods:**
-```typescript
-async loadEffect(name: string, url: string): Promise<void>
-async buildPipeline(effects: string[]): Promise<void>
-setPipelineEnabled(enabled: boolean): void
-setEffectUniform(effectName: string, uniformName: string, value: number | number[]): void
-getEffects(): string[]
-hasEffect(name: string): boolean
+```
+Input Texture (Composed Layers)
+    │
+    ▼
+┌─────────────┐  Pass 1: Bloom
+│  Texture A  │────────────────────▶┌──────────────┐
+└─────────────┘                     │  Texture B   │
+                                    └──────┬───────┘
+                                           │
+                               Pass 2: Scanlines
+                                           │
+                                           ▼
+                                    ┌──────────────┐
+                                    │  Texture A   │
+                                    └──────┬───────┘
+                                           │
+                                Pass 3: CRT
+                                           │
+                                           ▼
+                                    ┌──────────────┐
+                                    │  Texture B   │
+                                    └──────┬───────┘
+                                           │
+                                           ▼
+                                    Canvas Output
 ```
 
-**API Exposure:**
-All methods are accessible via `engine.compositor.*` in user scripts.
+## Shader Module Format
 
-### 3. Documentation
+All shaders follow a consistent structure:
 
-**Created Files:**
-- `/docs/SHADER_PIPELINE.md`: Complete architecture documentation
-  - System overview with diagrams
-  - Shader module format specification
-  - API reference with examples
-  - Performance analysis
-  - Future roadmap
-
-- `/docs/shader-pipeline-demo.md`: User-facing guide
-  - Available shaders catalog
-  - Usage examples
-  - Dynamic parameter control
-  - Pipeline composition patterns
-
-## Technical Details
-
-### Shader Standard
-
-All WGSL shaders follow convention:
-
-**File Structure:**
 ```javascript
-// effect.wgsl.js
+// shader.wgsl.js
 function getShaderConfig() {
   return {
-    vertexShader: `...WGSL vertex shader...`,
-    fragmentShader: `...WGSL fragment shader...`,
-    uniforms: { param1: defaultValue, ... }
+    vertexShader: `
+      struct VertexOutput {
+        @builtin(position) position: vec4f,
+        @location(0) vUv: vec2f,
+      }
+      
+      @vertex
+      fn vertexMain(@location(0) position: vec2f) -> VertexOutput {
+        var output: VertexOutput;
+        output.vUv = position * 0.5 + 0.5;
+        output.vUv.y = 1.0 - output.vUv.y;
+        output.position = vec4f(position, 0.0, 1.0);
+        return output;
+      }
+    `,
+    
+    fragmentShader: `
+      @group(0) @binding(0) var contentTexture: texture_2d<f32>;
+      @group(0) @binding(1) var contentTextureSampler: sampler;
+      
+      struct Uniforms {
+        time: f32,
+        _pad0: f32, _pad1: f32, _pad2: f32,
+        resolution: vec2f,
+        _pad3: f32, _pad4: f32,
+        // Custom effect parameters...
+        effectParam1: f32,
+        effectParam2: f32,
+        // ...
+      }
+      @group(0) @binding(2) var<uniform> uniforms: Uniforms;
+      
+      @fragment
+      fn fragmentMain(@location(0) vUv: vec2f) -> @location(0) vec4f {
+        // Effect implementation
+        let color = textureSample(contentTexture, contentTextureSampler, vUv);
+        // Apply effect...
+        return color;
+      }
+    `,
+    
+    uniforms: {
+      effectParam1: 1.0,
+      effectParam2: 0.5
+    }
   };
 }
 ```
 
-**Binding Layout:**
-```wgsl
-@group(0) @binding(0) var contentTexture: texture_2d<f32>;
-@group(0) @binding(1) var contentTextureSampler: sampler;
-@group(0) @binding(2) var<uniform> uniforms: Uniforms;
+### Binding Layout (Standardized)
+
+All shaders use the same binding layout:
+
+- **@group(0) @binding(0)**: Input texture (`texture_2d<f32>`)
+- **@group(0) @binding(1)**: Texture sampler (`sampler`)
+- **@group(0) @binding(2)**: Uniform buffer with standard fields:
+  - `time` (f32): Current time in seconds
+  - `_pad0, _pad1, _pad2` (f32): Padding for alignment
+  - `resolution` (vec2f): Texture resolution in pixels
+  - `_pad3, _pad4` (f32): Padding for alignment
+  - Custom effect parameters...
+
+## Implementation Details
+
+### Stage Creation
+
+When adding a stage to the pipeline:
+
+1. **Combine shaders**: Concatenate vertex + fragment shader code
+2. **Create shader module**: Compile WGSL to GPU code
+3. **Allocate uniform buffer**: Size based on standard layout + custom parameters
+4. **Create output texture**: Same size as canvas, RENDER_ATTACHMENT + TEXTURE_BINDING usage
+5. **Build render pipeline**: Configure vertex attributes, fragment targets, topology
+
+### Pipeline Execution
+
+When applying the pipeline (`apply(inputTexture)`):
+
+1. **Create fullscreen quad**: 2 triangles covering clip space (-1 to 1)
+2. **For each stage**:
+   a. Update uniform buffer (time, resolution, custom params)
+   b. Create bind group with previous stage's output as input
+   c. Begin render pass to this stage's output texture
+   d. Draw fullscreen quad through shader
+   e. Submit commands
+3. **Return final texture**: Output of last stage
+
+### Texture Management
+
+The pipeline uses **ping-pong textures**:
+- Each stage has its own output texture
+- Stage N's output feeds into Stage N+1's input
+- No intermediate CPU readback (fully GPU-resident)
+- Textures destroyed when pipeline is rebuilt
+
+## API Reference
+
+### Compositor Methods (Exposed via Engine)
+
+#### `loadEffect(name, url)`
+Load a shader effect from a JavaScript module.
+
+```javascript
+await engine.compositor.loadEffect('bloom', '/docs/shaders/wgsl/bloom.wgsl.js');
 ```
 
-**Uniform Structure:**
-```wgsl
-struct Uniforms {
-  time: f32, _pad0: f32, _pad1: f32, _pad2: f32,
-  resolution: vec2f, _pad3: f32, _pad4: f32,
-  // Custom effect parameters...
+**Parameters:**
+- `name` (string): Name to register effect under
+- `url` (string): Path to `.wgsl.js` file
+
+**Returns:** `Promise<void>`
+
+**Requirements:**
+- Module must export `getShaderConfig()` function
+- Config must have `vertexShader`, `fragmentShader`, `uniforms`
+
+---
+
+#### `buildPipeline(effects)`
+Build a shader pipeline from an array of effect names.
+
+```javascript
+await engine.compositor.buildPipeline(['bloom', 'scanlines', 'crt']);
+```
+
+**Parameters:**
+- `effects` (string[]): Array of effect names in execution order
+
+**Returns:** `Promise<void>`
+
+**Notes:**
+- Order matters! Effects applied left-to-right
+- Clears any existing pipeline
+- Empty array removes all effects
+
+---
+
+#### `setEffectUniform(effectName, uniformName, value)`
+Update a uniform parameter for a specific effect.
+
+```javascript
+engine.compositor.setEffectUniform('bloom', 'bloomIntensity', 0.8);
+```
+
+**Parameters:**
+- `effectName` (string): Name of registered effect
+- `uniformName` (string): Uniform field name (must match shader struct)
+- `value` (number | number[]): New value (scalar or array)
+
+**Notes:**
+- Changes apply on next pipeline application
+- Arrays must match expected length
+- Invalid uniform names are silently ignored
+
+---
+
+#### `getEffects()`
+Get list of all registered effects.
+
+```javascript
+const effects = engine.compositor.getEffects();
+console.log(effects); // ['bloom', 'scanlines', 'crt']
+```
+
+**Returns:** `string[]`
+
+---
+
+#### `hasEffect(name)`
+Check if an effect is registered.
+
+```javascript
+if (engine.compositor.hasEffect('bloom')) {
+  engine.compositor.setEffectUniform('bloom', 'bloomIntensity', 1.5);
 }
 ```
 
-### Existing Shader Library
+**Parameters:**
+- `name` (string): Effect name
 
-The system is designed to work with 11 existing shaders in `/docs/shaders/wgsl/`:
+**Returns:** `boolean`
 
-| Shader | Purpose | Complexity |
-|--------|---------|------------|
-| bloom.wgsl.js | Gaussian glow effect | High |
-| blurgradual.wgsl.js | Gradual blur effect | High |
-| scanlines.wgsl.js | CRT scanlines | Low |
-| crt.wgsl.js | Screen curvature + frame | Medium |
-| lightvignette.wgsl.js | Edge darkening | Low |
-| invert.wgsl.js | Color inversion | Very Low |
-| clouds.wgsl.js | Procedural noise | Medium |
-| paper.wgsl.js | Paper texture | Low |
-| border.wgsl.js | Decorative border | Low |
-| ruledlines.wgsl.js | Notebook lines | Low |
-| lightson.wgsl.js | Lights on effect | Medium |
+---
 
-All shaders are production-ready and follow the standardized format.
+#### `setPipelineEnabled(enabled)`
+Enable/disable the shader pipeline.
 
-## Implementation Status
+```javascript
+engine.compositor.setPipelineEnabled(false); // Bypass effects
+engine.compositor.setPipelineEnabled(true);  // Re-enable
+```
 
-### ✅ Complete
+**Parameters:**
+- `enabled` (boolean): `true` to apply effects, `false` to bypass
 
-1. **ShaderPipeline class**: Fully implemented
-2. **Compositor integration**: Methods added and exposed
-3. **Type definitions**: SandboxAPI updated
-4. **Documentation**: Comprehensive guides created
-5. **Demo page**: Interactive showcase built
-6. **Build system**: Compiles without errors (324KB ES, 140KB UMD)
+**Status:** ⚠️ Not yet implemented (placeholder for future integration)
 
-### ⚠️ Pending Integration
+## Performance Considerations
 
-The shader pipeline is **architecturally complete** but requires one final integration step:
+### Cost per Effect
 
-**Missing Piece:** Auto-application in compositor render flow
+| Effect | Cost | Notes |
+|--------|------|-------|
+| Invert | Very Low | Single texture sample |
+| Vignette | Very Low | Simple math, 1 sample |
+| Border | Low | Edge detection, 1-2 samples |
+| Paper | Low | Noise function |
+| Scanlines | Low | Sin function, 1 sample |
+| Ruled Lines | Low | Conditionals, 1 sample |
+| CRT | Medium | Distortion math, 1-3 samples |
+| Clouds | Medium | Noise function, time-based |
+| Blur | **High** | 5-13 texture samples |
+| Bloom | **Very High** | Brightness extraction + blur |
 
-**What's needed:**
-1. Modify `autoComposite()` to optionally render to offscreen texture
-2. When pipeline has stages, apply after layer composition
-3. Final blit of pipeline output to canvas
+### Optimization Tips
 
-**Why not done yet:**
-- Requires significant refactor of compositor's render path
-- Current compositor blits directly to canvas (no intermediate texture)
-- Need to handle both pipeline-enabled and pipeline-disabled modes efficiently
+1. **Limit chain length**: Keep to 3-5 effects maximum
+2. **Order strategically**: Expensive effects last (bloom, blur)
+3. **Reduce resolution**: Render at lower res, upscale final output
+4. **Adjust blur radius**: Lower radius = fewer samples = faster
+5. **Profile on target hardware**: WebGPU performance varies widely
 
-**Workaround:**
-Users can manually use `ShaderPipeline.apply()` with custom textures. The API is ready for testing, but automatic integration awaits refactoring.
+### Memory Usage
 
-## Usage Example (Once Integrated)
+Each stage allocates:
+- **Output texture**: `width × height × 4 bytes`  (RGBA8)
+- **Uniform buffer**: `~32-128 bytes` per effect
+
+Example: 1920×1080, 4 effects:
+- Textures: `1920 × 1080 × 4 × 4 = 33 MB`
+- Uniforms: `4 × 128 = 512 bytes`
+
+## Future Enhancements
+
+### Planned Features
+
+- [ ] **Automatic integration**: Apply pipeline in `autoComposite()`
+- [ ] **Offscreen composition**: Render to intermediate texture for pipeline input
+- [ ] **Effect presets**: Named combinations (e.g., "retro", "dreamstate")
+- [ ] **Dynamic loading**: Lazy-load shaders on demand
+- [ ] **Shader hot-reload**: Update shaders without rebuilding pipeline
+- [ ] **Custom uniform blocks**: User-defined struct layouts
+- [ ] **Compute shaders**: Parallel post-processing passes
+- [ ] **Effect gallery**: Interactive showcase of all available shaders
+
+### API Additions
+
+```javascript
+// Proposed future API
+await engine.compositor.loadEffectPreset('retro'); // bloom + scanlines + crt
+await engine.compositor.saveEffectPreset('myStyle', ['blur', 'vignette']);
+
+engine.compositor.onPipelineRebuild((effects) => {
+  console.log(`Pipeline updated: ${effects.join(' → ')}`);
+});
+
+const stats = engine.compositor.getPipelineStats();
+// { stages: 3, textureMemory: 33MB, lastFrameTime: 2.3ms }
+```
+
+## Debugging
+
+### Common Issues
+
+**Error: "Shader pipeline not initialized"**
+- Cause: Compositor not available (WebGPU disabled or unsupported)
+- Fix: Check `engine.compositor.available` before calling pipeline methods
+
+**Error: "Effect not found"**
+- Cause: Effect name in `buildPipeline()` wasn't loaded via `loadEffect()`
+- Fix: Ensure `await loadEffect()` completes before `buildPipeline()`
+
+**No visual effect**
+- Cause: Pipeline not integrated with compositor rendering yet
+- Status: Integration in progress (post-composition pass)
+
+**Shader compilation errors**
+- Cause: Invalid WGSL syntax in shader module
+- Fix: Check browser console for WebGPU validation errors
+
+### Logging
+
+Enable verbose logging:
+
+```javascript
+// In compositor.ts or shader-pipeline.ts
+const DEBUG = true;
+
+if (DEBUG) {
+  console.log('[ShaderPipeline] Stage info:', stage);
+}
+```
+
+## Examples
+
+### Basic Usage
 
 ```javascript
 const engine = new StorieEngine(canvas);
 await engine.init();
 
 // Load effects
-await engine.compositor.load Effect('bloom', '/docs/shaders/wgsl/bloom.wgsl.js');
-await engine.compositor.loadEffect('scanlines', '/docs/shaders/wgsl/scanlines.wgsl.js');
-await engine.compositor.loadEffect('crt', '/docs/shaders/wgsl/crt.wgsl.js');
+await engine.compositor.loadEffect('bloom', '/docs/shaders/wgsl/bloom.wgsl.js');
+await engine.compositor.loadEffect('vignette', '/docs/shaders/wgsl/vignette.wgsl.js');
 
 // Build pipeline
-await engine.compositor.buildPipeline(['bloom', 'scanlines', 'crt']);
+await engine.compositor.buildPipeline(['bloom', 'vignette']);
 
-// Customize effects
-engine.compositor.setEffectUniform('bloom', 'bloomIntensity', 0.8);
-engine.compositor.setEffectUniform('scanlines', 'scanlineStrength', 0.7);
-engine.compositor.setEffectUniform('crt', 'curveStrength', 0.3);
-
-// Render will automatically apply pipeline
-// (once integration complete)
+// Adjust parameters
+engine.compositor.setEffectUniform('bloom', 'bloomIntensity', 0.7);
+engine.compositor.setEffectUniform('vignette', 'vignetteStrength', 1.2);
 ```
 
-## Benefits
+### Dynamic Pipeline
 
-### For Users
+```javascript
+let effects = [];
 
-- **Visual Enhancement**: Professional post-processing effects
-- **Easy Composition**: Chain effects with simple array
-- **Real-Time Control**: Adjust parameters dynamically
-- **No Performance Hit**: GPU-accelerated, zero CPU overhead
-- **Extensible**: Add custom shaders following standard format
-
-### For Development
-
-- **Reuses Existing Shaders**: Leverages 11 production-ready effects
-- **Clean API**: Consistent with existing compositor phases
-- **Type-Safe**: Full TypeScript support
-- **Well-Documented**: Complete architecture + usage guides
-- **Future-Proof**: Designed for compute shader expansion
-
-## Performance Characteristics
-
-### Memory Usage
-- **Per Stage**: 1 output texture + 1 uniform buffer
-- **Example (1920×1080, 4 effects)**: ~33MB GPU memory
-
-### Frame Time Impact
-- **Low-complexity effects (vignette)**: <0.5ms
-- **Medium-complexity effects (CRT)**: ~1-2ms
-- **High-complexity effects (bloom)**: ~3-5ms
-- **Combined pipeline (3 effects)**: ~4-8ms on modern hardware
-
-### Optimization
-- GPU-only pipeline (no CPU readback)
-- Efficient texture ping-pong
-- Single-pass per effect
-- Uniform buffer updates batched
-
-## Next Steps
-
-### Immediate (Integration)
-
-1. **Refactor compositor render path**
-   - Add offscreen composition mode
-   - Detect when pipeline has stages
-   - Apply pipeline before final canvas blit
-
-2. **Testing**
-   - Verify each shader loads correctly
-   - Test pipeline chains (2-5 effects)
-   - Profile performance on various hardware
-
-### Near-Term (Enhancement)
-
-3. **Effect presets**
-   - Named combinations ("retro", "dreamstate")
-   - Save/load custom presets
-
-4. **Shader hot-reload**
-   - Update shaders without page refresh
-   - Useful for effect development
-
-### Long-Term (Advanced Features)
-
-5. **Compute shader support**
-   - Parallel post-processing
-   - Non-screen-space effects
-
-6. **Custom uniform layouts**
-   - User-defined struct formats
-   - Advanced parameter control
-
-## Files Modified/Created
-
-### New Files
-- `src/shader-pipeline.ts` (352 lines)
-- `docs/SHADER_PIPELINE.md` (441 lines)
-- `docs/shader-pipeline-demo.md` (163 lines)
-
-### Modified Files
-- `src/compositor.ts` (added pipeline integration)
-- `src/engine.ts` (exposed pipeline API)
-- `src/sandbox.ts` (updated type definitions)
-
-### Build Output
-```
-docs/storie.es.js   404 kB
-docs/storie.umd.js  180 kB
+document.getElementById('bloom-toggle').addEventListener('change', async (e) => {
+  if (e.target.checked) {
+    effects.push('bloom');
+  } else {
+    effects = effects.filter(fx => fx !== 'bloom');
+  }
+  await engine.compositor.buildPipeline(effects);
+});
 ```
 
-## Conclusion
+### Animated Parameters
 
-**Phase 5 (Shader Pipeline) is architecturally complete** with:
-- ✅ Full implementation of ShaderPipeline class
-- ✅ API integration with Compositor
-- ✅ Type definitions and exports
-- ✅ Comprehensive documentation
-- ✅ Interactive demo page
-- ⚠️ Awaiting final render path integration
+```javascript
+function animate() {
+  const time = performance.now() / 1000;
+  
+  // Pulse bloom
+  const intensity = 0.5 + Math.sin(time * 2) * 0.3;
+  engine.compositor.setEffectUniform('bloom', 'bloomIntensity', intensity);
+  
+  // Scroll scanlines
+  engine.compositor.setEffectUniform('scanlines', 'scanlineSpeed', 2.0);
+  
+  requestAnimationFrame(animate);
+}
+animate();
+```
 
-The system is ready for testing and can be manually used. The final integration step (auto-application in compositor) is well-defined and can be implemented when needed.
+## Shader Library Catalog
 
-**Strategic Value:**
-This aligns with the "focus strictly on WGSL shaders" directive by:
-1. Leveraging existing shader library (11 production shaders)
-2. Building WebGPU-first architecture
-3. Enabling unique visual capabilities vs. other engines
-4. Providing clean, extensible API for future shader development
+See `/docs/shaders/wgsl/` for available effects:
 
-The foundation is solid. Integration can proceed when ready.
+- **bloom.wgsl.js**: Gaussian bloom with brightness extraction
+- **blur.wgsl.js**: Gaussian blur
+- **border.wgsl.js**: Decorative border overlay
+- **clouds.wgsl.js**: Procedural cloud noise
+- **crt.wgsl.js**: CRT curvature + frame
+- **invert.wgsl.js**: Color inversion
+- **paper.wgsl.js**: Paper texture
+- **ruledlines.wgsl.js**: Notebook ruled lines
+- **scanlines.wgsl.js**: CRT scanlines
+- **vignette.wgsl.js**: Edge darkening
+
+Each shader includes documentation and default uniform values.

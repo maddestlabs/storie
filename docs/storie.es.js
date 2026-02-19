@@ -9296,12 +9296,24 @@ class ScriptSandbox {
         mouse: this.api.mouse,
         // Dropped file API (binary-safe)
         drop: this.api.drop,
+        // Document metadata (read-only)
+        doc: this.api.doc,
         // Theme API
         getStyle: this.api.getStyle,
         theme: this.api.theme,
         // Module API
         modules: this.api.modules,
         // Native Browser APIs
+        // Note: SES Compartments do not automatically inherit host globals.
+        // Explicitly endow safe built-ins needed by user docs/demos.
+        CompressionStream: globalThis.CompressionStream,
+        DecompressionStream: globalThis.DecompressionStream,
+        TextEncoder: globalThis.TextEncoder,
+        TextDecoder: globalThis.TextDecoder,
+        Response: globalThis.Response,
+        // Bind to the host global to avoid "Illegal invocation" in some runtimes.
+        atob: (s) => globalThis.atob(s),
+        btoa: (s) => globalThis.btoa(s),
         audio: (() => {
           const audioRef = this.api.audio;
           if (!audioRef || typeof audioRef !== "object") return audioRef;
@@ -9855,7 +9867,22 @@ async function parseMarkdown(source) {
   const wgslShaders = extractWGSLBlocks(expandedSource);
   const sections = extractSections(expandedSource);
   const codeBlocks = extractCodeBlocks(expandedSource);
-  const blobBlocks = extractBlobBlocks(codeBlocks);
+  let blobBlocks = extractBlobBlocks(codeBlocks);
+  if (blobBlocks.length > 0 && blobBlocks.some((b) => !!b.magic)) {
+    blobBlocks = await Promise.all(
+      blobBlocks.map(async (b) => {
+        if (!b.magic) return b;
+        const compressed = String(b.data ?? "").replace(/\s+/g, "");
+        if (!compressed) return b;
+        const decompressed = await decompressString(compressed);
+        if (!decompressed) {
+          console.warn(`[blob] Magic decompression failed for blob "${b.name}" (${b.encoding}); keeping original payload`);
+          return b;
+        }
+        return { ...b, data: decompressed };
+      })
+    );
+  }
   const metadata = extractFrontmatter(expandedSource);
   return {
     sections,
@@ -9866,8 +9893,14 @@ async function parseMarkdown(source) {
   };
 }
 function extractBlobBlocks(codeBlocks) {
-  var _a, _b, _c;
+  var _a, _b, _c, _d;
   const out = [];
+  const isTruthy = (v2) => {
+    if (v2 === true) return true;
+    if (v2 === false || v2 === null || v2 === void 0) return false;
+    const s = String(v2).trim().toLowerCase();
+    return s === "true" || s === "1" || s === "yes" || s === "on" || s === "magic";
+  };
   for (const block of codeBlocks) {
     if (block.lang !== "blob") continue;
     const name = String(((_a = block.metadata) == null ? void 0 : _a.name) ?? "").trim();
@@ -9884,6 +9917,7 @@ function extractBlobBlocks(codeBlocks) {
       mime,
       encoding,
       data: block.code,
+      magic: isTruthy((_d = block.metadata) == null ? void 0 : _d.magic),
       startLine: block.startLine,
       endLine: block.endLine
     });
@@ -9982,10 +10016,16 @@ function extractCodeBlocks(source) {
         const lang = parts[0] || "text";
         const metadata = {};
         for (let j = 1; j < parts.length; j++) {
-          const pair = parts[j].split(":");
-          if (pair.length === 2) {
-            metadata[pair[0]] = pair[1];
+          const token = parts[j] ?? "";
+          if (!token) continue;
+          const idx = token.indexOf(":");
+          if (idx > 0) {
+            const k = token.slice(0, idx);
+            const v2 = token.slice(idx + 1);
+            if (k) metadata[k] = v2;
+            continue;
           }
+          metadata[token] = "true";
         }
         currentBlock = {
           lang,
@@ -11590,6 +11630,292 @@ class TUITextField extends BaseWidget {
     }
   }
 }
+function splitLines$1(value) {
+  const normalized = (value ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = normalized.split("\n");
+  return lines.length > 0 ? lines : [""];
+}
+class TUITextEditor extends BaseWidget {
+  constructor(config) {
+    super(config);
+    __publicField(this, "lines");
+    __publicField(this, "cursorRow");
+    __publicField(this, "cursorCol");
+    __publicField(this, "desiredCol");
+    __publicField(this, "scrollX");
+    __publicField(this, "scrollY");
+    __publicField(this, "changedThisFrame", false);
+    this.lines = splitLines$1(config.value ?? "");
+    this.cursorRow = Math.max(0, this.lines.length - 1);
+    this.cursorCol = this.lines[this.cursorRow].length;
+    this.desiredCol = this.cursorCol;
+    this.scrollX = 0;
+    this.scrollY = 0;
+    this.on("click", (ev) => {
+      var _a, _b;
+      const clickX = typeof ((_a = ev.data) == null ? void 0 : _a.x) === "number" ? ev.data.x : null;
+      const clickY = typeof ((_b = ev.data) == null ? void 0 : _b.y) === "number" ? ev.data.y : null;
+      if (clickX === null || clickY === null) return;
+      const innerStartX = this.bounds.x + 1;
+      const innerStartY = this.bounds.y + 1;
+      const innerWidth = Math.max(0, this.bounds.width - 2);
+      const innerHeight = Math.max(0, this.bounds.height - 2);
+      if (innerWidth <= 0 || innerHeight <= 0) return;
+      const relX = Math.max(0, Math.min(innerWidth - 1, clickX - innerStartX));
+      const relY = Math.max(0, Math.min(innerHeight - 1, clickY - innerStartY));
+      const targetRow = Math.max(0, Math.min(this.lines.length - 1, this.scrollY + relY));
+      const targetCol = Math.max(0, Math.min(this.lines[targetRow].length, this.scrollX + relX));
+      this.cursorRow = targetRow;
+      this.cursorCol = targetCol;
+      this.desiredCol = this.cursorCol;
+    });
+  }
+  getValue() {
+    return this.lines.join("\n");
+  }
+  setValue(next) {
+    this.lines = splitLines$1(next ?? "");
+    this.cursorRow = Math.max(0, Math.min(this.cursorRow, this.lines.length - 1));
+    this.cursorCol = Math.max(0, Math.min(this.cursorCol, this.lines[this.cursorRow].length));
+    this.desiredCol = this.cursorCol;
+    this.scrollX = 0;
+    this.scrollY = 0;
+  }
+  wasChanged() {
+    const result = this.changedThisFrame;
+    this.changedThisFrame = false;
+    return result;
+  }
+  handleText(text) {
+    if (!this.state.enabled || !this.state.visible) return false;
+    if (!this.state.focused) return false;
+    if (!text) return false;
+    this.insertText(text);
+    this.markChanged();
+    return true;
+  }
+  handleKey(key, modifiers) {
+    if (!this.state.enabled || !this.state.visible) return false;
+    if (!this.state.focused) return false;
+    const ctrl = !!(modifiers == null ? void 0 : modifiers.ctrl);
+    const alt = !!(modifiers == null ? void 0 : modifiers.alt);
+    switch (key) {
+      case "ArrowLeft":
+        this.moveLeft();
+        return true;
+      case "ArrowRight":
+        this.moveRight();
+        return true;
+      case "ArrowUp":
+        this.moveUp();
+        return true;
+      case "ArrowDown":
+        this.moveDown();
+        return true;
+      case "Home":
+        this.cursorCol = 0;
+        this.desiredCol = 0;
+        return true;
+      case "End":
+        this.cursorCol = this.lines[this.cursorRow].length;
+        this.desiredCol = this.cursorCol;
+        return true;
+      case "Backspace":
+        if (this.backspace()) this.markChanged();
+        return true;
+      case "Delete":
+        if (this.del()) this.markChanged();
+        return true;
+      case "Enter":
+        this.insertNewline();
+        this.markChanged();
+        return true;
+      default:
+        if (!ctrl && !alt && key.length === 1) {
+          this.insertText(key);
+          this.markChanged();
+          return true;
+        }
+        return false;
+    }
+  }
+  insertText(text) {
+    const parts = (text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    if (parts.length === 1) {
+      const line2 = this.lines[this.cursorRow];
+      this.lines[this.cursorRow] = line2.slice(0, this.cursorCol) + parts[0] + line2.slice(this.cursorCol);
+      this.cursorCol += parts[0].length;
+      this.desiredCol = this.cursorCol;
+      return;
+    }
+    const line = this.lines[this.cursorRow];
+    const before = line.slice(0, this.cursorCol);
+    const after = line.slice(this.cursorCol);
+    const first = before + parts[0];
+    const last = parts[parts.length - 1] + after;
+    const middle = parts.slice(1, -1);
+    const newLines = [first, ...middle, last];
+    this.lines.splice(this.cursorRow, 1, ...newLines);
+    this.cursorRow += newLines.length - 1;
+    this.cursorCol = parts[parts.length - 1].length;
+    this.desiredCol = this.cursorCol;
+  }
+  insertNewline() {
+    const line = this.lines[this.cursorRow];
+    const before = line.slice(0, this.cursorCol);
+    const after = line.slice(this.cursorCol);
+    this.lines[this.cursorRow] = before;
+    this.lines.splice(this.cursorRow + 1, 0, after);
+    this.cursorRow += 1;
+    this.cursorCol = 0;
+    this.desiredCol = 0;
+  }
+  backspace() {
+    if (this.cursorCol > 0) {
+      const line = this.lines[this.cursorRow];
+      this.lines[this.cursorRow] = line.slice(0, this.cursorCol - 1) + line.slice(this.cursorCol);
+      this.cursorCol -= 1;
+      this.desiredCol = this.cursorCol;
+      return true;
+    }
+    if (this.cursorRow > 0) {
+      const prev = this.lines[this.cursorRow - 1];
+      const cur = this.lines[this.cursorRow];
+      const nextCol = prev.length;
+      this.lines[this.cursorRow - 1] = prev + cur;
+      this.lines.splice(this.cursorRow, 1);
+      this.cursorRow -= 1;
+      this.cursorCol = nextCol;
+      this.desiredCol = this.cursorCol;
+      return true;
+    }
+    return false;
+  }
+  del() {
+    const line = this.lines[this.cursorRow];
+    if (this.cursorCol < line.length) {
+      this.lines[this.cursorRow] = line.slice(0, this.cursorCol) + line.slice(this.cursorCol + 1);
+      this.desiredCol = this.cursorCol;
+      return true;
+    }
+    if (this.cursorRow < this.lines.length - 1) {
+      const next = this.lines[this.cursorRow + 1];
+      this.lines[this.cursorRow] = line + next;
+      this.lines.splice(this.cursorRow + 1, 1);
+      this.desiredCol = this.cursorCol;
+      return true;
+    }
+    return false;
+  }
+  moveLeft() {
+    if (this.cursorCol > 0) {
+      this.cursorCol -= 1;
+      this.desiredCol = this.cursorCol;
+      return;
+    }
+    if (this.cursorRow > 0) {
+      this.cursorRow -= 1;
+      this.cursorCol = this.lines[this.cursorRow].length;
+      this.desiredCol = this.cursorCol;
+    }
+  }
+  moveRight() {
+    const lineLen = this.lines[this.cursorRow].length;
+    if (this.cursorCol < lineLen) {
+      this.cursorCol += 1;
+      this.desiredCol = this.cursorCol;
+      return;
+    }
+    if (this.cursorRow < this.lines.length - 1) {
+      this.cursorRow += 1;
+      this.cursorCol = 0;
+      this.desiredCol = 0;
+    }
+  }
+  moveUp() {
+    if (this.cursorRow <= 0) return;
+    this.cursorRow -= 1;
+    this.cursorCol = Math.min(this.lines[this.cursorRow].length, this.desiredCol);
+  }
+  moveDown() {
+    if (this.cursorRow >= this.lines.length - 1) return;
+    this.cursorRow += 1;
+    this.cursorCol = Math.min(this.lines[this.cursorRow].length, this.desiredCol);
+  }
+  markChanged() {
+    this.changedThisFrame = true;
+    this.emit({
+      type: "change",
+      widget: this.id,
+      timestamp: Date.now(),
+      data: { value: this.getValue() }
+    });
+  }
+  render(buffer, renderer) {
+    if (!this.state.visible) return;
+    const { x, y, width, height } = this.bounds;
+    const style = this.getEffectiveStyle();
+    const defaults2 = getTUIThemeDefaults();
+    const fg = style.fg ?? defaults2.textfield.fg;
+    const bg = style.bg ?? defaults2.textfield.bg;
+    const borderFg = style.borderColor ?? defaults2.textfield.borderFg;
+    const cursorAccent = style.accentColor ?? defaults2.textfield.cursor;
+    for (let row = 0; row < height; row++) {
+      for (let col = 0; col < width; col++) {
+        renderer.setCell(buffer, x + col, y + row, " ", fg, bg);
+      }
+    }
+    if (width >= 2 && height >= 2) {
+      const borderChars = this.state.focused ? { tl: "╔", tr: "╗", bl: "╚", br: "╝", h: "═", v: "║" } : { tl: "┌", tr: "┐", bl: "└", br: "┘", h: "─", v: "│" };
+      for (let col = 0; col < width; col++) {
+        const topChar = col === 0 ? borderChars.tl : col === width - 1 ? borderChars.tr : borderChars.h;
+        const botChar = col === 0 ? borderChars.bl : col === width - 1 ? borderChars.br : borderChars.h;
+        renderer.setCell(buffer, x + col, y, topChar, borderFg, bg);
+        renderer.setCell(buffer, x + col, y + height - 1, botChar, borderFg, bg);
+      }
+      for (let row = 1; row < height - 1; row++) {
+        renderer.setCell(buffer, x, y + row, borderChars.v, borderFg, bg);
+        renderer.setCell(buffer, x + width - 1, y + row, borderChars.v, borderFg, bg);
+      }
+    }
+    const innerWidth = Math.max(0, width - 2);
+    const innerHeight = Math.max(0, height - 2);
+    if (innerWidth <= 0 || innerHeight <= 0) return;
+    this.cursorRow = Math.max(0, Math.min(this.cursorRow, this.lines.length - 1));
+    this.cursorCol = Math.max(0, Math.min(this.cursorCol, this.lines[this.cursorRow].length));
+    if (this.cursorRow < this.scrollY) this.scrollY = this.cursorRow;
+    else if (this.cursorRow > this.scrollY + innerHeight - 1) this.scrollY = this.cursorRow - innerHeight + 1;
+    this.scrollY = Math.max(0, Math.min(this.scrollY, Math.max(0, this.lines.length - innerHeight)));
+    if (this.cursorCol < this.scrollX) this.scrollX = this.cursorCol;
+    else if (this.cursorCol > this.scrollX + innerWidth - 1) this.scrollX = this.cursorCol - innerWidth + 1;
+    const maxLineLen = this.lines.reduce((m, l) => Math.max(m, l.length), 0);
+    this.scrollX = Math.max(0, Math.min(this.scrollX, Math.max(0, maxLineLen - innerWidth)));
+    for (let row = 0; row < innerHeight; row++) {
+      const lineIdx = this.scrollY + row;
+      if (lineIdx >= this.lines.length) break;
+      const line = this.lines[lineIdx];
+      const visible = line.slice(this.scrollX, this.scrollX + innerWidth);
+      for (let i = 0; i < visible.length && i < innerWidth; i++) {
+        renderer.setCell(buffer, x + 1 + i, y + 1 + row, visible[i], fg, bg);
+      }
+    }
+    if (this.state.focused) {
+      const cursorScreenX = x + 1 + (this.cursorCol - this.scrollX);
+      const cursorScreenY = y + 1 + (this.cursorRow - this.scrollY);
+      if (cursorScreenX >= x + 1 && cursorScreenX < x + width - 1 && cursorScreenY >= y + 1 && cursorScreenY < y + height - 1) {
+        const line = this.lines[this.cursorRow] ?? "";
+        const localIdx = this.cursorCol - this.scrollX;
+        const visible = line.slice(this.scrollX, this.scrollX + innerWidth);
+        const ch = localIdx >= 0 && localIdx < visible.length ? visible[localIdx] : " ";
+        const caretFg = bg;
+        const caretBg = fg;
+        const same = caretFg === caretBg;
+        if (same) renderer.setCell(buffer, cursorScreenX, cursorScreenY, ch, bg, cursorAccent);
+        else renderer.setCell(buffer, cursorScreenX, cursorScreenY, ch, caretFg, caretBg);
+      }
+    }
+  }
+}
 class TUISystem {
   constructor(renderer) {
     __publicField(this, "widgetManager");
@@ -11641,6 +11967,14 @@ class TUISystem {
     const textField = new TUITextField(config);
     this.widgetManager.register(textField);
     return textField;
+  }
+  /**
+   * Create a text editor widget (multi-line)
+   */
+  createTextEditor(config) {
+    const editor = new TUITextEditor(config);
+    this.widgetManager.register(editor);
+    return editor;
   }
   /**
    * Update all widgets with current input state
@@ -11722,8 +12056,26 @@ class TUISystem {
     return this.widgetManager;
   }
 }
-function createTUIAPI(renderer, getCellBuffer, getStyle) {
+function createTUIAPI(renderer, getCellBuffer, getStyle, isTrustedUserInput) {
   let tuiSystem = null;
+  const trusted = () => {
+    try {
+      return typeof isTrustedUserInput === "function" ? !!isTrustedUserInput() : false;
+    } catch {
+      return false;
+    }
+  };
+  const canClipboard = () => typeof navigator !== "undefined" && !!navigator.clipboard;
+  const sanitizeClipboardText = (text, multiline) => {
+    let s = String(text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    s = s.replace(/[\x00-\x08\x0B-\x1F\x7F\x1B]/g, "");
+    if (!multiline) {
+      s = s.replace(/\n+/g, " ");
+    }
+    const maxChars = 64 * 1024;
+    if (s.length > maxChars) s = s.slice(0, maxChars);
+    return s;
+  };
   return {
     /**
      * Initialize TUI system
@@ -11836,6 +12188,23 @@ function createTUIAPI(renderer, getCellBuffer, getStyle) {
       return tuiSystem.createTextField(config);
     },
     /**
+     * Create a text editor widget (multi-line)
+     *
+     * @example
+     * ```javascript
+     * const editor = tui.createTextEditor({
+     *   bounds: { x: 2, y: 5, width: 40, height: 8 },
+     *   value: 'hello\nworld'
+     * });
+     * ```
+     */
+    createTextEditor(config) {
+      if (!tuiSystem) {
+        throw new Error("TUI system not initialized. Call tui.init() first.");
+      }
+      return tuiSystem.createTextEditor(config);
+    },
+    /**
      * Update TUI with input state
      * Call this in on:update
      * 
@@ -11868,6 +12237,28 @@ function createTUIAPI(renderer, getCellBuffer, getStyle) {
      */
     handleKey(key, modifiers) {
       if (!tuiSystem) return;
+      const mods = modifiers ?? {};
+      const ctrl = !!mods.ctrl;
+      const meta = !!mods.meta;
+      const lower = String(key ?? "").toLowerCase();
+      if ((ctrl || meta) && trusted() && canClipboard()) {
+        const focused = tuiSystem.getWidgetManager().getFocused();
+        const isTextLike = focused && (focused instanceof TUITextField || focused instanceof TUITextEditor);
+        if (isTextLike && lower === "v") {
+          void navigator.clipboard.readText().then((clipText) => {
+            if (!tuiSystem) return;
+            const multiline = focused instanceof TUITextEditor;
+            const safe = sanitizeClipboardText(clipText, multiline);
+            if (safe) tuiSystem.handleText(safe);
+          }).catch(() => void 0);
+          return;
+        }
+        if (isTextLike && lower === "c") {
+          const value = typeof focused.getValue === "function" ? String(focused.getValue() ?? "") : "";
+          void navigator.clipboard.writeText(value).catch(() => void 0);
+          return;
+        }
+      }
       tuiSystem.handleKey(key, modifiers);
     },
     /**
@@ -12218,6 +12609,277 @@ class GUITextField extends BaseWidget {
       widget: this.id,
       timestamp: Date.now(),
       data: { value: this.value }
+    });
+  }
+  render() {
+  }
+}
+function splitLines(value) {
+  const normalized = (value ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = normalized.split("\n");
+  return lines.length > 0 ? lines : [""];
+}
+class GUITextEditor extends BaseWidget {
+  constructor(config) {
+    var _a, _b, _c, _d;
+    super(config);
+    __publicField(this, "placeholder");
+    __publicField(this, "textEditorStyle");
+    __publicField(this, "lines");
+    __publicField(this, "cursorRow");
+    __publicField(this, "cursorCol");
+    __publicField(this, "desiredCol");
+    __publicField(this, "scrollX");
+    __publicField(this, "scrollY");
+    __publicField(this, "changedThisFrame", false);
+    __publicField(this, "charWidth", 10);
+    __publicField(this, "charHeight", 18);
+    this.lines = splitLines(config.value ?? "");
+    this.cursorRow = Math.max(0, this.lines.length - 1);
+    this.cursorCol = this.lines[this.cursorRow].length;
+    this.desiredCol = this.cursorCol;
+    this.scrollX = 0;
+    this.scrollY = 0;
+    this.placeholder = config.placeholder ?? "";
+    this.textEditorStyle = {
+      fg: ((_a = config.textEditorStyle) == null ? void 0 : _a.fg) ?? { r: 240, g: 240, b: 240 },
+      bg: ((_b = config.textEditorStyle) == null ? void 0 : _b.bg) ?? { r: 30, g: 30, b: 30, a: 0.95 },
+      borderColor: ((_c = config.textEditorStyle) == null ? void 0 : _c.borderColor) ?? { r: 90, g: 90, b: 90 },
+      focusBorderColor: ((_d = config.textEditorStyle) == null ? void 0 : _d.focusBorderColor) ?? { r: 120, g: 170, b: 220 }
+    };
+    this.on("click", (ev) => {
+      var _a2, _b2;
+      const clickX = typeof ((_a2 = ev.data) == null ? void 0 : _a2.x) === "number" ? ev.data.x : null;
+      const clickY = typeof ((_b2 = ev.data) == null ? void 0 : _b2.y) === "number" ? ev.data.y : null;
+      if (clickX === null || clickY === null) return;
+      const padX = 8;
+      const padY = 8;
+      const innerX = this.bounds.x + padX;
+      const innerY = this.bounds.y + padY;
+      const innerW = Math.max(0, this.bounds.width - padX * 2);
+      const innerH = Math.max(0, this.bounds.height - padY * 2);
+      if (innerW <= 0 || innerH <= 0) return;
+      const relPxX = Math.max(0, Math.min(innerW - 1, clickX - innerX));
+      const relPxY = Math.max(0, Math.min(innerH - 1, clickY - innerY));
+      const relCol = Math.floor(relPxX / Math.max(1, this.charWidth));
+      const relRow = Math.floor(relPxY / Math.max(1, this.charHeight));
+      const targetRow = Math.max(0, Math.min(this.lines.length - 1, this.scrollY + relRow));
+      const targetCol = Math.max(0, Math.min(this.lines[targetRow].length, this.scrollX + relCol));
+      this.cursorRow = targetRow;
+      this.cursorCol = targetCol;
+      this.desiredCol = this.cursorCol;
+    });
+  }
+  updateMetrics(charWidth, charHeight) {
+    if (Number.isFinite(charWidth) && charWidth > 0) this.charWidth = charWidth;
+    if (Number.isFinite(charHeight) && charHeight > 0) this.charHeight = charHeight;
+  }
+  getValue() {
+    return this.lines.join("\n");
+  }
+  getLineCount() {
+    return this.lines.length;
+  }
+  getLine(row) {
+    const idx = row | 0;
+    if (idx < 0 || idx >= this.lines.length) return "";
+    return this.lines[idx];
+  }
+  getMaxLineLength() {
+    let max = 0;
+    for (const line of this.lines) max = Math.max(max, line.length);
+    return max;
+  }
+  setValue(next) {
+    this.lines = splitLines(next ?? "");
+    this.cursorRow = Math.max(0, Math.min(this.cursorRow, this.lines.length - 1));
+    this.cursorCol = Math.max(0, Math.min(this.cursorCol, this.lines[this.cursorRow].length));
+    this.desiredCol = this.cursorCol;
+    this.scrollX = 0;
+    this.scrollY = 0;
+  }
+  wasChanged() {
+    const result = this.changedThisFrame;
+    this.changedThisFrame = false;
+    return result;
+  }
+  handleText(text) {
+    if (!this.state.enabled || !this.state.visible) return false;
+    if (!this.state.focused) return false;
+    if (!text) return false;
+    this.insertText(text);
+    this.markChanged();
+    return true;
+  }
+  handleKey(key, modifiers) {
+    if (!this.state.enabled || !this.state.visible) return false;
+    if (!this.state.focused) return false;
+    const ctrl = !!(modifiers == null ? void 0 : modifiers.ctrl);
+    const alt = !!(modifiers == null ? void 0 : modifiers.alt);
+    switch (key) {
+      case "ArrowLeft":
+        this.moveLeft();
+        return true;
+      case "ArrowRight":
+        this.moveRight();
+        return true;
+      case "ArrowUp":
+        this.moveUp();
+        return true;
+      case "ArrowDown":
+        this.moveDown();
+        return true;
+      case "Home":
+        this.cursorCol = 0;
+        this.desiredCol = 0;
+        return true;
+      case "End":
+        this.cursorCol = this.lines[this.cursorRow].length;
+        this.desiredCol = this.cursorCol;
+        return true;
+      case "Backspace":
+        if (this.backspace()) this.markChanged();
+        return true;
+      case "Delete":
+        if (this.del()) this.markChanged();
+        return true;
+      case "Enter":
+        this.insertNewline();
+        this.markChanged();
+        return true;
+      default:
+        if (!ctrl && !alt && key.length === 1) {
+          this.insertText(key);
+          this.markChanged();
+          return true;
+        }
+        return false;
+    }
+  }
+  getCursorInfo() {
+    return {
+      cursorRow: this.cursorRow,
+      cursorCol: this.cursorCol,
+      scrollX: this.scrollX,
+      scrollY: this.scrollY,
+      charWidth: this.charWidth,
+      charHeight: this.charHeight
+    };
+  }
+  setScroll(scrollX, scrollY) {
+    this.scrollX = Math.max(0, scrollX | 0);
+    this.scrollY = Math.max(0, scrollY | 0);
+  }
+  insertText(text) {
+    const parts = (text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    if (parts.length === 1) {
+      const line2 = this.lines[this.cursorRow];
+      this.lines[this.cursorRow] = line2.slice(0, this.cursorCol) + parts[0] + line2.slice(this.cursorCol);
+      this.cursorCol += parts[0].length;
+      this.desiredCol = this.cursorCol;
+      return;
+    }
+    const line = this.lines[this.cursorRow];
+    const before = line.slice(0, this.cursorCol);
+    const after = line.slice(this.cursorCol);
+    const first = before + parts[0];
+    const last = parts[parts.length - 1] + after;
+    const middle = parts.slice(1, -1);
+    const newLines = [first, ...middle, last];
+    this.lines.splice(this.cursorRow, 1, ...newLines);
+    this.cursorRow += newLines.length - 1;
+    this.cursorCol = parts[parts.length - 1].length;
+    this.desiredCol = this.cursorCol;
+  }
+  insertNewline() {
+    const line = this.lines[this.cursorRow];
+    const before = line.slice(0, this.cursorCol);
+    const after = line.slice(this.cursorCol);
+    this.lines[this.cursorRow] = before;
+    this.lines.splice(this.cursorRow + 1, 0, after);
+    this.cursorRow += 1;
+    this.cursorCol = 0;
+    this.desiredCol = 0;
+  }
+  backspace() {
+    if (this.cursorCol > 0) {
+      const line = this.lines[this.cursorRow];
+      this.lines[this.cursorRow] = line.slice(0, this.cursorCol - 1) + line.slice(this.cursorCol);
+      this.cursorCol -= 1;
+      this.desiredCol = this.cursorCol;
+      return true;
+    }
+    if (this.cursorRow > 0) {
+      const prev = this.lines[this.cursorRow - 1];
+      const cur = this.lines[this.cursorRow];
+      const nextCol = prev.length;
+      this.lines[this.cursorRow - 1] = prev + cur;
+      this.lines.splice(this.cursorRow, 1);
+      this.cursorRow -= 1;
+      this.cursorCol = nextCol;
+      this.desiredCol = this.cursorCol;
+      return true;
+    }
+    return false;
+  }
+  del() {
+    const line = this.lines[this.cursorRow];
+    if (this.cursorCol < line.length) {
+      this.lines[this.cursorRow] = line.slice(0, this.cursorCol) + line.slice(this.cursorCol + 1);
+      this.desiredCol = this.cursorCol;
+      return true;
+    }
+    if (this.cursorRow < this.lines.length - 1) {
+      const next = this.lines[this.cursorRow + 1];
+      this.lines[this.cursorRow] = line + next;
+      this.lines.splice(this.cursorRow + 1, 1);
+      this.desiredCol = this.cursorCol;
+      return true;
+    }
+    return false;
+  }
+  moveLeft() {
+    if (this.cursorCol > 0) {
+      this.cursorCol -= 1;
+      this.desiredCol = this.cursorCol;
+      return;
+    }
+    if (this.cursorRow > 0) {
+      this.cursorRow -= 1;
+      this.cursorCol = this.lines[this.cursorRow].length;
+      this.desiredCol = this.cursorCol;
+    }
+  }
+  moveRight() {
+    const lineLen = this.lines[this.cursorRow].length;
+    if (this.cursorCol < lineLen) {
+      this.cursorCol += 1;
+      this.desiredCol = this.cursorCol;
+      return;
+    }
+    if (this.cursorRow < this.lines.length - 1) {
+      this.cursorRow += 1;
+      this.cursorCol = 0;
+      this.desiredCol = 0;
+    }
+  }
+  moveUp() {
+    if (this.cursorRow <= 0) return;
+    this.cursorRow -= 1;
+    this.cursorCol = Math.min(this.lines[this.cursorRow].length, this.desiredCol);
+  }
+  moveDown() {
+    if (this.cursorRow >= this.lines.length - 1) return;
+    this.cursorRow += 1;
+    this.cursorCol = Math.min(this.lines[this.cursorRow].length, this.desiredCol);
+  }
+  markChanged() {
+    this.changedThisFrame = true;
+    this.emit({
+      type: "change",
+      widget: this.id,
+      timestamp: Date.now(),
+      data: { value: this.getValue() }
     });
   }
   render() {
@@ -12818,6 +13480,14 @@ class GUISystem {
     return tf;
   }
   /**
+   * Create a text editor widget (multi-line)
+   */
+  createTextEditor(config) {
+    const editor = new GUITextEditor(config);
+    this.widgetManager.register(editor);
+    return editor;
+  }
+  /**
    * Create a markdown view widget (flow layout inside bounds)
    */
   createMarkdownView(config) {
@@ -12856,6 +13526,10 @@ class GUISystem {
     const textFields = this.widgetManager.getAll().filter((w) => w instanceof GUITextField);
     for (const tf of textFields) {
       tf.updateMetrics(charWidth, charHeight);
+    }
+    const textEditors = this.widgetManager.getAll().filter((w) => w instanceof GUITextEditor);
+    for (const ed of textEditors) {
+      ed.updateMetrics(charWidth, charHeight);
     }
   }
   /**
@@ -12923,6 +13597,8 @@ class GUISystem {
         this.renderSlider(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUITextField) {
         this.renderTextField(widget, uiAPI, charWidth);
+      } else if (widget instanceof GUITextEditor) {
+        this.renderTextEditor(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUIMarkdownView) {
         this.renderMarkdownView(widget, uiAPI, charWidth, charHeight);
       }
@@ -12967,6 +13643,65 @@ class GUISystem {
         ui.rect(caretX, caretY, caretW, caretH, fg);
         const ch = caretLocal >= 0 && caretLocal < visibleText.length ? visibleText[caretLocal] : " ";
         ui.text(ch, caretX, textY, bg);
+      }
+    }
+    if (ui.popClipRect) ui.popClipRect();
+  }
+  renderTextEditor(ed, ui, charW, charH) {
+    const { x, y, width, height } = ed.bounds;
+    const { fg, bg, borderColor, focusBorderColor } = ed.textEditorStyle;
+    ui.rect(x, y, width, height, bg);
+    const b = ed.state.focused ? 3 : 2;
+    const bc = ed.state.focused ? focusBorderColor : borderColor;
+    ui.rect(x, y, width, b, bc);
+    ui.rect(x, y + height - b, width, b, bc);
+    ui.rect(x, y, b, height, bc);
+    ui.rect(x + width - b, y, b, height, bc);
+    const padX = 8;
+    const padY = 8;
+    const innerX = x + padX;
+    const innerY = y + padY;
+    const innerW = Math.max(0, width - padX * 2);
+    const innerH = Math.max(0, height - padY * 2);
+    const maxCols = Math.max(0, Math.floor(innerW / Math.max(1, charW)));
+    const maxRows = Math.max(0, Math.floor(innerH / Math.max(1, charH)));
+    const info = ed.getCursorInfo();
+    const lineCount = ed.getLineCount();
+    const maxLineLen = ed.getMaxLineLength();
+    let scrollX = info.scrollX;
+    let scrollY = info.scrollY;
+    if (info.cursorRow < scrollY) scrollY = info.cursorRow;
+    else if (info.cursorRow > scrollY + maxRows - 1) scrollY = info.cursorRow - maxRows + 1;
+    scrollY = Math.max(0, Math.min(scrollY, Math.max(0, lineCount - maxRows)));
+    if (info.cursorCol < scrollX) scrollX = info.cursorCol;
+    else if (info.cursorCol > scrollX + maxCols - 1) scrollX = info.cursorCol - maxCols + 1;
+    scrollX = Math.max(0, Math.min(scrollX, Math.max(0, maxLineLen - maxCols)));
+    ed.setScroll(scrollX, scrollY);
+    if (ui.pushClipRect) ui.pushClipRect(innerX, innerY, innerW, innerH);
+    const value = ed.getValue();
+    if (value.length === 0 && ed.placeholder) {
+      ui.text(ed.placeholder, innerX, innerY, fg);
+    } else {
+      for (let row = 0; row < maxRows; row++) {
+        const lineIdx = scrollY + row;
+        if (lineIdx >= lineCount) break;
+        const line = ed.getLine(lineIdx);
+        const visible = line.slice(scrollX, scrollX + maxCols);
+        if (!visible) continue;
+        const textY = innerY + row * charH;
+        ui.text(visible, innerX, textY, fg);
+      }
+    }
+    if (ed.state.focused) {
+      const caretRow = info.cursorRow - scrollY;
+      const caretCol = info.cursorCol - scrollX;
+      if (caretRow >= 0 && caretRow < maxRows && caretCol >= 0 && caretCol < maxCols) {
+        const caretX = innerX + caretCol * charW;
+        const caretY = innerY + caretRow * charH;
+        ui.rect(caretX, caretY, charW, charH, fg);
+        const line = ed.getLine(info.cursorRow);
+        const ch = info.cursorCol < line.length ? line[info.cursorCol] : " ";
+        ui.text(ch, caretX, caretY, bg);
       }
     }
     if (ui.popClipRect) ui.popClipRect();
@@ -13063,8 +13798,14 @@ class GUISystem {
   getWidgets() {
     return this.widgetManager.getAll();
   }
+  /**
+   * Get widget manager (for advanced usage)
+   */
+  getWidgetManager() {
+    return this.widgetManager;
+  }
 }
-function createGUIAPI(getMetrics) {
+function createGUIAPI(getMetrics, isTrustedUserInput) {
   const api = {
     _system: null,
     /**
@@ -13164,6 +13905,15 @@ function createGUIAPI(getMetrics) {
       return this._system.createTextField(config);
     },
     /**
+     * Create a text editor widget (multi-line)
+     */
+    createTextEditor(config) {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      return this._system.createTextEditor(config);
+    },
+    /**
      * Create a markdown view widget (flow layout inside bounds)
      */
     createMarkdownView(config) {
@@ -13230,6 +13980,44 @@ function createGUIAPI(getMetrics) {
      */
     handleKey(key, modifiers) {
       if (!this._system) return;
+      const trusted = () => {
+        try {
+          return typeof isTrustedUserInput === "function" ? !!isTrustedUserInput() : false;
+        } catch {
+          return false;
+        }
+      };
+      const canClipboard = () => typeof navigator !== "undefined" && !!navigator.clipboard;
+      const sanitizeClipboardText = (text, multiline) => {
+        let s = String(text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+        s = s.replace(/[\x00-\x08\x0B-\x1F\x7F\x1B]/g, "");
+        if (!multiline) s = s.replace(/\n+/g, " ");
+        const maxChars = 64 * 1024;
+        if (s.length > maxChars) s = s.slice(0, maxChars);
+        return s;
+      };
+      const mods = modifiers ?? {};
+      const ctrl = !!mods.ctrl;
+      const meta = !!mods.meta;
+      const lower = String(key ?? "").toLowerCase();
+      if ((ctrl || meta) && trusted() && canClipboard()) {
+        const focused = this._system.getWidgetManager().getFocused();
+        const isTextLike = focused && (focused instanceof GUITextField || focused instanceof GUITextEditor);
+        if (isTextLike && lower === "v") {
+          void navigator.clipboard.readText().then((clipText) => {
+            if (!this._system) return;
+            const multiline = focused instanceof GUITextEditor;
+            const safe = sanitizeClipboardText(clipText, multiline);
+            if (safe) this._system.handleText(safe);
+          }).catch(() => void 0);
+          return;
+        }
+        if (isTextLike && lower === "c") {
+          const value = typeof focused.getValue === "function" ? String(focused.getValue() ?? "") : "";
+          void navigator.clipboard.writeText(value).catch(() => void 0);
+          return;
+        }
+      }
       this._system.handleKey(key, modifiers);
     },
     /**
@@ -14494,6 +15282,25 @@ class WebGPUUIRenderer {
     });
   }
 }
+const DEFAULT_VERTEX_WGSL = `
+struct DefaultVertexIn {
+  @location(0) pos: vec2f,
+  @location(1) uv: vec2f,
+};
+
+struct DefaultVertexOut {
+  @builtin(position) position: vec4f,
+  @location(0) uv: vec2f,
+};
+
+@vertex
+fn vertexMain(input: DefaultVertexIn) -> DefaultVertexOut {
+  var out: DefaultVertexOut;
+  out.position = vec4f(input.pos, 0.0, 1.0);
+  out.uv = input.uv;
+  return out;
+}
+`;
 class ShaderManager {
   constructor(device, format) {
     __publicField(this, "device");
@@ -14505,6 +15312,8 @@ class ShaderManager {
     // Active shader
     __publicField(this, "activeShader", null);
     __publicField(this, "initialized", false);
+    // Support pairing `wgsl vertex:name` + `wgsl fragment:name`
+    __publicField(this, "pendingVertexShaders", /* @__PURE__ */ new Map());
     this.device = device;
     this.format = format || navigator.gpu.getPreferredCanvasFormat();
   }
@@ -14558,15 +15367,24 @@ class ShaderManager {
     if (!this.initialized) await this.init();
     try {
       console.log(`[ShaderManager] Compiling shader: ${shader.name} (${shader.kind})`);
+      if (shader.kind === "vertex") {
+        this.pendingVertexShaders.set(shader.name, shader);
+        console.log(`[ShaderManager] Stored pending vertex shader: ${shader.name}`);
+        return true;
+      }
       if (shader.kind !== "fragment") {
-        console.warn(`[ShaderManager] Only fragment shaders supported, got: ${shader.kind}`);
+        console.warn(`[ShaderManager] Only fragment render shaders supported, got: ${shader.kind}`);
         return false;
       }
+      const pendingVertex = this.pendingVertexShaders.get(shader.name);
+      const mergedCode = this.buildRenderModuleCode(shader.code, pendingVertex == null ? void 0 : pendingVertex.code);
+      const mergedShader = parseWGSLShader(shader.name, mergedCode);
+      mergedShader.kind = "fragment";
       const module = this.device.createShaderModule({
-        code: shader.code,
+        code: mergedShader.code,
         label: shader.name
       });
-      const uniformLayout = this.calculateUniformLayout(shader);
+      const uniformLayout = this.calculateUniformLayout(mergedShader);
       const uniformBufferSize = this.calculateUniformBufferSize(uniformLayout);
       const uniformBuffer = this.device.createBuffer({
         size: uniformBufferSize,
@@ -14588,7 +15406,8 @@ class ShaderManager {
           },
           {
             binding: 2,
-            visibility: GPUShaderStage.FRAGMENT,
+            // Allow vertex shaders to use time/resolution/custom uniforms too.
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
             buffer: { type: "uniform" }
           }
         ]
@@ -14627,7 +15446,7 @@ class ShaderManager {
         }
       });
       const compiled = {
-        metadata: shader,
+        metadata: mergedShader,
         module,
         pipeline,
         uniformBuffer,
@@ -14635,17 +15454,70 @@ class ShaderManager {
         uniformValues: /* @__PURE__ */ new Map(),
         bindGroupLayout
       };
-      for (const uniformName of shader.uniforms) {
+      for (const uniformName of mergedShader.uniforms) {
         compiled.uniformValues.set(uniformName, 0);
       }
       this.shaders.set(shader.name, compiled);
       console.log(`[ShaderManager] ✓ Shader compiled: ${shader.name}`);
-      console.log(`[ShaderManager]   Uniforms: ${shader.uniforms.join(", ") || "none"}`);
+      console.log(`[ShaderManager]   Uniforms: ${mergedShader.uniforms.join(", ") || "none"}`);
+      if (pendingVertex) {
+        this.pendingVertexShaders.delete(shader.name);
+      }
       return true;
     } catch (error) {
       console.error(`[ShaderManager] Failed to compile shader ${shader.name}:`, error);
       return false;
     }
+  }
+  /**
+   * Register a set of WGSL shaders in one pass.
+   * This enables pairing `wgsl vertex:name` + `wgsl fragment:name` within a document.
+   */
+  async registerShaders(shaders) {
+    if (!Array.isArray(shaders) || shaders.length === 0) return;
+    for (const s of shaders) {
+      if ((s == null ? void 0 : s.kind) === "vertex") {
+        await this.registerShader(s);
+      }
+    }
+    for (const s of shaders) {
+      if ((s == null ? void 0 : s.kind) === "fragment") {
+        await this.registerShader(s);
+      }
+    }
+    for (const s of shaders) {
+      if (!s) continue;
+      if (s.kind !== "vertex" && s.kind !== "fragment") {
+        await this.registerShader(s);
+      }
+    }
+  }
+  buildRenderModuleCode(fragmentCode, vertexCode) {
+    const frag = String(fragmentCode ?? "");
+    const vert = String(vertexCode ?? "");
+    const hasFragment = this.hasFragmentMain(frag) || this.hasFragmentMain(vert);
+    if (!hasFragment) {
+      console.warn("[ShaderManager] WGSL shader is missing fragmentMain(); cannot compile render pipeline");
+    }
+    if (this.hasVertexMain(frag)) {
+      return frag;
+    }
+    if (this.hasVertexMain(vert)) {
+      return `${vert}
+
+${frag}`;
+    }
+    return `${DEFAULT_VERTEX_WGSL}
+
+${frag}`;
+  }
+  hasVertexMain(code) {
+    const src = String(code ?? "");
+    return src.includes("@vertex") && /fn\s+vertexMain\s*\(/.test(src);
+  }
+  hasFragmentMain(code) {
+    const src = String(code ?? "");
+    return src.includes("@fragment") && /fn\s+fragmentMain\s*\(/.test(src);
   }
   /**
    * Set a uniform value for a shader
@@ -15467,7 +16339,7 @@ function setCameraTarget(camera, target, rotation) {
     camera.targetRotation = { ...rotation };
   }
 }
-function clamp$1(value, min, max) {
+function clamp$3(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 function computeYawPitchFromForward(forward) {
@@ -15475,13 +16347,13 @@ function computeYawPitchFromForward(forward) {
   const fy = forward.y;
   const fz = forward.z;
   const yaw = Math.atan2(fx, -fz);
-  const pitch = Math.asin(clamp$1(-fy, -1, 1));
+  const pitch = Math.asin(clamp$3(-fy, -1, 1));
   return { x: pitch, y: yaw, z: 0 };
 }
 function focusOnSectionFit(camera, layout, viewportAspect, fill = 0.9, distanceLimits = {}) {
   var _a, _b;
   const safeAspect = Number.isFinite(viewportAspect) && viewportAspect > 0 ? viewportAspect : 1;
-  const safeFill = clamp$1(fill, 0.05, 0.99);
+  const safeFill = clamp$3(fill, 0.05, 0.99);
   const worldWidth = layout.width * (((_a = layout.transform.scale) == null ? void 0 : _a.x) ?? 1);
   const worldHeight = layout.height * (((_b = layout.transform.scale) == null ? void 0 : _b.y) ?? 1);
   const vFov = camera.fov;
@@ -15643,6 +16515,7 @@ class Canvas3DRenderer {
     __publicField(this, "sampler", null);
     __publicField(this, "uniformStride", 256);
     __publicField(this, "uniformCapacity", 0);
+    __publicField(this, "backgroundTexture", null);
     // Render to offscreen texture (for compositor)
     __publicField(this, "renderTexture", null);
     __publicField(this, "depthTexture", null);
@@ -15668,6 +16541,17 @@ class Canvas3DRenderer {
       addressModeU: "clamp-to-edge",
       addressModeV: "clamp-to-edge"
     });
+    this.backgroundTexture = this.device.createTexture({
+      size: { width: 1, height: 1 },
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+    });
+    this.device.queue.writeTexture(
+      { texture: this.backgroundTexture },
+      new Uint8Array([0, 0, 0, 0]),
+      { bytesPerRow: 4 },
+      { width: 1, height: 1 }
+    );
     this.createDepthTexture();
   }
   /**
@@ -15694,6 +16578,15 @@ class Canvas3DRenderer {
           mvpMatrix: mat4x4<f32>,
           params0: vec4<f32>,
           params1: vec4<f32>,
+          paperColor: vec4<f32>,
+          lineColor: vec4<f32>,
+          // x=scale, y=spacing, z=thicknessFrac, w=enabled
+          paperParams: vec4<f32>,
+          cameraPos: vec4<f32>,
+          cameraRight: vec4<f32>,
+          cameraUp: vec4<f32>,
+          // x=hasRuledLines, y=hasPaperNoise, z=noiseStrength, w=reserved
+          bgFlags: vec4<f32>,
         };
         
         @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -15717,13 +16610,78 @@ class Canvas3DRenderer {
           output.uv = input.uv;
           return output;
         }
+
+        fn paperCoordFromScreenUv(uv: vec2<f32>) -> vec2<f32> {
+          // Linear, camera-oriented background mapping.
+          // Uses camera right/up (projected into XY) so the paper rotates with
+          // the camera/section yaw, without ray-plane perspective warping.
+          // params1: x=viewW, y=viewH
+          let viewW = uniforms.params1.x;
+          let viewH = uniforms.params1.y;
+          let delta = (uv - vec2<f32>(0.5, 0.5)) * vec2<f32>(viewW, viewH);
+          let rightXY = uniforms.cameraRight.xy;
+          let upXY = uniforms.cameraUp.xy;
+          return uniforms.cameraPos.xy + rightXY * delta.x + upXY * delta.y;
+        }
+
+        fn hash21(p: vec2<f32>) -> f32 {
+          // Simple, stable hash (no sin/cos) for paper grain.
+          let x = dot(p, vec2<f32>(127.1, 311.7));
+          let y = dot(p, vec2<f32>(269.5, 183.3));
+          let h = fract(sin(x) * 43758.5453 + sin(y) * 12345.6789);
+          return h;
+        }
+
+        fn sampleBackgroundAt(coordIn: vec2<f32>) -> vec4<f32> {
+          let enabled = uniforms.paperParams.w;
+          if (enabled < 0.5) {
+            return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+          }
+
+          let scale = uniforms.paperParams.x;
+          let spacing = max(0.0001, uniforms.paperParams.y);
+          let thickness = clamp(uniforms.paperParams.z, 0.0, 0.5);
+
+          let coord = coordIn * scale;
+
+          // Base paper
+          var rgb = uniforms.paperColor.rgb;
+
+          // Optional paper grain
+          if (uniforms.bgFlags.y > 0.5) {
+            let s = clamp(uniforms.bgFlags.z, 0.0, 1.0);
+            let n = hash21(floor(coord * 8.0));
+            let grain = (n - 0.5) * 2.0; // -1..1
+            rgb = clamp(rgb + vec3<f32>(grain) * (0.08 * s), vec3<f32>(0.0), vec3<f32>(1.0));
+          }
+
+          // Optional ruled lines
+          if (uniforms.bgFlags.x > 0.5) {
+            let y = coord.y;
+            let phase = fract(y / spacing);
+            let mask = select(0.0, 1.0, phase < thickness);
+            let t = mask * uniforms.lineColor.a;
+            rgb = mix(rgb, uniforms.lineColor.rgb, t);
+          }
+
+          return vec4<f32>(rgb, 1.0);
+        }
         
         @fragment
         fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
           let texColor = textureSample(textureData, textureSampler, input.uv);
+          let isBackground = uniforms.params0.x < 0.0;
+          var outColor = texColor;
+
+          // Full-screen paper pass only (no per-card paper).
+          if (isBackground && uniforms.paperParams.w > 0.5) {
+            let coord = paperCoordFromScreenUv(input.uv);
+            outColor = sampleBackgroundAt(coord);
+          }
+
           // params0.z is full-card hover flag (1 = hovered)
           if (uniforms.params0.z > 0.5) {
-            return vec4<f32>(vec3<f32>(1.0) - texColor.rgb, texColor.a);
+            return vec4<f32>(vec3<f32>(1.0) - outColor.rgb, outColor.a);
           }
           // params0.w is highlight flag (1 = enabled)
           if (uniforms.params0.w > 0.5) {
@@ -15732,10 +16690,10 @@ class Canvas3DRenderer {
             let umax = uniforms.params1.z;
             let vmax = uniforms.params1.w;
             if (input.uv.x >= umin && input.uv.x <= umax && input.uv.y >= vmin && input.uv.y <= vmax) {
-              return vec4<f32>(vec3<f32>(1.0) - texColor.rgb, texColor.a);
+              return vec4<f32>(vec3<f32>(1.0) - outColor.rgb, outColor.a);
             }
           }
-          return texColor;
+          return outColor;
         }
       `
     });
@@ -15884,12 +16842,13 @@ class Canvas3DRenderer {
   /**
    * Render all 3D sections
    */
-  render(camera, layouts, hoveredSectionIndex = null) {
+  render(camera, layouts, hoveredSectionIndex = null, background) {
     if (!this.renderPipeline || !this.vertexBuffer || !this.indexBuffer || !this.renderTexture) {
       console.warn("Canvas3DRenderer not fully initialized");
       return;
     }
-    this.ensureUniformBufferCapacity(layouts.length);
+    const paperEnabled = !!(background == null ? void 0 : background.enabled);
+    this.ensureUniformBufferCapacity(layouts.length + (paperEnabled ? 1 : 0));
     if (!this.uniformBuffer || !this.sampler) {
       console.warn("Canvas3DRenderer not fully initialized");
       return;
@@ -15921,6 +16880,72 @@ class Canvas3DRenderer {
     const viewMatrix = getCameraViewMatrix(camera);
     const projectionMatrix = getCameraProjectionMatrix(camera, aspect);
     const viewProjectionMatrix = mat4Multiply(projectionMatrix, viewMatrix);
+    const paperColor = paperEnabled ? ColorUtils.rgbaNorm(background.paperColor) : [0, 0, 0, 0];
+    const lineColor = paperEnabled ? ColorUtils.rgbaNorm(background.lineColor) : [0, 0, 0, 0];
+    const paperParams = paperEnabled ? [
+      Number.isFinite(background.scale) ? background.scale : 1,
+      Number.isFinite(background.spacing) ? background.spacing : 1,
+      Number.isFinite(background.thickness) ? background.thickness : 0.06,
+      1
+    ] : [0, 0, 0, 0];
+    const chain = paperEnabled ? background.chain || [] : [];
+    const hasRuledLines = chain.some((s) => s === "ruledlines" || s === "ruled-lines" || s === "ruled_lines");
+    const hasPaper = chain.some((s) => s === "paper");
+    const noiseStrength = paperEnabled ? Number.isFinite(background.noiseStrength) ? background.noiseStrength : 0.06 : 0;
+    const bgFlags = paperEnabled ? [hasRuledLines ? 1 : 0, hasPaper ? 1 : 0, noiseStrength, 0] : [0, 0, 0, 0];
+    const cameraPos = new Float32Array([
+      camera.position.x,
+      camera.position.y,
+      camera.position.z,
+      1
+    ]);
+    const cameraRight = new Float32Array([viewMatrix[0], viewMatrix[4], viewMatrix[8], 0]);
+    const cameraUp = new Float32Array([viewMatrix[1], viewMatrix[5], viewMatrix[9], 0]);
+    if (paperEnabled) {
+      if (!this.backgroundTexture) {
+        console.warn("Canvas3DRenderer missing backgroundTexture");
+      } else {
+        const uniformOffset = 0;
+        const mvp = new Float32Array([
+          2,
+          0,
+          0,
+          0,
+          0,
+          2,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ]);
+        const params0 = new Float32Array([-1, -1, 0, 0]);
+        const dist = Math.max(1, Math.abs(camera.position.z));
+        const viewH = 2 * dist * Math.tan(camera.fov * 0.5);
+        const viewW = viewH * aspect;
+        const params1 = new Float32Array([viewW, viewH, dist, 0]);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 0, mvp);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 96, new Float32Array(paperColor));
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 112, new Float32Array(lineColor));
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array(paperParams));
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, new Float32Array(bgFlags));
+        const bindGroup = this.createBindGroupForTexture(this.backgroundTexture, uniformOffset);
+        if (bindGroup) {
+          pass.setBindGroup(0, bindGroup);
+          pass.drawIndexed(6);
+        }
+      }
+    }
     for (let i = 0; i < layouts.length; i++) {
       const layout = layouts[i];
       if (!layout.visible || !layout.texture) continue;
@@ -15954,7 +16979,8 @@ class Canvas3DRenderer {
       if (all((p) => p.x < -p.w) || all((p) => p.x > p.w) || all((p) => p.y < -p.w) || all((p) => p.y > p.w) || all((p) => p.z < 0) || all((p) => p.z > p.w)) {
         continue;
       }
-      const uniformOffset = i * this.uniformStride;
+      const uniformIndex = paperEnabled ? i + 1 : i;
+      const uniformOffset = uniformIndex * this.uniformStride;
       this.device.queue.writeBuffer(
         this.uniformBuffer,
         uniformOffset + 0,
@@ -15969,7 +16995,14 @@ class Canvas3DRenderer {
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
       const params1 = rect ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax]) : new Float32Array([0, 0, 0, 0]);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
-      const bindGroup = this.createSectionBindGroup(layout, uniformOffset);
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 96, new Float32Array(paperColor));
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 112, new Float32Array(lineColor));
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array([0, 0, 0, 0]));
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, new Float32Array([0, 0, 0, 0]));
+      const bindGroup = this.createBindGroupForTexture(layout.texture, uniformOffset);
       if (!bindGroup) continue;
       pass.setBindGroup(0, bindGroup);
       pass.drawIndexed(6);
@@ -15980,14 +17013,14 @@ class Canvas3DRenderer {
   /**
    * Create bind group for a section (texture sampling)
    */
-  createSectionBindGroup(layout, uniformOffset) {
-    if (!layout.texture || !this.renderPipeline || !this.uniformBuffer || !this.sampler) return null;
+  createBindGroupForTexture(texture, uniformOffset) {
+    if (!this.renderPipeline || !this.uniformBuffer || !this.sampler) return null;
     return this.device.createBindGroup({
       layout: this.renderPipeline.getBindGroupLayout(0),
       entries: [
         {
           binding: 0,
-          resource: { buffer: this.uniformBuffer, offset: uniformOffset, size: 96 }
+          resource: { buffer: this.uniformBuffer, offset: uniformOffset, size: 208 }
         },
         {
           binding: 1,
@@ -15995,7 +17028,7 @@ class Canvas3DRenderer {
         },
         {
           binding: 2,
-          resource: layout.texture.createView()
+          resource: texture.createView()
         }
       ]
     });
@@ -16022,12 +17055,13 @@ class Canvas3DRenderer {
    * Clean up resources
    */
   destroy() {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     (_a = this.vertexBuffer) == null ? void 0 : _a.destroy();
     (_b = this.indexBuffer) == null ? void 0 : _b.destroy();
     (_c = this.uniformBuffer) == null ? void 0 : _c.destroy();
     (_d = this.depthTexture) == null ? void 0 : _d.destroy();
     (_e = this.renderTexture) == null ? void 0 : _e.destroy();
+    (_f = this.backgroundTexture) == null ? void 0 : _f.destroy();
   }
 }
 class LineStream {
@@ -16510,6 +17544,524 @@ function parseAnsiToRuns(text, opts) {
     width = Math.max(width, w);
   }
   return { lines, width, height: lines.length };
+}
+const clamp$2 = (v2, lo, hi) => Math.max(lo, Math.min(hi, v2));
+function mean(arr) {
+  let s = 0;
+  for (let i = 0; i < arr.length; i++) s += arr[i];
+  return arr.length ? s / arr.length : 0;
+}
+function movingAverage$1(src, win) {
+  if (win <= 1) return src;
+  const out = new Float32Array(src.length);
+  let sum = 0;
+  let count = 0;
+  for (let i = 0; i < src.length; i++) {
+    sum += src[i];
+    count++;
+    if (i - win >= 0) {
+      sum -= src[i - win];
+      count--;
+    }
+    out[i] = sum / Math.max(1, count);
+  }
+  return out;
+}
+function getMonoChannelData(buffer) {
+  const ch = buffer.numberOfChannels;
+  if (ch <= 1) return buffer.getChannelData(0);
+  const len = buffer.length;
+  const out = new Float32Array(len);
+  for (let c2 = 0; c2 < ch; c2++) {
+    const data = buffer.getChannelData(c2);
+    for (let i = 0; i < len; i++) out[i] += data[i];
+  }
+  const inv = 1 / ch;
+  for (let i = 0; i < len; i++) out[i] *= inv;
+  return out;
+}
+function detectPeaksFromAudioBuffer(buffer, options = {}) {
+  const sampleRate = buffer.sampleRate;
+  const windowMs = options.windowMs ?? 12;
+  const smoothMs = options.smoothMs ?? 120;
+  const minGapMs = options.minGapMs ?? 160;
+  const thresholdMul = options.thresholdMul ?? 1.6;
+  const minThreshold = options.minThreshold ?? 0.02;
+  const compressPow = options.compressPow ?? 2;
+  const minProminence = options.minProminence ?? 0.03;
+  const mono = getMonoChannelData(buffer);
+  const win = Math.max(16, Math.floor(windowMs / 1e3 * sampleRate));
+  const hop = win;
+  const frames = Math.max(1, Math.floor(mono.length / hop));
+  const envelope = new Float32Array(frames);
+  for (let f = 0; f < frames; f++) {
+    const start = f * hop;
+    const end = Math.min(mono.length, start + win);
+    let s = 0;
+    for (let i = start; i < end; i++) {
+      const v2 = mono[i];
+      s += v2 * v2;
+    }
+    const rms = Math.sqrt(s / Math.max(1, end - start));
+    envelope[f] = rms;
+  }
+  let max = 0;
+  for (let i = 0; i < envelope.length; i++) max = Math.max(max, envelope[i]);
+  const invMax = max > 0 ? 1 / max : 1;
+  for (let i = 0; i < envelope.length; i++) envelope[i] *= invMax;
+  if (compressPow && Number.isFinite(compressPow) && compressPow !== 1) {
+    const p = 1 / clamp$2(compressPow, 1, 10);
+    for (let i = 0; i < envelope.length; i++) {
+      envelope[i] = Math.pow(clamp$2(envelope[i], 0, 1), p);
+    }
+  }
+  const smoothWin = Math.max(1, Math.floor(smoothMs / 1e3 * (sampleRate / hop)));
+  const smooth = movingAverage$1(envelope, smoothWin);
+  const envMean = mean(smooth);
+  const threshold = Math.max(minThreshold, envMean * thresholdMul);
+  const minGapFrames = Math.max(1, Math.floor(minGapMs / 1e3 * (sampleRate / hop)));
+  const peaks = [];
+  let lastPeakFrame = -Infinity;
+  for (let i = 1; i < smooth.length - 1; i++) {
+    const v2 = smooth[i];
+    if (v2 < threshold) continue;
+    if (!(v2 >= smooth[i - 1] && v2 > smooth[i + 1])) continue;
+    if (minProminence > 0) {
+      const left = smooth[i - 1];
+      const right = smooth[i + 1];
+      const prom = v2 - Math.max(left, right);
+      if (prom < minProminence) continue;
+    }
+    if (i - lastPeakFrame < minGapFrames) {
+      const prevIdx = peaks.length - 1;
+      if (prevIdx >= 0) {
+        const prevFrame = Math.round(peaks[prevIdx] * (sampleRate / hop));
+        if (v2 > smooth[prevFrame]) {
+          peaks[prevIdx] = i / (sampleRate / hop);
+          lastPeakFrame = i;
+        }
+      }
+      continue;
+    }
+    peaks.push(i / (sampleRate / hop));
+    lastPeakFrame = i;
+  }
+  return {
+    peaks,
+    envelopeHz: sampleRate / hop,
+    envelope: smooth,
+    threshold
+  };
+}
+const planCache = /* @__PURE__ */ new Map();
+function nextPow2(n) {
+  let x = Math.max(1, Math.floor(n));
+  x--;
+  x |= x >> 1;
+  x |= x >> 2;
+  x |= x >> 4;
+  x |= x >> 8;
+  x |= x >> 16;
+  x++;
+  return x;
+}
+function getFFTPlan(size) {
+  const n = nextPow2(size);
+  const cached = planCache.get(n);
+  if (cached) return cached;
+  const bits = Math.round(Math.log2(n));
+  const bitrev = new Uint32Array(n);
+  for (let i = 0; i < n; i++) {
+    let x = i;
+    let y = 0;
+    for (let b = 0; b < bits; b++) {
+      y = y << 1 | x & 1;
+      x >>= 1;
+    }
+    bitrev[i] = y;
+  }
+  const plan = { size: n, bitrev };
+  planCache.set(n, plan);
+  return plan;
+}
+function applyWindowInPlace(re, window2) {
+  if (window2 === "none") return;
+  if (window2 !== "hann") return;
+  const n = re.length;
+  if (n <= 1) return;
+  const denom = n - 1;
+  for (let i = 0; i < n; i++) {
+    const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / denom);
+    re[i] *= w;
+  }
+}
+function fftComplexInPlace(re, im, plan) {
+  const n = re.length;
+  if (im.length !== n) throw new Error("FFT: re/im length mismatch");
+  const p = plan ?? getFFTPlan(n);
+  if (p.size !== n) throw new Error("FFT: plan size mismatch");
+  for (let i = 0; i < n; i++) {
+    const j = p.bitrev[i];
+    if (j > i) {
+      const tr = re[i];
+      re[i] = re[j];
+      re[j] = tr;
+      const ti = im[i];
+      im[i] = im[j];
+      im[j] = ti;
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len;
+    const wlenRe = Math.cos(ang);
+    const wlenIm = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let wRe = 1;
+      let wIm = 0;
+      const half = len >> 1;
+      for (let j = 0; j < half; j++) {
+        const uRe = re[i + j];
+        const uIm = im[i + j];
+        const vRe = re[i + j + half] * wRe - im[i + j + half] * wIm;
+        const vIm = re[i + j + half] * wIm + im[i + j + half] * wRe;
+        re[i + j] = uRe + vRe;
+        im[i + j] = uIm + vIm;
+        re[i + j + half] = uRe - vRe;
+        im[i + j + half] = uIm - vIm;
+        const nextWRe = wRe * wlenRe - wIm * wlenIm;
+        const nextWIm = wRe * wlenIm + wIm * wlenRe;
+        wRe = nextWRe;
+        wIm = nextWIm;
+      }
+    }
+  }
+}
+function fftMagReal(input, fftSize, options = {}) {
+  const plan = options.plan ?? getFFTPlan(fftSize);
+  const n = plan.size;
+  const re = options.outRe ?? new Float32Array(n);
+  const im = options.outIm ?? new Float32Array(n);
+  re.fill(0);
+  im.fill(0);
+  const copyN = Math.min(input.length, n);
+  re.set(input.subarray(0, copyN));
+  applyWindowInPlace(re, options.window ?? "hann");
+  fftComplexInPlace(re, im, plan);
+  const bins = (n >> 1) + 1;
+  const mag = options.outMag ?? new Float32Array(bins);
+  if (mag.length !== bins) throw new Error("FFT: outMag length mismatch");
+  for (let k = 0; k < bins; k++) {
+    const rr = re[k];
+    const ii = im[k];
+    mag[k] = Math.sqrt(rr * rr + ii * ii);
+  }
+  return mag;
+}
+const clamp$1 = (v2, lo, hi) => Math.max(lo, Math.min(hi, v2));
+function movingAverage(src, window2) {
+  const n = src.length;
+  if (window2 <= 1 || n === 0) return src;
+  const w = Math.max(1, Math.floor(window2));
+  const out = new Float32Array(n);
+  let sum = 0;
+  let count = 0;
+  for (let i = 0; i < n; i++) {
+    sum += src[i];
+    count++;
+    if (i - w >= 0) {
+      sum -= src[i - w];
+      count--;
+    }
+    out[i] = sum / Math.max(1, count);
+  }
+  return out;
+}
+function normalize01(src) {
+  let max = 0;
+  for (let i = 0; i < src.length; i++) max = Math.max(max, Math.abs(src[i]));
+  if (max <= 0) return src;
+  const out = new Float32Array(src.length);
+  for (let i = 0; i < src.length; i++) out[i] = src[i] / max;
+  return out;
+}
+function onsetFromEnergy(energy) {
+  const n = energy.length;
+  const out = new Float32Array(n);
+  let prev = 0;
+  for (let i = 0; i < n; i++) {
+    const v2 = energy[i];
+    const d = v2 - prev;
+    out[i] = d > 0 ? d : 0;
+    prev = v2;
+  }
+  return out;
+}
+function onsetFromSpectralFlux(mono, sampleRate, envelopeHz, fftSize, window2) {
+  const hop = Math.max(1, Math.floor(sampleRate / envelopeHz));
+  const frames = Math.max(1, Math.floor(mono.length / hop));
+  const nfft = nextPow2(fftSize);
+  const plan = getFFTPlan(nfft);
+  const bins = (nfft >> 1) + 1;
+  const frame = new Float32Array(nfft);
+  const outRe = new Float32Array(nfft);
+  const outIm = new Float32Array(nfft);
+  const mag = new Float32Array(bins);
+  const prev = new Float32Array(bins);
+  const flux = new Float32Array(frames);
+  for (let fi = 0; fi < frames; fi++) {
+    const start = fi * hop;
+    frame.fill(0);
+    const copyN = Math.min(nfft, Math.max(0, mono.length - start));
+    if (copyN > 0) {
+      frame.set(mono.subarray(start, start + copyN), 0);
+    }
+    fftMagReal(frame, nfft, { window: window2, plan, outMag: mag, outRe, outIm });
+    let s = 0;
+    for (let k = 0; k < bins; k++) {
+      const d = mag[k] - prev[k];
+      if (d > 0) s += d;
+      prev[k] = mag[k];
+    }
+    flux[fi] = s;
+  }
+  return flux;
+}
+function bestTempoFromOnset(onset, envelopeHz, bpmMin, bpmMax) {
+  const n = onset.length;
+  if (n < 8) return { bpm: 120, confidence: 0, bestLag: Math.max(1, Math.floor(envelopeHz * 60 / 120)) };
+  const minLag = Math.max(1, Math.floor(envelopeHz * 60 / bpmMax));
+  const maxLag = Math.max(minLag + 1, Math.floor(envelopeHz * 60 / bpmMin));
+  let bestLag = minLag;
+  let bestScore = -1;
+  let secondScore = -1;
+  const x = normalize01(onset);
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    let sum = 0;
+    for (let i = 0; i + lag < n; i++) {
+      sum += x[i] * x[i + lag];
+    }
+    if (sum > bestScore) {
+      secondScore = bestScore;
+      bestScore = sum;
+      bestLag = lag;
+    } else if (sum > secondScore) {
+      secondScore = sum;
+    }
+  }
+  const bpm = clamp$1(60 * envelopeHz / bestLag, bpmMin, bpmMax);
+  const conf = bestScore <= 0 ? 0 : clamp$1((bestScore - secondScore) / Math.max(1e-9, bestScore), 0, 1);
+  return { bpm, confidence: conf, bestLag };
+}
+function scoreOffset(onset, envelopeHz, periodSec, offsetSec, maxTimeSec) {
+  const n = onset.length;
+  let score = 0;
+  for (let t = offsetSec; t <= maxTimeSec; t += periodSec) {
+    const idx = Math.floor(t * envelopeHz);
+    if (idx >= 0 && idx < n) score += onset[idx];
+  }
+  return score;
+}
+function bestOffsetFromOnset(onset, envelopeHz, periodSec, durationSec) {
+  const steps = 32;
+  let best = 0;
+  let bestScore = -1;
+  const maxTimeSec = Math.min(durationSec, Math.max(0, durationSec - periodSec));
+  for (let i = 0; i < steps; i++) {
+    const off = i / steps * periodSec;
+    const s = scoreOffset(onset, envelopeHz, periodSec, off, maxTimeSec);
+    if (s > bestScore) {
+      bestScore = s;
+      best = off;
+    }
+  }
+  const refineStep = periodSec / (steps * 4);
+  for (let k = -8; k <= 8; k++) {
+    const off = clamp$1(best + k * refineStep, 0, Math.max(0, periodSec - 1e-6));
+    const s = scoreOffset(onset, envelopeHz, periodSec, off, maxTimeSec);
+    if (s > bestScore) {
+      bestScore = s;
+      best = off;
+    }
+  }
+  return best;
+}
+function sampleOnsetAt(onset, envelopeHz, timeSec) {
+  const idx = Math.floor(timeSec * envelopeHz);
+  if (idx < 0 || idx >= onset.length) return 0;
+  return onset[idx] ?? 0;
+}
+function tempoContrastScore(onset, envelopeHz, periodSec, offsetSec, durationSec, meter) {
+  const beatsPerBar = Math.max(1, Math.floor(meter));
+  let beatSum = 0;
+  let beatCount = 0;
+  let offSum = 0;
+  let offCount = 0;
+  let downSum = 0;
+  let downCount = 0;
+  const maxTimeSec = Math.min(durationSec, Math.max(0, durationSec - periodSec));
+  let bi = 0;
+  for (let t = offsetSec; t <= maxTimeSec; t += periodSec) {
+    const vBeat = sampleOnsetAt(onset, envelopeHz, t);
+    beatSum += vBeat;
+    beatCount++;
+    const vOff = sampleOnsetAt(onset, envelopeHz, t + periodSec * 0.5);
+    offSum += vOff;
+    offCount++;
+    if (bi % beatsPerBar === 0) {
+      downSum += vBeat;
+      downCount++;
+    }
+    bi++;
+  }
+  const beatAvg = beatCount > 0 ? beatSum / beatCount : 0;
+  const offAvg = offCount > 0 ? offSum / offCount : 0;
+  const downAvg = downCount > 0 ? downSum / downCount : 0;
+  return beatAvg - 0.6 * offAvg + 0.5 * downAvg;
+}
+function pickTempoCandidate(onset, envelopeHz, durationSec, meter, bestLag, bpmMin, bpmMax) {
+  const minLag = Math.max(1, Math.floor(envelopeHz * 60 / bpmMax));
+  const maxLag = Math.max(minLag + 1, Math.floor(envelopeHz * 60 / bpmMin));
+  const candidates = [];
+  candidates.push(bestLag);
+  candidates.push(bestLag * 2);
+  candidates.push(Math.max(1, Math.floor(bestLag / 2)));
+  const unique = Array.from(new Set(candidates)).filter((lag) => lag >= minLag && lag <= maxLag);
+  if (unique.length === 0) {
+    const bpm = clamp$1(60 * envelopeHz / bestLag, bpmMin, bpmMax);
+    const periodSec = 60 / Math.max(1e-9, bpm);
+    const offsetSec = bestOffsetFromOnset(onset, envelopeHz, periodSec, durationSec);
+    return { bpm, offsetSec };
+  }
+  const scored = [];
+  for (const lag of unique) {
+    const bpm = clamp$1(60 * envelopeHz / lag, bpmMin, bpmMax);
+    const periodSec = 60 / Math.max(1e-9, bpm);
+    const offsetSec = bestOffsetFromOnset(onset, envelopeHz, periodSec, durationSec);
+    const score = tempoContrastScore(onset, envelopeHz, periodSec, offsetSec, durationSec, meter);
+    scored.push({ lag, bpm, periodSec, offsetSec, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  const best = scored[0];
+  if (scored.length >= 2) {
+    const a = scored[0];
+    const b = scored[1];
+    const denom = Math.max(1e-9, Math.max(Math.abs(a.score), Math.abs(b.score)));
+    const rel = Math.abs(a.score - b.score) / denom;
+    if (rel < 0.02) {
+      const slower = a.bpm <= b.bpm ? a : b;
+      return { bpm: slower.bpm, offsetSec: slower.offsetSec };
+    }
+  }
+  return { bpm: best.bpm, offsetSec: best.offsetSec };
+}
+function analyzeBeatsFromAudioBuffer(buffer, options = {}) {
+  const bpmMin = Number.isFinite(options.bpmMin) ? options.bpmMin : 60;
+  const bpmMax = Number.isFinite(options.bpmMax) ? options.bpmMax : 200;
+  const envelopeHz = Number.isFinite(options.envelopeHz) ? options.envelopeHz : 100;
+  const smoothMs = Number.isFinite(options.smoothMs) ? options.smoothMs : 80;
+  const onsetMode = options.onsetMode === "spectralFlux" ? "spectralFlux" : "energy";
+  const fftSize = Number.isFinite(options.fftSize) ? Math.max(64, Math.floor(options.fftSize)) : 1024;
+  const fftWindow = options.fftWindow ?? "hann";
+  const meter = Number.isFinite(options.meter) ? Math.max(1, Math.floor(options.meter)) : 4;
+  const sr = buffer.sampleRate;
+  const channels = buffer.numberOfChannels;
+  const length = buffer.length;
+  const durationSec = buffer.duration;
+  const hop = Math.max(1, Math.floor(sr / envelopeHz));
+  const frames = Math.max(1, Math.floor(length / hop));
+  const ch = [];
+  for (let c2 = 0; c2 < channels; c2++) ch.push(buffer.getChannelData(c2));
+  const mono = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    let v2 = 0;
+    for (let c2 = 0; c2 < channels; c2++) v2 += ch[c2][i] ?? 0;
+    mono[i] = v2 / channels;
+  }
+  let onsetRaw;
+  if (onsetMode === "spectralFlux") {
+    onsetRaw = onsetFromSpectralFlux(mono, sr, envelopeHz, fftSize, fftWindow);
+  } else {
+    const energy = new Float32Array(frames);
+    for (let fi = 0; fi < frames; fi++) {
+      const start = fi * hop;
+      const end = Math.min(length, start + hop);
+      let sumSq = 0;
+      let count = 0;
+      for (let i = start; i < end; i++) {
+        const m = mono[i] ?? 0;
+        sumSq += m * m;
+        count++;
+      }
+      energy[fi] = count > 0 ? Math.sqrt(sumSq / count) : 0;
+    }
+    const energyNorm = normalize01(energy);
+    onsetRaw = onsetFromEnergy(energyNorm);
+  }
+  const smoothWindow = Math.max(1, Math.round(smoothMs / 1e3 * envelopeHz));
+  const onsetSmooth = normalize01(movingAverage(onsetRaw, smoothWindow));
+  const tempo = bestTempoFromOnset(onsetSmooth, envelopeHz, bpmMin, bpmMax);
+  const picked = pickTempoCandidate(onsetSmooth, envelopeHz, durationSec, meter, tempo.bestLag, bpmMin, bpmMax);
+  const periodSec = 60 / Math.max(1e-9, picked.bpm);
+  const offsetSec = picked.offsetSec;
+  const beats = [];
+  for (let t = offsetSec; t < durationSec + 1e-6; t += periodSec) beats.push(t);
+  const downbeats = [];
+  for (let i = 0; i < beats.length; i += meter) downbeats.push(beats[i]);
+  return {
+    bpm: picked.bpm,
+    confidence: tempo.confidence,
+    meter,
+    periodSec,
+    offsetSec,
+    beats,
+    downbeats,
+    envelopeHz,
+    envelope: onsetSmooth
+  };
+}
+function getBeatState(analysis, timeSec, prevTimeSec) {
+  const bpm = (analysis == null ? void 0 : analysis.bpm) ?? 120;
+  const meter = (analysis == null ? void 0 : analysis.meter) ?? 4;
+  const periodSec = (analysis == null ? void 0 : analysis.periodSec) ?? 0.5;
+  const offsetSec = (analysis == null ? void 0 : analysis.offsetSec) ?? 0;
+  const t = Math.max(0, (Number.isFinite(timeSec) ? timeSec : 0) - offsetSec);
+  const beatFloat = periodSec > 1e-9 ? t / periodSec : 0;
+  const beatIndex = Math.max(0, Math.floor(beatFloat));
+  const beatPhase = clamp$1(beatFloat - beatIndex, 0, 1);
+  const barIndex = Math.max(0, Math.floor(beatIndex / Math.max(1, meter)));
+  const beatInBar0 = (beatIndex % meter + meter) % meter;
+  const beatInBar = beatInBar0 + 1;
+  const beatsPerBar = Math.max(1, meter);
+  const barFloat = beatFloat / beatsPerBar;
+  const barPhase = clamp$1(barFloat - Math.floor(barFloat), 0, 1);
+  const nextBeatSec = offsetSec + (beatIndex + 1) * periodSec;
+  const nextDownbeatBeatIndex = (barIndex + 1) * beatsPerBar;
+  const nextDownbeatSec = offsetSec + nextDownbeatBeatIndex * periodSec;
+  let isBeatEdge = false;
+  let isDownbeatEdge = false;
+  if (typeof prevTimeSec === "number" && Number.isFinite(prevTimeSec)) {
+    const prevT = Math.max(0, prevTimeSec - offsetSec);
+    const prevBeatIndex = Math.max(0, Math.floor(prevT / Math.max(1e-9, periodSec)));
+    isBeatEdge = prevBeatIndex !== beatIndex;
+    isDownbeatEdge = Math.floor(prevBeatIndex / beatsPerBar) !== barIndex;
+  }
+  return {
+    bpm,
+    meter,
+    periodSec,
+    offsetSec,
+    timeSec: Number.isFinite(timeSec) ? timeSec : 0,
+    beatIndex,
+    beatInBar,
+    barIndex,
+    beatFloat,
+    beatPhase,
+    barPhase,
+    nextBeatSec,
+    nextDownbeatSec,
+    isBeatEdge,
+    isDownbeatEdge
+  };
 }
 const SFX_PRESET_NAMES = ["coin", "zap", "boom", "jump", "1up", "lose", "hurt", "blip"];
 const v = (name) => ({ kind: "var", name });
@@ -17638,7 +19190,11 @@ class StorieEngine {
     // Dropped-file handling (binary-safe)
     __publicField(this, "lastDroppedFile", null);
     __publicField(this, "dropHandlingCleanup", null);
-    __publicField(this, "maxDropBytes", 10 * 1024 * 1024);
+    // True only while dispatching a real DOM input event into the active document handler.
+    // Used to gate sensitive operations (e.g., clipboard) so sandbox code cannot trigger them
+    // outside a trusted user gesture.
+    __publicField(this, "inputDispatchDepth", 0);
+    __publicField(this, "maxDropBytes", 50 * 1024 * 1024);
     // Canvas viewport (reserved for future use)
     // private viewportX: number = 0;
     // private viewportY: number = 0;
@@ -17650,7 +19206,7 @@ class StorieEngine {
     this.canvas = canvas;
     this.width = config.width || 80;
     this.height = config.height || 24;
-    const configuredMaxDropBytes = typeof config.maxDropBytes === "number" ? config.maxDropBytes : 10 * 1024 * 1024;
+    const configuredMaxDropBytes = typeof config.maxDropBytes === "number" ? config.maxDropBytes : 50 * 1024 * 1024;
     this.maxDropBytes = configuredMaxDropBytes > 0 ? configuredMaxDropBytes : Infinity;
     this.camera3D = createCamera3D();
     this.currentTheme = getTheme("neotopia");
@@ -18156,6 +19712,21 @@ class StorieEngine {
           }
         }
       },
+      // Document metadata API (read-only)
+      // Section indices match Canvas3D's depth-first layout order.
+      doc: {
+        sectionsFlat: () => {
+          const d = engine.getActiveDocument();
+          if (!d) return [];
+          const flat = flattenSections(d.sections);
+          return flat.map((s, index) => ({ index, title: s.title, level: s.level }));
+        },
+        sectionCount: () => {
+          const d = engine.getActiveDocument();
+          if (!d) return 0;
+          return flattenSections(d.sections).length;
+        }
+      },
       // Retained-mode TUI API
       tui: createTUIAPI(
         // Use the WebGPU terminal renderer when available; otherwise provide a minimal shim
@@ -18170,7 +19741,8 @@ class StorieEngine {
           }
         },
         () => this.layers.getActive().buffer,
-        (name) => this.getStyle(name)
+        (name) => this.getStyle(name),
+        () => this.inputDispatchDepth > 0
       ),
       // Retained-mode GUI API
       gui: createGUIAPI(
@@ -18180,7 +19752,8 @@ class StorieEngine {
             charWidth: (atlas == null ? void 0 : atlas.getCharWidth()) ?? 10,
             charHeight: (atlas == null ? void 0 : atlas.getCharHeight()) ?? 16
           };
-        }
+        },
+        () => this.inputDispatchDepth > 0
       ),
       // Theme API
       getStyle: (name) => this.getStyle(name),
@@ -19024,10 +20597,25 @@ class StorieEngine {
           osc.stop(this.audioContext.currentTime + duration);
           return { osc, gain };
         },
-        loadSound: async (url) => {
-          const response = await fetch(url);
-          const arrayBuffer = await response.arrayBuffer();
-          return await this.audioContext.decodeAudioData(arrayBuffer);
+        /**
+         * Decode the currently dropped file (if any) into an AudioBuffer.
+         * This is a safe alternative to URL loading: no network access.
+         */
+        loadSoundFromDrop: async () => {
+          const dropped = engine.lastDroppedFile;
+          const bytes = (dropped == null ? void 0 : dropped.bytes) ?? null;
+          if (!bytes) return null;
+          const mime = String((dropped == null ? void 0 : dropped.mime) ?? "");
+          if (mime && !mime.startsWith("audio/")) {
+            console.warn(`[audio.loadSoundFromDrop] Dropped file "${String((dropped == null ? void 0 : dropped.name) ?? "")}" has non-audio mime "${mime}"; attempting decode anyway.`);
+          }
+          try {
+            const ab = toExactArrayBuffer(bytes);
+            return await engine.audioContext.decodeAudioData(ab);
+          } catch (e) {
+            console.warn("[audio.loadSoundFromDrop] Failed to decode dropped audio:", e);
+            return null;
+          }
         },
         /**
          * Decode an embedded ```blob block into an AudioBuffer.
@@ -19047,6 +20635,154 @@ class StorieEngine {
           gain.connect(this.audioContext.destination);
           source.start();
           return source;
+        },
+        /**
+         * Convenience: decode and play the currently dropped file as audio.
+         * Returns the started AudioBufferSourceNode, or null if decode fails.
+         */
+        playDrop: async (options = {}) => {
+          const dropped = engine.lastDroppedFile;
+          const bytes = (dropped == null ? void 0 : dropped.bytes) ?? null;
+          if (!bytes) return null;
+          const mime = String((dropped == null ? void 0 : dropped.mime) ?? "");
+          if (mime && !mime.startsWith("audio/")) {
+            console.warn(`[audio.playDrop] Dropped file "${String((dropped == null ? void 0 : dropped.name) ?? "")}" has non-audio mime "${mime}"; attempting decode anyway.`);
+          }
+          let buffer = null;
+          try {
+            const ab = toExactArrayBuffer(bytes);
+            buffer = await engine.audioContext.decodeAudioData(ab);
+          } catch (e) {
+            console.warn("[audio.playDrop] Failed to decode dropped audio:", e);
+            buffer = null;
+          }
+          if (!buffer) return null;
+          const source = engine.audioContext.createBufferSource();
+          const gain = engine.audioContext.createGain();
+          source.buffer = buffer;
+          source.loop = options.loop || false;
+          source.playbackRate.value = options.playbackRate || 1;
+          gain.gain.value = options.volume !== void 0 ? options.volume : 1;
+          source.connect(gain);
+          gain.connect(options.destination ?? engine.audioContext.destination);
+          const when = typeof options.when === "number" && Number.isFinite(options.when) ? options.when : engine.audioContext.currentTime;
+          try {
+            source.start(when);
+          } catch {
+            source.start();
+          }
+          return source;
+        },
+        /**
+         * Offline peak detection for a decoded AudioBuffer.
+         * Returns peak timestamps (seconds) and the smoothed envelope.
+         * Dependency-free and deterministic.
+         */
+        peaksFromBuffer: (buffer, options = {}) => {
+          return detectPeaksFromAudioBuffer(buffer, options);
+        },
+        /**
+         * Offline beat grid analysis for a decoded AudioBuffer.
+         * Currently assumes 4/4 by default, but returns a `meter` field for future meter detection.
+         */
+        beatsFromBuffer: (buffer, options = {}) => {
+          return analyzeBeatsFromAudioBuffer(buffer, options);
+        },
+        /**
+         * Convert an offline beat analysis into a "what beat are we on" state.
+         * Pass prevTimeSec to get edge flags when crossing beat boundaries.
+         */
+        beatState: (analysis, timeSec, prevTimeSec) => {
+          return getBeatState(analysis, timeSec, prevTimeSec);
+        },
+        /**
+         * Realtime FFT/analyser helper for visualizers.
+         * Users can still use the raw WebAudio AnalyserNode directly, but this
+         * provides convenient typed-array buffers and band-energy helpers.
+         */
+        fft: {
+          createAnalyser: (options = {}) => {
+            const analyser = this.audioContext.createAnalyser();
+            if (typeof options.fftSize === "number" && Number.isFinite(options.fftSize)) {
+              try {
+                analyser.fftSize = Math.max(32, Math.floor(options.fftSize));
+              } catch {
+              }
+            }
+            if (typeof options.smoothing === "number" && Number.isFinite(options.smoothing)) {
+              analyser.smoothingTimeConstant = Math.max(0, Math.min(1, options.smoothing));
+            }
+            if (typeof options.minDecibels === "number" && Number.isFinite(options.minDecibels)) {
+              analyser.minDecibels = options.minDecibels;
+            }
+            if (typeof options.maxDecibels === "number" && Number.isFinite(options.maxDecibels)) {
+              analyser.maxDecibels = options.maxDecibels;
+            }
+            const freqBytes = new Uint8Array(analyser.frequencyBinCount);
+            const freqFloats = new Float32Array(analyser.frequencyBinCount);
+            const timeBytes = new Uint8Array(analyser.fftSize);
+            const timeFloats = new Float32Array(analyser.fftSize);
+            const api = {
+              analyser,
+              binHz: () => this.audioContext.sampleRate / analyser.fftSize,
+              connectFrom: (node) => {
+                try {
+                  node.connect(analyser);
+                } catch {
+                }
+                return api;
+              },
+              connectTo: (node) => {
+                try {
+                  analyser.connect(node);
+                } catch {
+                }
+                return api;
+              },
+              getFrequencyBytes: () => {
+                analyser.getByteFrequencyData(freqBytes);
+                return freqBytes;
+              },
+              getFrequencyFloats: () => {
+                analyser.getFloatFrequencyData(freqFloats);
+                return freqFloats;
+              },
+              getTimeDomainBytes: () => {
+                analyser.getByteTimeDomainData(timeBytes);
+                return timeBytes;
+              },
+              getTimeDomainFloats: () => {
+                analyser.getFloatTimeDomainData(timeFloats);
+                return timeFloats;
+              },
+              /**
+               * Compute simple band energies (0..1-ish) from current float frequency data.
+               * Bands are given in Hz: [{ fromHz, toHz }, ...]
+               */
+              getBands: (bands) => {
+                analyser.getFloatFrequencyData(freqFloats);
+                const binHz = this.audioContext.sampleRate / analyser.fftSize;
+                const out = [];
+                for (const b of bands) {
+                  const from = Math.max(0, Math.min(b.fromHz, b.toHz));
+                  const to = Math.max(0, Math.max(b.fromHz, b.toHz));
+                  const i0 = Math.max(0, Math.floor(from / binHz));
+                  const i1 = Math.min(freqFloats.length - 1, Math.ceil(to / binHz));
+                  let sum = 0;
+                  let count = 0;
+                  for (let i = i0; i <= i1; i++) {
+                    const db = freqFloats[i];
+                    const lin = Math.pow(10, db / 20);
+                    sum += lin;
+                    count++;
+                  }
+                  out.push(count > 0 ? sum / count : 0);
+                }
+                return out;
+              }
+            };
+            return api;
+          }
         },
         /**
          * Convenience: decode and play an embedded audio blob by name.
@@ -19171,14 +20907,8 @@ class StorieEngine {
           ctx.font = font;
           ctx.fillText(text, x, y);
         },
-        loadImage: async (url) => {
-          return new Promise((resolve, reject) => {
-            const img = new Image();
-            img.onload = () => resolve(img);
-            img.onerror = reject;
-            img.src = url;
-          });
-        },
+        // NOTE: URL-based image loading is intentionally not exposed to sandboxed
+        // user code. Use `ui.loadImageFromBlob()` instead.
         // === CONVENIENCE PROPERTIES ===
         get width() {
           var _a;
@@ -19228,26 +20958,8 @@ class StorieEngine {
           if (!ui) return;
           ui.text(text, x, y, color);
         },
-        /**
-         * Load an image URL into a GPU texture and return an opaque image id.
-         * WebGPU-only: returns null if WebGPU UI is unavailable.
-         */
-        loadImage: async (url) => {
-          const ui = engine.ensureWebGPUUI();
-          if (!ui) return null;
-          if (typeof url !== "string" || url.length === 0) return null;
-          const res = await fetch(url);
-          if (!res.ok) return null;
-          const blob = await res.blob();
-          const bitmap = await createImageBitmap(blob);
-          const id = `img_${nextUIImageId++}`;
-          ui.registerImage(id, bitmap);
-          try {
-            bitmap.close();
-          } catch {
-          }
-          return id;
-        },
+        // NOTE: URL-based image loading is intentionally not exposed to sandboxed
+        // user code. Use `ui.loadImageFromBlob()` instead.
         /**
          * Load an image from an embedded ```blob block by name.
          * The blob should be base64-encoded PNG/JPEG (mime:image/png or mime:image/jpeg).
@@ -19868,13 +21580,18 @@ class StorieEngine {
       const parsed = doc._parsedMarkdown;
       if ((parsed == null ? void 0 : parsed.wgslShaders) && parsed.wgslShaders.length > 0) {
         console.log(`[ShaderManager] Registering ${parsed.wgslShaders.length} shader(s) from ${docId}...`);
-        for (const shader of parsed.wgslShaders) {
-          try {
-            await this.shaderManager.registerShader(shader);
-            console.log(`  ✓ Registered ${shader.name}`);
-          } catch (error) {
-            console.error(`  ✗ Failed to register ${shader.name}:`, error);
+        try {
+          const sm = this.shaderManager;
+          if (typeof sm.registerShaders === "function") {
+            await sm.registerShaders(parsed.wgslShaders);
+          } else {
+            for (const shader of parsed.wgslShaders) {
+              await this.shaderManager.registerShader(shader);
+            }
           }
+          console.log(`  ✓ Registered WGSL shaders from ${docId}`);
+        } catch (error) {
+          console.error(`  ✗ Failed to register WGSL shaders from ${docId}:`, error);
         }
       }
     }
@@ -19896,13 +21613,18 @@ class StorieEngine {
         }
         if (this.shaderManager) {
           console.log(`  Registering shaders with ShaderManager...`);
-          for (const shader of parsed.wgslShaders) {
-            try {
-              await this.shaderManager.registerShader(shader);
-              console.log(`    ✓ Registered ${shader.name}`);
-            } catch (error) {
-              console.error(`    ✗ Failed to register ${shader.name}:`, error);
+          try {
+            const sm = this.shaderManager;
+            if (typeof sm.registerShaders === "function") {
+              await sm.registerShaders(parsed.wgslShaders);
+            } else {
+              for (const shader of parsed.wgslShaders) {
+                await this.shaderManager.registerShader(shader);
+              }
             }
+            console.log(`    ✓ Registered WGSL shaders`);
+          } catch (error) {
+            console.error(`    ✗ Failed to register WGSL shaders:`, error);
           }
         } else {
           console.log(`  ⏳ ShaderManager not yet initialized - shaders will be registered when WebGPU starts`);
@@ -20507,7 +22229,19 @@ ${exportVars}
               if (layout) layout.highlightUvRect = rect;
             }
           }
-          this.canvas3DRenderer.render(this.camera3D, this.section3DLayouts, null);
+          const backgroundChain = this.parseCanvas3DSectionBackgroundChain();
+          const proceduralBackground = this.isCanvas3DSectionBackgroundProceduralChainEnabled();
+          const backgroundConfig = proceduralBackground ? {
+            enabled: true,
+            chain: backgroundChain,
+            paperColor: this.resolveCanvas3DSectionBackground(),
+            lineColor: this.withAlpha(this.getStyle("dim").fg, 64),
+            scale: 1,
+            spacing: 1,
+            thickness: 0.06,
+            noiseStrength: 0.06
+          } : void 0;
+          this.canvas3DRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig);
         }
         if (this.webgpuUIRenderer) {
           const guiAPI = (_b = this.api) == null ? void 0 : _b.gui;
@@ -20621,8 +22355,11 @@ ${exportVars}
       const heading = this.getStyle("heading");
       const link2 = this.getStyle("link");
       const code = this.getStyle("code");
+      const proceduralRuledPaper = this.isCanvas3DSectionBackgroundProceduralChainEnabled();
+      const bakedRuledPaper = this.isCanvas3DSectionBackgroundBakedRuledLines();
       const surfaceBg = this.resolveCanvas3DSectionBackground();
       const borderStyle = this.getStyle("border");
+      const mdBg = proceduralRuledPaper || bakedRuledPaper ? this.withAlpha(surfaceBg, 0) : surfaceBg;
       const mdStyle = {
         fg: base.fg,
         mutedFg: dim.fg,
@@ -20630,7 +22367,7 @@ ${exportVars}
         linkFg: link2.fg,
         codeFg: code.fg,
         codeBg: code.bg,
-        bg: surfaceBg
+        bg: mdBg
       };
       const title = (layout.displayTitle || layout.sectionTitle || "").trim();
       const content = (layout.content || "").trim();
@@ -20647,6 +22384,10 @@ ${content}`.trim();
         texturePadding
       );
       ctx.clearRect(0, 0, widthPx, heightPx);
+      if (bakedRuledPaper) {
+        const ruledLine = this.withAlpha(dim.fg, 64);
+        this.drawRuledLines2D(ctx, widthPx, heightPx, surfaceBg, ruledLine, baseLineHeight, texturePadding);
+      }
       for (const op of result.ops) {
         if (op.kind === "rect") {
           ctx.fillStyle = ColorUtils.toCss(op.color);
@@ -20717,6 +22458,46 @@ ${content}`.trim();
     if (![r2, g, b, a].every(Number.isFinite)) return null;
     return (r2 & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | a & 255;
   }
+  withAlpha(color, alphaByte) {
+    const a = Math.max(0, Math.min(255, Math.round(alphaByte)));
+    return color & 4294967040 | a & 255;
+  }
+  parseCanvas3DSectionBackgroundChain() {
+    const v2 = this.canvas3DConfig.sectionBackground;
+    if (typeof v2 !== "string") return [];
+    const trimmed = v2.trim();
+    if (!trimmed) return [];
+    const separators = ["+", ";", ",", "|"];
+    for (const sep of separators) {
+      if (trimmed.includes(sep)) {
+        return trimmed.split(sep).map((s) => s.trim().toLowerCase()).filter(Boolean);
+      }
+    }
+    return [trimmed.toLowerCase()];
+  }
+  isCanvas3DSectionBackgroundProceduralChainEnabled() {
+    const chain = this.parseCanvas3DSectionBackgroundChain();
+    const hasRuledLines = chain.includes("ruledlines") || chain.includes("ruled-lines") || chain.includes("ruled_lines");
+    const hasPaper = chain.includes("paper");
+    return hasRuledLines || hasPaper;
+  }
+  isCanvas3DSectionBackgroundBakedRuledLines() {
+    const v2 = this.canvas3DConfig.sectionBackground;
+    if (typeof v2 !== "string") return false;
+    const key = v2.trim().toLowerCase();
+    return key === "ruledlines-baked" || key === "ruledlines_baked" || key === "ruledlinesbaked";
+  }
+  drawRuledLines2D(ctx, widthPx, heightPx, paperColor, lineColor, lineSpacingPx, texturePadding) {
+    ctx.fillStyle = ColorUtils.toCss(paperColor);
+    ctx.fillRect(0, 0, widthPx, heightPx);
+    const spacing = Math.max(6, Math.round(lineSpacingPx));
+    const thickness = 1;
+    const startY = Math.max(0, Math.round(texturePadding + spacing - 3));
+    ctx.fillStyle = ColorUtils.toCss(lineColor);
+    for (let y = startY; y < heightPx; y += spacing) {
+      ctx.fillRect(0, y, widthPx, thickness);
+    }
+  }
   resolveCanvas3DSectionBackground() {
     const v2 = this.canvas3DConfig.sectionBackground;
     if (v2 === void 0 || v2 === null || v2 === "surface") {
@@ -20736,6 +22517,14 @@ ${content}`.trim();
       }
       const key = trimmed.toLowerCase();
       switch (key) {
+        case "ruledlines":
+        case "ruled-lines":
+        case "ruled_lines":
+          return this.getStyle("surface").bg;
+        case "ruledlines-baked":
+        case "ruledlines_baked":
+        case "ruledlinesbaked":
+          return this.getStyle("surface").bg;
         case "bg":
         case "background":
           return this.currentTheme.bg;
@@ -20791,8 +22580,11 @@ ${content}`.trim();
     const heading = this.getStyle("heading");
     const link2 = this.getStyle("link");
     const code = this.getStyle("code");
+    const proceduralRuledPaper = this.isCanvas3DSectionBackgroundProceduralChainEnabled();
+    const bakedRuledPaper = this.isCanvas3DSectionBackgroundBakedRuledLines();
     const surfaceBg = this.resolveCanvas3DSectionBackground();
     const borderStyle = this.getStyle("border");
+    const mdBg = proceduralRuledPaper || bakedRuledPaper ? this.withAlpha(surfaceBg, 0) : surfaceBg;
     const style = {
       fg: base.fg,
       mutedFg: dim.fg,
@@ -20801,7 +22593,7 @@ ${content}`.trim();
       codeFg: code.fg,
       codeBg: code.bg,
       // Give 3D cards a panel-like background; matches theme elevated surfaces.
-      bg: surfaceBg
+      bg: mdBg
     };
     const borderEnabled = this.canvas3DConfig.sectionBorderEnabled !== false;
     const borderWidth = Math.max(0, Math.round(this.canvas3DConfig.sectionBorderWidth ?? 2));
@@ -20867,6 +22659,16 @@ ${content}`.trim();
       );
       this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
       ui.clearCommands();
+      if (bakedRuledPaper) {
+        const ruledLine = this.withAlpha(dim.fg, 64);
+        ui.rect(0, 0, widthPx, heightPx, surfaceBg);
+        const spacing = Math.max(6, Math.round(baseLineHeight));
+        const thickness = 1;
+        const startY = Math.max(0, Math.round(texturePadding + spacing - 3));
+        for (let y = startY; y < heightPx; y += spacing) {
+          ui.rect(0, y, widthPx, thickness, ruledLine);
+        }
+      }
       for (const op of result.ops) {
         if (op.kind === "rect") {
           ui.rect(op.x, op.y, op.w, op.h, op.color);
@@ -21242,6 +23044,7 @@ ${content}`.trim();
         keyCode: e.keyCode,
         mods
       };
+      this.inputDispatchDepth++;
       try {
         const shouldContinue = doc.handlers.input(event);
         if (shouldContinue === false) {
@@ -21249,6 +23052,8 @@ ${content}`.trim();
         }
       } catch (error) {
         console.error("Error in input handler:", error);
+      } finally {
+        this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
       }
     }
     if (handledBy3D || ((_b = doc == null ? void 0 : doc.handlers) == null ? void 0 : _b.input)) {

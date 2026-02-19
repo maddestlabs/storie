@@ -9,7 +9,7 @@ import { Canvas2DRenderer } from './renderer.js';
 import { WebGPURenderer } from './webgpu-renderer.js';
 import { Compositor } from './compositor.js';
 import { ScriptSandbox } from './sandbox.js';
-import { parseMarkdown } from './markdown.js';
+import { parseMarkdown, flattenSections } from './markdown.js';
 import { getTheme, applyTheme } from './themes.js';
 import { ModuleLoader } from './modules/loader.js';
 import { createTUIAPI } from './tui-api.js';
@@ -49,6 +49,8 @@ import {
 } from './canvas3d.js';
 import type { ModuleResolverConfig } from './modules/types.js';
 import type { UserScript, Color, InputEvent, ThemeColors, ThemeStyleSheet, NamedStyle, DroppedFile } from './types.js';
+import { detectPeaksFromAudioBuffer, type PeakDetectionOptions, type PeakDetectionResult } from './audio/peaks.js';
+import { analyzeBeatsFromAudioBuffer, getBeatState, type BeatAnalysisResult, type BeatDetectionOptions, type BeatState } from './audio/beats.js';
 import { KEY } from './types.js';
 import { ColorUtils } from './types.js';
 import type { SandboxAPI } from './sandbox.js';
@@ -64,7 +66,7 @@ export interface EngineConfig {
   preferWebGPU?: boolean; // Default true
   /**
    * Maximum number of bytes allowed for a single dropped file.
-   * Default: 10MB. Set <= 0 to disable the limit.
+   * Default: 50MB. Set <= 0 to disable the limit.
    */
   maxDropBytes?: number;
   modules?: ModuleResolverConfig; // Module loader configuration
@@ -172,7 +174,12 @@ export class StorieEngine {
   // Dropped-file handling (binary-safe)
   private lastDroppedFile: DroppedFile | null = null;
   private dropHandlingCleanup: (() => void) | null = null;
-  private maxDropBytes: number = 10 * 1024 * 1024;
+
+  // True only while dispatching a real DOM input event into the active document handler.
+  // Used to gate sensitive operations (e.g., clipboard) so sandbox code cannot trigger them
+  // outside a trusted user gesture.
+  private inputDispatchDepth: number = 0;
+  private maxDropBytes: number = 50 * 1024 * 1024;
   
   // Canvas viewport (reserved for future use)
   // private viewportX: number = 0;
@@ -190,7 +197,7 @@ export class StorieEngine {
     this.width = config.width || 80;
     this.height = config.height || 24;
 
-    const configuredMaxDropBytes = typeof config.maxDropBytes === 'number' ? config.maxDropBytes : 10 * 1024 * 1024;
+    const configuredMaxDropBytes = typeof config.maxDropBytes === 'number' ? config.maxDropBytes : 50 * 1024 * 1024;
     this.maxDropBytes = configuredMaxDropBytes > 0 ? configuredMaxDropBytes : Infinity;
 
     // Camera state should exist even before WebGPU initializes so user code can
@@ -822,6 +829,22 @@ export class StorieEngine {
         }
       },
 
+      // Document metadata API (read-only)
+      // Section indices match Canvas3D's depth-first layout order.
+      doc: {
+        sectionsFlat: () => {
+          const d = engine.getActiveDocument();
+          if (!d) return [] as Array<{ index: number; title: string; level: number }>;
+          const flat = flattenSections(d.sections);
+          return flat.map((s, index) => ({ index, title: s.title, level: s.level }));
+        },
+        sectionCount: () => {
+          const d = engine.getActiveDocument();
+          if (!d) return 0;
+          return flattenSections(d.sections).length;
+        }
+      },
+
       // Retained-mode TUI API
       tui: createTUIAPI(
         // Use the WebGPU terminal renderer when available; otherwise provide a minimal shim
@@ -837,7 +860,8 @@ export class StorieEngine {
               }
             } as any)),
         () => this.layers.getActive().buffer,
-        (name: string) => this.getStyle(name)
+        (name: string) => this.getStyle(name),
+        () => this.inputDispatchDepth > 0
       ),
       
       // Retained-mode GUI API
@@ -848,7 +872,8 @@ export class StorieEngine {
             charWidth: atlas?.getCharWidth() ?? 10,
             charHeight: atlas?.getCharHeight() ?? 16
           };
-        }
+        },
+        () => this.inputDispatchDepth > 0
       ),
       
       // Theme API
@@ -1754,10 +1779,27 @@ export class StorieEngine {
           return { osc, gain }; // Return for user control
         },
         
-        loadSound: async (url: string): Promise<AudioBuffer> => {
-          const response = await fetch(url);
-          const arrayBuffer = await response.arrayBuffer();
-          return await this.audioContext.decodeAudioData(arrayBuffer);
+        /**
+         * Decode the currently dropped file (if any) into an AudioBuffer.
+         * This is a safe alternative to URL loading: no network access.
+         */
+        loadSoundFromDrop: async (): Promise<AudioBuffer | null> => {
+          const dropped = engine.lastDroppedFile;
+          const bytes = dropped?.bytes ?? null;
+          if (!bytes) return null;
+
+          const mime = String(dropped?.mime ?? '');
+          if (mime && !mime.startsWith('audio/')) {
+            console.warn(`[audio.loadSoundFromDrop] Dropped file "${String(dropped?.name ?? '')}" has non-audio mime "${mime}"; attempting decode anyway.`);
+          }
+
+          try {
+            const ab = toExactArrayBuffer(bytes);
+            return await engine.audioContext.decodeAudioData(ab);
+          } catch (e) {
+            console.warn('[audio.loadSoundFromDrop] Failed to decode dropped audio:', e);
+            return null;
+          }
         },
 
         /**
@@ -1786,6 +1828,171 @@ export class StorieEngine {
           source.start();
           
           return source; // User can stop/modify
+        },
+
+        /**
+         * Convenience: decode and play the currently dropped file as audio.
+         * Returns the started AudioBufferSourceNode, or null if decode fails.
+         */
+        playDrop: async (options: {
+          loop?: boolean;
+          volume?: number;
+          playbackRate?: number;
+          when?: number;
+          destination?: AudioNode;
+        } = {}): Promise<AudioBufferSourceNode | null> => {
+          const dropped = engine.lastDroppedFile;
+          const bytes = dropped?.bytes ?? null;
+          if (!bytes) return null;
+
+          const mime = String(dropped?.mime ?? '');
+          if (mime && !mime.startsWith('audio/')) {
+            console.warn(`[audio.playDrop] Dropped file "${String(dropped?.name ?? '')}" has non-audio mime "${mime}"; attempting decode anyway.`);
+          }
+
+          let buffer: AudioBuffer | null = null;
+          try {
+            const ab = toExactArrayBuffer(bytes);
+            buffer = await engine.audioContext.decodeAudioData(ab);
+          } catch (e) {
+            console.warn('[audio.playDrop] Failed to decode dropped audio:', e);
+            buffer = null;
+          }
+
+          if (!buffer) return null;
+
+          const source = engine.audioContext.createBufferSource();
+          const gain = engine.audioContext.createGain();
+          source.buffer = buffer;
+          source.loop = options.loop || false;
+          source.playbackRate.value = options.playbackRate || 1.0;
+          gain.gain.value = options.volume !== undefined ? options.volume : 1.0;
+          source.connect(gain);
+          gain.connect(options.destination ?? engine.audioContext.destination);
+          const when = (typeof options.when === 'number' && Number.isFinite(options.when))
+            ? options.when
+            : engine.audioContext.currentTime;
+          try {
+            source.start(when);
+          } catch {
+            source.start();
+          }
+          return source;
+        },
+
+        /**
+         * Offline peak detection for a decoded AudioBuffer.
+         * Returns peak timestamps (seconds) and the smoothed envelope.
+         * Dependency-free and deterministic.
+         */
+        peaksFromBuffer: (buffer: AudioBuffer, options: PeakDetectionOptions = {}): PeakDetectionResult => {
+          return detectPeaksFromAudioBuffer(buffer, options);
+        },
+
+        /**
+         * Offline beat grid analysis for a decoded AudioBuffer.
+         * Currently assumes 4/4 by default, but returns a `meter` field for future meter detection.
+         */
+        beatsFromBuffer: (buffer: AudioBuffer, options: BeatDetectionOptions = {}): BeatAnalysisResult => {
+          return analyzeBeatsFromAudioBuffer(buffer, options);
+        },
+
+        /**
+         * Convert an offline beat analysis into a "what beat are we on" state.
+         * Pass prevTimeSec to get edge flags when crossing beat boundaries.
+         */
+        beatState: (analysis: BeatAnalysisResult, timeSec: number, prevTimeSec?: number): BeatState => {
+          return getBeatState(analysis, timeSec, prevTimeSec);
+        },
+
+        /**
+         * Realtime FFT/analyser helper for visualizers.
+         * Users can still use the raw WebAudio AnalyserNode directly, but this
+         * provides convenient typed-array buffers and band-energy helpers.
+         */
+        fft: {
+          createAnalyser: (options: {
+            fftSize?: number;
+            smoothing?: number;
+            minDecibels?: number;
+            maxDecibels?: number;
+          } = {}) => {
+            const analyser = this.audioContext.createAnalyser();
+            if (typeof options.fftSize === 'number' && Number.isFinite(options.fftSize)) {
+              try { analyser.fftSize = Math.max(32, Math.floor(options.fftSize)); } catch { /* ignore */ }
+            }
+            if (typeof options.smoothing === 'number' && Number.isFinite(options.smoothing)) {
+              analyser.smoothingTimeConstant = Math.max(0, Math.min(1, options.smoothing));
+            }
+            if (typeof options.minDecibels === 'number' && Number.isFinite(options.minDecibels)) {
+              analyser.minDecibels = options.minDecibels;
+            }
+            if (typeof options.maxDecibels === 'number' && Number.isFinite(options.maxDecibels)) {
+              analyser.maxDecibels = options.maxDecibels;
+            }
+
+            const freqBytes = new Uint8Array(analyser.frequencyBinCount);
+            const freqFloats = new Float32Array(analyser.frequencyBinCount);
+            const timeBytes = new Uint8Array(analyser.fftSize);
+            const timeFloats = new Float32Array(analyser.fftSize);
+
+            const api = {
+              analyser,
+              binHz: () => this.audioContext.sampleRate / analyser.fftSize,
+              connectFrom: (node: AudioNode) => {
+                try { node.connect(analyser); } catch { /* ignore */ }
+                return api;
+              },
+              connectTo: (node: AudioNode) => {
+                try { analyser.connect(node); } catch { /* ignore */ }
+                return api;
+              },
+              getFrequencyBytes: () => {
+                analyser.getByteFrequencyData(freqBytes);
+                return freqBytes;
+              },
+              getFrequencyFloats: () => {
+                analyser.getFloatFrequencyData(freqFloats);
+                return freqFloats;
+              },
+              getTimeDomainBytes: () => {
+                analyser.getByteTimeDomainData(timeBytes);
+                return timeBytes;
+              },
+              getTimeDomainFloats: () => {
+                analyser.getFloatTimeDomainData(timeFloats);
+                return timeFloats;
+              },
+              /**
+               * Compute simple band energies (0..1-ish) from current float frequency data.
+               * Bands are given in Hz: [{ fromHz, toHz }, ...]
+               */
+              getBands: (bands: Array<{ fromHz: number; toHz: number }>) => {
+                analyser.getFloatFrequencyData(freqFloats);
+                const binHz = this.audioContext.sampleRate / analyser.fftSize;
+                const out: number[] = [];
+                for (const b of bands) {
+                  const from = Math.max(0, Math.min(b.fromHz, b.toHz));
+                  const to = Math.max(0, Math.max(b.fromHz, b.toHz));
+                  const i0 = Math.max(0, Math.floor(from / binHz));
+                  const i1 = Math.min(freqFloats.length - 1, Math.ceil(to / binHz));
+                  let sum = 0;
+                  let count = 0;
+                  for (let i = i0; i <= i1; i++) {
+                    const db = freqFloats[i];
+                    // Convert dBFS to linear magnitude (roughly 0..1).
+                    const lin = Math.pow(10, db / 20);
+                    sum += lin;
+                    count++;
+                  }
+                  out.push(count > 0 ? sum / count : 0);
+                }
+                return out;
+              }
+            };
+
+            return api;
+          }
         },
 
         /**
@@ -1939,14 +2146,8 @@ export class StorieEngine {
           ctx.fillText(text, x, y);
         },
         
-        loadImage: async (url: string): Promise<HTMLImageElement> => {
-          return new Promise((resolve, reject) => {
-            const img = new Image();
-            img.onload = () => resolve(img);
-            img.onerror = reject;
-            img.src = url;
-          });
-        },
+        // NOTE: URL-based image loading is intentionally not exposed to sandboxed
+        // user code. Use `ui.loadImageFromBlob()` instead.
         
         // === CONVENIENCE PROPERTIES ===
         get width() {
@@ -1997,24 +2198,8 @@ export class StorieEngine {
           ui.text(text, x, y, color);
         },
 
-        /**
-         * Load an image URL into a GPU texture and return an opaque image id.
-         * WebGPU-only: returns null if WebGPU UI is unavailable.
-         */
-        loadImage: async (url: string): Promise<string | null> => {
-          const ui = engine.ensureWebGPUUI();
-          if (!ui) return null;
-          if (typeof url !== 'string' || url.length === 0) return null;
-
-          const res = await fetch(url);
-          if (!res.ok) return null;
-          const blob = await res.blob();
-          const bitmap = await createImageBitmap(blob);
-          const id = `img_${nextUIImageId++}`;
-          ui.registerImage(id, bitmap);
-          try { bitmap.close(); } catch { /* ignore */ }
-          return id;
-        },
+        // NOTE: URL-based image loading is intentionally not exposed to sandboxed
+        // user code. Use `ui.loadImageFromBlob()` instead.
 
         /**
          * Load an image from an embedded ```blob block by name.
@@ -2748,13 +2933,18 @@ export class StorieEngine {
       const parsed = (doc as any)._parsedMarkdown;
       if (parsed?.wgslShaders && parsed.wgslShaders.length > 0) {
         console.log(`[ShaderManager] Registering ${parsed.wgslShaders.length} shader(s) from ${docId}...`);
-        for (const shader of parsed.wgslShaders) {
-          try {
-            await this.shaderManager.registerShader(shader);
-            console.log(`  ✓ Registered ${shader.name}`);
-          } catch (error) {
-            console.error(`  ✗ Failed to register ${shader.name}:`, error);
+        try {
+          const sm: any = this.shaderManager as any;
+          if (typeof sm.registerShaders === 'function') {
+            await sm.registerShaders(parsed.wgslShaders);
+          } else {
+            for (const shader of parsed.wgslShaders) {
+              await this.shaderManager.registerShader(shader);
+            }
           }
+          console.log(`  ✓ Registered WGSL shaders from ${docId}`);
+        } catch (error) {
+          console.error(`  ✗ Failed to register WGSL shaders from ${docId}:`, error);
         }
       }
     }
@@ -2782,13 +2972,18 @@ export class StorieEngine {
         // Register shaders with ShaderManager if WebGPU is available
         if (this.shaderManager) {
           console.log(`  Registering shaders with ShaderManager...`);
-          for (const shader of parsed.wgslShaders) {
-            try {
-              await this.shaderManager.registerShader(shader);
-              console.log(`    ✓ Registered ${shader.name}`);
-            } catch (error) {
-              console.error(`    ✗ Failed to register ${shader.name}:`, error);
+          try {
+            const sm: any = this.shaderManager as any;
+            if (typeof sm.registerShaders === 'function') {
+              await sm.registerShaders(parsed.wgslShaders);
+            } else {
+              for (const shader of parsed.wgslShaders) {
+                await this.shaderManager.registerShader(shader);
+              }
             }
+            console.log(`    ✓ Registered WGSL shaders`);
+          } catch (error) {
+            console.error(`    ✗ Failed to register WGSL shaders:`, error);
           }
         } else {
           console.log(`  ⏳ ShaderManager not yet initialized - shaders will be registered when WebGPU starts`);
@@ -3585,7 +3780,22 @@ ${exportVars}
           }
 
           // Whole-card hover invert disabled (we highlight links instead)
-          this.canvas3DRenderer.render(this.camera3D, this.section3DLayouts, null);
+          const backgroundChain = this.parseCanvas3DSectionBackgroundChain();
+          const proceduralBackground = this.isCanvas3DSectionBackgroundProceduralChainEnabled();
+          const backgroundConfig = proceduralBackground
+            ? {
+                enabled: true,
+                chain: backgroundChain,
+                paperColor: this.resolveCanvas3DSectionBackground(),
+                lineColor: this.withAlpha(this.getStyle('dim').fg, 0x40),
+                scale: 1,
+                spacing: 1,
+                thickness: 0.06,
+                noiseStrength: 0.06,
+              }
+            : undefined;
+
+          this.canvas3DRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig);
         }
 
         // Render GPU UI into its own texture (if created)
@@ -3759,8 +3969,14 @@ ${exportVars}
       const heading = this.getStyle('heading');
       const link = this.getStyle('link');
       const code = this.getStyle('code');
+      const proceduralRuledPaper = this.isCanvas3DSectionBackgroundProceduralChainEnabled();
+      const bakedRuledPaper = this.isCanvas3DSectionBackgroundBakedRuledLines();
       const surfaceBg = this.resolveCanvas3DSectionBackground();
       const borderStyle = this.getStyle('border');
+
+      // If the 3D shader (procedural) or this path (baked) will draw paper,
+      // keep the section texture background transparent so paper shows through.
+      const mdBg = (proceduralRuledPaper || bakedRuledPaper) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
 
       const mdStyle: MarkdownStyle = {
         fg: base.fg,
@@ -3769,7 +3985,7 @@ ${exportVars}
         linkFg: link.fg,
         codeFg: code.fg,
         codeBg: code.bg,
-        bg: surfaceBg,
+        bg: mdBg,
       };
 
       const title = (layout.displayTitle || layout.sectionTitle || '').trim();
@@ -3788,6 +4004,11 @@ ${exportVars}
 
       // Draw ops into the Canvas2D surface
       ctx.clearRect(0, 0, widthPx, heightPx);
+      if (bakedRuledPaper) {
+        // Use a subtle line color derived from the theme.
+        const ruledLine = this.withAlpha(dim.fg, 0x40);
+        this.drawRuledLines2D(ctx, widthPx, heightPx, surfaceBg, ruledLine, baseLineHeight, texturePadding);
+      }
       for (const op of result.ops) {
         if (op.kind === 'rect') {
           ctx.fillStyle = ColorUtils.toCss(op.color as any);
@@ -3870,6 +4091,68 @@ ${exportVars}
     return ((r & 0xFF) << 24) | ((g & 0xFF) << 16) | ((b & 0xFF) << 8) | (a & 0xFF);
   }
 
+  private withAlpha(color: Color, alphaByte: number): Color {
+    const a = Math.max(0, Math.min(255, Math.round(alphaByte)));
+    return ((color as any) & 0xFFFFFF00) | (a & 0xFF);
+  }
+
+  private parseCanvas3DSectionBackgroundChain(): string[] {
+    const v: any = (this.canvas3DConfig as any).sectionBackground;
+    if (typeof v !== 'string') return [];
+    const trimmed = v.trim();
+    if (!trimmed) return [];
+
+    const separators = ['+', ';', ',', '|'];
+    for (const sep of separators) {
+      if (trimmed.includes(sep)) {
+        return trimmed
+          .split(sep)
+          .map(s => s.trim().toLowerCase())
+          .filter(Boolean);
+      }
+    }
+
+    return [trimmed.toLowerCase()];
+  }
+
+  private isCanvas3DSectionBackgroundProceduralChainEnabled(): boolean {
+    const chain = this.parseCanvas3DSectionBackgroundChain();
+
+    const hasRuledLines = chain.includes('ruledlines') || chain.includes('ruled-lines') || chain.includes('ruled_lines');
+    const hasPaper = chain.includes('paper');
+    return hasRuledLines || hasPaper;
+  }
+
+  private isCanvas3DSectionBackgroundBakedRuledLines(): boolean {
+    const v: any = (this.canvas3DConfig as any).sectionBackground;
+    if (typeof v !== 'string') return false;
+    const key = v.trim().toLowerCase();
+    return key === 'ruledlines-baked' || key === 'ruledlines_baked' || key === 'ruledlinesbaked';
+  }
+
+  private drawRuledLines2D(
+    ctx: OffscreenCanvasRenderingContext2D,
+    widthPx: number,
+    heightPx: number,
+    paperColor: Color,
+    lineColor: Color,
+    lineSpacingPx: number,
+    texturePadding: number
+  ): void {
+    ctx.fillStyle = ColorUtils.toCss(paperColor as any);
+    ctx.fillRect(0, 0, widthPx, heightPx);
+
+    const spacing = Math.max(6, Math.round(lineSpacingPx));
+    const thickness = 1;
+    // Place lines roughly under the text baseline for a “paper” look.
+    const startY = Math.max(0, Math.round(texturePadding + spacing - 3));
+
+    ctx.fillStyle = ColorUtils.toCss(lineColor as any);
+    for (let y = startY; y < heightPx; y += spacing) {
+      ctx.fillRect(0, y, widthPx, thickness);
+    }
+  }
+
   private resolveCanvas3DSectionBackground(): Color {
     const v: any = (this.canvas3DConfig as any).sectionBackground;
 
@@ -3895,6 +4178,14 @@ ${exportVars}
 
       const key = trimmed.toLowerCase();
       switch (key) {
+        case 'ruledlines':
+        case 'ruled-lines':
+        case 'ruled_lines':
+          return this.getStyle('surface').bg;
+        case 'ruledlines-baked':
+        case 'ruledlines_baked':
+        case 'ruledlinesbaked':
+          return this.getStyle('surface').bg;
         case 'bg':
         case 'background':
           return this.currentTheme.bg;
@@ -3961,8 +4252,12 @@ ${exportVars}
     const heading = this.getStyle('heading');
     const link = this.getStyle('link');
     const code = this.getStyle('code');
+    const proceduralRuledPaper = this.isCanvas3DSectionBackgroundProceduralChainEnabled();
+    const bakedRuledPaper = this.isCanvas3DSectionBackgroundBakedRuledLines();
     const surfaceBg = this.resolveCanvas3DSectionBackground();
     const borderStyle = this.getStyle('border');
+
+    const mdBg = (proceduralRuledPaper || bakedRuledPaper) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
 
     const style: MarkdownStyle = {
       fg: base.fg,
@@ -3972,7 +4267,7 @@ ${exportVars}
       codeFg: code.fg,
       codeBg: code.bg,
       // Give 3D cards a panel-like background; matches theme elevated surfaces.
-      bg: surfaceBg,
+      bg: mdBg,
     };
 
     const borderEnabled = this.canvas3DConfig.sectionBorderEnabled !== false;
@@ -4052,6 +4347,18 @@ ${exportVars}
 
       // Replay ops into UI renderer and render into this section texture.
       ui.clearCommands();
+
+      if (bakedRuledPaper) {
+        const ruledLine = this.withAlpha(dim.fg, 0x40) as any;
+        ui.rect(0, 0, widthPx, heightPx, surfaceBg as any);
+
+        const spacing = Math.max(6, Math.round(baseLineHeight));
+        const thickness = 1;
+        const startY = Math.max(0, Math.round(texturePadding + spacing - 3));
+        for (let y = startY; y < heightPx; y += spacing) {
+          ui.rect(0, y, widthPx, thickness, ruledLine);
+        }
+      }
       for (const op of result.ops) {
         if (op.kind === 'rect') {
           ui.rect(op.x, op.y, op.w, op.h, op.color as any);
@@ -4514,6 +4821,7 @@ ${exportVars}
         mods
       };
 
+      this.inputDispatchDepth++;
       try {
         const shouldContinue = doc.handlers.input(event);
         // Only stop if handler explicitly returns false (undefined = continue)
@@ -4522,6 +4830,8 @@ ${exportVars}
         }
       } catch (error) {
         console.error('Error in input handler:', error);
+      } finally {
+        this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
       }
     }
 

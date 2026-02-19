@@ -1,6 +1,6 @@
 ---
 name: "TUI Widgets Demo (Storie)"
-theme: "solarlight"
+theme: "nord"
 shaders: "ruledlines+paper"
 ---
 
@@ -32,15 +32,17 @@ tui.init();
 const title = tui.createLabel({ bounds: { x: 2, y: 1, width: 70, height: 1 }, text: 'TUI Widgets Demo (Storie)' });
 const btn = tui.createButton({ bounds: { x: 2, y: 3, width: 26, height: 3 }, label: 'Click Me' });
 const chk = tui.createCheckbox({ bounds: { x: 2, y: 7, width: 40, height: 1 }, label: 'Enable Feature' });
-const input = tui.createTextField({ bounds: { x: 2, y: 9, width: 40, height: 3 }, value: 'Type here' });
+const input = (typeof tui.createTextEditor === 'function')
+  ? tui.createTextEditor({ bounds: { x: 2, y: 9, width: 40, height: 5 }, value: 'Type here\nSecond line' })
+  : tui.createTextField({ bounds: { x: 2, y: 9, width: 40, height: 3 }, value: 'Type here' });
 const sld = tui.createSlider({
-  bounds: { x: 2, y: 13, width: 30, height: 3 },
+  bounds: { x: 2, y: 15, width: 30, height: 3 },
   label: 'Volume',
   min: 0,
   max: 100,
   value: 50
 });
-const status = tui.createLabel({ bounds: { x: 2, y: 17, width: 80, height: 1 }, text: 'Status: Ready' });
+const status = tui.createLabel({ bounds: { x: 2, y: 19, width: 80, height: 1 }, text: 'Status: Ready' });
 
 // Store widget references in persistent state
 widgets = { title, btn, chk, input, sld, status };
@@ -56,7 +58,8 @@ if (event.type === 'keydown') {
   tui.handleKey(event.key, {
     shift: (event.mods || []).includes('shift'),
     ctrl: (event.mods || []).includes('ctrl'),
-    alt: (event.mods || []).includes('alt')
+    alt: (event.mods || []).includes('alt'),
+    meta: (event.mods || []).includes('meta')
   });
 }
 
@@ -100,7 +103,8 @@ if (widgets.chk.wasToggled()) {
 }
 
 if (widgets.input.wasChanged()) {
-  widgets.status.setText(`Status: Input = "${widgets.input.getValue()}"`);
+  const safe = String(widgets.input.getValue()).replace(/\n/g, '\\n');
+  widgets.status.setText(`Status: Input = "${safe}"`);
 }
 
 // Keep title showing slider value.
