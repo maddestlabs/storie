@@ -42,9 +42,10 @@ pub fn run() {
             read_dropped_file_bytes,
         ])
         .setup(|app| {
-            #[cfg(debug_assertions)]
-            {
-                let window = app.get_webview_window("main").unwrap();
+            // Always open devtools for now so we can debug white/blank screens
+            // in portable Windows builds. Once stable, we can gate this behind
+            // a config/env flag.
+            if let Some(window) = app.get_webview_window("main") {
                 window.open_devtools();
             }
             Ok(())
