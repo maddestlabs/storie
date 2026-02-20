@@ -12,10 +12,15 @@
     "build:site": "node scripts/build-site.js",
     "preview": "vite preview --outDir docs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest"
+    "test": "vitest",
+    "tauri": "tauri",
+    "dev:tauri": "tauri dev",
+    "build:tauri": "tauri build",
+    "gen-icons": "node scripts/gen-icons.js"
   },
   "dependencies": {
-    "ses": "^1.14.0"
+    "ses": "^1.14.0",
+    "@tauri-apps/api": "^2"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
@@ -23,7 +28,8 @@
     "terser": "^5.46.0",
     "typescript": "^5.3.3",
     "vite": "^5.0.12",
-    "vitest": "^1.2.1"
+    "vitest": "^1.2.1",
+    "@tauri-apps/cli": "^2"
   },
   "keywords": [
     "terminal",

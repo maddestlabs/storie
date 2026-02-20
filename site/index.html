@@ -385,6 +385,115 @@ This demo showcases:
       return shadersParam.trim();
     }
 
+    // ── Tauri native detection ──────────────────────────────────────────────────
+    // When running inside Tauri, window.__TAURI_INTERNALS__ is injected by the
+    // runtime (requires `withGlobalTauri: true` in tauri.conf.json).
+    const IS_TAURI = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+    /**
+     * Native drag-and-drop bridge for Tauri.
+     *
+     * WebView2 on Windows blocks `event.dataTransfer.files` for security
+     * reasons, so DOM drop events arrive empty. Tauri intercepts the drop at
+     * the native layer and emits a 'tauri://drag-drop' event with the real
+     * filesystem paths. We read each file via a custom Rust command and then
+     * either:
+     *   a) Load a .md file as a new story (default behaviour).
+     *   b) Pass binary files back through the engine's on:drop handler by
+     *      synthesising a DOM DragEvent with a Blob-backed File object, which
+     *      keeps full parity with the browser drop contract that stories rely on.
+     */
+    async function installTauriDropHandling(engine) {
+      const tauri = window.__TAURI__;
+      if (!tauri) {
+        console.warn('[tauri-drop] __TAURI__ not found — falling back to DOM D&D');
+        engine.installDropHandling(document.body);
+        return;
+      }
+
+      const { invoke }           = tauri.core;
+      const { getCurrentWindow } = tauri.window;
+
+      let cleanup = null;
+
+      try {
+        const win = getCurrentWindow();
+
+        cleanup = await win.onDragDropEvent(async (event) => {
+          const { type, paths, position } = event.payload;
+
+          if (type === 'over') {
+            // Visual feedback — nothing needed; Tauri handles the cursor
+            return;
+          }
+
+          if (type !== 'drop' || !paths || paths.length === 0) return;
+
+          const filePath = paths[0]; // Storie processes one file at a time
+          const name     = filePath.replace(/.*[\\/]/, '');
+          const ext      = name.split('.').pop().toLowerCase();
+
+          const isMarkdown = ext === 'md' || ext === 'markdown' || ext === 'txt';
+
+          if (isMarkdown) {
+            // ── Text / markdown drop ───────────────────────────────────────────
+            try {
+              const content = await invoke('read_dropped_file', { path: filePath });
+              await engine.loadMarkdown(name, content);
+              console.log(`[tauri-drop] Loaded markdown: ${name}`);
+            } catch (err) {
+              console.error('[tauri-drop] Failed to read markdown file:', err);
+            }
+            return;
+          }
+
+          // ── Binary drop (audio, image, etc.) ──────────────────────────────────
+          // Only delivered if active story has `dropTarget: true` in frontmatter.
+          if (!engine.isDropTargetEnabled()) {
+            console.log(`[tauri-drop] Ignoring binary file (no dropTarget): ${name}`);
+            return;
+          }
+
+          try {
+            const b64  = await invoke('read_dropped_file_bytes', { path: filePath });
+            // Decode base64 → Uint8Array
+            const bin  = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+            // Infer MIME type from extension
+            const MIME = {
+              mp3:'audio/mpeg', wav:'audio/wav', ogg:'audio/ogg', flac:'audio/flac',
+              m4a:'audio/mp4', aac:'audio/aac', opus:'audio/opus',
+              png:'image/png',  jpg:'image/jpeg', jpeg:'image/jpeg',
+              gif:'image/gif',  webp:'image/webp', svg:'image/svg+xml',
+              json:'application/json',
+            };
+            const mime = MIME[ext] || 'application/octet-stream';
+
+            // Synthesise a File and dispatch as a real DOM DragEvent so the
+            // engine's internal handleDropEvent / on:drop path is unchanged.
+            const file = new File([bin], name, { type: mime });
+            const dt   = new DataTransfer();
+            dt.items.add(file);
+            const syntheticDrop = new DragEvent('drop', {
+              dataTransfer: dt,
+              bubbles:      true,
+              cancelable:   true,
+            });
+            document.body.dispatchEvent(syntheticDrop);
+            console.log(`[tauri-drop] Dispatched binary file: ${name} (${mime})`);
+          } catch (err) {
+            console.error('[tauri-drop] Failed to read binary file:', err);
+          }
+        });
+
+        console.log('✓ Native Tauri drag-and-drop installed');
+      } catch (err) {
+        console.warn('[tauri-drop] Failed to install native D&D, falling back:', err);
+        engine.installDropHandling(document.body);
+      }
+
+      return cleanup;
+    }
+
     async function main() {
       try {
         // Get canvas
@@ -448,11 +557,18 @@ This demo showcases:
         });
 
         // Enable drag-and-drop behavior:
-        // - default: dropped markdown loads as a new story
+        // - default: dropped markdown loads as a new story  
         // - if active story has frontmatter `dropTarget: true`: pass-through to on:drop
-        engine.installDropHandling(document.body);
-        
-        console.log(`✓ S|torie engine initialized (${gridWidth}x${gridHeight})`);
+        //
+        // In Tauri (native), WebView2 blocks dataTransfer.files so we intercept
+        // drops at the OS level via the Tauri native drag-drop event API.
+        if (IS_TAURI) {
+          await installTauriDropHandling(engine);
+        } else {
+          engine.installDropHandling(document.body);
+        }
+
+        console.log(`✓ S|torie engine initialized (${gridWidth}x${gridHeight}) [${IS_TAURI ? 'Tauri native' : 'browser'}]`);
         
         // Handle window resize
         let resizeTimeout;

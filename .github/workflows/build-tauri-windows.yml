@@ -1,0 +1,136 @@
+name: Build – Windows Portable
+
+# Builds a portable Windows .exe (no installer/MSI) via Tauri v2.
+# Triggered on: push to main with a version tag, manual dispatch, or PRs.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Create a GitHub Release'
+        type: boolean
+        default: false
+
+jobs:
+  build-windows-portable:
+    name: Windows Portable (.exe)
+    runs-on: windows-latest
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Node.js ─────────────────────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      # ── Rust ────────────────────────────────────────────────────────────────
+      - name: Setup Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      # ── WebView2 (pre-installed on windows-latest, but confirm) ─────────────
+      - name: Confirm WebView2 runtime present
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          if (Test-Path $key) {
+            $ver = (Get-ItemProperty $key).pv
+            Write-Host "WebView2 runtime: $ver"
+          } else {
+            Write-Warning "WebView2 registry key not found; build will still proceed."
+          }
+
+      # ── Build frontend + Tauri ───────────────────────────────────────────────
+      - name: Build Storie frontend (docs/)
+        run: npm run build
+
+      - name: Build Tauri app (NSIS currentUser installer)
+        run: npm run build:tauri -- --target x86_64-pc-windows-msvc
+        env:
+          # Disable code-signing for portable/CI builds (set TAURI_SIGNING_*
+          # secrets to enable signing; see Tauri docs on code signing).
+          TAURI_SIGNING_PRIVATE_KEY: ''
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+
+      # ── Package portable .exe ────────────────────────────────────────────────
+      # The main .exe in target/release/ is fully self-contained on Windows 10+
+      # (requires the pre-installed WebView2 evergreen runtime).
+      # We zip it alongside the release notes as the "portable" distribution.
+      - name: Package portable zip
+        shell: pwsh
+        run: |
+          $exePath = "src-tauri\target\x86_64-pc-windows-msvc\release\storie.exe"
+          if (-not (Test-Path $exePath)) {
+            # Release builds without --target flag land here
+            $exePath = "src-tauri\target\release\storie.exe"
+          }
+          if (-not (Test-Path $exePath)) {
+            Write-Error "storie.exe not found. Check build output."
+            exit 1
+          }
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $zipName = "storie-$version-windows-portable-x64.zip"
+          Compress-Archive -Path $exePath -DestinationPath $zipName -Force
+          Write-Host "Portable zip: $zipName ($([Math]::Round((Get-Item $zipName).Length / 1MB, 2)) MB)"
+          echo "PORTABLE_ZIP=$zipName" | Out-File -FilePath $Env:GITHUB_ENV -Append
+
+      # ── Artifacts ────────────────────────────────────────────────────────────
+      - name: Upload portable zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: storie-windows-portable
+          path: ${{ env.PORTABLE_ZIP }}
+          if-no-files-found: error
+
+      - name: Upload NSIS installer (bonus)
+        uses: actions/upload-artifact@v4
+        with:
+          name: storie-windows-installer
+          path: src-tauri/target/**/bundle/nsis/*.exe
+          if-no-files-found: warn
+
+      # ── GitHub Release (on tag push or manual dispatch with release=true) ───
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: S|torie ${{ github.ref_name }}
+          draft: true
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          files: |
+            ${{ env.PORTABLE_ZIP }}
+            src-tauri/target/**/bundle/nsis/*.exe
+          body: |
+            ## S|torie ${{ github.ref_name }}
+
+            ### Downloads
+
+            | File | Description |
+            |------|-------------|
+            | `storie-*-windows-portable-x64.zip` | **Portable** – extract and run, no install needed |
+            | `storie-*_x64-setup.exe` | **Installer** – per-user NSIS installer (no admin required) |
+
+            **Requirements:** Windows 10/11 with [WebView2 runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (pre-installed on Windows 11 and most Windows 10 systems).
+
+            ### WebGPU
+            WebGPU shaders require a DirectX 12-capable GPU (most systems from 2015+). The engine falls back to Canvas 2D if WebGPU is unavailable.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
