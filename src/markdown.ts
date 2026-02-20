@@ -14,8 +14,13 @@ interface HeadingMatch {
 }
 
 export async function parseMarkdown(source: string): Promise<MarkdownDocument> {
+  // Normalize line endings so parsing behaves consistently across platforms.
+  // On Windows, fetched files often contain CRLF, and downstream parsing logic
+  // splits on '\n', leaving a trailing '\r' on each line.
+  const normalizedSource = source.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
   // Step 1: Process magic blocks FIRST - they expand into markdown content
-  const expandedSource = await expandMagicBlocks(source);
+  const expandedSource = await expandMagicBlocks(normalizedSource);
   
   // Step 2: Extract WGSL shaders AFTER magic expansion (so shaders can be compressed)
   const wgslShaders = extractWGSLBlocks(expandedSource);
@@ -102,6 +107,7 @@ function extractSections(source: string): Section[] {
 
   // Debug aid (only used when headings unexpectedly come out empty).
   const candidateHeadings: Array<{ line: number; inFence: boolean; text: string }> = [];
+  let fenceToggles = 0;
 
   // Detect YAML frontmatter range so we don't accidentally treat the closing
   // '---' as a Setext underline (e.g. "key: value\n---").
@@ -125,6 +131,7 @@ function extractSections(source: string): Section[] {
     // Toggle fenced code blocks
     if (line.trim().startsWith('```')) {
       inFence = !inFence;
+      fenceToggles++;
       continue;
     }
 
@@ -178,9 +185,25 @@ function extractSections(source: string): Section[] {
   }
 
   if (headings.length === 0 && candidateHeadings.length > 0) {
+    // Re-test the regex against our samples to diagnose environment-specific regex behavior.
+    const re = /^\s*(#{1,6})\s*(.+)$/;
+    const tested = candidateHeadings.map((c) => {
+      const raw = c.text;
+      const m = raw.match(re);
+      return {
+        line: c.line,
+        inFence: c.inFence,
+        raw,
+        matched: !!m,
+        groups: m ? [m[1], m[2]] : null,
+        cps: Array.from(raw).slice(0, 24).map(ch => '0x' + ch.codePointAt(0)!.toString(16))
+      };
+    });
+
     console.warn('[markdown] No sections detected, but heading-like lines exist:', {
       frontmatterEnd: frontmatterEnd >= 0 ? frontmatterEnd + 1 : null,
-      sample: candidateHeadings
+      fenceToggles,
+      sample: tested
     });
   }
 

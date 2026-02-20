@@ -9896,7 +9896,8 @@ function extractWGSLBlocks(source) {
   return shaders;
 }
 async function parseMarkdown(source) {
-  const expandedSource = await expandMagicBlocks(source);
+  const normalizedSource = source.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const expandedSource = await expandMagicBlocks(normalizedSource);
   const wgslShaders = extractWGSLBlocks(expandedSource);
   const sections = extractSections(expandedSource);
   const codeBlocks = extractCodeBlocks(expandedSource);
@@ -9962,6 +9963,7 @@ function extractSections(source) {
   const lines = source.split("\n");
   const headings = [];
   const candidateHeadings = [];
+  let fenceToggles = 0;
   let frontmatterEnd = -1;
   if (((_a = lines[0]) == null ? void 0 : _a.trim()) === "---") {
     for (let i = 1; i < lines.length; i++) {
@@ -9976,6 +9978,7 @@ function extractSections(source) {
     const line = lines[i];
     if (line.trim().startsWith("```")) {
       inFence = !inFence;
+      fenceToggles++;
       continue;
     }
     if (inFence) continue;
@@ -10015,9 +10018,23 @@ function extractSections(source) {
     }
   }
   if (headings.length === 0 && candidateHeadings.length > 0) {
+    const re = /^\s*(#{1,6})\s*(.+)$/;
+    const tested = candidateHeadings.map((c2) => {
+      const raw = c2.text;
+      const m = raw.match(re);
+      return {
+        line: c2.line,
+        inFence: c2.inFence,
+        raw,
+        matched: !!m,
+        groups: m ? [m[1], m[2]] : null,
+        cps: Array.from(raw).slice(0, 24).map((ch) => "0x" + ch.codePointAt(0).toString(16))
+      };
+    });
     console.warn("[markdown] No sections detected, but heading-like lines exist:", {
       frontmatterEnd: frontmatterEnd >= 0 ? frontmatterEnd + 1 : null,
-      sample: candidateHeadings
+      fenceToggles,
+      sample: tested
     });
   }
   const rootSections = [];
