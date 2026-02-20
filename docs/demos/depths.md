@@ -8,19 +8,19 @@ shaders: "lightvignette"
 ---
 
 ```javascript on:init
-canvas3D.enable();
+worlds.enable();
 console.log('✓ 3D Canvas enabled!');
-canvas3D.config.setDefaults({
+worlds.config.setDefaults({
   defaultSectionWidth: 100,        // Default width
   defaultSectionHeight: 24,       // Default height
   autoLayoutSpacing: 150,         // Spacing between auto-laid-out sections (world units)
   sectionBorderEnabled: false,     // Draw a border around each section card
   sectionBackground: 'paper+ruledlines',   // Section card background: 'surface' | 'ruledlines' | 'bg' | 'bgAlt' | 'accent1' | '#RRGGBB' | 0xRRGGBBAA
 });
-canvas3D.camera.setPosition(0, 0, 250);
-canvas3D.camera.setRotation(0, 10, 0.5);
-canvas3D.camera.setEaseSpeed(0.018, 0.012);
-canvas3D.camera.focusOnSection(0, 50);
+worlds.camera.setPosition(0, 0, 250);
+worlds.camera.setRotation(0, 10, 0.5);
+worlds.camera.setEaseSpeed(0.018, 0.012);
+worlds.camera.focusOnSection(0, 50);
 ```
 
 # Entrance

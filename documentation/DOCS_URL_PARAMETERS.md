@@ -12,7 +12,7 @@ https://yoursite.com/?content=SOURCE
 
 ## Host Sync (Host/Client)
 
-Storie can optionally sync *navigation state* (e.g. the current Canvas3D section) across two windows:
+Storie can optionally sync *navigation state* (e.g. the current Worlds section) across two windows:
 
 - **Host** window: you control navigation
 - **Client** window: follows along (audience / player)
@@ -52,7 +52,7 @@ Backwards compatibility: older `present*` parameters are also still accepted for
 
 - Keep the client URL private: anyone with the `channel` + `token` can inject navigation events.
 - This currently syncs *section navigation* (focused section) and intentionally does not provide a general-purpose messaging channel.
-- When `role=client`, Storie treats the window as an *audience/presentation view* by default: it suppresses keyboard/mouse navigation input and hides the terminal layer once the Canvas3D (3D) layer is active (to keep projector windows clean).
+- When `role=client`, Storie treats the window as an *audience/presentation view* by default: it suppresses keyboard/mouse navigation input and hides the terminal layer once the Worlds (3D) layer is active (to keep projector windows clean).
 
 ### Script access
 

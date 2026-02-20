@@ -24,7 +24,7 @@ Drop an `.mp3` file and watch the engine trigger lyric section changes on detect
 
 - Uses **offline peak detection** via `audio.peaksFromBuffer(audioBuffer)`.
 - On each peak, advances the current lyric **section index**.
-- If Canvas3D is available, it focuses the 3D camera on the current section.
+- If Worlds is available, it focuses the 3D camera on the current section.
 
 # Verse 1
 Lorem ipsum dolor sit amet, consectetur adipiscing elit.
@@ -179,11 +179,11 @@ function focusSection(target) {
   const s = st();
   s.sectionIndex = target;
 
-  // Canvas3D is optional: focus camera when available/enabled.
-  if (canvas3D?.available) {
-    canvas3D.enable();
-    canvas3D.controls.setEnabled(false);
-    canvas3D.camera.focusOnSection(target, 60);
+  // Worlds is optional: focus camera when available/enabled.
+  if (worlds?.available) {
+    worlds.enable();
+    worlds.controls.setEnabled(false);
+    worlds.camera.focusOnSection(target, 60);
   }
 
   if (s.widgets?.section) s.widgets.section.setText(`Section: ${String(target)}`);
@@ -375,10 +375,10 @@ s.gain.gain.value = 1;
 s.gain.connect(audio.destination);
 
 // Optional: enable 3D early if available
-if (canvas3D?.available) {
-  canvas3D.enable();
-  canvas3D.controls.setEnabled(false);
-  canvas3D.camera.setFOV?.(60);
+if (worlds?.available) {
+  worlds.enable();
+  worlds.controls.setEnabled(false);
+  worlds.camera.setFOV?.(60);
 }
 
 focusSection(0);
@@ -553,6 +553,6 @@ if (s.audioBuffer) {
 ```
 
 ```js on:render
-// Let the engine render markdown sections and Canvas3D normally.
+// Let the engine render markdown sections and Worlds normally.
 // Clearing here can wipe section text / 3D output depending on render order.
 ```

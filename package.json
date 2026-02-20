@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "vite",
     "build": "npm run build:lib && npm run build:site",
-    "build:lib": "tsc && vite build",
+    "build:lib": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\" && tsc && vite build",
     "build:site": "node scripts/build-site.js",
     "preview": "vite preview --outDir docs",
     "typecheck": "tsc --noEmit",

@@ -27,7 +27,7 @@ Drop an `.mp3` file and watch the engine advance lyric sections on **downbeats**
 
 - Uses offline beat detection via `audio.beatsFromBuffer(audioBuffer)`.
 - Uses `audio.beatState(analysis, time, prevTime)` each frame to detect downbeat edges.
-- If Canvas3D is available (WebGPU), it focuses the 3D camera on the current section.
+- If Worlds is available (WebGPU), it focuses the 3D camera on the current section.
 
 # Verse 1
 Lorem ipsum dolor sit amet, consectetur adipiscing elit.
@@ -212,10 +212,10 @@ function computeLyricSectionIndices() {
 function focusSection(targetTitle) {
   const s = st();
 
-  if (canvas3D?.available) {
-    canvas3D.enable();
-    canvas3D.controls.setEnabled(false);
-    canvas3D.camera.focusOnSection(targetTitle, 60);
+  if (worlds?.available) {
+    worlds.enable();
+    worlds.controls.setEnabled(false);
+    worlds.camera.focusOnSection(targetTitle, 60);
   }
 
   if (s.widgets?.section) s.widgets.section.setText(`Section: ${String(targetTitle)}`);
@@ -315,10 +315,10 @@ s.gain = audio.createGain();
 s.gain.gain.value = 1;
 s.gain.connect(audio.destination);
 
-if (canvas3D?.available) {
-  canvas3D.enable();
-  canvas3D.controls.setEnabled(false);
-  canvas3D.camera.setFOV?.(60);
+if (worlds?.available) {
+  worlds.enable();
+  worlds.controls.setEnabled(false);
+  worlds.camera.setFOV?.(60);
 }
 
 audio.context.resume().catch(() => {});

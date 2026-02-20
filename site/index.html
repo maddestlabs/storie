@@ -393,6 +393,21 @@ This demo showcases:
         // Measure actual font dimensions
         const fontFamily = '3270-regular';
         const fontSize = 16;
+
+        // Important: ensure the font is actually available *before* measuring.
+        // On a normal refresh, cached fonts can become available between our
+        // bootstrap measurement and the renderer's GlyphAtlas measurement,
+        // causing canvas buffer size != CSS size (visible X stretch).
+        if (document.fonts && document.fonts.ready) {
+          try {
+            await document.fonts.ready;
+            await document.fonts.load(`${fontSize}px '${fontFamily}'`);
+            console.log('✓ Font ready for measurement');
+          } catch (e) {
+            console.log('⚠ Font readiness check failed, continuing anyway');
+          }
+        }
+
         const tempCanvas = document.createElement('canvas');
         const tempCtx = tempCanvas.getContext('2d');
         tempCtx.font = `${fontSize}px '${fontFamily}', 'Consolas', 'Monaco', monospace`;
@@ -509,7 +524,7 @@ This demo showcases:
         
         // Wait for fonts to load before starting
         try {
-          await document.fonts.load('16px 3270-regular');
+          await document.fonts.load(`${fontSize}px '${fontFamily}'`);
           console.log('✓ Font loaded');
         } catch (e) {
           console.log('⚠ Font load check failed, continuing anyway');

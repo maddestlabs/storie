@@ -20,14 +20,14 @@ import { layoutMarkdownDocument } from './ui/document/layout.js';
 import type { LinkRegion, MarkdownStyle } from './ui/document/types.js';
 import { ShaderManager } from './shader-manager.js';
 import { ShaderChainManager } from './shader-chain.js';
-import { Canvas3DRenderer } from './canvas3d-renderer.js';
+import { WorldsRenderer } from './worlds-renderer.js';
 import { parseFIGfont, renderFigletCharLines, renderFigletLines, measureFigletLinesWidth, type FigletFont } from './figlet.js';
 import { parseAnsiToRuns, type AnsiParsed, type AnsiRun } from './ansi.js';
 import {
   createCamera3D,
   updateCamera3D,
   createSection3DLayouts,
-  getDefaultCanvas3DConfig,
+  getDefaultWorldsConfig,
   focusOnSection,
   focusOnSectionFit,
   setCameraTarget,
@@ -46,8 +46,8 @@ import {
   vec3Length,
   type Camera3D,
   type Section3DLayout,
-  type Canvas3DConfig
-} from './canvas3d.js';
+  type WorldsConfig
+} from './worlds.js';
 import type { ModuleResolverConfig } from './modules/types.js';
 import type { UserScript, Color, InputEvent, ThemeColors, ThemeStyleSheet, NamedStyle, DroppedFile } from './types.js';
 import { detectPeaksFromAudioBuffer, type PeakDetectionOptions, type PeakDetectionResult } from './audio/peaks.js';
@@ -56,7 +56,7 @@ import { KEY } from './types.js';
 import { ColorUtils } from './types.js';
 import type { SandboxAPI } from './sandbox.js';
 import { getSfxPresetNames, playSfx, sfxSnippet, toSfxSeed } from './audio/sfx.js';
-import { bakeSfxGraphBuffer, parseStfxrDefinitionJson, playSfxGraph, type SfxGraphPreset } from './audio/sfx-graph.js';
+import { bakeSfxGraphBuffer, mulberry32, parseStfxrDefinitionJson, playSfxGraph, type SfxGraphPreset } from './audio/sfx-graph.js';
 import { SFX_PRESETS, type SfxPresetName } from './audio/sfx-presets.js';
 import {
   HostSync,
@@ -135,12 +135,12 @@ export interface EngineConfig {
 
 type OutlineLevels = 'any' | number | { min?: number; max?: number };
 
-type Canvas3DOverviewOptions = {
+type WorldsOverviewOptions = {
   /** Layout: how many columns in the overview grid (auto if omitted). */
   columns?: number;
   /** Layout: extra spacing between cards in world units (defaults to ~20). */
   padding?: number;
-  /** Layout: Z depth to place the grid at (defaults to canvas3DConfig.defaultDepth). */
+  /** Layout: Z depth to place the grid at (defaults to worldsConfig.defaultDepth). */
   depth?: number;
   /** Camera: fraction of viewport to fill when fitting the full grid (0..1). */
   fill?: number;
@@ -153,7 +153,7 @@ type Canvas3DOverviewOptions = {
 };
 
 export interface OutlineNode {
-  /** Depth-first section index (matches Canvas3D section indices). */
+  /** Depth-first section index (matches Worlds section indices). */
   index: number;
   title: string;
   level: number;
@@ -197,7 +197,7 @@ export class StorieEngine {
   private pendingShaderChain: { chainStr: string; source: string } | null = null;
   
   // 3D Canvas system
-  private canvas3DRenderer: Canvas3DRenderer | null = null;
+  private worldsRenderer: WorldsRenderer | null = null;
   private camera3D: Camera3D | null = null;
   private section3DLayouts: Section3DLayout[] = [];
 
@@ -211,10 +211,10 @@ export class StorieEngine {
     | { kind: 'focus'; sectionIndex: number; distance: number }
     | { kind: 'fit'; sectionIndex: number; fill: number }
     | null = null;
-  private canvas3DConfig: Canvas3DConfig = getDefaultCanvas3DConfig();
-  private canvas3DEnabled: boolean = false;
+  private worldsConfig: WorldsConfig = getDefaultWorldsConfig();
+  private worldsEnabled: boolean = false;
 
-  private canvas3DLayoutCallback: ((args: {
+  private worldsLayoutCallback: ((args: {
     sectionIndex: number;
     title: string;
     layout: Section3DLayout;
@@ -231,10 +231,10 @@ export class StorieEngine {
     | void) | null = null;
 
   // 3D interaction state (hover + basic navigation controls)
-  private canvas3DControlsEnabled: boolean = false;
+  private worldsControlsEnabled: boolean = false;
   // 3D link navigation key handling (Tab/Enter/Arrow keys). When disabled,
   // user documents can implement their own keybindings (e.g. slide decks).
-  private canvas3DLinkKeyHandlingEnabled: boolean = true;
+  private worldsLinkKeyHandlingEnabled: boolean = true;
   private mouseLookActive: boolean = false;
   private mouseLookLastX: number = 0;
   private mouseLookLastY: number = 0;
@@ -281,16 +281,16 @@ export class StorieEngine {
 
   private outlineCache: { documentId: string; nodes: OutlineNode[] } | null = null;
 
-  // Canvas3D Overview (host-only)
-  private canvas3DOverviewEnabled: boolean = false;
-  private canvas3DOverviewSavedTransforms:
+  // Worlds Overview (host-only)
+  private worldsOverviewEnabled: boolean = false;
+  private worldsOverviewSavedTransforms:
     | Array<{
         position: { x: number; y: number; z: number };
         rotation: { x: number; y: number; z: number };
         scale: { x: number; y: number; z: number };
       }>
     | null = null;
-  private pendingCanvas3DOverview: { enabled: boolean; options?: Canvas3DOverviewOptions } | null = null;
+  private pendingWorldsOverview: { enabled: boolean; options?: WorldsOverviewOptions } | null = null;
 
   // Dropped-file handling (binary-safe)
   private lastDroppedFile: DroppedFile | null = null;
@@ -359,45 +359,45 @@ export class StorieEngine {
     if (!this.compositor) return;
 
     const has3DLayer = !!this.compositor.layers.get('3d');
-    const shouldHideTerminal = this.canvas3DEnabled && has3DLayer;
+    const shouldHideTerminal = this.worldsEnabled && has3DLayer;
     if (this.compositor.layers.get('terminal')) {
       this.compositor.updateLayer('terminal', { enabled: !shouldHideTerminal });
     }
   }
 
-  private applyPendingCanvas3DOverview(): void {
-    if (!this.pendingCanvas3DOverview) return;
-    const p = this.pendingCanvas3DOverview;
-    this.pendingCanvas3DOverview = null;
-    this.setCanvas3DOverviewEnabled(p.enabled, p.options);
+  private applyPendingWorldsOverview(): void {
+    if (!this.pendingWorldsOverview) return;
+    const p = this.pendingWorldsOverview;
+    this.pendingWorldsOverview = null;
+    this.setWorldsOverviewEnabled(p.enabled, p.options);
   }
 
-  private setCanvas3DOverviewEnabled(enabled: boolean, options?: Canvas3DOverviewOptions): void {
+  private setWorldsOverviewEnabled(enabled: boolean, options?: WorldsOverviewOptions): void {
     // Host-only: never allow audience/client windows to enter overview.
     if (this.hostAudienceView) return;
 
     // Defer until we have layouts + camera.
     if (!this.section3DLayouts || this.section3DLayouts.length === 0 || !this.camera3D) {
-      this.pendingCanvas3DOverview = { enabled: !!enabled, options };
+      this.pendingWorldsOverview = { enabled: !!enabled, options };
       return;
     }
 
     const nextEnabled = !!enabled;
 
-    if (nextEnabled && !this.canvas3DOverviewEnabled) {
+    if (nextEnabled && !this.worldsOverviewEnabled) {
       // Save current transforms so we can restore exactly.
-      this.canvas3DOverviewSavedTransforms = this.section3DLayouts.map(l => ({
+      this.worldsOverviewSavedTransforms = this.section3DLayouts.map(l => ({
         position: { ...l.transform.position },
         rotation: { ...l.transform.rotation },
         scale: { ...l.transform.scale }
       }));
     }
 
-    if (!nextEnabled && this.canvas3DOverviewEnabled) {
+    if (!nextEnabled && this.worldsOverviewEnabled) {
       // Restore transforms.
-      if (this.canvas3DOverviewSavedTransforms) {
-        for (let i = 0; i < Math.min(this.canvas3DOverviewSavedTransforms.length, this.section3DLayouts.length); i++) {
-          const saved = this.canvas3DOverviewSavedTransforms[i];
+      if (this.worldsOverviewSavedTransforms) {
+        for (let i = 0; i < Math.min(this.worldsOverviewSavedTransforms.length, this.section3DLayouts.length); i++) {
+          const saved = this.worldsOverviewSavedTransforms[i];
           const layout = this.section3DLayouts[i];
           if (!layout) continue;
           layout.transform.position = { ...saved.position };
@@ -405,8 +405,8 @@ export class StorieEngine {
           layout.transform.scale = { ...saved.scale };
         }
       }
-      this.canvas3DOverviewSavedTransforms = null;
-      this.canvas3DOverviewEnabled = false;
+      this.worldsOverviewSavedTransforms = null;
+      this.worldsOverviewEnabled = false;
 
       // Return to the last slide framing (if any).
       this.refocus3DForCurrentViewport();
@@ -416,12 +416,12 @@ export class StorieEngine {
     if (!nextEnabled) return;
 
     // (Re)apply overview grid layout and fit camera.
-    this.canvas3DOverviewEnabled = true;
+    this.worldsOverviewEnabled = true;
 
     const includeHidden = !!options?.includeHidden;
     const includeNonNavigable = !!options?.includeNonNavigable;
     const padding = Number.isFinite(options?.padding ?? NaN) ? (options!.padding as number) : 20;
-    const depth = Number.isFinite(options?.depth ?? NaN) ? (options!.depth as number) : this.canvas3DConfig.defaultDepth;
+    const depth = Number.isFinite(options?.depth ?? NaN) ? (options!.depth as number) : this.worldsConfig.defaultDepth;
     const fill = Number.isFinite(options?.fill ?? NaN) ? (options!.fill as number) : 0.9;
     const levels: OutlineLevels = options?.levels ?? 'any';
 
@@ -577,6 +577,11 @@ export class StorieEngine {
     
     // Resize renderer to match configured dimensions
     this.renderer.resize(this.width, this.height);
+
+    // Keep the canvas element's CSS size in sync with its backing buffer.
+    // This prevents visual stretching when external code sets canvas.style
+    // based on stale font metrics or when cached fonts change measurement timing.
+    this.syncCanvasElementSizeToBuffer();
     
     // Initialize module loader
     this.moduleLoader = new ModuleLoader(this, config.modules);
@@ -601,6 +606,17 @@ export class StorieEngine {
     );
     console.log(`  Modules: ready for dynamic loading`);    console.log('  Audio: Web Audio API ready');
     console.log('  Canvas2D: lazy (created on first use)');
+  }
+
+  /**
+   * Ensure the canvas element's CSS pixel size matches the backing buffer size.
+   * When these disagree, the browser scales the canvas, causing stretched output.
+   */
+  private syncCanvasElementSizeToBuffer(): void {
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    if (w > 0) this.canvas.style.width = `${w}px`;
+    if (h > 0) this.canvas.style.height = `${h}px`;
   }
 
   private initHostSync(cfg?: EngineConfig['host']): void {
@@ -660,8 +676,8 @@ export class StorieEngine {
       this.hostAudienceView = role === 'client';
       if (this.hostAudienceView) {
         this.input.setEnabled(false);
-        this.canvas3DControlsEnabled = false;
-        this.canvas3DLinkKeyHandlingEnabled = false;
+        this.worldsControlsEnabled = false;
+        this.worldsLinkKeyHandlingEnabled = false;
         this.mouseLookActive = false;
       } else {
         this.input.setEnabled(true);
@@ -670,7 +686,7 @@ export class StorieEngine {
       // Apply remote navigation.
       sync.onGotoSection((args) => {
         // Treat remote messages as untrusted; only allow safe navigation.
-        this.canvas3DEnabled = true;
+        this.worldsEnabled = true;
         if (this.compositor?.layers.get('3d')) {
           this.compositor.updateLayer('3d', { enabled: true });
         }
@@ -696,7 +712,7 @@ export class StorieEngine {
       // Apply shared scene state (preferred over raw goto).
       sync.onSceneState((args) => {
         // Treat remote messages as untrusted; only allow safe navigation.
-        this.canvas3DEnabled = true;
+        this.worldsEnabled = true;
         if (this.compositor?.layers.get('3d')) {
           this.compositor.updateLayer('3d', { enabled: true });
         }
@@ -1301,7 +1317,7 @@ export class StorieEngine {
       },
 
       // Document metadata API (read-only)
-      // Section indices match Canvas3D's depth-first layout order.
+      // Section indices match Worlds's depth-first layout order.
       doc: {
         sectionsFlat: () => {
           const d = engine.getActiveDocument();
@@ -2304,6 +2320,70 @@ export class StorieEngine {
       getFrame: () => this.frameCount,
       getTime: () => this.elapsedTime,
       getDelta: () => this.deltaTime,
+
+      /**
+       * Seeded / random utilities — the same PRNG the engine uses internally.
+       */
+      random: {
+        /**
+         * Generate a cryptographically random uint32 seed.
+         * Drop-in replacement for the `randomSeed()` boilerplate found in demos.
+         */
+        seed: (): number => {
+          try {
+            const a = new Uint32Array(1);
+            globalThis.crypto.getRandomValues(a);
+            return a[0] >>> 0;
+          } catch {
+            return (Math.random() * 0xffffffff) >>> 0;
+          }
+        },
+        /**
+         * Create a seeded PRNG using the mulberry32 algorithm — identical to
+         * what the engine uses for stfxr / sfx graph noise generation.
+         * Returns a `() => number` function that yields values in [0, 1).
+         *
+         * Example:
+         *   const rng = random.rng(stfxrSeed);
+         *   const x = rng(); // deterministic float in [0, 1)
+         */
+        rng: (seed: number): (() => number) => mulberry32(seed >>> 0),
+        /**
+         * Normalise any seed value (number or string) to a uint32 in the same
+         * way the engine does before passing it to stfxr / sfx presets.
+         * Strings are hashed with FNV-1a 32-bit; numbers are coerced with `>>> 0`.
+         *
+         * Example:
+         *   random.toSeed('player1') // → stable uint32 every time
+         *   random.toSeed(42.7)      // → 42
+         */
+        toSeed: (val: number | string): number => toSfxSeed(val),
+      },
+
+      /**
+       * Safely read a URL query parameter by name.
+       * Coerces the raw string to number / boolean / string automatically.
+       * Returns `defaultValue` when the param is absent or the URL is inaccessible.
+       */
+      getParam: (name: string, defaultValue?: string | number | boolean | null): string | number | boolean | null | undefined => {
+        try {
+          const search = globalThis.location?.search ?? '';
+          const sp = new URLSearchParams(search);
+          const raw = sp.get(String(name));
+          if (raw === null) return defaultValue;
+          // Coerce to number if possible
+          const asNum = Number(raw);
+          if (raw.trim() !== '' && Number.isFinite(asNum)) return asNum;
+          // Coerce to boolean
+          const lower = raw.toLowerCase();
+          if (lower === 'true') return true;
+          if (lower === 'false') return false;
+          // Return as string
+          return raw;
+        } catch {
+          return defaultValue;
+        }
+      },
       
       // === NATIVE BROWSER APIs ===
       
@@ -3233,12 +3313,12 @@ export class StorieEngine {
       },
       
       // 3D Canvas API - Hardware-accelerated 3D section rendering
-      canvas3D: {
+      worlds: {
         // Enable/disable 3D rendering mode
         enable: () => {
           // Treat enable() as a request that can be made before WebGPU is ready.
           // If/when the 3D layer becomes available, it will be enabled.
-          engine.canvas3DEnabled = true;
+          engine.worldsEnabled = true;
 
           // If the compositor already exists and the 3D layer is registered, enable it now.
           if (engine.compositor?.layers.get('3d')) {
@@ -3247,12 +3327,12 @@ export class StorieEngine {
 
           engine.updateAudienceViewLayers();
 
-          // Return whether Canvas3D is available immediately.
-          return engine.canvas3DRenderer !== null;
+          // Return whether Worlds is available immediately.
+          return engine.worldsRenderer !== null;
         },
         
         disable: () => {
-          engine.canvas3DEnabled = false;
+          engine.worldsEnabled = false;
           // Disable the 3D layer in compositor
           if (engine.compositor?.layers.get('3d')) {
             engine.compositor.updateLayer('3d', { enabled: false });
@@ -3262,20 +3342,20 @@ export class StorieEngine {
         },
         
         get enabled(): boolean {
-          return engine.canvas3DEnabled;
+          return engine.worldsEnabled;
         },
         
         get available(): boolean {
-          return engine.canvas3DRenderer !== null;
+          return engine.worldsRenderer !== null;
         },
 
         // Built-in navigation controls (WASD + QE + right-drag mouse-look)
         controls: {
           setEnabled: (enabled: boolean) => {
-            engine.canvas3DControlsEnabled = !!enabled;
+            engine.worldsControlsEnabled = !!enabled;
           },
           get enabled(): boolean {
-            return engine.canvas3DControlsEnabled;
+            return engine.worldsControlsEnabled;
           }
         },
 
@@ -3283,10 +3363,10 @@ export class StorieEngine {
         // documents own those keys (e.g. presenter/slide mode).
         links: {
           setKeyHandlingEnabled: (enabled: boolean) => {
-            engine.canvas3DLinkKeyHandlingEnabled = !!enabled;
+            engine.worldsLinkKeyHandlingEnabled = !!enabled;
           },
           get keyHandlingEnabled(): boolean {
-            return engine.canvas3DLinkKeyHandlingEnabled;
+            return engine.worldsLinkKeyHandlingEnabled;
           }
         },
 
@@ -3452,14 +3532,14 @@ export class StorieEngine {
         // PowerPoint-like overview mode (host-only): lays out candidate sections in a grid
         // and fits the camera to show them all.
         overview: {
-          setEnabled: (enabled: boolean, options?: Canvas3DOverviewOptions) => {
-            engine.setCanvas3DOverviewEnabled(enabled, options);
+          setEnabled: (enabled: boolean, options?: WorldsOverviewOptions) => {
+            engine.setWorldsOverviewEnabled(enabled, options);
           },
-          toggle: (options?: Canvas3DOverviewOptions) => {
-            engine.setCanvas3DOverviewEnabled(!engine.canvas3DOverviewEnabled, options);
+          toggle: (options?: WorldsOverviewOptions) => {
+            engine.setWorldsOverviewEnabled(!engine.worldsOverviewEnabled, options);
           },
           get enabled(): boolean {
-            return engine.canvas3DOverviewEnabled;
+            return engine.worldsOverviewEnabled;
           }
         },
         
@@ -3574,86 +3654,86 @@ export class StorieEngine {
         
         // Configuration
         config: {
-          setDefaults: (config: Partial<Canvas3DConfig>) => {
+          setDefaults: (config: Partial<WorldsConfig>) => {
             if (config.defaultDepth !== undefined) {
-              engine.canvas3DConfig.defaultDepth = config.defaultDepth;
+              engine.worldsConfig.defaultDepth = config.defaultDepth;
             }
             if (config.defaultSectionWidth !== undefined) {
-              engine.canvas3DConfig.defaultSectionWidth = config.defaultSectionWidth;
+              engine.worldsConfig.defaultSectionWidth = config.defaultSectionWidth;
             }
             if (config.defaultSectionHeight !== undefined) {
-              engine.canvas3DConfig.defaultSectionHeight = config.defaultSectionHeight;
+              engine.worldsConfig.defaultSectionHeight = config.defaultSectionHeight;
             }
             if (config.cameraFov !== undefined) {
-              engine.canvas3DConfig.cameraFov = config.cameraFov;
+              engine.worldsConfig.cameraFov = config.cameraFov;
             }
             if (config.cameraNear !== undefined) {
-              engine.canvas3DConfig.cameraNear = config.cameraNear;
+              engine.worldsConfig.cameraNear = config.cameraNear;
             }
             if (config.cameraFar !== undefined) {
-              engine.canvas3DConfig.cameraFar = config.cameraFar;
+              engine.worldsConfig.cameraFar = config.cameraFar;
             }
             if (config.positionEaseSpeed !== undefined) {
-              engine.canvas3DConfig.positionEaseSpeed = config.positionEaseSpeed;
+              engine.worldsConfig.positionEaseSpeed = config.positionEaseSpeed;
             }
             if (config.rotationEaseSpeed !== undefined) {
-              engine.canvas3DConfig.rotationEaseSpeed = config.rotationEaseSpeed;
+              engine.worldsConfig.rotationEaseSpeed = config.rotationEaseSpeed;
             }
             if (config.autoLayoutEnabled !== undefined) {
-              engine.canvas3DConfig.autoLayoutEnabled = config.autoLayoutEnabled;
+              engine.worldsConfig.autoLayoutEnabled = config.autoLayoutEnabled;
             }
             if (config.autoLayoutColumns !== undefined) {
-              engine.canvas3DConfig.autoLayoutColumns = config.autoLayoutColumns;
+              engine.worldsConfig.autoLayoutColumns = config.autoLayoutColumns;
             }
             if (config.autoLayoutSpacing !== undefined) {
-              engine.canvas3DConfig.autoLayoutSpacing = config.autoLayoutSpacing;
+              engine.worldsConfig.autoLayoutSpacing = config.autoLayoutSpacing;
             }
             if (config.sectionTextureMode !== undefined) {
-              const prev = engine.canvas3DConfig.sectionTextureMode;
-              engine.canvas3DConfig.sectionTextureMode = config.sectionTextureMode;
+              const prev = engine.worldsConfig.sectionTextureMode;
+              engine.worldsConfig.sectionTextureMode = config.sectionTextureMode;
               if (prev !== config.sectionTextureMode) {
                 engine.clear3DSectionTextures();
               }
             }
 
             if (config.sectionBorderEnabled !== undefined) {
-              const prev = engine.canvas3DConfig.sectionBorderEnabled;
-              engine.canvas3DConfig.sectionBorderEnabled = config.sectionBorderEnabled;
+              const prev = engine.worldsConfig.sectionBorderEnabled;
+              engine.worldsConfig.sectionBorderEnabled = config.sectionBorderEnabled;
               if (prev !== config.sectionBorderEnabled) {
                 engine.clear3DSectionTextures();
               }
             }
             if (config.sectionBorderWidth !== undefined) {
-              const prev = engine.canvas3DConfig.sectionBorderWidth;
-              engine.canvas3DConfig.sectionBorderWidth = config.sectionBorderWidth;
+              const prev = engine.worldsConfig.sectionBorderWidth;
+              engine.worldsConfig.sectionBorderWidth = config.sectionBorderWidth;
               if (prev !== config.sectionBorderWidth) {
                 engine.clear3DSectionTextures();
               }
             }
 
             if ((config as any).sectionBackground !== undefined) {
-              const prev = (engine.canvas3DConfig as any).sectionBackground;
-              (engine.canvas3DConfig as any).sectionBackground = (config as any).sectionBackground;
+              const prev = (engine.worldsConfig as any).sectionBackground;
+              (engine.worldsConfig as any).sectionBackground = (config as any).sectionBackground;
               if (prev !== (config as any).sectionBackground) {
                 engine.clear3DSectionTextures();
               }
             }
 
-            engine.applyCanvas3DLayoutCallback();
+            engine.applyWorldsLayoutCallback();
           },
           
           getDefaults: () => {
-            return { ...engine.canvas3DConfig };
+            return { ...engine.worldsConfig };
           }
         },
 
         layout: {
           setCallback: (fn: any) => {
-            engine.canvas3DLayoutCallback = typeof fn === 'function' ? fn : null;
-            engine.applyCanvas3DLayoutCallback();
+            engine.worldsLayoutCallback = typeof fn === 'function' ? fn : null;
+            engine.applyWorldsLayoutCallback();
           },
           clearCallback: () => {
-            engine.canvas3DLayoutCallback = null;
+            engine.worldsLayoutCallback = null;
           }
         }
       }
@@ -3745,12 +3825,12 @@ export class StorieEngine {
       }
       
       // Create 3D layouts for sections (if 3D canvas is available)
-      if (this.canvas3DRenderer) {
-        this.section3DLayouts = createSection3DLayouts(parsed.sections, this.canvas3DConfig);
+      if (this.worldsRenderer) {
+        this.section3DLayouts = createSection3DLayouts(parsed.sections, this.worldsConfig);
         console.log(`  Created 3D layouts for ${this.section3DLayouts.length} sections`);
         this.applyPending3DCameraFocus();
-        this.applyCanvas3DLayoutCallback(parsed.sections);
-        this.applyPendingCanvas3DOverview();
+        this.applyWorldsLayoutCallback(parsed.sections);
+        this.applyPendingWorldsOverview();
       }
       
       // Apply theme:
@@ -4101,7 +4181,7 @@ export class StorieEngine {
         const exports = scopeVarNames.map(k => `  try { scope.${k} = ${k}; } catch (e) {}` ).join('\n');
         
         // Pass API globals as IIFE parameters so they're accessible inside the function
-        const apiParams = 'term, termCanvas, layer, key, mouse, drop, doc, host, scene, tui, gui, getStyle, theme, modules, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY, termWidth, termHeight, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, canvas3D';
+        const apiParams = 'term, termCanvas, layer, key, mouse, drop, doc, host, scene, tui, gui, getStyle, theme, modules, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY, termWidth, termHeight, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, worlds';
         
         for (const code of globalBlocks) {
           const wrappedCode = `(function(${apiParams}) {
@@ -4326,6 +4406,7 @@ ${exportVars}
         const fontSize = (this.renderer as any).fontSize;
         this.renderer = new Canvas2DRenderer(canvas, { fontFamily, fontSize });
         this.renderer.resize(this.width, this.height);
+        this.syncCanvasElementSizeToBuffer();
       } else if (this.renderer instanceof WebGPURenderer) {
         // WebGPU initialized successfully - set up compositor
         await this.initCompositor();
@@ -4346,23 +4427,23 @@ ${exportVars}
           }
           
           // Initialize 3D Canvas renderer
-          if (!this.canvas3DRenderer) {
+          if (!this.worldsRenderer) {
             try {
-              this.canvas3DRenderer = new Canvas3DRenderer(device, this.canvas.width, this.canvas.height);
-              await this.canvas3DRenderer.init();
+              this.worldsRenderer = new WorldsRenderer(device, this.canvas.width, this.canvas.height);
+              await this.worldsRenderer.init();
               if (!this.camera3D) {
                 this.camera3D = createCamera3D();
               }
               
               // Register 3D layer with compositor
-              const renderTexture = this.canvas3DRenderer.getRenderTexture();
+              const renderTexture = this.worldsRenderer.getRenderTexture();
               if (renderTexture && this.compositor) {
                 this.compositor.registerLayer('3d', {
                   texture: renderTexture,
                   width: this.canvas.width,
                   height: this.canvas.height,
                   zIndex: 5,  // Above terminal (0) but below UI (20)
-                  enabled: this.canvas3DEnabled,  // Honor early canvas3D.enable() calls
+                  enabled: this.worldsEnabled,  // Honor early worlds.enable() calls
                   opacity: 1.0,  // Full opacity
                   blendMode: 'normal'  // Normal blend (not multiply)
                 });
@@ -4375,16 +4456,16 @@ ${exportVars}
               
               // (init logs removed)
               
-              // Create section3DLayouts for any documents that were loaded before Canvas3D was ready
+              // Create section3DLayouts for any documents that were loaded before Worlds was ready
               // (debug log removed)
               for (const [docId, docData] of this.documents.entries()) {
                 const anyDocData = docData as any;
                 if (anyDocData._parsedMarkdown?.sections) {
-                  const layouts = createSection3DLayouts(anyDocData._parsedMarkdown.sections, this.canvas3DConfig);
+                  const layouts = createSection3DLayouts(anyDocData._parsedMarkdown.sections, this.worldsConfig);
                   this.section3DLayouts = layouts;
                   this.applyPending3DCameraFocus();
-                  this.applyCanvas3DLayoutCallback(anyDocData._parsedMarkdown.sections);
-                  this.applyPendingCanvas3DOverview();
+                  this.applyWorldsLayoutCallback(anyDocData._parsedMarkdown.sections);
+                  this.applyPendingWorldsOverview();
                   console.log(`✓ Created ${layouts.length} 3D section layouts for document ${docId}`);
                 } else {
                   // (debug log removed)
@@ -4392,7 +4473,7 @@ ${exportVars}
               }
               
             } catch (error) {
-              console.warn('Failed to initialize Canvas3DRenderer:', error);
+              console.warn('Failed to initialize WorldsRenderer:', error);
             }
           }
 
@@ -4481,10 +4562,10 @@ ${exportVars}
         }
 
         // Ensure each section has a texture with its rendered heading/content.
-        if (this.canvas3DEnabled && this.section3DLayouts.length > 0 && this.renderer instanceof WebGPURenderer) {
+        if (this.worldsEnabled && this.section3DLayouts.length > 0 && this.renderer instanceof WebGPURenderer) {
           const device = this.renderer.getContext().getDevice();
           if (device) {
-            if (this.canvas3DConfig.sectionTextureMode === 'webgpu-ui') {
+            if (this.worldsConfig.sectionTextureMode === 'webgpu-ui') {
               this.ensure3DSectionTexturesWebGPUUI(device);
             } else {
               this.ensure3DSectionTextures(device);
@@ -4493,7 +4574,7 @@ ${exportVars}
         }
 
         // Render 3D canvas to offscreen texture (before compositing)
-        if (this.canvas3DEnabled && this.canvas3DRenderer && this.camera3D) {
+        if (this.worldsEnabled && this.worldsRenderer && this.camera3D) {
           const pick = this.pick3DAt(this.input.getMouseX(), this.input.getMouseY());
 
           // Link hover/focus highlight (invert only the link region)
@@ -4521,13 +4602,13 @@ ${exportVars}
           }
 
           // Whole-card hover invert disabled (we highlight links instead)
-          const backgroundChain = this.parseCanvas3DSectionBackgroundChain();
-          const proceduralBackground = this.isCanvas3DSectionBackgroundProceduralChainEnabled();
+          const backgroundChain = this.parseWorldsSectionBackgroundChain();
+          const proceduralBackground = this.isWorldsSectionBackgroundProceduralChainEnabled();
           const backgroundConfig = proceduralBackground
             ? {
                 enabled: true,
                 chain: backgroundChain,
-                paperColor: this.resolveCanvas3DSectionBackground(),
+                paperColor: this.resolveWorldsSectionBackground(),
                 lineColor: this.withAlpha(this.getStyle('dim').fg, 0x40),
                 scale: 1,
                 spacing: 1,
@@ -4536,7 +4617,8 @@ ${exportVars}
               }
             : undefined;
 
-          this.canvas3DRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig);
+          const cardXScaleFactor = this.get3DCardXScaleFactor();
+          this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig, cardXScaleFactor);
         }
 
         // Render GPU UI into its own texture (if created)
@@ -4557,7 +4639,7 @@ ${exportVars}
           // terminal cell size derived from the current font metrics.
           this.syncTerminalCellSizeToShaders();
 
-          // Clear to theme background (Canvas3D renders to transparent).
+          // Clear to theme background (Worlds renders to transparent).
           this.compositor.setAutoClearColor(this.currentTheme.bg);
           this.compositor.autoComposite();   // Composite all layers to main canvas
         } else if (this.frameCount < 3) {
@@ -4631,7 +4713,7 @@ ${exportVars}
   }
 
   private ensure3DSectionTextures(device: GPUDevice): void {
-    if (!this.canvas3DEnabled || !this.camera3D) return;
+    if (!this.worldsEnabled || !this.camera3D) return;
 
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
@@ -4710,9 +4792,9 @@ ${exportVars}
       const heading = this.getStyle('heading');
       const link = this.getStyle('link');
       const code = this.getStyle('code');
-      const proceduralRuledPaper = this.isCanvas3DSectionBackgroundProceduralChainEnabled();
-      const bakedRuledPaper = this.isCanvas3DSectionBackgroundBakedRuledLines();
-      const surfaceBg = this.resolveCanvas3DSectionBackground();
+      const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
+      const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
+      const surfaceBg = this.resolveWorldsSectionBackground();
       const borderStyle = this.getStyle('border');
 
       // If the 3D shader (procedural) or this path (baked) will draw paper,
@@ -4761,8 +4843,8 @@ ${exportVars}
       }
 
       // Border on top (matches previous Canvas2D look)
-      const borderEnabled = this.canvas3DConfig.sectionBorderEnabled !== false;
-      const borderWidth = Math.max(0, Math.round(this.canvas3DConfig.sectionBorderWidth ?? 2));
+      const borderEnabled = this.worldsConfig.sectionBorderEnabled !== false;
+      const borderWidth = Math.max(0, Math.round(this.worldsConfig.sectionBorderWidth ?? 2));
       if (borderEnabled && borderWidth > 0) {
         ctx.strokeStyle = ColorUtils.toCss(borderStyle.fg);
         ctx.lineWidth = borderWidth;
@@ -4837,8 +4919,8 @@ ${exportVars}
     return ((color as any) & 0xFFFFFF00) | (a & 0xFF);
   }
 
-  private parseCanvas3DSectionBackgroundChain(): string[] {
-    const v: any = (this.canvas3DConfig as any).sectionBackground;
+  private parseWorldsSectionBackgroundChain(): string[] {
+    const v: any = (this.worldsConfig as any).sectionBackground;
     if (typeof v !== 'string') return [];
     const trimmed = v.trim();
     if (!trimmed) return [];
@@ -4856,16 +4938,16 @@ ${exportVars}
     return [trimmed.toLowerCase()];
   }
 
-  private isCanvas3DSectionBackgroundProceduralChainEnabled(): boolean {
-    const chain = this.parseCanvas3DSectionBackgroundChain();
+  private isWorldsSectionBackgroundProceduralChainEnabled(): boolean {
+    const chain = this.parseWorldsSectionBackgroundChain();
 
     const hasRuledLines = chain.includes('ruledlines') || chain.includes('ruled-lines') || chain.includes('ruled_lines');
     const hasPaper = chain.includes('paper');
     return hasRuledLines || hasPaper;
   }
 
-  private isCanvas3DSectionBackgroundBakedRuledLines(): boolean {
-    const v: any = (this.canvas3DConfig as any).sectionBackground;
+  private isWorldsSectionBackgroundBakedRuledLines(): boolean {
+    const v: any = (this.worldsConfig as any).sectionBackground;
     if (typeof v !== 'string') return false;
     const key = v.trim().toLowerCase();
     return key === 'ruledlines-baked' || key === 'ruledlines_baked' || key === 'ruledlinesbaked';
@@ -4894,8 +4976,8 @@ ${exportVars}
     }
   }
 
-  private resolveCanvas3DSectionBackground(): Color {
-    const v: any = (this.canvas3DConfig as any).sectionBackground;
+  private resolveWorldsSectionBackground(): Color {
+    const v: any = (this.worldsConfig as any).sectionBackground;
 
     // Default: match the theme's elevated surface color (existing behavior).
     if (v === undefined || v === null || v === 'surface') {
@@ -4963,7 +5045,7 @@ ${exportVars}
 
   private ensure3DSectionTexturesWebGPUUI(device: GPUDevice): void {
     if (!(this.renderer instanceof WebGPURenderer)) return;
-    if (!this.canvas3DEnabled || !this.camera3D) return;
+    if (!this.worldsEnabled || !this.camera3D) return;
 
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
@@ -4993,9 +5075,9 @@ ${exportVars}
     const heading = this.getStyle('heading');
     const link = this.getStyle('link');
     const code = this.getStyle('code');
-    const proceduralRuledPaper = this.isCanvas3DSectionBackgroundProceduralChainEnabled();
-    const bakedRuledPaper = this.isCanvas3DSectionBackgroundBakedRuledLines();
-    const surfaceBg = this.resolveCanvas3DSectionBackground();
+    const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
+    const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
+    const surfaceBg = this.resolveWorldsSectionBackground();
     const borderStyle = this.getStyle('border');
 
     const mdBg = (proceduralRuledPaper || bakedRuledPaper) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
@@ -5011,8 +5093,8 @@ ${exportVars}
       bg: mdBg,
     };
 
-    const borderEnabled = this.canvas3DConfig.sectionBorderEnabled !== false;
-    const borderWidth = Math.max(0, Math.round(this.canvas3DConfig.sectionBorderWidth ?? 2));
+    const borderEnabled = this.worldsConfig.sectionBorderEnabled !== false;
+    const borderWidth = Math.max(0, Math.round(this.worldsConfig.sectionBorderWidth ?? 2));
 
     for (const layout of this.section3DLayouts) {
       if (!layout.visible) continue;
@@ -5124,6 +5206,24 @@ ${exportVars}
     }
   }
 
+  private get3DCardXScaleFactor(): number {
+    // Section card sizes (layout.width/layout.height) are specified in logical
+    // text units (columns/rows). Section textures are generated in pixel space
+    // using terminal font metrics (charW and baseline height). If we scale the
+    // quad purely by cols/rows, the card world aspect ratio won't match the
+    // texture pixel aspect ratio, which shows up as an X-stretch of sections.
+    if (!(this.renderer instanceof WebGPURenderer)) return 1;
+
+    const atlas = this.renderer.getAtlas();
+    const charW = atlas ? atlas.getCharWidth() : 0;
+    const charH = atlas ? atlas.getCharHeight() : 0;
+    if (!(charW > 0 && charH > 0)) return 1;
+
+    const baseLineHeight = Math.max(1, Math.round(charH * 1.25));
+    const factor = charW / baseLineHeight;
+    return Number.isFinite(factor) && factor > 0 ? factor : 1;
+  }
+
   /**
    * Update phase - call user's update handler
    */
@@ -5132,7 +5232,7 @@ ${exportVars}
     this.moduleLoader.update(this.deltaTime);
 
     // Built-in 3D controls (useful for testing picking/navigation)
-    if (this.canvas3DEnabled && this.canvas3DControlsEnabled && this.camera3D) {
+    if (this.worldsEnabled && this.worldsControlsEnabled && this.camera3D) {
       const dt = this.deltaTime;
       const moveSpeed = 120; // world units / second
       const lookSpeed = 1.6; // radians / second
@@ -5200,7 +5300,7 @@ ${exportVars}
     }
     
     // Update 3D camera (easing)
-    if (this.camera3D && this.canvas3DEnabled) {
+    if (this.camera3D && this.worldsEnabled) {
       updateCamera3D(this.camera3D, this.deltaTime);
     }
     
@@ -5310,6 +5410,9 @@ ${exportVars}
     this.height = height;
     this.layers.resize(width, height);
     this.renderer.resize(width, height);
+
+    // Renderer.resize() may change canvas.width/height; ensure CSS matches.
+    this.syncCanvasElementSizeToBuffer();
     
     // Update compositor if WebGPU is enabled
     if (this.compositor && this.renderer instanceof WebGPURenderer) {
@@ -5328,10 +5431,10 @@ ${exportVars}
         this.compositor.updateLayerTexture('ui', this.webgpuUIRenderer.getTexture());
       }
 
-      // Resize Canvas3D render targets (offscreen) and keep compositor layer in sync.
-      if (this.canvas3DRenderer) {
-        this.canvas3DRenderer.resize(this.canvas.width, this.canvas.height);
-        const renderTexture = this.canvas3DRenderer.getRenderTexture();
+      // Resize Worlds render targets (offscreen) and keep compositor layer in sync.
+      if (this.worldsRenderer) {
+        this.worldsRenderer.resize(this.canvas.width, this.canvas.height);
+        const renderTexture = this.worldsRenderer.getRenderTexture();
         if (renderTexture) {
           this.compositor.updateLayerTexture('3d', renderTexture);
         }
@@ -5553,9 +5656,9 @@ ${exportVars}
     let handledBy3D = false;
     if (
       action === 'press' &&
-      this.canvas3DEnabled &&
+      this.worldsEnabled &&
       this.camera3D &&
-      this.canvas3DLinkKeyHandlingEnabled
+      this.worldsLinkKeyHandlingEnabled
     ) {
       if (e.key === 'Tab') {
         this.move3DLinkFocus(e.shiftKey ? -1 : 1);
@@ -5695,7 +5798,7 @@ ${exportVars}
     pixelX: number,
     pixelY: number
   ): { layout: Section3DLayout; u: number; v: number } | null {
-    if (!this.canvas3DEnabled || !this.camera3D) return null;
+    if (!this.worldsEnabled || !this.camera3D) return null;
     if (!this.section3DLayouts || this.section3DLayouts.length === 0) return null;
 
     const canvasW = this.canvas.width;
@@ -5719,6 +5822,8 @@ ${exportVars}
 
     let best: { layout: Section3DLayout; dist: number; u: number; v: number } | null = null;
 
+    const cardXScaleFactor = this.get3DCardXScaleFactor();
+
     for (const layout of this.section3DLayouts) {
       if (!layout.visible || !layout.texture) continue;
 
@@ -5727,7 +5832,7 @@ ${exportVars}
         position: layout.transform.position,
         rotation: layout.transform.rotation,
         scale: {
-          x: layout.transform.scale.x * layout.width,
+          x: layout.transform.scale.x * layout.width * cardXScaleFactor,
           y: layout.transform.scale.y * layout.height,
           z: layout.transform.scale.z,
         },
@@ -5861,7 +5966,9 @@ ${exportVars}
         const aspect = this.canvas.width > 0 && this.canvas.height > 0
           ? this.canvas.width / this.canvas.height
           : 1;
-        focusOnSectionFit(this.camera3D, layout, aspect, 0.9, { min: 60, max: 400 });
+        const cardXScaleFactor = this.get3DCardXScaleFactor();
+        const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
+        focusOnSectionFit(this.camera3D, proxyLayout as any, aspect, 0.9, { min: 60, max: 400 });
       }
       return;
     }
@@ -5877,11 +5984,12 @@ ${exportVars}
   }
 
   private get3DCardModelMatrix(layout: Section3DLayout): Float32Array {
+    const cardXScaleFactor = this.get3DCardXScaleFactor();
     const sectionTransform = {
       position: layout.transform.position,
       rotation: layout.transform.rotation,
       scale: {
-        x: layout.transform.scale.x * layout.width,
+        x: layout.transform.scale.x * layout.width * cardXScaleFactor,
         y: layout.transform.scale.y * layout.height,
         z: layout.transform.scale.z,
       },
@@ -5937,12 +6045,14 @@ ${exportVars}
       const aspect = this.canvas.width > 0 && this.canvas.height > 0
         ? this.canvas.width / this.canvas.height
         : 1;
-      focusOnSectionFit(this.camera3D, layout, aspect, req.fill);
+      const cardXScaleFactor = this.get3DCardXScaleFactor();
+      const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
+      focusOnSectionFit(this.camera3D, proxyLayout as any, aspect, req.fill);
     }
   }
 
   private refocus3DForCurrentViewport(): void {
-    if (!this.canvas3DEnabled || !this.camera3D) return;
+    if (!this.worldsEnabled || !this.camera3D) return;
     if (!this.lastApplied3DCameraFocus) return;
 
     const layout = this.section3DLayouts.find(l => l.sectionIndex === this.lastApplied3DCameraFocus!.sectionIndex);
@@ -5954,7 +6064,9 @@ ${exportVars}
       const aspect = this.canvas.width > 0 && this.canvas.height > 0
         ? this.canvas.width / this.canvas.height
         : 1;
-      focusOnSectionFit(this.camera3D, layout, aspect, this.lastApplied3DCameraFocus.fill);
+      const cardXScaleFactor = this.get3DCardXScaleFactor();
+      const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
+      focusOnSectionFit(this.camera3D, proxyLayout as any, aspect, this.lastApplied3DCameraFocus.fill);
     }
   }
 
@@ -6098,8 +6210,8 @@ ${exportVars}
     return best;
   }
 
-  private applyCanvas3DLayoutCallback(sections?: any[]): void {
-    if (!this.canvas3DLayoutCallback) return;
+  private applyWorldsLayoutCallback(sections?: any[]): void {
+    if (!this.worldsLayoutCallback) return;
     if (!this.section3DLayouts || this.section3DLayouts.length === 0) return;
 
     const order: any[] = [];
@@ -6121,7 +6233,7 @@ ${exportVars}
       if (!layout) continue;
 
       try {
-        const out = this.canvas3DLayoutCallback({
+        const out = this.worldsLayoutCallback({
           sectionIndex: layout.sectionIndex,
           title: String(layout.displayTitle || layout.sectionTitle || ''),
           layout,
@@ -6148,7 +6260,7 @@ ${exportVars}
         if (typeof out.visible === 'boolean') layout.visible = out.visible;
         if (typeof out.navigable === 'boolean') layout.navigable = out.navigable;
       } catch (error) {
-        console.error('[canvas3D.layout] callback error:', error);
+        console.error('[worlds.layout] callback error:', error);
       }
     }
 
@@ -6190,7 +6302,7 @@ ${exportVars}
     screenX: number;
     screenY: number;
   }> {
-    if (!this.canvas3DEnabled || !this.camera3D) return [];
+    if (!this.worldsEnabled || !this.camera3D) return [];
 
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;

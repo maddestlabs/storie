@@ -125,7 +125,7 @@ export interface SandboxAPI {
   };
 
   // Document metadata API (read-only)
-  // Indices match Canvas3D's depth-first section layout order.
+  // Indices match Worlds's depth-first section layout order.
   doc: {
     sectionsFlat: () => Array<{ index: number; title: string; level: number }>;
     sectionCount: () => number;
@@ -189,6 +189,34 @@ export interface SandboxAPI {
   getFrame: () => number;
   getTime: () => number;
   getDelta: () => number;
+
+  /**
+   * Safely read a URL query parameter by name.
+   * Returns the coerced value (number / boolean / string) or `defaultValue`
+   * when the param is missing or the URL is inaccessible (e.g. inside SES).
+   *
+   * Examples:
+   *   getParam('seed', 1337)   // → number
+   *   getParam('debug', false) // → boolean
+   *   getParam('name', 'hero') // → string
+   */
+  getParam: (name: string, defaultValue?: string | number | boolean | null) => string | number | boolean | null | undefined;
+
+  /** Seeded / random utilities — same PRNG the engine uses internally. */
+  random: {
+    /** Generate a cryptographically random uint32 seed. */
+    seed: () => number;
+    /**
+     * Create a seeded mulberry32 PRNG — identical to the engine's internal one.
+     * Returns a `() => number` yielding values in [0, 1).
+     */
+    rng: (seed: number) => () => number;
+    /**
+     * Normalise a number or string to a uint32 (FNV-1a hash for strings)
+     * using the same logic the engine applies before stfxr / sfx playback.
+     */
+    toSeed: (val: number | string) => number;
+  };
   
   // Native Browser APIs
   audio: {
@@ -568,7 +596,7 @@ export interface SandboxAPI {
   };
   
   // 3D Canvas API
-  canvas3D: {
+  worlds: {
     enable: () => boolean;
     disable: () => void;
     enabled: boolean;
@@ -594,19 +622,19 @@ export interface SandboxAPI {
         includeNonNavigable?: boolean;
         includeSelf?: boolean;
       }) => number[];
-      count: (rule?: Parameters<SandboxAPI['canvas3D']['nav']['list']>[0]) => number;
-      cursor: (rule?: Parameters<SandboxAPI['canvas3D']['nav']['list']>[0]) => number | null;
+      count: (rule?: Parameters<SandboxAPI['worlds']['nav']['list']>[0]) => number;
+      cursor: (rule?: Parameters<SandboxAPI['worlds']['nav']['list']>[0]) => number | null;
       goto: (
         index: number,
-        rule?: Parameters<SandboxAPI['canvas3D']['nav']['list']>[0] & {
+        rule?: Parameters<SandboxAPI['worlds']['nav']['list']>[0] & {
           wrap?: boolean;
           mode?: 'fit' | 'focus';
           fill?: number;
           distance?: number;
         }
       ) => void;
-      next: (rule?: Parameters<SandboxAPI['canvas3D']['nav']['goto']>[1]) => void;
-      prev: (rule?: Parameters<SandboxAPI['canvas3D']['nav']['goto']>[1]) => void;
+      next: (rule?: Parameters<SandboxAPI['worlds']['nav']['goto']>[1]) => void;
+      prev: (rule?: Parameters<SandboxAPI['worlds']['nav']['goto']>[1]) => void;
     };
 
     overview: {
@@ -622,7 +650,7 @@ export interface SandboxAPI {
           levels?: 'any' | number | { min?: number; max?: number };
         }
       ) => void;
-      toggle: (options?: Parameters<SandboxAPI['canvas3D']['overview']['setEnabled']>[1]) => void;
+      toggle: (options?: Parameters<SandboxAPI['worlds']['overview']['setEnabled']>[1]) => void;
       enabled: boolean;
     };
     camera: {
@@ -907,7 +935,7 @@ export class ScriptSandbox {
         })(),
         
         // 3D Canvas API
-        canvas3D: this.api.canvas3D,
+        worlds: this.api.worlds,
         
         // Mouse/terminal accessors - provide BOTH properties (getters) and functions
         // Use captured apiRef to avoid this binding issues in SES
@@ -934,6 +962,12 @@ export class ScriptSandbox {
         getFrame: this.api.getFrame,
         getTime: this.api.getTime,
         getDelta: this.api.getDelta,
+
+        // URL parameter helper (safe — resolved in host context before entering SES)
+        getParam: this.api.getParam,
+
+        // Seeded / random utilities (same PRNG as the engine)
+        random: this.api.random,
         
         // NO ACCESS TO:
         // - fetch (network)

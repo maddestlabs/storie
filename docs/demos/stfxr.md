@@ -114,20 +114,6 @@ let lastSnippet = '';
 
 // NOTE: Baking is async. To persist results across frames,
 // store baked state on `scope.*` (not imported locals).
-
-function randomSeed() {
-  try {
-    const c = globalThis.crypto;
-    if (c && typeof c.getRandomValues === 'function') {
-      const a = new Uint32Array(1);
-      c.getRandomValues(a);
-      return a[0] >>> 0;
-    }
-  } catch {
-    // ignore
-  }
-  return (Math.random() * 0xffffffff) >>> 0;
-}
 ```
 
 ```js on:init
@@ -315,7 +301,7 @@ const playBaked = () => {
 };
 
 if (widgets.btnRandomize.wasClicked()) {
-  stfxrSeed = randomSeed();
+  stfxrSeed = random.seed();
   widgets.info.setText(`Seed: ${stfxrSeed}   (click a button to unlock audio if needed)`);
 }
 

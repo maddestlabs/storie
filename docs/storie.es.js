@@ -9453,7 +9453,7 @@ class ScriptSandbox {
           return ui;
         })(),
         // 3D Canvas API
-        canvas3D: this.api.canvas3D,
+        worlds: this.api.worlds,
         // Mouse/terminal accessors - provide BOTH properties (getters) and functions
         // Use captured apiRef to avoid this binding issues in SES
         get mouseX() {
@@ -9492,7 +9492,11 @@ class ScriptSandbox {
         // Read-only state accessors
         getFrame: this.api.getFrame,
         getTime: this.api.getTime,
-        getDelta: this.api.getDelta
+        getDelta: this.api.getDelta,
+        // URL parameter helper (safe — resolved in host context before entering SES)
+        getParam: this.api.getParam,
+        // Seeded / random utilities (same PRNG as the engine)
+        random: this.api.random
         // NO ACCESS TO:
         // - fetch (network)
         // - localStorage (storage)
@@ -16206,6 +16210,13 @@ function mat4Translate(x, y, z) {
   m[14] = z;
   return m;
 }
+function mat4Scale(x, y, z) {
+  const m = mat4Identity();
+  m[0] = x;
+  m[5] = y;
+  m[10] = z;
+  return m;
+}
 function mat4RotateX(angle) {
   const c2 = Math.cos(angle);
   const s = Math.sin(angle);
@@ -16236,60 +16247,18 @@ function mat4RotateZ(angle) {
   m[5] = c2;
   return m;
 }
-function mat4Scale(x, y, z) {
-  const m = mat4Identity();
-  m[0] = x;
-  m[5] = y;
-  m[10] = z;
-  return m;
-}
 function mat4Multiply(a, b) {
   const out = new Float32Array(16);
-  const a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
-  const a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
-  const a20 = a[8], a21 = a[9], a22 = a[10], a23 = a[11];
-  const a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
-  const b00 = b[0], b01 = b[1], b02 = b[2], b03 = b[3];
-  const b10 = b[4], b11 = b[5], b12 = b[6], b13 = b[7];
-  const b20 = b[8], b21 = b[9], b22 = b[10], b23 = b[11];
-  const b30 = b[12], b31 = b[13], b32 = b[14], b33 = b[15];
-  out[0] = a00 * b00 + a10 * b01 + a20 * b02 + a30 * b03;
-  out[1] = a01 * b00 + a11 * b01 + a21 * b02 + a31 * b03;
-  out[2] = a02 * b00 + a12 * b01 + a22 * b02 + a32 * b03;
-  out[3] = a03 * b00 + a13 * b01 + a23 * b02 + a33 * b03;
-  out[4] = a00 * b10 + a10 * b11 + a20 * b12 + a30 * b13;
-  out[5] = a01 * b10 + a11 * b11 + a21 * b12 + a31 * b13;
-  out[6] = a02 * b10 + a12 * b11 + a22 * b12 + a32 * b13;
-  out[7] = a03 * b10 + a13 * b11 + a23 * b12 + a33 * b13;
-  out[8] = a00 * b20 + a10 * b21 + a20 * b22 + a30 * b23;
-  out[9] = a01 * b20 + a11 * b21 + a21 * b22 + a31 * b23;
-  out[10] = a02 * b20 + a12 * b21 + a22 * b22 + a32 * b23;
-  out[11] = a03 * b20 + a13 * b21 + a23 * b22 + a33 * b23;
-  out[12] = a00 * b30 + a10 * b31 + a20 * b32 + a30 * b33;
-  out[13] = a01 * b30 + a11 * b31 + a21 * b32 + a31 * b33;
-  out[14] = a02 * b30 + a12 * b31 + a22 * b32 + a32 * b33;
-  out[15] = a03 * b30 + a13 * b31 + a23 * b32 + a33 * b33;
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) {
+      out[i + j * 4] = a[i] * b[j * 4] + a[i + 4] * b[j * 4 + 1] + a[i + 8] * b[j * 4 + 2] + a[i + 12] * b[j * 4 + 3];
+    }
+  }
   return out;
 }
-function mat4LookAt(eye, target, up = { x: 0, y: 1, z: 0 }) {
-  const zAxis = {
-    x: eye.x - target.x,
-    y: eye.y - target.y,
-    z: eye.z - target.z
-  };
-  const zLength = Math.sqrt(zAxis.x * zAxis.x + zAxis.y * zAxis.y + zAxis.z * zAxis.z);
-  zAxis.x /= zLength;
-  zAxis.y /= zLength;
-  zAxis.z /= zLength;
-  const xAxis = {
-    x: up.y * zAxis.z - up.z * zAxis.y,
-    y: up.z * zAxis.x - up.x * zAxis.z,
-    z: up.x * zAxis.y - up.y * zAxis.x
-  };
-  const xLength = Math.sqrt(xAxis.x * xAxis.x + xAxis.y * xAxis.y + xAxis.z * xAxis.z);
-  xAxis.x /= xLength;
-  xAxis.y /= xLength;
-  xAxis.z /= xLength;
+function mat4LookAt(eye, target) {
+  const zAxis = vec3Normalize(vec3Sub(eye, target));
+  const xAxis = vec3Normalize({ x: zAxis.z, y: 0, z: -zAxis.x });
   const yAxis = {
     x: zAxis.y * xAxis.z - zAxis.z * xAxis.y,
     y: zAxis.z * xAxis.x - zAxis.x * xAxis.z,
@@ -16498,7 +16467,7 @@ function createSection3DLayouts(sections, config) {
   processSections(sections);
   return layouts;
 }
-function getDefaultCanvas3DConfig() {
+function getDefaultWorldsConfig() {
   return {
     defaultDepth: -100,
     // Sections start 100 units in front of camera (negative Z)
@@ -16533,7 +16502,7 @@ function focusOnSection(camera, layout, distance2 = 50) {
   };
   setCameraTarget(camera, target, rotation);
 }
-class Canvas3DRenderer {
+class WorldsRenderer {
   constructor(device, width, height) {
     __publicField(this, "device");
     __publicField(this, "renderPipeline", null);
@@ -16871,15 +16840,15 @@ class Canvas3DRenderer {
   /**
    * Render all 3D sections
    */
-  render(camera, layouts, hoveredSectionIndex = null, background) {
+  render(camera, layouts, hoveredSectionIndex = null, background, cardXScaleFactor = 1) {
     if (!this.renderPipeline || !this.vertexBuffer || !this.indexBuffer || !this.renderTexture) {
-      console.warn("Canvas3DRenderer not fully initialized");
+      console.warn("WorldsRenderer not fully initialized");
       return;
     }
     const paperEnabled = !!(background == null ? void 0 : background.enabled);
     this.ensureUniformBufferCapacity(layouts.length + (paperEnabled ? 1 : 0));
     if (!this.uniformBuffer || !this.sampler) {
-      console.warn("Canvas3DRenderer not fully initialized");
+      console.warn("WorldsRenderer not fully initialized");
       return;
     }
     layouts.filter((l) => l.visible && l.texture).length;
@@ -16932,7 +16901,7 @@ class Canvas3DRenderer {
     const cameraUp = new Float32Array([viewMatrix[1], viewMatrix[5], viewMatrix[9], 0]);
     if (paperEnabled) {
       if (!this.backgroundTexture) {
-        console.warn("Canvas3DRenderer missing backgroundTexture");
+        console.warn("WorldsRenderer missing backgroundTexture");
       } else {
         const uniformOffset = 0;
         const mvp = new Float32Array([
@@ -16982,7 +16951,7 @@ class Canvas3DRenderer {
         position: layout.transform.position,
         rotation: layout.transform.rotation,
         scale: {
-          x: layout.transform.scale.x * layout.width,
+          x: layout.transform.scale.x * layout.width * cardXScaleFactor,
           y: layout.transform.scale.y * layout.height,
           z: layout.transform.scale.z
         }
@@ -19458,20 +19427,20 @@ class StorieEngine {
     // Deferred shader chain (applied after WebGPU init)
     __publicField(this, "pendingShaderChain", null);
     // 3D Canvas system
-    __publicField(this, "canvas3DRenderer", null);
+    __publicField(this, "worldsRenderer", null);
     __publicField(this, "camera3D", null);
     __publicField(this, "section3DLayouts", []);
     __publicField(this, "pending3DCameraFocus", null);
     // Last focus request that was actually applied (used to re-frame on resize).
     __publicField(this, "lastApplied3DCameraFocus", null);
-    __publicField(this, "canvas3DConfig", getDefaultCanvas3DConfig());
-    __publicField(this, "canvas3DEnabled", false);
-    __publicField(this, "canvas3DLayoutCallback", null);
+    __publicField(this, "worldsConfig", getDefaultWorldsConfig());
+    __publicField(this, "worldsEnabled", false);
+    __publicField(this, "worldsLayoutCallback", null);
     // 3D interaction state (hover + basic navigation controls)
-    __publicField(this, "canvas3DControlsEnabled", false);
+    __publicField(this, "worldsControlsEnabled", false);
     // 3D link navigation key handling (Tab/Enter/Arrow keys). When disabled,
     // user documents can implement their own keybindings (e.g. slide decks).
-    __publicField(this, "canvas3DLinkKeyHandlingEnabled", true);
+    __publicField(this, "worldsLinkKeyHandlingEnabled", true);
     __publicField(this, "mouseLookActive", false);
     __publicField(this, "mouseLookLastX", 0);
     __publicField(this, "mouseLookLastY", 0);
@@ -19507,10 +19476,10 @@ class StorieEngine {
     __publicField(this, "documents", /* @__PURE__ */ new Map());
     __publicField(this, "activeDocumentId", null);
     __publicField(this, "outlineCache", null);
-    // Canvas3D Overview (host-only)
-    __publicField(this, "canvas3DOverviewEnabled", false);
-    __publicField(this, "canvas3DOverviewSavedTransforms", null);
-    __publicField(this, "pendingCanvas3DOverview", null);
+    // Worlds Overview (host-only)
+    __publicField(this, "worldsOverviewEnabled", false);
+    __publicField(this, "worldsOverviewSavedTransforms", null);
+    __publicField(this, "pendingWorldsOverview", null);
     // Dropped-file handling (binary-safe)
     __publicField(this, "lastDroppedFile", null);
     __publicField(this, "dropHandlingCleanup", null);
@@ -19559,6 +19528,7 @@ class StorieEngine {
       });
     }
     this.renderer.resize(this.width, this.height);
+    this.syncCanvasElementSizeToBuffer();
     this.moduleLoader = new ModuleLoader(this, config.modules);
     const api = this.createUserAPI();
     this.api = api;
@@ -19611,36 +19581,36 @@ class StorieEngine {
     if (!this.hostAudienceView) return;
     if (!this.compositor) return;
     const has3DLayer = !!this.compositor.layers.get("3d");
-    const shouldHideTerminal = this.canvas3DEnabled && has3DLayer;
+    const shouldHideTerminal = this.worldsEnabled && has3DLayer;
     if (this.compositor.layers.get("terminal")) {
       this.compositor.updateLayer("terminal", { enabled: !shouldHideTerminal });
     }
   }
-  applyPendingCanvas3DOverview() {
-    if (!this.pendingCanvas3DOverview) return;
-    const p = this.pendingCanvas3DOverview;
-    this.pendingCanvas3DOverview = null;
-    this.setCanvas3DOverviewEnabled(p.enabled, p.options);
+  applyPendingWorldsOverview() {
+    if (!this.pendingWorldsOverview) return;
+    const p = this.pendingWorldsOverview;
+    this.pendingWorldsOverview = null;
+    this.setWorldsOverviewEnabled(p.enabled, p.options);
   }
-  setCanvas3DOverviewEnabled(enabled, options) {
+  setWorldsOverviewEnabled(enabled, options) {
     var _a, _b, _c, _d;
     if (this.hostAudienceView) return;
     if (!this.section3DLayouts || this.section3DLayouts.length === 0 || !this.camera3D) {
-      this.pendingCanvas3DOverview = { enabled: !!enabled, options };
+      this.pendingWorldsOverview = { enabled: !!enabled, options };
       return;
     }
     const nextEnabled = !!enabled;
-    if (nextEnabled && !this.canvas3DOverviewEnabled) {
-      this.canvas3DOverviewSavedTransforms = this.section3DLayouts.map((l) => ({
+    if (nextEnabled && !this.worldsOverviewEnabled) {
+      this.worldsOverviewSavedTransforms = this.section3DLayouts.map((l) => ({
         position: { ...l.transform.position },
         rotation: { ...l.transform.rotation },
         scale: { ...l.transform.scale }
       }));
     }
-    if (!nextEnabled && this.canvas3DOverviewEnabled) {
-      if (this.canvas3DOverviewSavedTransforms) {
-        for (let i = 0; i < Math.min(this.canvas3DOverviewSavedTransforms.length, this.section3DLayouts.length); i++) {
-          const saved = this.canvas3DOverviewSavedTransforms[i];
+    if (!nextEnabled && this.worldsOverviewEnabled) {
+      if (this.worldsOverviewSavedTransforms) {
+        for (let i = 0; i < Math.min(this.worldsOverviewSavedTransforms.length, this.section3DLayouts.length); i++) {
+          const saved = this.worldsOverviewSavedTransforms[i];
           const layout = this.section3DLayouts[i];
           if (!layout) continue;
           layout.transform.position = { ...saved.position };
@@ -19648,17 +19618,17 @@ class StorieEngine {
           layout.transform.scale = { ...saved.scale };
         }
       }
-      this.canvas3DOverviewSavedTransforms = null;
-      this.canvas3DOverviewEnabled = false;
+      this.worldsOverviewSavedTransforms = null;
+      this.worldsOverviewEnabled = false;
       this.refocus3DForCurrentViewport();
       return;
     }
     if (!nextEnabled) return;
-    this.canvas3DOverviewEnabled = true;
+    this.worldsOverviewEnabled = true;
     const includeHidden = !!(options == null ? void 0 : options.includeHidden);
     const includeNonNavigable = !!(options == null ? void 0 : options.includeNonNavigable);
     const padding = Number.isFinite((options == null ? void 0 : options.padding) ?? NaN) ? options.padding : 20;
-    const depth = Number.isFinite((options == null ? void 0 : options.depth) ?? NaN) ? options.depth : this.canvas3DConfig.defaultDepth;
+    const depth = Number.isFinite((options == null ? void 0 : options.depth) ?? NaN) ? options.depth : this.worldsConfig.defaultDepth;
     const fill = Number.isFinite((options == null ? void 0 : options.fill) ?? NaN) ? options.fill : 0.9;
     const levels = (options == null ? void 0 : options.levels) ?? "any";
     const nodes = this.getOutlineNodes();
@@ -19740,6 +19710,16 @@ class StorieEngine {
       { x: 0, y: 0, z: 0 }
     );
   }
+  /**
+   * Ensure the canvas element's CSS pixel size matches the backing buffer size.
+   * When these disagree, the browser scales the canvas, causing stretched output.
+   */
+  syncCanvasElementSizeToBuffer() {
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    if (w > 0) this.canvas.style.width = `${w}px`;
+    if (h > 0) this.canvas.style.height = `${h}px`;
+  }
   initHostSync(cfg) {
     if (typeof window === "undefined" || typeof URL === "undefined") return;
     const url = new URL(window.location.href);
@@ -19783,15 +19763,15 @@ class StorieEngine {
       this.hostAudienceView = role === "client";
       if (this.hostAudienceView) {
         this.input.setEnabled(false);
-        this.canvas3DControlsEnabled = false;
-        this.canvas3DLinkKeyHandlingEnabled = false;
+        this.worldsControlsEnabled = false;
+        this.worldsLinkKeyHandlingEnabled = false;
         this.mouseLookActive = false;
       } else {
         this.input.setEnabled(true);
       }
       sync.onGotoSection((args) => {
         var _a;
-        this.canvas3DEnabled = true;
+        this.worldsEnabled = true;
         if ((_a = this.compositor) == null ? void 0 : _a.layers.get("3d")) {
           this.compositor.updateLayer("3d", { enabled: true });
         }
@@ -19812,7 +19792,7 @@ class StorieEngine {
       });
       sync.onSceneState((args) => {
         var _a;
-        this.canvas3DEnabled = true;
+        this.worldsEnabled = true;
         if ((_a = this.compositor) == null ? void 0 : _a.layers.get("3d")) {
           this.compositor.updateLayer("3d", { enabled: true });
         }
@@ -20309,7 +20289,7 @@ class StorieEngine {
         }
       },
       // Document metadata API (read-only)
-      // Section indices match Canvas3D's depth-first layout order.
+      // Section indices match Worlds's depth-first layout order.
       doc: {
         sectionsFlat: () => {
           const d = engine.getActiveDocument();
@@ -21250,6 +21230,66 @@ class StorieEngine {
       getFrame: () => this.frameCount,
       getTime: () => this.elapsedTime,
       getDelta: () => this.deltaTime,
+      /**
+       * Seeded / random utilities — the same PRNG the engine uses internally.
+       */
+      random: {
+        /**
+         * Generate a cryptographically random uint32 seed.
+         * Drop-in replacement for the `randomSeed()` boilerplate found in demos.
+         */
+        seed: () => {
+          try {
+            const a = new Uint32Array(1);
+            globalThis.crypto.getRandomValues(a);
+            return a[0] >>> 0;
+          } catch {
+            return Math.random() * 4294967295 >>> 0;
+          }
+        },
+        /**
+         * Create a seeded PRNG using the mulberry32 algorithm — identical to
+         * what the engine uses for stfxr / sfx graph noise generation.
+         * Returns a `() => number` function that yields values in [0, 1).
+         *
+         * Example:
+         *   const rng = random.rng(stfxrSeed);
+         *   const x = rng(); // deterministic float in [0, 1)
+         */
+        rng: (seed) => mulberry32(seed >>> 0),
+        /**
+         * Normalise any seed value (number or string) to a uint32 in the same
+         * way the engine does before passing it to stfxr / sfx presets.
+         * Strings are hashed with FNV-1a 32-bit; numbers are coerced with `>>> 0`.
+         *
+         * Example:
+         *   random.toSeed('player1') // → stable uint32 every time
+         *   random.toSeed(42.7)      // → 42
+         */
+        toSeed: (val) => toSfxSeed(val)
+      },
+      /**
+       * Safely read a URL query parameter by name.
+       * Coerces the raw string to number / boolean / string automatically.
+       * Returns `defaultValue` when the param is absent or the URL is inaccessible.
+       */
+      getParam: (name, defaultValue) => {
+        var _a;
+        try {
+          const search = ((_a = globalThis.location) == null ? void 0 : _a.search) ?? "";
+          const sp = new URLSearchParams(search);
+          const raw = sp.get(String(name));
+          if (raw === null) return defaultValue;
+          const asNum = Number(raw);
+          if (raw.trim() !== "" && Number.isFinite(asNum)) return asNum;
+          const lower = raw.toLowerCase();
+          if (lower === "true") return true;
+          if (lower === "false") return false;
+          return raw;
+        } catch {
+          return defaultValue;
+        }
+      },
       // === NATIVE BROWSER APIs ===
       // Web Audio API (Phase 1) - Full exposure with shared instance
       audio: {
@@ -22036,20 +22076,20 @@ class StorieEngine {
         }
       },
       // 3D Canvas API - Hardware-accelerated 3D section rendering
-      canvas3D: {
+      worlds: {
         // Enable/disable 3D rendering mode
         enable: () => {
           var _a;
-          engine.canvas3DEnabled = true;
+          engine.worldsEnabled = true;
           if ((_a = engine.compositor) == null ? void 0 : _a.layers.get("3d")) {
             engine.compositor.updateLayer("3d", { enabled: true });
           }
           engine.updateAudienceViewLayers();
-          return engine.canvas3DRenderer !== null;
+          return engine.worldsRenderer !== null;
         },
         disable: () => {
           var _a;
-          engine.canvas3DEnabled = false;
+          engine.worldsEnabled = false;
           if ((_a = engine.compositor) == null ? void 0 : _a.layers.get("3d")) {
             engine.compositor.updateLayer("3d", { enabled: false });
           }
@@ -22057,28 +22097,28 @@ class StorieEngine {
           console.log("3D Canvas mode disabled");
         },
         get enabled() {
-          return engine.canvas3DEnabled;
+          return engine.worldsEnabled;
         },
         get available() {
-          return engine.canvas3DRenderer !== null;
+          return engine.worldsRenderer !== null;
         },
         // Built-in navigation controls (WASD + QE + right-drag mouse-look)
         controls: {
           setEnabled: (enabled) => {
-            engine.canvas3DControlsEnabled = !!enabled;
+            engine.worldsControlsEnabled = !!enabled;
           },
           get enabled() {
-            return engine.canvas3DControlsEnabled;
+            return engine.worldsControlsEnabled;
           }
         },
         // Built-in 3D link navigation (Tab/Enter/Arrow). Disable this to let
         // documents own those keys (e.g. presenter/slide mode).
         links: {
           setKeyHandlingEnabled: (enabled) => {
-            engine.canvas3DLinkKeyHandlingEnabled = !!enabled;
+            engine.worldsLinkKeyHandlingEnabled = !!enabled;
           },
           get keyHandlingEnabled() {
-            return engine.canvas3DLinkKeyHandlingEnabled;
+            return engine.worldsLinkKeyHandlingEnabled;
           }
         },
         // Outline-based navigation helpers.
@@ -22202,13 +22242,13 @@ class StorieEngine {
         // and fits the camera to show them all.
         overview: {
           setEnabled: (enabled, options) => {
-            engine.setCanvas3DOverviewEnabled(enabled, options);
+            engine.setWorldsOverviewEnabled(enabled, options);
           },
           toggle: (options) => {
-            engine.setCanvas3DOverviewEnabled(!engine.canvas3DOverviewEnabled, options);
+            engine.setWorldsOverviewEnabled(!engine.worldsOverviewEnabled, options);
           },
           get enabled() {
-            return engine.canvas3DOverviewEnabled;
+            return engine.worldsOverviewEnabled;
           }
         },
         // Camera controls
@@ -22305,79 +22345,79 @@ class StorieEngine {
         config: {
           setDefaults: (config) => {
             if (config.defaultDepth !== void 0) {
-              engine.canvas3DConfig.defaultDepth = config.defaultDepth;
+              engine.worldsConfig.defaultDepth = config.defaultDepth;
             }
             if (config.defaultSectionWidth !== void 0) {
-              engine.canvas3DConfig.defaultSectionWidth = config.defaultSectionWidth;
+              engine.worldsConfig.defaultSectionWidth = config.defaultSectionWidth;
             }
             if (config.defaultSectionHeight !== void 0) {
-              engine.canvas3DConfig.defaultSectionHeight = config.defaultSectionHeight;
+              engine.worldsConfig.defaultSectionHeight = config.defaultSectionHeight;
             }
             if (config.cameraFov !== void 0) {
-              engine.canvas3DConfig.cameraFov = config.cameraFov;
+              engine.worldsConfig.cameraFov = config.cameraFov;
             }
             if (config.cameraNear !== void 0) {
-              engine.canvas3DConfig.cameraNear = config.cameraNear;
+              engine.worldsConfig.cameraNear = config.cameraNear;
             }
             if (config.cameraFar !== void 0) {
-              engine.canvas3DConfig.cameraFar = config.cameraFar;
+              engine.worldsConfig.cameraFar = config.cameraFar;
             }
             if (config.positionEaseSpeed !== void 0) {
-              engine.canvas3DConfig.positionEaseSpeed = config.positionEaseSpeed;
+              engine.worldsConfig.positionEaseSpeed = config.positionEaseSpeed;
             }
             if (config.rotationEaseSpeed !== void 0) {
-              engine.canvas3DConfig.rotationEaseSpeed = config.rotationEaseSpeed;
+              engine.worldsConfig.rotationEaseSpeed = config.rotationEaseSpeed;
             }
             if (config.autoLayoutEnabled !== void 0) {
-              engine.canvas3DConfig.autoLayoutEnabled = config.autoLayoutEnabled;
+              engine.worldsConfig.autoLayoutEnabled = config.autoLayoutEnabled;
             }
             if (config.autoLayoutColumns !== void 0) {
-              engine.canvas3DConfig.autoLayoutColumns = config.autoLayoutColumns;
+              engine.worldsConfig.autoLayoutColumns = config.autoLayoutColumns;
             }
             if (config.autoLayoutSpacing !== void 0) {
-              engine.canvas3DConfig.autoLayoutSpacing = config.autoLayoutSpacing;
+              engine.worldsConfig.autoLayoutSpacing = config.autoLayoutSpacing;
             }
             if (config.sectionTextureMode !== void 0) {
-              const prev = engine.canvas3DConfig.sectionTextureMode;
-              engine.canvas3DConfig.sectionTextureMode = config.sectionTextureMode;
+              const prev = engine.worldsConfig.sectionTextureMode;
+              engine.worldsConfig.sectionTextureMode = config.sectionTextureMode;
               if (prev !== config.sectionTextureMode) {
                 engine.clear3DSectionTextures();
               }
             }
             if (config.sectionBorderEnabled !== void 0) {
-              const prev = engine.canvas3DConfig.sectionBorderEnabled;
-              engine.canvas3DConfig.sectionBorderEnabled = config.sectionBorderEnabled;
+              const prev = engine.worldsConfig.sectionBorderEnabled;
+              engine.worldsConfig.sectionBorderEnabled = config.sectionBorderEnabled;
               if (prev !== config.sectionBorderEnabled) {
                 engine.clear3DSectionTextures();
               }
             }
             if (config.sectionBorderWidth !== void 0) {
-              const prev = engine.canvas3DConfig.sectionBorderWidth;
-              engine.canvas3DConfig.sectionBorderWidth = config.sectionBorderWidth;
+              const prev = engine.worldsConfig.sectionBorderWidth;
+              engine.worldsConfig.sectionBorderWidth = config.sectionBorderWidth;
               if (prev !== config.sectionBorderWidth) {
                 engine.clear3DSectionTextures();
               }
             }
             if (config.sectionBackground !== void 0) {
-              const prev = engine.canvas3DConfig.sectionBackground;
-              engine.canvas3DConfig.sectionBackground = config.sectionBackground;
+              const prev = engine.worldsConfig.sectionBackground;
+              engine.worldsConfig.sectionBackground = config.sectionBackground;
               if (prev !== config.sectionBackground) {
                 engine.clear3DSectionTextures();
               }
             }
-            engine.applyCanvas3DLayoutCallback();
+            engine.applyWorldsLayoutCallback();
           },
           getDefaults: () => {
-            return { ...engine.canvas3DConfig };
+            return { ...engine.worldsConfig };
           }
         },
         layout: {
           setCallback: (fn2) => {
-            engine.canvas3DLayoutCallback = typeof fn2 === "function" ? fn2 : null;
-            engine.applyCanvas3DLayoutCallback();
+            engine.worldsLayoutCallback = typeof fn2 === "function" ? fn2 : null;
+            engine.applyWorldsLayoutCallback();
           },
           clearCallback: () => {
-            engine.canvas3DLayoutCallback = null;
+            engine.worldsLayoutCallback = null;
           }
         }
       }
@@ -22452,12 +22492,12 @@ class StorieEngine {
           console.error(`  ✗ Failed to load modules:`, error);
         }
       }
-      if (this.canvas3DRenderer) {
-        this.section3DLayouts = createSection3DLayouts(parsed.sections, this.canvas3DConfig);
+      if (this.worldsRenderer) {
+        this.section3DLayouts = createSection3DLayouts(parsed.sections, this.worldsConfig);
         console.log(`  Created 3D layouts for ${this.section3DLayouts.length} sections`);
         this.applyPending3DCameraFocus();
-        this.applyCanvas3DLayoutCallback(parsed.sections);
-        this.applyPendingCanvas3DOverview();
+        this.applyWorldsLayoutCallback(parsed.sections);
+        this.applyPendingWorldsOverview();
       }
       if (this.themeOverrideFromUrl) {
         this.applyThemeColors(this.themeOverrideFromUrl.theme, this.themeOverrideFromUrl.label, "url");
@@ -22726,7 +22766,7 @@ class StorieEngine {
       if (scopeVarNames.length > 0 && globalBlocks.length > 0) {
         console.log(`  Re-executing global blocks to create closures for ${scopeVarNames.length} variables`);
         const exports$1 = scopeVarNames.map((k) => `  try { scope.${k} = ${k}; } catch (e) {}`).join("\n");
-        const apiParams = "term, termCanvas, layer, key, mouse, drop, doc, host, scene, tui, gui, getStyle, theme, modules, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY, termWidth, termHeight, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, canvas3D";
+        const apiParams = "term, termCanvas, layer, key, mouse, drop, doc, host, scene, tui, gui, getStyle, theme, modules, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY, termWidth, termHeight, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, worlds";
         for (const code of globalBlocks) {
           const wrappedCode = `(function(${apiParams}) {
 ${code}
@@ -22903,6 +22943,7 @@ ${exportVars}
         const fontSize = this.renderer.fontSize;
         this.renderer = new Canvas2DRenderer(canvas, { fontFamily, fontSize });
         this.renderer.resize(this.width, this.height);
+        this.syncCanvasElementSizeToBuffer();
       } else if (this.renderer instanceof WebGPURenderer) {
         await this.initCompositor();
         const device = this.renderer.getContext().getDevice();
@@ -22916,14 +22957,14 @@ ${exportVars}
             this.shaderChainManager = new ShaderChainManager(this.shaderManager, device);
             console.log("✓ ShaderChainManager initialized (renderer device)");
           }
-          if (!this.canvas3DRenderer) {
+          if (!this.worldsRenderer) {
             try {
-              this.canvas3DRenderer = new Canvas3DRenderer(device, this.canvas.width, this.canvas.height);
-              await this.canvas3DRenderer.init();
+              this.worldsRenderer = new WorldsRenderer(device, this.canvas.width, this.canvas.height);
+              await this.worldsRenderer.init();
               if (!this.camera3D) {
                 this.camera3D = createCamera3D();
               }
-              const renderTexture = this.canvas3DRenderer.getRenderTexture();
+              const renderTexture = this.worldsRenderer.getRenderTexture();
               if (renderTexture && this.compositor) {
                 this.compositor.registerLayer("3d", {
                   texture: renderTexture,
@@ -22931,8 +22972,8 @@ ${exportVars}
                   height: this.canvas.height,
                   zIndex: 5,
                   // Above terminal (0) but below UI (20)
-                  enabled: this.canvas3DEnabled,
-                  // Honor early canvas3D.enable() calls
+                  enabled: this.worldsEnabled,
+                  // Honor early worlds.enable() calls
                   opacity: 1,
                   // Full opacity
                   blendMode: "normal"
@@ -22945,17 +22986,17 @@ ${exportVars}
               for (const [docId, docData] of this.documents.entries()) {
                 const anyDocData = docData;
                 if ((_a = anyDocData._parsedMarkdown) == null ? void 0 : _a.sections) {
-                  const layouts = createSection3DLayouts(anyDocData._parsedMarkdown.sections, this.canvas3DConfig);
+                  const layouts = createSection3DLayouts(anyDocData._parsedMarkdown.sections, this.worldsConfig);
                   this.section3DLayouts = layouts;
                   this.applyPending3DCameraFocus();
-                  this.applyCanvas3DLayoutCallback(anyDocData._parsedMarkdown.sections);
-                  this.applyPendingCanvas3DOverview();
+                  this.applyWorldsLayoutCallback(anyDocData._parsedMarkdown.sections);
+                  this.applyPendingWorldsOverview();
                   console.log(`✓ Created ${layouts.length} 3D section layouts for document ${docId}`);
                 } else {
                 }
               }
             } catch (error) {
-              console.warn("Failed to initialize Canvas3DRenderer:", error);
+              console.warn("Failed to initialize WorldsRenderer:", error);
             }
           }
           if (this.compositor) {
@@ -23014,17 +23055,17 @@ ${exportVars}
             console.warn("[Compositor] Terminal render texture missing; frame may be blank");
           }
         }
-        if (this.canvas3DEnabled && this.section3DLayouts.length > 0 && this.renderer instanceof WebGPURenderer) {
+        if (this.worldsEnabled && this.section3DLayouts.length > 0 && this.renderer instanceof WebGPURenderer) {
           const device = this.renderer.getContext().getDevice();
           if (device) {
-            if (this.canvas3DConfig.sectionTextureMode === "webgpu-ui") {
+            if (this.worldsConfig.sectionTextureMode === "webgpu-ui") {
               this.ensure3DSectionTexturesWebGPUUI(device);
             } else {
               this.ensure3DSectionTextures(device);
             }
           }
         }
-        if (this.canvas3DEnabled && this.canvas3DRenderer && this.camera3D) {
+        if (this.worldsEnabled && this.worldsRenderer && this.camera3D) {
           const pick = this.pick3DAt(this.input.getMouseX(), this.input.getMouseY());
           this.hovered3DLink = null;
           if (pick) {
@@ -23044,19 +23085,20 @@ ${exportVars}
               if (layout) layout.highlightUvRect = rect;
             }
           }
-          const backgroundChain = this.parseCanvas3DSectionBackgroundChain();
-          const proceduralBackground = this.isCanvas3DSectionBackgroundProceduralChainEnabled();
+          const backgroundChain = this.parseWorldsSectionBackgroundChain();
+          const proceduralBackground = this.isWorldsSectionBackgroundProceduralChainEnabled();
           const backgroundConfig = proceduralBackground ? {
             enabled: true,
             chain: backgroundChain,
-            paperColor: this.resolveCanvas3DSectionBackground(),
+            paperColor: this.resolveWorldsSectionBackground(),
             lineColor: this.withAlpha(this.getStyle("dim").fg, 64),
             scale: 1,
             spacing: 1,
             thickness: 0.06,
             noiseStrength: 0.06
           } : void 0;
-          this.canvas3DRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig);
+          const cardXScaleFactor = this.get3DCardXScaleFactor();
+          this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig, cardXScaleFactor);
         }
         if (this.webgpuUIRenderer) {
           const guiAPI = (_b = this.api) == null ? void 0 : _b.gui;
@@ -23118,7 +23160,7 @@ ${exportVars}
     }
   }
   ensure3DSectionTextures(device) {
-    if (!this.canvas3DEnabled || !this.camera3D) return;
+    if (!this.worldsEnabled || !this.camera3D) return;
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
     const aspect = canvasW > 0 && canvasH > 0 ? canvasW / canvasH : 1;
@@ -23170,9 +23212,9 @@ ${exportVars}
       const heading = this.getStyle("heading");
       const link2 = this.getStyle("link");
       const code = this.getStyle("code");
-      const proceduralRuledPaper = this.isCanvas3DSectionBackgroundProceduralChainEnabled();
-      const bakedRuledPaper = this.isCanvas3DSectionBackgroundBakedRuledLines();
-      const surfaceBg = this.resolveCanvas3DSectionBackground();
+      const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
+      const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
+      const surfaceBg = this.resolveWorldsSectionBackground();
       const borderStyle = this.getStyle("border");
       const mdBg = proceduralRuledPaper || bakedRuledPaper ? this.withAlpha(surfaceBg, 0) : surfaceBg;
       const mdStyle = {
@@ -23212,8 +23254,8 @@ ${content}`.trim();
           ctx.fillText(op.text, op.x, op.y);
         }
       }
-      const borderEnabled = this.canvas3DConfig.sectionBorderEnabled !== false;
-      const borderWidth = Math.max(0, Math.round(this.canvas3DConfig.sectionBorderWidth ?? 2));
+      const borderEnabled = this.worldsConfig.sectionBorderEnabled !== false;
+      const borderWidth = Math.max(0, Math.round(this.worldsConfig.sectionBorderWidth ?? 2));
       if (borderEnabled && borderWidth > 0) {
         ctx.strokeStyle = ColorUtils.toCss(borderStyle.fg);
         ctx.lineWidth = borderWidth;
@@ -23277,8 +23319,8 @@ ${content}`.trim();
     const a = Math.max(0, Math.min(255, Math.round(alphaByte)));
     return color & 4294967040 | a & 255;
   }
-  parseCanvas3DSectionBackgroundChain() {
-    const v2 = this.canvas3DConfig.sectionBackground;
+  parseWorldsSectionBackgroundChain() {
+    const v2 = this.worldsConfig.sectionBackground;
     if (typeof v2 !== "string") return [];
     const trimmed = v2.trim();
     if (!trimmed) return [];
@@ -23290,14 +23332,14 @@ ${content}`.trim();
     }
     return [trimmed.toLowerCase()];
   }
-  isCanvas3DSectionBackgroundProceduralChainEnabled() {
-    const chain = this.parseCanvas3DSectionBackgroundChain();
+  isWorldsSectionBackgroundProceduralChainEnabled() {
+    const chain = this.parseWorldsSectionBackgroundChain();
     const hasRuledLines = chain.includes("ruledlines") || chain.includes("ruled-lines") || chain.includes("ruled_lines");
     const hasPaper = chain.includes("paper");
     return hasRuledLines || hasPaper;
   }
-  isCanvas3DSectionBackgroundBakedRuledLines() {
-    const v2 = this.canvas3DConfig.sectionBackground;
+  isWorldsSectionBackgroundBakedRuledLines() {
+    const v2 = this.worldsConfig.sectionBackground;
     if (typeof v2 !== "string") return false;
     const key = v2.trim().toLowerCase();
     return key === "ruledlines-baked" || key === "ruledlines_baked" || key === "ruledlinesbaked";
@@ -23313,8 +23355,8 @@ ${content}`.trim();
       ctx.fillRect(0, y, widthPx, thickness);
     }
   }
-  resolveCanvas3DSectionBackground() {
-    const v2 = this.canvas3DConfig.sectionBackground;
+  resolveWorldsSectionBackground() {
+    const v2 = this.worldsConfig.sectionBackground;
     if (v2 === void 0 || v2 === null || v2 === "surface") {
       return this.getStyle("surface").bg;
     }
@@ -23373,7 +23415,7 @@ ${content}`.trim();
   }
   ensure3DSectionTexturesWebGPUUI(device) {
     if (!(this.renderer instanceof WebGPURenderer)) return;
-    if (!this.canvas3DEnabled || !this.camera3D) return;
+    if (!this.worldsEnabled || !this.camera3D) return;
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
     const aspect = canvasW > 0 && canvasH > 0 ? canvasW / canvasH : 1;
@@ -23395,9 +23437,9 @@ ${content}`.trim();
     const heading = this.getStyle("heading");
     const link2 = this.getStyle("link");
     const code = this.getStyle("code");
-    const proceduralRuledPaper = this.isCanvas3DSectionBackgroundProceduralChainEnabled();
-    const bakedRuledPaper = this.isCanvas3DSectionBackgroundBakedRuledLines();
-    const surfaceBg = this.resolveCanvas3DSectionBackground();
+    const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
+    const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
+    const surfaceBg = this.resolveWorldsSectionBackground();
     const borderStyle = this.getStyle("border");
     const mdBg = proceduralRuledPaper || bakedRuledPaper ? this.withAlpha(surfaceBg, 0) : surfaceBg;
     const style = {
@@ -23410,8 +23452,8 @@ ${content}`.trim();
       // Give 3D cards a panel-like background; matches theme elevated surfaces.
       bg: mdBg
     };
-    const borderEnabled = this.canvas3DConfig.sectionBorderEnabled !== false;
-    const borderWidth = Math.max(0, Math.round(this.canvas3DConfig.sectionBorderWidth ?? 2));
+    const borderEnabled = this.worldsConfig.sectionBorderEnabled !== false;
+    const borderWidth = Math.max(0, Math.round(this.worldsConfig.sectionBorderWidth ?? 2));
     for (const layout of this.section3DLayouts) {
       if (!layout.visible) continue;
       if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
@@ -23504,13 +23546,23 @@ ${content}`.trim();
       this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx });
     }
   }
+  get3DCardXScaleFactor() {
+    if (!(this.renderer instanceof WebGPURenderer)) return 1;
+    const atlas = this.renderer.getAtlas();
+    const charW = atlas ? atlas.getCharWidth() : 0;
+    const charH = atlas ? atlas.getCharHeight() : 0;
+    if (!(charW > 0 && charH > 0)) return 1;
+    const baseLineHeight = Math.max(1, Math.round(charH * 1.25));
+    const factor = charW / baseLineHeight;
+    return Number.isFinite(factor) && factor > 0 ? factor : 1;
+  }
   /**
    * Update phase - call user's update handler
    */
   update() {
     var _a;
     this.moduleLoader.update(this.deltaTime);
-    if (this.canvas3DEnabled && this.canvas3DControlsEnabled && this.camera3D) {
+    if (this.worldsEnabled && this.worldsControlsEnabled && this.camera3D) {
       const dt = this.deltaTime;
       const moveSpeed = 120;
       const lookSpeed = 1.6;
@@ -23566,7 +23618,7 @@ ${content}`.trim();
         this.mouseLookActive = false;
       }
     }
-    if (this.camera3D && this.canvas3DEnabled) {
+    if (this.camera3D && this.worldsEnabled) {
       updateCamera3D(this.camera3D, this.deltaTime);
     }
     const doc = this.getActiveDocument();
@@ -23657,6 +23709,7 @@ ${content}`.trim();
     this.height = height;
     this.layers.resize(width, height);
     this.renderer.resize(width, height);
+    this.syncCanvasElementSizeToBuffer();
     if (this.compositor && this.renderer instanceof WebGPURenderer) {
       this.compositor.resize(this.canvas.width, this.canvas.height);
       const terminalTexture = this.renderer.getRenderTexture();
@@ -23667,9 +23720,9 @@ ${content}`.trim();
         this.webgpuUIRenderer.resize(this.canvas.width, this.canvas.height);
         this.compositor.updateLayerTexture("ui", this.webgpuUIRenderer.getTexture());
       }
-      if (this.canvas3DRenderer) {
-        this.canvas3DRenderer.resize(this.canvas.width, this.canvas.height);
-        const renderTexture = this.canvas3DRenderer.getRenderTexture();
+      if (this.worldsRenderer) {
+        this.worldsRenderer.resize(this.canvas.width, this.canvas.height);
+        const renderTexture = this.worldsRenderer.getRenderTexture();
         if (renderTexture) {
           this.compositor.updateLayerTexture("3d", renderTexture);
         }
@@ -23839,7 +23892,7 @@ ${content}`.trim();
     }
     const doc = this.getActiveDocument();
     let handledBy3D = false;
-    if (action === "press" && this.canvas3DEnabled && this.camera3D && this.canvas3DLinkKeyHandlingEnabled) {
+    if (action === "press" && this.worldsEnabled && this.camera3D && this.worldsLinkKeyHandlingEnabled) {
       if (e.key === "Tab") {
         this.move3DLinkFocus(e.shiftKey ? -1 : 1);
         handledBy3D = true;
@@ -23947,7 +24000,7 @@ ${content}`.trim();
     }
   }
   pick3DAt(pixelX, pixelY) {
-    if (!this.canvas3DEnabled || !this.camera3D) return null;
+    if (!this.worldsEnabled || !this.camera3D) return null;
     if (!this.section3DLayouts || this.section3DLayouts.length === 0) return null;
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
@@ -23964,13 +24017,14 @@ ${content}`.trim();
     const farWorld = mat4TransformPoint(invViewProj, { x: ndcX, y: ndcY, z: 1 });
     const rayDirWorld = vec3Normalize(vec3Sub(farWorld, nearWorld));
     let best = null;
+    const cardXScaleFactor = this.get3DCardXScaleFactor();
     for (const layout of this.section3DLayouts) {
       if (!layout.visible || !layout.texture) continue;
       const sectionTransform = {
         position: layout.transform.position,
         rotation: layout.transform.rotation,
         scale: {
-          x: layout.transform.scale.x * layout.width,
+          x: layout.transform.scale.x * layout.width * cardXScaleFactor,
           y: layout.transform.scale.y * layout.height,
           z: layout.transform.scale.z
         }
@@ -24062,7 +24116,9 @@ ${content}`.trim();
       if (layout) {
         this.setCurrent3DSection(layout.sectionIndex);
         const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
-        focusOnSectionFit(this.camera3D, layout, aspect, 0.9, { min: 60, max: 400 });
+        const cardXScaleFactor = this.get3DCardXScaleFactor();
+        const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
+        focusOnSectionFit(this.camera3D, proxyLayout, aspect, 0.9, { min: 60, max: 400 });
       }
       return;
     }
@@ -24074,11 +24130,12 @@ ${content}`.trim();
     }
   }
   get3DCardModelMatrix(layout) {
+    const cardXScaleFactor = this.get3DCardXScaleFactor();
     const sectionTransform = {
       position: layout.transform.position,
       rotation: layout.transform.rotation,
       scale: {
-        x: layout.transform.scale.x * layout.width,
+        x: layout.transform.scale.x * layout.width * cardXScaleFactor,
         y: layout.transform.scale.y * layout.height,
         z: layout.transform.scale.z
       }
@@ -24119,11 +24176,13 @@ ${content}`.trim();
       focusOnSection(this.camera3D, layout, req.distance);
     } else {
       const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
-      focusOnSectionFit(this.camera3D, layout, aspect, req.fill);
+      const cardXScaleFactor = this.get3DCardXScaleFactor();
+      const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
+      focusOnSectionFit(this.camera3D, proxyLayout, aspect, req.fill);
     }
   }
   refocus3DForCurrentViewport() {
-    if (!this.canvas3DEnabled || !this.camera3D) return;
+    if (!this.worldsEnabled || !this.camera3D) return;
     if (!this.lastApplied3DCameraFocus) return;
     const layout = this.section3DLayouts.find((l) => l.sectionIndex === this.lastApplied3DCameraFocus.sectionIndex);
     if (!layout) return;
@@ -24131,7 +24190,9 @@ ${content}`.trim();
       focusOnSection(this.camera3D, layout, this.lastApplied3DCameraFocus.distance);
     } else {
       const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
-      focusOnSectionFit(this.camera3D, layout, aspect, this.lastApplied3DCameraFocus.fill);
+      const cardXScaleFactor = this.get3DCardXScaleFactor();
+      const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
+      focusOnSectionFit(this.camera3D, proxyLayout, aspect, this.lastApplied3DCameraFocus.fill);
     }
   }
   applyPending3DCameraFocus() {
@@ -24237,9 +24298,9 @@ ${content}`.trim();
     visit(sections);
     return best;
   }
-  applyCanvas3DLayoutCallback(sections) {
+  applyWorldsLayoutCallback(sections) {
     var _a;
-    if (!this.canvas3DLayoutCallback) return;
+    if (!this.worldsLayoutCallback) return;
     if (!this.section3DLayouts || this.section3DLayouts.length === 0) return;
     const order = [];
     const walk = (list) => {
@@ -24255,7 +24316,7 @@ ${content}`.trim();
       const layout = this.section3DLayouts[i];
       if (!layout) continue;
       try {
-        const out = this.canvas3DLayoutCallback({
+        const out = this.worldsLayoutCallback({
           sectionIndex: layout.sectionIndex,
           title: String(layout.displayTitle || layout.sectionTitle || ""),
           layout
@@ -24279,7 +24340,7 @@ ${content}`.trim();
         if (typeof out.visible === "boolean") layout.visible = out.visible;
         if (typeof out.navigable === "boolean") layout.navigable = out.navigable;
       } catch (error) {
-        console.error("[canvas3D.layout] callback error:", error);
+        console.error("[worlds.layout] callback error:", error);
       }
     }
     this.clear3DSectionTextures();
@@ -24306,7 +24367,7 @@ ${content}`.trim();
     return true;
   }
   getVisible3DLinks() {
-    if (!this.canvas3DEnabled || !this.camera3D) return [];
+    if (!this.worldsEnabled || !this.camera3D) return [];
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
     if (canvasW <= 0 || canvasH <= 0) return [];
@@ -24435,7 +24496,6 @@ export {
   BuiltInModules,
   COLORS,
   Canvas2DRenderer,
-  Canvas3DRenderer,
   InputManager,
   KEY,
   Layer,
@@ -24445,6 +24505,7 @@ export {
   THEMES,
   VERSION,
   WebGPURenderer,
+  WorldsRenderer,
   applyTheme,
   createCamera3D,
   createSection3DLayouts,
@@ -24453,7 +24514,7 @@ export {
   flattenSections,
   focusOnSection,
   getAvailableThemes,
-  getDefaultCanvas3DConfig,
+  getDefaultWorldsConfig,
   getTheme,
   lerp,
   lerpAngle,
