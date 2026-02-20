@@ -35,6 +35,9 @@ dist/
 *.d.ts.map
 *.tsbuildinfo
 
+# Rust / Tauri
+src-tauri/target/
+
 # Note: /docs/ is auto-generated from /site/ and /src/
 # but it's committed for GitHub Pages deployment
 # Edit source in /site/ or /src/, then run: npm run build
