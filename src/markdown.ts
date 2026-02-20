@@ -143,7 +143,10 @@ function extractSections(source: string): Section[] {
     // ATX-style headings (# Heading)
     // Allow optional leading whitespace before the # so section parsing still
     // works when markdown is indented (e.g. embedded in HTML or copied/pasted).
-    const atxMatch = line.match(/^\s*(#{1,6})\s+(.+)$/);
+    // Also allow *no* whitespace after the hashes ("#Title"), because some
+    // content sources can introduce odd characters after the hash which makes
+    // strict "\s+" matching fail in practice.
+    const atxMatch = line.match(/^\s*(#{1,6})\s*(.+)$/);
     if (atxMatch) {
       headings.push({
         level: atxMatch[1].length,

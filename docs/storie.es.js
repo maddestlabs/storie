@@ -9986,7 +9986,7 @@ function extractSections(source) {
         candidateHeadings.push({ line: i + 1, inFence, text: ls.slice(0, 120) });
       }
     }
-    const atxMatch = line.match(/^\s*(#{1,6})\s+(.+)$/);
+    const atxMatch = line.match(/^\s*(#{1,6})\s*(.+)$/);
     if (atxMatch) {
       headings.push({
         level: atxMatch[1].length,

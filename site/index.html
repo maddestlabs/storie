@@ -126,7 +126,7 @@ This demo showcases:
   <script type="module">
     // Import the built engine
     // Cache-bust the module URL so WebView2 doesn't reuse an older bundle across runs.
-    import { StorieEngine } from './storie.es.js?v=tauri-2026-02-20';
+    import { StorieEngine } from './storie.es.js?v=tauri-2026-02-20-2';
 
     /**
      * Parse URL parameters to load content from various sources
@@ -357,11 +357,30 @@ This demo showcases:
       _debugState.shown = true;
     }
 
+    function nativeDebugFormatArg(a) {
+      if (a instanceof Error) return a.stack || a.message || String(a);
+      if (a === null) return 'null';
+      if (a === undefined) return 'undefined';
+      if (typeof a === 'string') return a;
+      if (typeof a === 'number' || typeof a === 'boolean' || typeof a === 'bigint') return String(a);
+      try {
+        return JSON.stringify(a, (_, v) => (typeof v === 'bigint' ? String(v) : v), 2);
+      } catch {
+        try { return String(a); } catch { return '[unprintable]'; }
+      }
+    }
+
+    function nativeDebugFormatArgs(args) {
+      const parts = (Array.isArray(args) ? args : [args]).map(nativeDebugFormatArg);
+      const msg = parts.join(' ');
+      return msg.length > 4000 ? (msg.slice(0, 4000) + '…') : msg;
+    }
+
     function nativeDebugLine(...args) {
       // Always log to console; overlay updates only if visible.
       try { console.log(...args); } catch {}
       if (!_debugState.enabled) return;
-      const msg = args.map(a => (typeof a === 'string' ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })())).join(' ');
+      const msg = nativeDebugFormatArgs(args);
       _debugState.lines.push(msg);
       if (_debugState.lines.length > _debugState.maxLines) _debugState.lines.shift();
       const el = document.getElementById('native-debug');
@@ -372,7 +391,7 @@ This demo showcases:
     }
 
     function nativeDebugError(prefix, err) {
-      const message = (err && (err.stack || err.message)) ? (err.stack || err.message) : String(err);
+      const message = nativeDebugFormatArgs(err);
       if (_debugState.enabled && !_debugState.shown) {
         nativeDebugEnsureVisible();
       }
@@ -390,12 +409,12 @@ This demo showcases:
         const _origError = console.error.bind(console);
         console.error = (...args) => {
           _origError(...args);
-          nativeDebugError('[console.error]', args.map(String).join(' '));
+          nativeDebugError('[console.error]', args);
         };
         const _origWarn = console.warn.bind(console);
         console.warn = (...args) => {
           _origWarn(...args);
-          nativeDebugError('[console.warn]', args.map(String).join(' '));
+          nativeDebugError('[console.warn]', args);
         };
       } catch {
         // ignore
@@ -645,6 +664,17 @@ This demo showcases:
               console.log(`✓ index.md first line: ${firstLine}`);
               console.log(`✓ index.md heading lines: ${headingLines}`);
               if (IS_TAURI) nativeDebugLine(`✓ index.md headings: ${headingLines}`);
+
+              // Extra diagnostic: print the first heading's codepoints so we
+              // can spot invisible characters between '#' and the title.
+              const firstHeading = markdown.split('\n').find(l => l.trimStart().startsWith('#'));
+              if (firstHeading) {
+                const raw = firstHeading.slice(0, 80);
+                const cps = Array.from(raw).slice(0, 24).map(ch => '0x' + ch.codePointAt(0).toString(16));
+                console.log('✓ index.md first heading (raw):', raw);
+                console.log('✓ index.md first heading codepoints:', cps.join(' '));
+                if (IS_TAURI) nativeDebugLine(`✓ first heading cps: ${cps.join(' ')}`);
+              }
 
               console.log('✓ Loaded index.md');
             } else {
