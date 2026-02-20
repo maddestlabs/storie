@@ -23,30 +23,25 @@
         "decorations": true,
         "center": true,
         "dragDropEnabled": true,
+        "devtools": true,
         "additionalBrowserArgs": "--enable-features=Vulkan,UseSkiaRenderer --disable-features=RendererCodeIntegrity"
       }
     ],
     "security": {
-      "csp": "default-src 'self' asset: https://asset.localhost; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data: blob:; font-src 'self' asset: https://asset.localhost data:; connect-src ipc: http://ipc.localhost https://api.github.com; media-src 'self' asset: https://asset.localhost blob: data:"
+      "csp": "default-src 'self' asset: https://asset.localhost; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data: blob:; font-src 'self' asset: https://asset.localhost data:; connect-src 'self' asset: https://asset.localhost ipc: http://ipc.localhost https://api.github.com; media-src 'self' asset: https://asset.localhost blob: data:"
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["app"],
     "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
+      "icons/favicon.ico",
+      "icons/favicon-16x16.png",
+      "icons/favicon-32x32.png",
+      "icons/android-chrome-192x192.png",
+      "icons/android-chrome-512x512.png",
+      "icons/apple-touch-icon.png"
     ],
-    "windows": {
-      "nsis": {
-        "installMode": "currentUser",
-        "languages": ["English"],
-        "displayLanguageSelector": false
-      }
-    },
     "resources": {}
   }
 }

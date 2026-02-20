@@ -79,6 +79,24 @@
     <canvas id="canvas"></canvas>
   </div>
 
+  <!-- Native (Tauri) debug overlay: shown on errors / startup hints -->
+  <div id="native-debug" style="
+    position: fixed;
+    left: 8px;
+    top: 8px;
+    right: 8px;
+    max-height: 45vh;
+    overflow: auto;
+    padding: 8px 10px;
+    background: rgba(0, 17, 17, 0.92);
+    color: #a9f5ff;
+    border: 1px solid rgba(169, 245, 255, 0.35);
+    font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    white-space: pre-wrap;
+    display: none;
+    z-index: 9999;
+  "></div>
+
   <!-- Markdown content with embedded JavaScript -->
   <div id="markdown">
 # Bouncing Character Demo
@@ -390,6 +408,78 @@ This demo showcases:
     // runtime (requires `withGlobalTauri: true` in tauri.conf.json).
     const IS_TAURI = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+    // Minimal debug overlay (native only)
+    const _debugState = {
+      enabled: IS_TAURI,
+      lines: [],
+      maxLines: 120,
+      shown: false,
+    };
+
+    const _debugParamEnabled = (() => {
+      try {
+        return new URLSearchParams(window.location.search).get('debug') === '1';
+      } catch {
+        return false;
+      }
+    })();
+
+    function nativeDebugEnsureVisible() {
+      const el = document.getElementById('native-debug');
+      if (!el) return;
+      el.style.display = 'block';
+      _debugState.shown = true;
+    }
+
+    function nativeDebugLine(...args) {
+      // Always log to console; overlay updates only if visible.
+      try { console.log(...args); } catch {}
+      if (!_debugState.enabled) return;
+      const msg = args.map(a => (typeof a === 'string' ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })())).join(' ');
+      _debugState.lines.push(msg);
+      if (_debugState.lines.length > _debugState.maxLines) _debugState.lines.shift();
+      const el = document.getElementById('native-debug');
+      if (!el) return;
+      if (_debugState.shown) {
+        el.textContent = _debugState.lines.join('\n');
+      }
+    }
+
+    function nativeDebugError(prefix, err) {
+      const message = (err && (err.stack || err.message)) ? (err.stack || err.message) : String(err);
+      if (_debugState.enabled && !_debugState.shown) {
+        nativeDebugEnsureVisible();
+      }
+      nativeDebugLine(prefix, message);
+      const el = document.getElementById('native-debug');
+      if (el) el.textContent = _debugState.lines.join('\n');
+    }
+
+    if (IS_TAURI) {
+      if (_debugParamEnabled) nativeDebugEnsureVisible();
+
+      // Surface engine-caught errors (it logs to console.error, which doesn't
+      // trigger window.onerror because the engine catches exceptions).
+      try {
+        const _origError = console.error.bind(console);
+        console.error = (...args) => {
+          _origError(...args);
+          nativeDebugError('[console.error]', args.map(String).join(' '));
+        };
+        const _origWarn = console.warn.bind(console);
+        console.warn = (...args) => {
+          _origWarn(...args);
+          nativeDebugError('[console.warn]', args.map(String).join(' '));
+        };
+      } catch {
+        // ignore
+      }
+
+      window.addEventListener('error', (e) => nativeDebugError('[window:error]', e.error || e.message));
+      window.addEventListener('unhandledrejection', (e) => nativeDebugError('[unhandledrejection]', e.reason));
+      nativeDebugLine('[native] Tauri detected');
+    }
+
     /**
      * Native drag-and-drop bridge for Tauri.
      *
@@ -406,92 +496,82 @@ This demo showcases:
     async function installTauriDropHandling(engine) {
       const tauri = window.__TAURI__;
       if (!tauri) {
-        console.warn('[tauri-drop] __TAURI__ not found — falling back to DOM D&D');
+        nativeDebugLine('[tauri-drop] __TAURI__ not found — falling back to DOM D&D');
         engine.installDropHandling(document.body);
         return;
       }
 
       const { invoke }           = tauri.core;
-      const { getCurrentWindow } = tauri.window;
-
-      let cleanup = null;
+      const { listen }           = tauri.event;
 
       try {
-        const win = getCurrentWindow();
-
-        cleanup = await win.onDragDropEvent(async (event) => {
-          const { type, paths, position } = event.payload;
-
-          if (type === 'over') {
-            // Visual feedback — nothing needed; Tauri handles the cursor
-            return;
-          }
+        // Canonical Tauri event name for OS-level drag/drop.
+        // Payload shape: { type: 'enter'|'over'|'drop'|'leave', paths?: string[], position?: { x, y } }
+        const unlisten = await listen('tauri://drag-drop', async (event) => {
+          const payload = event.payload || {};
+          const type  = payload.type;
+          const paths = payload.paths;
 
           if (type !== 'drop' || !paths || paths.length === 0) return;
 
-          const filePath = paths[0]; // Storie processes one file at a time
-          const name     = filePath.replace(/.*[\\/]/, '');
-          const ext      = name.split('.').pop().toLowerCase();
-
+          const filePath = paths[0];
+          const name = String(filePath).replace(/.*[\\/]/, '');
+          const ext = (name.includes('.') ? name.split('.').pop() : '').toLowerCase();
           const isMarkdown = ext === 'md' || ext === 'markdown' || ext === 'txt';
 
           if (isMarkdown) {
-            // ── Text / markdown drop ───────────────────────────────────────────
             try {
               const content = await invoke('read_dropped_file', { path: filePath });
-              await engine.loadMarkdown(name, content);
-              console.log(`[tauri-drop] Loaded markdown: ${name}`);
+              await engine.loadMarkdown(name || 'dropped.md', content);
+              nativeDebugLine(`[tauri-drop] Loaded markdown: ${name}`);
             } catch (err) {
-              console.error('[tauri-drop] Failed to read markdown file:', err);
+              nativeDebugError('[tauri-drop] Failed to read markdown file:', err);
             }
             return;
           }
 
-          // ── Binary drop (audio, image, etc.) ──────────────────────────────────
-          // Only delivered if active story has `dropTarget: true` in frontmatter.
+          // Binary files only matter if the active doc has `dropTarget: true`.
           if (!engine.isDropTargetEnabled()) {
-            console.log(`[tauri-drop] Ignoring binary file (no dropTarget): ${name}`);
+            nativeDebugLine(`[tauri-drop] Ignoring binary file (no dropTarget): ${name}`);
             return;
           }
 
           try {
-            const b64  = await invoke('read_dropped_file_bytes', { path: filePath });
-            // Decode base64 → Uint8Array
-            const bin  = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-            // Infer MIME type from extension
+            const b64 = await invoke('read_dropped_file_bytes', { path: filePath });
+            const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
             const MIME = {
-              mp3:'audio/mpeg', wav:'audio/wav', ogg:'audio/ogg', flac:'audio/flac',
-              m4a:'audio/mp4', aac:'audio/aac', opus:'audio/opus',
-              png:'image/png',  jpg:'image/jpeg', jpeg:'image/jpeg',
-              gif:'image/gif',  webp:'image/webp', svg:'image/svg+xml',
-              json:'application/json',
+              mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', flac: 'audio/flac',
+              m4a: 'audio/mp4', aac: 'audio/aac', opus: 'audio/opus',
+              png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+              gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+              json: 'application/json',
             };
             const mime = MIME[ext] || 'application/octet-stream';
 
-            // Synthesise a File and dispatch as a real DOM DragEvent so the
-            // engine's internal handleDropEvent / on:drop path is unchanged.
-            const file = new File([bin], name, { type: mime });
-            const dt   = new DataTransfer();
+            const file = new File([bin], name || 'dropped', { type: mime });
+            const dt = new DataTransfer();
             dt.items.add(file);
             const syntheticDrop = new DragEvent('drop', {
               dataTransfer: dt,
-              bubbles:      true,
-              cancelable:   true,
+              bubbles: true,
+              cancelable: true,
             });
             document.body.dispatchEvent(syntheticDrop);
-            console.log(`[tauri-drop] Dispatched binary file: ${name} (${mime})`);
+            nativeDebugLine(`[tauri-drop] Dispatched binary file: ${name} (${mime})`);
           } catch (err) {
-            console.error('[tauri-drop] Failed to read binary file:', err);
+            nativeDebugError('[tauri-drop] Failed to read binary file:', err);
           }
         });
 
-        console.log('✓ Native Tauri drag-and-drop installed');
+        nativeDebugLine('✓ Native Tauri drag-and-drop installed (event listener)');
+        return () => {
+          try { unlisten(); } catch {}
+        };
       } catch (err) {
-        console.warn('[tauri-drop] Failed to install native D&D, falling back:', err);
+        nativeDebugError('[tauri-drop] Failed to install native D&D, falling back:', err);
         engine.installDropHandling(document.body);
+        return null;
       }
-
-      return cleanup;
     }
 
     async function main() {
@@ -568,7 +648,7 @@ This demo showcases:
           engine.installDropHandling(document.body);
         }
 
-        console.log(`✓ S|torie engine initialized (${gridWidth}x${gridHeight}) [${IS_TAURI ? 'Tauri native' : 'browser'}]`);
+        nativeDebugLine(`✓ S|torie engine initialized (${gridWidth}x${gridHeight}) [${IS_TAURI ? 'Tauri native' : 'browser'}]`);
         
         // Handle window resize
         let resizeTimeout;

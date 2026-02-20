@@ -15,8 +15,7 @@
     "test": "vitest",
     "tauri": "tauri",
     "dev:tauri": "tauri dev",
-    "build:tauri": "tauri build",
-    "gen-icons": "node scripts/gen-icons.js"
+    "build:tauri": "tauri build"
   },
   "dependencies": {
     "ses": "^1.14.0",

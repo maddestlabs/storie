@@ -61,7 +61,7 @@ jobs:
       - name: Build Storie frontend (docs/)
         run: npm run build
 
-      - name: Build Tauri app (NSIS currentUser installer)
+      - name: Build Tauri app (portable)
         run: npm run build:tauri -- --target x86_64-pc-windows-msvc
         env:
           # Disable code-signing for portable/CI builds (set TAURI_SIGNING_*
@@ -76,18 +76,33 @@ jobs:
       - name: Package portable zip
         shell: pwsh
         run: |
-          $exePath = "src-tauri\target\x86_64-pc-windows-msvc\release\storie.exe"
-          if (-not (Test-Path $exePath)) {
-            # Release builds without --target flag land here
-            $exePath = "src-tauri\target\release\storie.exe"
+          # Prefer the Tauri app bundle output (this is where the Windows icon
+          # and bundle metadata are applied). Fall back to the raw target exe.
+          $appDir = "src-tauri\target\x86_64-pc-windows-msvc\release\bundle\app\storie"
+          if (-not (Test-Path $appDir)) {
+            $appDir = "src-tauri\target\release\bundle\app\storie"
           }
+
+          $exePath = Join-Path $appDir "storie.exe"
+
           if (-not (Test-Path $exePath)) {
-            Write-Error "storie.exe not found. Check build output."
-            exit 1
+            $exePath = "src-tauri\target\x86_64-pc-windows-msvc\release\storie.exe"
+            if (-not (Test-Path $exePath)) {
+              $exePath = "src-tauri\target\release\storie.exe"
+            }
           }
+
+          if (-not (Test-Path $exePath)) { Write-Error "storie.exe not found"; exit 1 }
+
           $version = (Get-Content package.json | ConvertFrom-Json).version
           $zipName = "storie-$version-windows-portable-x64.zip"
-          Compress-Archive -Path $exePath -DestinationPath $zipName -Force
+
+          if (Test-Path $appDir) {
+            Compress-Archive -Path (Join-Path $appDir '*') -DestinationPath $zipName -Force
+          } else {
+            Compress-Archive -Path $exePath -DestinationPath $zipName -Force
+          }
+
           Write-Host "Portable zip: $zipName ($([Math]::Round((Get-Item $zipName).Length / 1MB, 2)) MB)"
           echo "PORTABLE_ZIP=$zipName" | Out-File -FilePath $Env:GITHUB_ENV -Append
 
@@ -98,13 +113,6 @@ jobs:
           name: storie-windows-portable
           path: ${{ env.PORTABLE_ZIP }}
           if-no-files-found: error
-
-      - name: Upload NSIS installer (bonus)
-        uses: actions/upload-artifact@v4
-        with:
-          name: storie-windows-installer
-          path: src-tauri/target/**/bundle/nsis/*.exe
-          if-no-files-found: warn
 
       # ── GitHub Release (on tag push or manual dispatch with release=true) ───
       - name: Create GitHub Release
@@ -117,7 +125,6 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
           files: |
             ${{ env.PORTABLE_ZIP }}
-            src-tauri/target/**/bundle/nsis/*.exe
           body: |
             ## S|torie ${{ github.ref_name }}
 
@@ -126,7 +133,7 @@ jobs:
             | File | Description |
             |------|-------------|
             | `storie-*-windows-portable-x64.zip` | **Portable** – extract and run, no install needed |
-            | `storie-*_x64-setup.exe` | **Installer** – per-user NSIS installer (no admin required) |
+            
 
             **Requirements:** Windows 10/11 with [WebView2 runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (pre-installed on Windows 11 and most Windows 10 systems).
 
