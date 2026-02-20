@@ -100,6 +100,9 @@ function extractSections(source: string): Section[] {
   const lines = source.split('\n');
   const headings: HeadingMatch[] = [];
 
+  // Debug aid (only used when headings unexpectedly come out empty).
+  const candidateHeadings: Array<{ line: number; inFence: boolean; text: string }> = [];
+
   // Detect YAML frontmatter range so we don't accidentally treat the closing
   // '---' as a Setext underline (e.g. "key: value\n---").
   let frontmatterEnd = -1;
@@ -128,6 +131,14 @@ function extractSections(source: string): Section[] {
     // Skip frontmatter and fenced code
     if (inFence) continue;
     if (frontmatterEnd >= 0 && i <= frontmatterEnd) continue;
+
+    // Capture a few heading-like lines for debugging if section extraction fails.
+    if (candidateHeadings.length < 8) {
+      const ls = line.trimStart();
+      if (ls.startsWith('#')) {
+        candidateHeadings.push({ line: i + 1, inFence, text: ls.slice(0, 120) });
+      }
+    }
     
     // ATX-style headings (# Heading)
     // Allow optional leading whitespace before the # so section parsing still
@@ -161,6 +172,13 @@ function extractSections(source: string): Section[] {
         });
       }
     }
+  }
+
+  if (headings.length === 0 && candidateHeadings.length > 0) {
+    console.warn('[markdown] No sections detected, but heading-like lines exist:', {
+      frontmatterEnd: frontmatterEnd >= 0 ? frontmatterEnd + 1 : null,
+      sample: candidateHeadings
+    });
   }
 
   // Build hierarchical structure

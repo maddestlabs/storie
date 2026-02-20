@@ -125,7 +125,8 @@ This demo showcases:
 
   <script type="module">
     // Import the built engine
-    import { StorieEngine } from './storie.es.js';
+    // Cache-bust the module URL so WebView2 doesn't reuse an older bundle across runs.
+    import { StorieEngine } from './storie.es.js?v=tauri-2026-02-20';
 
     /**
      * Parse URL parameters to load content from various sources
@@ -428,14 +429,16 @@ This demo showcases:
 
       const { invoke }           = tauri.core;
       const { listen }           = tauri.event;
+      const getCurrentWebviewWindow = tauri.webviewWindow?.getCurrentWebviewWindow;
 
       try {
-        // Canonical Tauri event name for OS-level drag/drop.
-        // Payload shape: { type: 'enter'|'over'|'drop'|'leave', paths?: string[], position?: { x, y } }
-        const unlisten = await listen('tauri://drag-drop', async (event) => {
-          const payload = event.payload || {};
-          const type  = payload.type;
-          const paths = payload.paths;
+        // Prefer WebviewWindow-targeted drag-drop listener: in Tauri v2 the
+        // events are typically emitted on the window/webview target.
+        const wvw = (typeof getCurrentWebviewWindow === 'function') ? getCurrentWebviewWindow() : null;
+
+        const handler = async (payload) => {
+          const type  = payload?.type;
+          const paths = payload?.paths;
 
           if (type === 'drop') {
             console.log('[tauri-drop] drop event:', paths);
@@ -493,9 +496,18 @@ This demo showcases:
           } catch (err) {
             nativeDebugError('[tauri-drop] Failed to read binary file:', err);
           }
-        });
+        };
 
-        nativeDebugLine('✓ Native Tauri drag-and-drop installed (event listener)');
+        let unlisten = null;
+        if (wvw && typeof wvw.onDragDropEvent === 'function') {
+          unlisten = await wvw.onDragDropEvent((event) => handler(event?.payload));
+          nativeDebugLine('✓ Native Tauri drag-and-drop installed (webviewWindow)');
+        } else {
+          // Fallback: global event listener.
+          unlisten = await listen('tauri://drag-drop', async (event) => handler(event?.payload || {}));
+          nativeDebugLine('✓ Native Tauri drag-and-drop installed (event listener)');
+        }
+
         return () => {
           try { unlisten(); } catch {}
         };

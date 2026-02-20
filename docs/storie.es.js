@@ -9961,6 +9961,7 @@ function extractSections(source) {
   var _a;
   const lines = source.split("\n");
   const headings = [];
+  const candidateHeadings = [];
   let frontmatterEnd = -1;
   if (((_a = lines[0]) == null ? void 0 : _a.trim()) === "---") {
     for (let i = 1; i < lines.length; i++) {
@@ -9979,6 +9980,12 @@ function extractSections(source) {
     }
     if (inFence) continue;
     if (frontmatterEnd >= 0 && i <= frontmatterEnd) continue;
+    if (candidateHeadings.length < 8) {
+      const ls = line.trimStart();
+      if (ls.startsWith("#")) {
+        candidateHeadings.push({ line: i + 1, inFence, text: ls.slice(0, 120) });
+      }
+    }
     const atxMatch = line.match(/^\s*(#{1,6})\s+(.+)$/);
     if (atxMatch) {
       headings.push({
@@ -10006,6 +10013,12 @@ function extractSections(source) {
         });
       }
     }
+  }
+  if (headings.length === 0 && candidateHeadings.length > 0) {
+    console.warn("[markdown] No sections detected, but heading-like lines exist:", {
+      frontmatterEnd: frontmatterEnd >= 0 ? frontmatterEnd + 1 : null,
+      sample: candidateHeadings
+    });
   }
   const rootSections = [];
   const stack = [];
