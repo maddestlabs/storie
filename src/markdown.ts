@@ -130,7 +130,9 @@ function extractSections(source: string): Section[] {
     if (frontmatterEnd >= 0 && i <= frontmatterEnd) continue;
     
     // ATX-style headings (# Heading)
-    const atxMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    // Allow optional leading whitespace before the # so section parsing still
+    // works when markdown is indented (e.g. embedded in HTML or copied/pasted).
+    const atxMatch = line.match(/^\s*(#{1,6})\s+(.+)$/);
     if (atxMatch) {
       headings.push({
         level: atxMatch[1].length,

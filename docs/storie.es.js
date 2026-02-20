@@ -9979,7 +9979,7 @@ function extractSections(source) {
     }
     if (inFence) continue;
     if (frontmatterEnd >= 0 && i <= frontmatterEnd) continue;
-    const atxMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    const atxMatch = line.match(/^\s*(#{1,6})\s+(.+)$/);
     if (atxMatch) {
       headings.push({
         level: atxMatch[1].length,
