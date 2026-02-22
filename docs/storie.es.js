@@ -9353,6 +9353,12 @@ class ScriptSandbox {
           if (typeof audioRef.playBlob === "function") {
             audio.playBlob = (name, options) => audioRef.playBlob(name, options, documentId);
           }
+          if (typeof audioRef.captureForExport === "function") {
+            audio.captureForExport = (buffer, offsetSec) => audioRef.captureForExport(buffer, offsetSec);
+          }
+          if (typeof audioRef.getCapturedForExport === "function") {
+            audio.getCapturedForExport = () => audioRef.getCapturedForExport();
+          }
           return audio;
         })(),
         canvas2d: this.api.canvas2d,
@@ -9493,6 +9499,10 @@ class ScriptSandbox {
         getFrame: this.api.getFrame,
         getTime: this.api.getTime,
         getDelta: this.api.getDelta,
+        get isExporting() {
+          return apiRef.isExporting;
+        },
+        getIsExporting: this.api.getIsExporting,
         // URL parameter helper (safe — resolved in host context before entering SES)
         getParam: this.api.getParam,
         // Seeded / random utilities (same PRNG as the engine)
@@ -19526,6 +19536,15 @@ class StorieEngine {
     __publicField(this, "height");
     // Canvas reference for event listeners
     __publicField(this, "canvas");
+    /** True while a video export is in progress. Exposed to document code via api.isExporting. */
+    __publicField(this, "_isExporting", false);
+    /** AudioBuffer captured by document code via captureForExport() during an export pass. */
+    __publicField(this, "_exportAudioBuffer", null);
+    __publicField(this, "_exportAudioOffset", 0);
+    /** Saved live AudioContext while an audio export pass is active. */
+    __publicField(this, "_savedAudioContext", null);
+    /** Last error thrown by a user-supplied update/render handler, or null. */
+    __publicField(this, "_lastUserHandlerError", null);
     var _a;
     this.canvas = canvas;
     this.width = config.width || 80;
@@ -21260,6 +21279,13 @@ class StorieEngine {
       getFrame: () => this.frameCount,
       getTime: () => this.elapsedTime,
       getDelta: () => this.deltaTime,
+      /** True while a video export is in progress. Use this to auto-start audio
+       *  or skip user-interaction gating so the offline tick loop captures correctly. */
+      get isExporting() {
+        return engine._isExporting;
+      },
+      /** Function form of isExporting (more robust under SES scoping). */
+      getIsExporting: () => engine._isExporting,
       /**
        * Seeded / random utilities — the same PRNG the engine uses internally.
        */
@@ -21324,7 +21350,9 @@ class StorieEngine {
       // Web Audio API (Phase 1) - Full exposure with shared instance
       audio: {
         // === SHARED INSTANCE (Full Web Audio API) ===
-        context: this.audioContext,
+        get context() {
+          return engine.audioContext;
+        },
         // === HELPERS (Use same AudioContext) ===
         playTone: (frequency, duration, volume = 0.5) => {
           const osc = this.audioContext.createOscillator();
@@ -21558,6 +21586,24 @@ class StorieEngine {
         createBufferSource: () => this.audioContext.createBufferSource(),
         createPanner: () => this.audioContext.createPanner(),
         createStereoPanner: () => this.audioContext.createStereoPanner(),
+        /**
+         * Capture an AudioBuffer (and optional start offset) for inclusion in
+         * the current video export. Call this every on:update frame while
+         * isExporting is true. The export panel reads it via engine.getExportAudioBuffer().
+         *
+         * Only has effect while an export is in progress; safe to call at any time.
+         */
+        captureForExport: (buffer, offsetSec = 0) => {
+          engine.setExportAudioBuffer(buffer, offsetSec);
+        },
+        /**
+         * Read back the currently latched export audio buffer (if any).
+         * Useful for export-time animation even when the demo's on:drop hasn't
+         * decoded/analysed yet.
+         */
+        getCapturedForExport: () => {
+          return engine.getExportAudioBuffer();
+        },
         createWaveShaper: () => this.audioContext.createWaveShaper(),
         // === SEEDED SFX HELPERS (Chiptone basics) ===
         sfx: {
@@ -22488,6 +22534,37 @@ class StorieEngine {
       const parsed = await parseMarkdown(markdown);
       console.log(`  Found ${parsed.sections.length} sections`);
       console.log(`  Found ${parsed.codeBlocks.length} code blocks`);
+      if (this.documents.size > 0 || this.activeDocumentId) {
+        try {
+          await this.moduleLoader.unloadAll();
+        } catch (error) {
+          console.warn("[Engine] Failed to unload modules during document swap:", error);
+        }
+        this.documents.clear();
+        this.sandbox.clearAll();
+        this.activeDocumentId = null;
+      }
+      this.pendingShaderChain = null;
+      if (this.shaderChainManager) {
+        try {
+          this.shaderChainManager.clearChain();
+        } catch (error) {
+          console.warn("[Engine] Failed to clear shader chain during document swap:", error);
+        }
+      }
+      try {
+        this.clear3DSectionTextures();
+      } catch {
+      }
+      this.section3DLayouts = [];
+      this.worldsEnabled = false;
+      this.worldsOverviewEnabled = false;
+      this.worldsOverviewSavedTransforms = null;
+      this.pendingWorldsOverview = null;
+      this.pending3DCameraFocus = null;
+      if (this.worldsRenderer) {
+        this.camera3D = createCamera3D();
+      }
       if (parsed.wgslShaders && parsed.wgslShaders.length > 0) {
         console.log(`  Found ${parsed.wgslShaders.length} WGSL shader(s):`);
         for (const shader of parsed.wgslShaders) {
@@ -22534,7 +22611,10 @@ class StorieEngine {
       } else if (parsed.metadata.theme) {
         const themeName = String(parsed.metadata.theme).toLowerCase().replace(/['"]/g, "");
         this.applyThemeColors(getTheme(themeName), themeName, "frontmatter");
+      } else {
+        this.applyThemeColors(getTheme("neotopia"), "neotopia", "default");
       }
+      this.layers.clearAll(this.currentTheme.bg);
       if (parsed.metadata.shaders) {
         const shadersStr = String(parsed.metadata.shaders);
         console.log(`  Shader chain (frontmatter): ${shadersStr}`);
@@ -22907,9 +22987,7 @@ ${exportVars}
         _stfxrStore: stfxrStore,
         _stfxrBakedStore: /* @__PURE__ */ new Map()
       });
-      if (!this.activeDocumentId) {
-        this.activeDocumentId = documentId;
-      }
+      this.activeDocumentId = documentId;
       console.log("🔍 Extracted handlers:", {
         init: typeof (handlers == null ? void 0 : handlers.init),
         update: typeof (handlers == null ? void 0 : handlers.update),
@@ -22924,6 +23002,10 @@ ${exportVars}
         } catch (error) {
           console.error("  Error in init:", error);
         }
+      }
+      try {
+        this.canvas.focus();
+      } catch {
       }
       console.log("✓ Document loaded successfully");
       return true;
@@ -23062,12 +23144,22 @@ ${exportVars}
    * Main loop: update, render, composite
    */
   mainLoop(timestamp) {
-    var _a, _b;
     if (!this.running) return;
+    this.deltaTime = (timestamp - this.lastFrameTime) / 1e3;
+    this.lastFrameTime = timestamp;
+    this.elapsedTime += this.deltaTime;
+    this.runFrame();
+    this.frameCount++;
+    requestAnimationFrame((ts) => this.mainLoop(ts));
+  }
+  /**
+   * Run one frame: update + render + composite + input flush.
+   * elapsedTime and deltaTime must be set before calling.
+   * Shared by the live mainLoop and tickExportFrame.
+   */
+  runFrame() {
+    var _a, _b;
     try {
-      this.deltaTime = (timestamp - this.lastFrameTime) / 1e3;
-      this.lastFrameTime = timestamp;
-      this.elapsedTime += this.deltaTime;
       this.update();
       this.render();
       if (this.compositor) {
@@ -23149,11 +23241,134 @@ ${exportVars}
         this.renderer.render(composited);
       }
     } catch (error) {
-      console.error("[Engine] Uncaught error in mainLoop:", error);
+      console.error("[Engine] Uncaught error in runFrame:", error);
     }
     this.input.endFrame();
+  }
+  /**
+   * Pause the main loop for video export.
+   * Freezes user input so document code sees no events during the export.
+   * Call resumeFromExport() when done.
+   */
+  pauseForExport() {
+    this.running = false;
+    this._isExporting = true;
+    this.input.setEnabled(false);
+    this._exportAudioBuffer = null;
+    this._exportAudioOffset = 0;
+  }
+  /**
+   * Resume normal operation after a video export ends or is cancelled.
+   */
+  resumeFromExport() {
+    this._isExporting = false;
+    this.input.setEnabled(true);
+    this.running = true;
+    this.lastFrameTime = performance.now();
+    this.mainLoop(this.lastFrameTime);
+  }
+  /**
+   * Return the sample rate of the engine's live AudioContext.
+   * Used by the video export panel to configure the OfflineAudioContext.
+   */
+  getAudioSampleRate() {
+    return this.audioContext.sampleRate;
+  }
+  get isExporting() {
+    return this._isExporting;
+  }
+  /**
+   * Store an AudioBuffer (and optional playback start offset) for use in the
+   * current video export. Called by the audio.captureForExport() sandbox method.
+   */
+  setExportAudioBuffer(buffer, offsetSec = 0) {
+    this._exportAudioBuffer = buffer;
+    this._exportAudioOffset = offsetSec;
+  }
+  /**
+   * Return the captured audio buffer (and offset) for the current export pass,
+   * or null if none was captured.
+   */
+  getExportAudioBuffer() {
+    if (!this._exportAudioBuffer) return null;
+    return { buffer: this._exportAudioBuffer, offsetSec: this._exportAudioOffset };
+  }
+  /**
+   * Resize the canvas and engine to an exact pixel resolution for native-quality
+   * video export. The canvas is resized to the nearest cell-aligned dimensions
+   * that fit within exportWidth × exportHeight.
+   *
+   * Returns the actual pixel size used (may be a few px smaller than requested
+   * due to cell alignment). Pass these to VideoExporter as exportWidth/exportHeight.
+   * Call restoreExportResize() with the returned token when export ends.
+   */
+  resizeForExport(exportWidth, exportHeight) {
+    const token = {
+      cols: this.width,
+      rows: this.height,
+      canvasW: this.canvas.width,
+      canvasH: this.canvas.height
+    };
+    let charW = 1;
+    let charH = 1;
+    if (this.renderer instanceof WebGPURenderer) {
+      charW = this.renderer.getAtlas().getCharWidth() || 1;
+      charH = this.renderer.getAtlas().getCharHeight() || 1;
+    } else {
+      charW = Math.max(1, Math.round(this.canvas.width / Math.max(1, this.width)));
+      charH = Math.max(1, Math.round(this.canvas.height / Math.max(1, this.height)));
+    }
+    const cols = Math.max(1, Math.floor(exportWidth / charW));
+    const rows = Math.max(1, Math.floor(exportHeight / charH));
+    const actualWidth = cols * charW;
+    const actualHeight = rows * charH;
+    this.canvas.width = actualWidth;
+    this.canvas.height = actualHeight;
+    this.resize(cols, rows);
+    return { actualWidth, actualHeight, token };
+  }
+  /**
+   * Restore canvas and grid to the pre-export dimensions.
+   * @param token — the value returned by resizeForExport()
+   */
+  restoreExportResize(token) {
+    this.canvas.width = token.canvasW;
+    this.canvas.height = token.canvasH;
+    this.resize(token.cols, token.rows);
+  }
+  /**
+   * Swap the engine's AudioContext for an OfflineAudioContext proxy so that
+   * audio calls made during tickExportFrame() schedule nodes into the offline
+   * timeline instead of playing live.
+   *
+   * Pass ANY object that satisfies the AudioContext surface used by user code
+   * (e.g. a Proxy wrapping an OfflineAudioContext whose currentTime is
+   * overridden to return the synthetic elapsed time).
+   */
+  beginAudioExport(ctx) {
+    this._savedAudioContext = this.audioContext;
+    this.audioContext = ctx;
+  }
+  /**
+   * Restore the live AudioContext after an audio export pass.
+   */
+  endAudioExport() {
+    if (this._savedAudioContext) {
+      this.audioContext = this._savedAudioContext;
+      this._savedAudioContext = null;
+    }
+  }
+  /**
+   * Tick one engine frame with synthetic time for video export.
+   * Must be called after pauseForExport(). Does NOT schedule a new rAF.
+   * @param elapsed — total seconds from start of export
+   * @param delta   — time step in seconds (1/fps)
+   */
+  tickExportFrame(elapsed, delta) {
+    this.elapsedTime = elapsed;
+    this.deltaTime = delta;
+    this.runFrame();
     this.frameCount++;
-    requestAnimationFrame((ts) => this.mainLoop(ts));
   }
   /**
    * Push the terminal cell size (in render-texture pixels) into any active
@@ -23657,6 +23872,7 @@ ${content}`.trim();
         doc.handlers.update(this.deltaTime);
       } catch (error) {
         console.error("Error in update handler:", error);
+        this.recordUserHandlerError("update", error);
       }
     }
   }
@@ -23681,6 +23897,7 @@ ${content}`.trim();
       doc.handlers.render();
     } catch (error) {
       console.error("Error in render handler:", error);
+      this.recordUserHandlerError("render", error);
     }
     this.moduleLoader.render();
   }
@@ -24510,6 +24727,35 @@ ${content}`.trim();
   getModuleLoader() {
     return this.moduleLoader;
   }
+  /**
+   * Return the most recently dropped file (the last file the user dragged onto
+   * the engine). Used by the export panel as a fallback audio source when the
+   * document code doesn't call captureForExport().
+   */
+  getLastDroppedFile() {
+    const dropped = this.lastDroppedFile;
+    if (!dropped) return null;
+    return {
+      bytes: dropped.bytes,
+      mime: String(dropped.mime ?? ""),
+      name: String(dropped.name ?? "")
+    };
+  }
+  /**
+   * Called internally when an update or render handler throws.
+   * Stores the error so the export panel can surface it in the progress UI.
+   */
+  recordUserHandlerError(handler, error) {
+    this._lastUserHandlerError = { handler, error };
+  }
+  /** Read (but do not clear) the last user handler error. */
+  getLastUserHandlerError() {
+    return this._lastUserHandlerError;
+  }
+  /** Clear any stored user handler error (call before starting an export). */
+  clearLastUserHandlerError() {
+    this._lastUserHandlerError = null;
+  }
 }
 var BuiltInModules = /* @__PURE__ */ ((BuiltInModules2) => {
   BuiltInModules2["Babylon"] = "babylon";
@@ -24521,7 +24767,6 @@ var BuiltInModules = /* @__PURE__ */ ((BuiltInModules2) => {
   return BuiltInModules2;
 })(BuiltInModules || {});
 const VERSION = "2.0.0-alpha.1";
-console.log(`S|torie v${VERSION}`);
 export {
   BuiltInModules,
   COLORS,

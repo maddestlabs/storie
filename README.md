@@ -39,14 +39,6 @@ Create your own project:
 - Update index.md with your content and commit the change
 - See your content running live in moments
 
-### Desktop App
-
-**S|tauri** is a desktop runner that lets you drag and drop `.md` files to run them locally:
-- Native desktop app for Linux, macOS, and Windows
-- Drag & drop `.md` files to run instantly
-- Uses the same WASM engine as the web version
-- Runs completely offline
-
 ### Web Usage
 
 **Quick Start with Content Parameter:**
@@ -65,6 +57,10 @@ https://maddestlabs.github.io/storie?content=browser:my-draft
 - `gist:<ID>` - Load from GitHub Gist
 - `demo:<name>` - Load from local demos folder
 - `file:<path>` - Load from file path
+
+## Video Export
+
+Video export is now built in. Access Export panel with `CTRL-SHIFT-E`. The feature only works with local filesystem which is required for feasible storage. It works from a locally hosted repo; just clone the repo and serve /docs/index.html with any basic web server. Or more easily, use Codespaces directly on GitHub (no download needed).
 
 ## History
 

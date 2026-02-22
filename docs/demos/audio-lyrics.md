@@ -1,8 +1,8 @@
 ---
 name: "Audio Beats → Lyric Sections (Drop MP3)"
-theme: "neonopia"
+theme: "nord"
 dropTarget: true
-shaders: "handcam+bloom+lightvignette+crt"
+shaders: "scanlines+bloom+lightvignette+crt"
 
 # Lyric section selection
 lyricLevel: 1
@@ -89,6 +89,10 @@ function st() {
       lyricSectionIndices: [],
       lyricCursor: 0,
 
+      startOnExport: false,
+      exportAutoStarted: false,
+      wasExporting: false,
+
       statusText: 'Status: waiting for drop'
     };
   }
@@ -122,6 +126,14 @@ function getScreenH() {
 function getPosSec() {
   const s = st();
   if (!s.audioBuffer) return 0;
+  // During export the engine drives time; use getTime() for frame-accurate sync.
+  const exporting = (typeof getIsExporting === 'function')
+    ? !!getIsExporting()
+    : (typeof isExporting === 'boolean' && isExporting);
+  if (exporting && typeof getTime === 'function') {
+    // Export defaults to starting at 0 regardless of the live play/seek state.
+    return clamp(getTime(), 0, s.audioBuffer.duration);
+  }
   if (!s.isPlaying) return clamp(s.pauseOffset, 0, s.audioBuffer.duration);
   return clamp(audio.currentTime - s.startTime, 0, s.audioBuffer.duration);
 }
@@ -282,6 +294,7 @@ const hint = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, t
 const file = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: 'File: (none)', align: 'left' });
 const status = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: s.statusText, align: 'left' });
 
+const chkExportStart = gui.createCheckbox({ bounds: { x: 0, y: 0, width: 420, height: 30 }, label: 'Start on Export', checked: false });
 const btnPlay = gui.createButton({ bounds: { x: 0, y: 0, width: 420, height: 44 }, label: 'Play' });
 const btnPause = gui.createButton({ bounds: { x: 0, y: 0, width: 420, height: 44 }, label: 'Pause' });
 
@@ -298,6 +311,7 @@ panel
   .add(hint)
   .add(file)
   .add(status)
+  .add(chkExportStart)
   .add(btnPlay)
   .add(btnPause)
   .add(time)
@@ -309,7 +323,7 @@ panel
 panel.layout();
 
 s.panel = panel;
-s.widgets = { title, hint, file, status, btnPlay, btnPause, time, seek, bpmLbl, clockLbl, section };
+s.widgets = { title, hint, file, status, chkExportStart, btnPlay, btnPause, time, seek, bpmLbl, clockLbl, section };
 
 s.gain = audio.createGain();
 s.gain.gain.value = 1;
@@ -410,6 +424,61 @@ if (s.panel) {
 
 gui.update(getMouseX(), getMouseY(), s.mouseDownLeft);
 
+// Sync "Start on Export" checkbox
+if (s.widgets.chkExportStart) {
+  s.startOnExport = s.widgets.chkExportStart.isChecked();
+}
+
+const exporting = (typeof getIsExporting === 'function')
+  ? !!getIsExporting()
+  : (typeof isExporting === 'boolean' && isExporting);
+if (exporting && !s.wasExporting) {
+  // Export just started: default to starting at 0.
+  s.pauseOffset = 0;
+
+  // Prefer the engine-latched export buffer (host-decoded fallback or captureForExport)
+  // so export-time animation works even if on:drop decode/analysis never ran.
+  if (typeof audio?.getCapturedForExport === 'function') {
+    const cap = audio.getCapturedForExport();
+    if (cap?.buffer) {
+      if (s.audioBuffer !== cap.buffer) {
+        s.audioBuffer = cap.buffer;
+        s.analysis = null;
+      }
+    }
+  }
+
+  // Ensure we have beat analysis available for export-time animation.
+  if (s.audioBuffer && !s.analysis && typeof audio?.beatsFromBuffer === 'function') {
+    try {
+      s.analysis = audio.beatsFromBuffer(s.audioBuffer, beatOptions());
+      if (s.widgets?.bpmLbl && s.analysis) {
+        s.widgets.bpmLbl.setText(
+          `BPM: ${s.analysis.bpm.toFixed(1)}  (conf ${s.analysis.confidence.toFixed(2)})  meter ${s.analysis.meter}/4`
+        );
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // Snap section + prev time to the export timeline.
+  syncSectionToPos(0);
+  s.lastPos = 0;
+}
+
+// During video export: hand the AudioBuffer directly to the exporter.
+// The export panel encodes it as an AAC audio track via AudioEncoder.
+if (exporting) {
+  if (s.audioBuffer && typeof audio?.captureForExport === 'function') {
+    // Always export from 0 by default.
+    audio.captureForExport(s.audioBuffer, 0);
+  }
+} else {
+  // Reset so the next export captures again
+  s.exportAutoStarted = false;
+}
+
 if (s.widgets.btnPlay.wasClicked()) {
   if (!s.audioBuffer) setStatus('Status: drop an .mp3 first');
   else {
@@ -466,4 +535,6 @@ if (s.audioBuffer) {
 
   s.lastPos = pos;
 }
+
+s.wasExporting = exporting;
 ```

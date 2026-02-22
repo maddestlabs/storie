@@ -16,11 +16,75 @@
 </head>
 <body>
   <div id="container">
+    <div id="loading">
+      <div>Loading <span id="t">S</span><span id="cursor">|</span>torie. The little engine that shouldn't.</div>
+    </div>
     <canvas id="canvas"></canvas>
   </div>
 
-  <!-- Native (Tauri) debug overlay: shown on errors / startup hints -->
-  <div id="native-debug"></div>
+  <!-- Video Export Panel (Ctrl+Shift+E to open) -->
+  <div id="export-panel" class="hidden">
+    <div class="export-inner">
+      <h2 class="export-title">Export Video</h2>
+
+      <!-- Form -->
+      <div id="export-form" class="export-fields">
+        <label class="export-label">Duration (seconds)
+          <input id="export-duration" class="export-input" type="number" value="10" min="1" max="3600" step="1">
+        </label>
+        <label class="export-label">Resolution
+          <select id="export-resolution" class="export-select">
+            <option value="source" selected>Source (current canvas)</option>
+            <option value="800x600">800 × 600</option>
+            <option value="1280x720">1280 × 720  (HD)</option>
+            <option value="1920x1080">1920 × 1080  (Full HD)</option>
+            <option value="2560x1440">2560 × 1440  (QHD)</option>
+            <option value="3840x2160">3840 × 2160  (4K)</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </label>
+        <div id="export-custom-res" class="export-custom-res hidden">
+          <label class="export-label">Width (px)
+            <input id="export-width" class="export-input" type="number" value="1920" min="2" max="7680" step="2">
+          </label>
+          <label class="export-label">Height (px)
+            <input id="export-height" class="export-input" type="number" value="1080" min="2" max="4320" step="2">
+          </label>
+        </div>
+        <label class="export-label">Frame rate
+          <select id="export-fps" class="export-select">
+            <option value="24">24 fps</option>
+            <option value="30" selected>30 fps</option>
+            <option value="60">60 fps</option>
+          </select>
+        </label>
+        <label class="export-label">Bitrate
+          <select id="export-bitrate" class="export-select">
+            <option value="4000000">4 Mbps (smaller file)</option>
+            <option value="8000000" selected>8 Mbps (balanced)</option>
+            <option value="16000000">16 Mbps (high quality)</option>
+            <option value="32000000">32 Mbps (archival)</option>
+          </select>
+        </label>
+        <label class="export-label export-audio-row">
+          <span class="export-audio-check">
+            <input id="export-audio" type="checkbox" checked>
+            Include audio (WebAudio capture)
+          </span>
+        </label>
+        <p class="export-note">Non-source resolutions render natively at full quality. Audio capture works for sounds scheduled by document code during the tick loop — e.g. music that auto-starts in <code>on:init</code>. Live audio started before export (user-pressed Play) cannot be captured offline and will be silent.</p>
+        <button id="export-start-btn" class="export-btn export-btn-start">Choose file &amp; start export</button>
+        <button id="export-close-btn" class="export-btn export-btn-close">Close</button>
+      </div>
+
+      <!-- Progress -->
+      <div id="export-progress" class="hidden">
+        <div class="export-bar-track"><div id="export-bar" class="export-bar-fill"></div></div>
+        <p id="export-status" class="export-status">Starting…</p>
+        <button id="export-cancel-btn" class="export-btn export-btn-cancel">Cancel export</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Markdown content with embedded JavaScript -->
   <div id="markdown">
@@ -126,7 +190,7 @@ This demo showcases:
   <script type="module">
     // Import the built engine
     // Cache-bust the module URL so WebView2 doesn't reuse an older bundle across runs.
-    import { StorieEngine } from './storie.es.js?v=tauri-2026-02-20-2';
+    import { StorieEngine } from './storie.es.js?v=tauri-2026-02-20-3';
 
     /**
      * Parse URL parameters to load content from various sources
@@ -334,97 +398,6 @@ This demo showcases:
     // runtime (requires `withGlobalTauri: true` in tauri.conf.json).
     const IS_TAURI = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
-    // Minimal debug overlay (native only)
-    const _debugState = {
-      enabled: IS_TAURI,
-      lines: [],
-      maxLines: 120,
-      shown: false,
-    };
-
-    const _debugParamEnabled = (() => {
-      try {
-        return new URLSearchParams(window.location.search).get('debug') === '1';
-      } catch {
-        return false;
-      }
-    })();
-
-    function nativeDebugEnsureVisible() {
-      const el = document.getElementById('native-debug');
-      if (!el) return;
-      el.classList.add('native-debug--visible');
-      _debugState.shown = true;
-    }
-
-    function nativeDebugFormatArg(a) {
-      if (a instanceof Error) return a.stack || a.message || String(a);
-      if (a === null) return 'null';
-      if (a === undefined) return 'undefined';
-      if (typeof a === 'string') return a;
-      if (typeof a === 'number' || typeof a === 'boolean' || typeof a === 'bigint') return String(a);
-      try {
-        return JSON.stringify(a, (_, v) => (typeof v === 'bigint' ? String(v) : v), 2);
-      } catch {
-        try { return String(a); } catch { return '[unprintable]'; }
-      }
-    }
-
-    function nativeDebugFormatArgs(args) {
-      const parts = (Array.isArray(args) ? args : [args]).map(nativeDebugFormatArg);
-      const msg = parts.join(' ');
-      return msg.length > 4000 ? (msg.slice(0, 4000) + '…') : msg;
-    }
-
-    function nativeDebugLine(...args) {
-      // Always log to console; overlay updates only if visible.
-      try { console.log(...args); } catch {}
-      if (!_debugState.enabled) return;
-      const msg = nativeDebugFormatArgs(args);
-      _debugState.lines.push(msg);
-      if (_debugState.lines.length > _debugState.maxLines) _debugState.lines.shift();
-      const el = document.getElementById('native-debug');
-      if (!el) return;
-      if (_debugState.shown) {
-        el.textContent = _debugState.lines.join('\n');
-      }
-    }
-
-    function nativeDebugError(prefix, err) {
-      const message = nativeDebugFormatArgs(err);
-      if (_debugState.enabled && !_debugState.shown) {
-        nativeDebugEnsureVisible();
-      }
-      nativeDebugLine(prefix, message);
-      const el = document.getElementById('native-debug');
-      if (el) el.textContent = _debugState.lines.join('\n');
-    }
-
-    if (IS_TAURI) {
-      if (_debugParamEnabled) nativeDebugEnsureVisible();
-
-      // Surface engine-caught errors (it logs to console.error, which doesn't
-      // trigger window.onerror because the engine catches exceptions).
-      try {
-        const _origError = console.error.bind(console);
-        console.error = (...args) => {
-          _origError(...args);
-          nativeDebugError('[console.error]', args);
-        };
-        const _origWarn = console.warn.bind(console);
-        console.warn = (...args) => {
-          _origWarn(...args);
-          nativeDebugError('[console.warn]', args);
-        };
-      } catch {
-        // ignore
-      }
-
-      window.addEventListener('error', (e) => nativeDebugError('[window:error]', e.error || e.message));
-      window.addEventListener('unhandledrejection', (e) => nativeDebugError('[unhandledrejection]', e.reason));
-      nativeDebugLine('[native] Tauri detected');
-    }
-
     /**
      * Native drag-and-drop bridge for Tauri.
      *
@@ -441,7 +414,7 @@ This demo showcases:
     async function installTauriDropHandling(engine) {
       const tauri = window.__TAURI__;
       if (!tauri) {
-        nativeDebugLine('[tauri-drop] __TAURI__ not found — falling back to DOM D&D');
+        console.log('[tauri-drop] __TAURI__ not found — falling back to DOM D&D');
         engine.installDropHandling(document.body);
         return;
       }
@@ -461,7 +434,6 @@ This demo showcases:
 
           if (type === 'drop') {
             console.log('[tauri-drop] drop event:', paths);
-            nativeDebugLine(`[tauri-drop] drop event: ${(paths && paths.length) ? paths.length : 0} path(s)`);
           }
 
           if (type !== 'drop' || !paths || paths.length === 0) return;
@@ -476,16 +448,15 @@ This demo showcases:
               const content = await invoke('read_dropped_file', { path: filePath });
               await engine.loadMarkdown(name || 'dropped.md', content);
               console.log(`[tauri-drop] loaded markdown: ${name}`);
-              nativeDebugLine(`[tauri-drop] Loaded markdown: ${name}`);
             } catch (err) {
-              nativeDebugError('[tauri-drop] Failed to read markdown file:', err);
+              console.error('[tauri-drop] Failed to read markdown file:', err);
             }
             return;
           }
 
           // Binary files only matter if the active doc has `dropTarget: true`.
           if (!engine.isDropTargetEnabled()) {
-            nativeDebugLine(`[tauri-drop] Ignoring binary file (no dropTarget): ${name}`);
+            console.log(`[tauri-drop] Ignoring binary file (no dropTarget): ${name}`);
             return;
           }
 
@@ -511,27 +482,26 @@ This demo showcases:
             });
             document.body.dispatchEvent(syntheticDrop);
             console.log(`[tauri-drop] dispatched binary: ${name} (${mime})`);
-            nativeDebugLine(`[tauri-drop] Dispatched binary file: ${name} (${mime})`);
           } catch (err) {
-            nativeDebugError('[tauri-drop] Failed to read binary file:', err);
+            console.error('[tauri-drop] Failed to read binary file:', err);
           }
         };
 
         let unlisten = null;
         if (wvw && typeof wvw.onDragDropEvent === 'function') {
           unlisten = await wvw.onDragDropEvent((event) => handler(event?.payload));
-          nativeDebugLine('✓ Native Tauri drag-and-drop installed (webviewWindow)');
+          console.log('✓ Native Tauri drag-and-drop installed (webviewWindow)');
         } else {
           // Fallback: global event listener.
           unlisten = await listen('tauri://drag-drop', async (event) => handler(event?.payload || {}));
-          nativeDebugLine('✓ Native Tauri drag-and-drop installed (event listener)');
+          console.log('✓ Native Tauri drag-and-drop installed (event listener)');
         }
 
         return () => {
           try { unlisten(); } catch {}
         };
       } catch (err) {
-        nativeDebugError('[tauri-drop] Failed to install native D&D, falling back:', err);
+        console.error('[tauri-drop] Failed to install native D&D, falling back:', err);
         engine.installDropHandling(document.body);
         return null;
       }
@@ -607,7 +577,7 @@ This demo showcases:
           engine.installDropHandling(document.body);
         }
 
-        nativeDebugLine(`✓ S|torie engine initialized (${gridWidth}x${gridHeight}) [${IS_TAURI ? 'Tauri native' : 'browser'}]`);
+        console.log(`✓ S|torie engine initialized (${gridWidth}x${gridHeight}) [${IS_TAURI ? 'Tauri native' : 'browser'}]`);
         
         // Handle window resize
         let resizeTimeout;
@@ -663,7 +633,6 @@ This demo showcases:
                 .length;
               console.log(`✓ index.md first line: ${firstLine}`);
               console.log(`✓ index.md heading lines: ${headingLines}`);
-              if (IS_TAURI) nativeDebugLine(`✓ index.md headings: ${headingLines}`);
 
               // Extra diagnostic: print the first heading's codepoints so we
               // can spot invisible characters between '#' and the title.
@@ -673,7 +642,6 @@ This demo showcases:
                 const cps = Array.from(raw).slice(0, 24).map(ch => '0x' + ch.codePointAt(0).toString(16));
                 console.log('✓ index.md first heading (raw):', raw);
                 console.log('✓ index.md first heading codepoints:', cps.join(' '));
-                if (IS_TAURI) nativeDebugLine(`✓ first heading cps: ${cps.join(' ')}`);
               }
 
               console.log('✓ Loaded index.md');
@@ -709,6 +677,14 @@ This demo showcases:
         // This initializes WebGPU, ShaderManager, and ShaderChainManager
         await engine.start();
         console.log('✓ Engine started');
+
+        // Hide startup loading screen now that the engine is running
+        const loadingEl = document.getElementById('loading');
+        if (loadingEl) loadingEl.style.display = 'none';
+
+        // ── Video Export Panel ─────────────────────────────────────────
+        installExportPanel(engine);
+        // ──────────────────────────────────────────────────────────────
         
         // Apply shader chain from URL parameter (overrides frontmatter)
         // Must be done AFTER engine.start() so ShaderChainManager exists
@@ -733,6 +709,232 @@ This demo showcases:
         console.error(`✗ Error: ${error.message}`, error);
       }
     }
+
+    // ── Video Export Panel ──────────────────────────────────────────────────────
+    // Wires the export overlay (Ctrl+Shift+E) to VideoExporter + the engine's
+    // pauseForExport / tickExportFrame / resumeFromExport API.
+    function installExportPanel(engine) {
+      const panel         = document.getElementById('export-panel');
+      const form          = document.getElementById('export-form');
+      const progress      = document.getElementById('export-progress');
+      const startBtn      = document.getElementById('export-start-btn');
+      const cancelBtn     = document.getElementById('export-cancel-btn');
+      const closeBtn      = document.getElementById('export-close-btn');
+      const bar           = document.getElementById('export-bar');
+      const statusEl      = document.getElementById('export-status');
+      const durationEl    = document.getElementById('export-duration');
+      const fpsEl         = document.getElementById('export-fps');
+      const bitrateEl     = document.getElementById('export-bitrate');
+      const resolutionEl  = document.getElementById('export-resolution');
+      const customResEl   = document.getElementById('export-custom-res');
+      const widthEl       = document.getElementById('export-width');
+      const heightEl      = document.getElementById('export-height');
+      const audioEl       = document.getElementById('export-audio');
+
+      let exporter = null;
+
+      // Show/hide custom resolution inputs
+      resolutionEl.addEventListener('change', () => {
+        customResEl.classList.toggle('hidden', resolutionEl.value !== 'custom');
+      });
+
+      function getExportResolution() {
+        const v = resolutionEl.value;
+        if (v === 'source') return { w: engine.getCanvas().width, h: engine.getCanvas().height };
+        if (v === 'custom') return { w: parseInt(widthEl.value, 10) || 1920, h: parseInt(heightEl.value, 10) || 1080 };
+        const [w, h] = v.split('x').map(Number);
+        return { w, h };
+      }
+
+      function openPanel() {
+        form.classList.remove('hidden');
+        progress.classList.add('hidden');
+        bar.style.width = '0%';
+        bar.style.background = '#2a7a2a';
+        cancelBtn.disabled = false;
+        panel.classList.remove('hidden');
+      }
+
+      function closePanel() {
+        panel.classList.add('hidden');
+      }
+
+      // Ctrl+Shift+E — toggle the export panel
+      window.addEventListener('keydown', (e) => {
+        if (e.ctrlKey && e.shiftKey && e.key === 'E') {
+          e.preventDefault();
+          panel.classList.contains('hidden') ? openPanel() : closePanel();
+        }
+        if (e.key === 'Escape' && !exporter) closePanel();
+      });
+
+      closeBtn.addEventListener('click', closePanel);
+
+      // ── Capability check ─────────────────────────────────────────────────────
+      const noteEl      = document.querySelector('.export-note');
+      const hasWebCodecs = typeof VideoEncoder !== 'undefined';
+      const hasPicker    = typeof window.showSaveFilePicker === 'function';
+      const hasAudioEnc  = typeof AudioEncoder !== 'undefined';
+
+      if (!hasAudioEnc && audioEl) {
+        audioEl.disabled = true;
+        audioEl.checked  = false;
+        audioEl.closest('.export-audio-row').style.opacity = '0.4';
+        audioEl.closest('.export-audio-row').title = 'AudioEncoder not available in this browser';
+      }
+
+      if (!hasWebCodecs || !hasPicker) {
+        startBtn.disabled = true;
+        startBtn.style.opacity = '0.4';
+        startBtn.style.cursor = 'not-allowed';
+        if (noteEl) {
+          const missing = [];
+          if (!hasWebCodecs) missing.push('WebCodecs (VideoEncoder)');
+          if (!hasPicker)    missing.push('File System Access API');
+          noteEl.textContent = `Video export requires ${missing.join(' and ')}, available in Chrome / Edge 94+.`;
+        }
+      }
+
+      // ── Start export ────────────────────────────────────────────────────────
+      // showSaveFilePicker MUST be triggered directly from a trusted click event.
+      startBtn.addEventListener('click', async () => {
+        if (startBtn.disabled) return;
+
+        const fps        = Math.max(1, Math.min(120, parseInt(fpsEl.value, 10) || 30));
+        const duration   = Math.max(0.1, parseFloat(durationEl.value) || 10);
+        const bitrate    = parseInt(bitrateEl.value, 10) || 8_000_000;
+        let { w: exportWidth, h: exportHeight } = getExportResolution();
+        const wantAudio  = hasAudioEnc && audioEl && audioEl.checked;
+
+        // 1. Pick the output file NOW, inside the trusted click handler.
+        let fileHandle;
+        try {
+          fileHandle = await window.showSaveFilePicker({
+            suggestedName: 'storie-export.mp4',
+            types: [{ description: 'MP4 Video', accept: { 'video/mp4': ['.mp4'] } }],
+          });
+        } catch (_) {
+          return; // User dismissed
+        }
+
+        // 2. Switch the panel to progress view.
+        form.classList.add('hidden');
+        progress.classList.remove('hidden');
+        bar.style.width = '0%';
+        statusEl.textContent = 'Starting…';
+
+        // 3. Pause the live engine loop and freeze user input.
+        engine.clearLastUserHandlerError();
+        engine.pauseForExport();
+
+        const writableStream = await fileHandle.createWritable();
+
+        // 4. Lazy-load VideoExporter (only needed when actually exporting).
+        const { VideoExporter } = await import('./video-exporter.js');
+        exporter = new VideoExporter();
+
+        const canvas = engine.getCanvas();
+
+        // 4a. Resize canvas + engine to the export resolution for native-quality output.
+        // resizeForExport() returns the actual pixel size (cell-aligned) and a restore token.
+        let resizeToken = null;
+        if (exportWidth !== canvas.width || exportHeight !== canvas.height) {
+          const r = engine.resizeForExport(exportWidth, exportHeight);
+          exportWidth  = r.actualWidth;
+          exportHeight = r.actualHeight;
+          resizeToken  = r.token;
+        }
+
+        const tickFrame = (elapsed, delta) => engine.tickExportFrame(elapsed, delta);
+
+        // 5a. Host-side fallback: if the user dropped an audio file, decode it now
+        //     so AudioPath B is available even if the demo never calls captureForExport().
+        if (wantAudio) {
+          const dropped = engine.getLastDroppedFile?.();
+          if (dropped && dropped.bytes) {
+            try {
+              const tmpCtx = new AudioContext({ sampleRate: engine.getAudioSampleRate() });
+              const ab = dropped.bytes.buffer.slice(
+                dropped.bytes.byteOffset,
+                dropped.bytes.byteOffset + dropped.bytes.byteLength
+              );
+              const audioBuffer = await tmpCtx.decodeAudioData(ab);
+              engine.setExportAudioBuffer(audioBuffer, 0);
+              await tmpCtx.close();
+            } catch (e) {
+              console.warn('[Export] Host fallback audio decode failed:', e);
+            }
+          }
+        }
+
+        // 5. Build audio capture options if requested.
+        //    The live AudioContext sampleRate is read before pauseForExport so
+        //    the AudioContext is still in a running state.
+        const audioCapture = wantAudio ? {
+          sampleRate: engine.getAudioSampleRate(),
+          channels:   2,
+          begin: (offlineProxy) => engine.beginAudioExport(offlineProxy),
+          end:   ()             => engine.endAudioExport(),
+          getCapturedBuffer: () => engine.getExportAudioBuffer(),
+        } : null;
+
+        let wasCancelled = false;
+        try {
+          await exporter.run(
+            canvas,
+            tickFrame,
+            { fps, duration, bitrate, exportWidth, exportHeight, audioCapture },
+            writableStream,
+            ({ frame, totalFrames, cancelled }) => {
+              if (cancelled) { wasCancelled = true; return; }
+              const pct = Math.round((frame / totalFrames) * 100);
+              bar.style.width = pct + '%';
+              const secs = frame / fps;
+              const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+              const ss = String(Math.floor(secs % 60)).padStart(2, '0');
+              statusEl.textContent =
+                `Frame ${frame} / ${totalFrames}  —  ${mm}:${ss}  (${pct}%)`;
+            }
+          );
+        } catch (err) {
+          console.error('[Export] Render error:', err);
+          statusEl.textContent = `Error: ${err.message}`;
+          bar.style.background = '#7a2a2a';
+        } finally {
+          // Restore canvas/engine size before resuming the live loop.
+          if (resizeToken) engine.restoreExportResize(resizeToken);
+          // Always restore the live engine, even on error or cancel.
+          engine.resumeFromExport();
+          exporter = null;
+        }
+
+        if (wasCancelled) {
+          statusEl.textContent = 'Cancelled — partial file saved to disk.';
+          bar.style.background = '#7a4a2a';
+          // Give the user a moment to read the message, then reset to form.
+          setTimeout(() => {
+            cancelBtn.disabled = false;
+            form.classList.remove('hidden');
+            progress.classList.add('hidden');
+          }, 3000);
+        } else {
+          bar.style.width = '100%';
+          statusEl.textContent = 'Export complete.';
+          setTimeout(closePanel, 2000);
+        }
+      });
+
+      // ── Cancel ──────────────────────────────────────────────────────────────
+      cancelBtn.addEventListener('click', () => {
+        if (!exporter) return;
+        exporter.cancel();
+        statusEl.textContent = 'Cancelling…';
+        cancelBtn.disabled = true;
+      });
+
+      console.log('✓ Export panel ready  (Ctrl+Shift+E to open)');
+    }
+    // ── End Video Export Panel ──────────────────────────────────────────────────
 
     // Start when DOM is ready
     if (document.readyState === 'loading') {

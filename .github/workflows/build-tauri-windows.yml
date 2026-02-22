@@ -73,7 +73,7 @@ jobs:
       # The main .exe in target/release/ is fully self-contained on Windows 10+
       # (requires the pre-installed WebView2 evergreen runtime).
       # We zip it alongside the release notes as the "portable" distribution.
-      - name: Package portable zip
+      - name: Resolve portable app paths
         shell: pwsh
         run: |
           # Prefer the Tauri app bundle output (this is where the Windows icon
@@ -94,6 +94,21 @@ jobs:
 
           if (-not (Test-Path $exePath)) { Write-Error "storie.exe not found"; exit 1 }
 
+          if (-not (Test-Path $appDir)) {
+            $appDir = Split-Path -Parent $exePath
+          }
+
+          echo "APP_DIR=$appDir" | Out-File -FilePath $Env:GITHUB_ENV -Append
+          echo "EXE_PATH=$exePath" | Out-File -FilePath $Env:GITHUB_ENV -Append
+
+      # ── Package portable .zip (for GitHub Release downloads) ───────────────
+      - name: Create portable zip
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release == 'true'
+        shell: pwsh
+        run: |
+          $appDir = "${{ env.APP_DIR }}"
+          $exePath = "${{ env.EXE_PATH }}"
+
           $version = (Get-Content package.json | ConvertFrom-Json).version
           $zipName = "storie-$version-windows-portable-x64.zip"
 
@@ -107,11 +122,14 @@ jobs:
           echo "PORTABLE_ZIP=$zipName" | Out-File -FilePath $Env:GITHUB_ENV -Append
 
       # ── Artifacts ────────────────────────────────────────────────────────────
-      - name: Upload portable zip
+      # NOTE: GitHub Actions artifacts are downloaded as a .zip already.
+      # Uploading our own .zip yields a nested zip. Upload the app directory
+      # instead so extracting the artifact yields the runnable files directly.
+      - name: Upload portable app folder
         uses: actions/upload-artifact@v4
         with:
           name: storie-windows-portable
-          path: ${{ env.PORTABLE_ZIP }}
+          path: ${{ env.APP_DIR }}
           if-no-files-found: error
 
       # ── GitHub Release (on tag push or manual dispatch with release=true) ───

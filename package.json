@@ -18,17 +18,18 @@
     "build:tauri": "tauri build"
   },
   "dependencies": {
-    "ses": "^1.14.0",
-    "@tauri-apps/api": "^2"
+    "@tauri-apps/api": "^2",
+    "mp4-muxer": "^5.2.2",
+    "ses": "^1.14.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2",
     "@types/node": "^20.11.0",
     "@webgpu/types": "^0.1.69",
     "terser": "^5.46.0",
     "typescript": "^5.3.3",
     "vite": "^5.0.12",
-    "vitest": "^1.2.1",
-    "@tauri-apps/cli": "^2"
+    "vitest": "^1.2.1"
   },
   "keywords": [
     "terminal",

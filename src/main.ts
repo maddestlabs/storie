@@ -65,5 +65,3 @@ export { KEY, COLORS } from './types.js';
 
 // Version
 export const VERSION = '2.0.0-alpha.1';
-
-console.log(`S|torie v${VERSION}`);

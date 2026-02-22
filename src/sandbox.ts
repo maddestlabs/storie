@@ -189,6 +189,11 @@ export interface SandboxAPI {
   getFrame: () => number;
   getTime: () => number;
   getDelta: () => number;
+  /** True while a video export is in progress. Check this in on:init or on:update
+   *  to auto-start audio or skip user-interaction gating during export. */
+  readonly isExporting: boolean;
+  /** Function form of isExporting (more robust under SES scoping). */
+  getIsExporting: () => boolean;
 
   /**
    * Safely read a URL query parameter by name.
@@ -340,6 +345,8 @@ export interface SandboxAPI {
     createPanner: () => PannerNode;
     createStereoPanner: () => StereoPannerNode;
     createWaveShaper: () => WaveShaperNode;
+    /** Capture an AudioBuffer for the current video export (Path A). */
+    captureForExport: (buffer: AudioBuffer, offsetSec?: number) => void;
 
     // Seeded SFX helper (built-in chiptone basics)
     sfx: {
@@ -360,6 +367,8 @@ export interface SandboxAPI {
     sampleRate: number;
     destination: AudioDestinationNode;
     state: AudioContextState;
+    /** Read the engine-latched export buffer (Path A/B) if available. */
+    getCapturedForExport: () => { buffer: AudioBuffer; offsetSec: number } | null;
   };
   
   canvas2d: {
@@ -817,6 +826,15 @@ export class ScriptSandbox {
             if (typeof audioRef.playBlob === 'function') {
               audio.playBlob = (name: string, options?: any) => audioRef.playBlob(name, options, documentId);
             }
+            // captureForExport must be an own-property so SES-hardened prototypes
+            // don't block access from inside the Compartment.
+            if (typeof audioRef.captureForExport === 'function') {
+              audio.captureForExport = (buffer: any, offsetSec?: number) =>
+                audioRef.captureForExport(buffer, offsetSec);
+            }
+            if (typeof audioRef.getCapturedForExport === 'function') {
+              audio.getCapturedForExport = () => audioRef.getCapturedForExport();
+            }
             return audio;
           })(),
         canvas2d: this.api.canvas2d,
@@ -962,6 +980,8 @@ export class ScriptSandbox {
         getFrame: this.api.getFrame,
         getTime: this.api.getTime,
         getDelta: this.api.getDelta,
+        get isExporting() { return apiRef.isExporting; },
+        getIsExporting: this.api.getIsExporting,
 
         // URL parameter helper (safe — resolved in host context before entering SES)
         getParam: this.api.getParam,

@@ -2320,6 +2320,11 @@ export class StorieEngine {
       getFrame: () => this.frameCount,
       getTime: () => this.elapsedTime,
       getDelta: () => this.deltaTime,
+      /** True while a video export is in progress. Use this to auto-start audio
+       *  or skip user-interaction gating so the offline tick loop captures correctly. */
+      get isExporting() { return engine._isExporting; },
+      /** Function form of isExporting (more robust under SES scoping). */
+      getIsExporting: () => engine._isExporting,
 
       /**
        * Seeded / random utilities — the same PRNG the engine uses internally.
@@ -2390,7 +2395,7 @@ export class StorieEngine {
       // Web Audio API (Phase 1) - Full exposure with shared instance
       audio: {
         // === SHARED INSTANCE (Full Web Audio API) ===
-        context: this.audioContext,
+        get context() { return engine.audioContext; },
         
         // === HELPERS (Use same AudioContext) ===
         playTone: (frequency: number, duration: number, volume: number = 0.5) => {
@@ -2677,6 +2682,26 @@ export class StorieEngine {
         createBufferSource: () => this.audioContext.createBufferSource(),
         createPanner: () => this.audioContext.createPanner(),
         createStereoPanner: () => this.audioContext.createStereoPanner(),
+
+        /**
+         * Capture an AudioBuffer (and optional start offset) for inclusion in
+         * the current video export. Call this every on:update frame while
+         * isExporting is true. The export panel reads it via engine.getExportAudioBuffer().
+         *
+         * Only has effect while an export is in progress; safe to call at any time.
+         */
+        captureForExport: (buffer: AudioBuffer, offsetSec: number = 0): void => {
+          engine.setExportAudioBuffer(buffer, offsetSec);
+        },
+
+        /**
+         * Read back the currently latched export audio buffer (if any).
+         * Useful for export-time animation even when the demo's on:drop hasn't
+         * decoded/analysed yet.
+         */
+        getCapturedForExport: (): { buffer: AudioBuffer; offsetSec: number } | null => {
+          return engine.getExportAudioBuffer();
+        },
         createWaveShaper: () => this.audioContext.createWaveShaper(),
 
         // === SEEDED SFX HELPERS (Chiptone basics) ===
@@ -3778,6 +3803,48 @@ export class StorieEngine {
       const parsed = await parseMarkdown(markdown);
       console.log(`  Found ${parsed.sections.length} sections`);
       console.log(`  Found ${parsed.codeBlocks.length} code blocks`);
+
+      // Treat each load as a full content swap.
+      // This ensures drag-and-drop (browser + native) fully replaces the
+      // previous story: old handlers stop receiving input, old modules are
+      // unloaded, and old visuals are cleared.
+      if (this.documents.size > 0 || this.activeDocumentId) {
+        try {
+          await this.moduleLoader.unloadAll();
+        } catch (error) {
+          console.warn('[Engine] Failed to unload modules during document swap:', error);
+        }
+
+        this.documents.clear();
+        this.sandbox.clearAll();
+        this.activeDocumentId = null;
+      }
+
+      // Reset per-document render state.
+      this.pendingShaderChain = null;
+      if (this.shaderChainManager) {
+        try {
+          this.shaderChainManager.clearChain();
+        } catch (error) {
+          console.warn('[Engine] Failed to clear shader chain during document swap:', error);
+        }
+      }
+
+      // Reset 3D state so Worlds does not stay enabled across documents.
+      try {
+        this.clear3DSectionTextures();
+      } catch {
+        // ignore
+      }
+      this.section3DLayouts = [];
+      this.worldsEnabled = false;
+      this.worldsOverviewEnabled = false;
+      this.worldsOverviewSavedTransforms = null;
+      this.pendingWorldsOverview = null;
+      this.pending3DCameraFocus = null;
+      if (this.worldsRenderer) {
+        this.camera3D = createCamera3D();
+      }
       
       // Log WGSL shaders if present
       if (parsed.wgslShaders && parsed.wgslShaders.length > 0) {
@@ -3841,7 +3908,13 @@ export class StorieEngine {
       } else if (parsed.metadata.theme) {
         const themeName = String(parsed.metadata.theme).toLowerCase().replace(/['"]/g, '');
         this.applyThemeColors(getTheme(themeName), themeName, 'frontmatter');
+      } else {
+        // Reset to default theme when switching documents.
+        this.applyThemeColors(getTheme('neotopia'), 'neotopia', 'default');
       }
+
+      // Ensure the terminal buffers start clean for the new story.
+      this.layers.clearAll(this.currentTheme.bg);
       
       // Apply shader chain from frontmatter if specified
       if (parsed.metadata.shaders) {
@@ -4327,10 +4400,8 @@ ${exportVars}
         _stfxrBakedStore: new Map()
       } as any);
       
-      // Set as active if first document
-      if (!this.activeDocumentId) {
-        this.activeDocumentId = documentId;
-      }
+      // Newly loaded document becomes active.
+      this.activeDocumentId = documentId;
       console.log('🔍 Extracted handlers:', {
         init: typeof handlers?.init,
         update: typeof handlers?.update,
@@ -4348,6 +4419,13 @@ ${exportVars}
         } catch (error) {
           console.error('  Error in init:', error);
         }
+      }
+
+      // Keep keyboard input responsive after document swaps.
+      try {
+        this.canvas.focus();
+      } catch {
+        // ignore
       }
       
       console.log('✓ Document loaded successfully');
@@ -4524,14 +4602,22 @@ ${exportVars}
   private mainLoop(timestamp: number): void {
     if (!this.running) return;
 
+    this.deltaTime = (timestamp - this.lastFrameTime) / 1000;
+    this.lastFrameTime = timestamp;
+    this.elapsedTime += this.deltaTime;
+
+    this.runFrame();
+    this.frameCount++;
+    requestAnimationFrame((ts) => this.mainLoop(ts));
+  }
+
+  /**
+   * Run one frame: update + render + composite + input flush.
+   * elapsedTime and deltaTime must be set before calling.
+   * Shared by the live mainLoop and tickExportFrame.
+   */
+  private runFrame(): void {
     try {
-      // Calculate delta time
-      this.deltaTime = (timestamp - this.lastFrameTime) / 1000;
-      this.lastFrameTime = timestamp;
-      this.elapsedTime += this.deltaTime;
-
-      // (Optional) reserved for future one-time perf/health logs.
-
       // Update phase
       this.update();
 
@@ -4651,15 +4737,166 @@ ${exportVars}
         this.renderer.render(composited);
       }
     } catch (error) {
-      console.error('[Engine] Uncaught error in mainLoop:', error);
+      console.error('[Engine] Uncaught error in runFrame:', error);
     }
 
     // Clean up input state
     this.input.endFrame();
+  }
 
-    // Next frame
+  /**
+   * Pause the main loop for video export.
+   * Freezes user input so document code sees no events during the export.
+   * Call resumeFromExport() when done.
+   */
+  pauseForExport(): void {
+    this.running = false;
+    this._isExporting = true;
+    this.input.setEnabled(false);
+    this._exportAudioBuffer = null;
+    this._exportAudioOffset = 0;
+  }
+
+  /**
+   * Resume normal operation after a video export ends or is cancelled.
+   */
+  resumeFromExport(): void {
+    this._isExporting = false;
+    this.input.setEnabled(true);
+    this.running = true;
+    this.lastFrameTime = performance.now();
+    this.mainLoop(this.lastFrameTime);
+  }
+
+  /**
+   * Return the sample rate of the engine's live AudioContext.
+   * Used by the video export panel to configure the OfflineAudioContext.
+   */
+  getAudioSampleRate(): number {
+    return this.audioContext.sampleRate;
+  }
+
+  /** True while a video export is in progress. Exposed to document code via api.isExporting. */
+  private _isExporting: boolean = false;
+
+  get isExporting(): boolean { return this._isExporting; }
+
+  /** AudioBuffer captured by document code via captureForExport() during an export pass. */
+  private _exportAudioBuffer: AudioBuffer | null = null;
+  private _exportAudioOffset: number = 0;
+
+  /**
+   * Store an AudioBuffer (and optional playback start offset) for use in the
+   * current video export. Called by the audio.captureForExport() sandbox method.
+   */
+  setExportAudioBuffer(buffer: AudioBuffer, offsetSec: number = 0): void {
+    this._exportAudioBuffer = buffer;
+    this._exportAudioOffset = offsetSec;
+  }
+
+  /**
+   * Return the captured audio buffer (and offset) for the current export pass,
+   * or null if none was captured.
+   */
+  getExportAudioBuffer(): { buffer: AudioBuffer; offsetSec: number } | null {
+    if (!this._exportAudioBuffer) return null;
+    return { buffer: this._exportAudioBuffer, offsetSec: this._exportAudioOffset };
+  }
+
+  /**
+   * Resize the canvas and engine to an exact pixel resolution for native-quality
+   * video export. The canvas is resized to the nearest cell-aligned dimensions
+   * that fit within exportWidth × exportHeight.
+   *
+   * Returns the actual pixel size used (may be a few px smaller than requested
+   * due to cell alignment). Pass these to VideoExporter as exportWidth/exportHeight.
+   * Call restoreExportResize() with the returned token when export ends.
+   */
+  resizeForExport(exportWidth: number, exportHeight: number): {
+    actualWidth: number;
+    actualHeight: number;
+    token: { cols: number; rows: number; canvasW: number; canvasH: number };
+  } {
+    const token = {
+      cols:    this.width,
+      rows:    this.height,
+      canvasW: this.canvas.width,
+      canvasH: this.canvas.height,
+    };
+
+    // Derive character cell size from the current atlas (WebGPU) or renderer.
+    let charW = 1;
+    let charH = 1;
+    if (this.renderer instanceof WebGPURenderer) {
+      charW = this.renderer.getAtlas().getCharWidth()  || 1;
+      charH = this.renderer.getAtlas().getCharHeight() || 1;
+    } else {
+      // Canvas2D renderer: approximate from current canvas/grid ratio.
+      charW = Math.max(1, Math.round(this.canvas.width  / Math.max(1, this.width)));
+      charH = Math.max(1, Math.round(this.canvas.height / Math.max(1, this.height)));
+    }
+
+    const cols = Math.max(1, Math.floor(exportWidth  / charW));
+    const rows = Math.max(1, Math.floor(exportHeight / charH));
+    const actualWidth  = cols * charW;
+    const actualHeight = rows * charH;
+
+    // Temporarily expand the canvas buffer to the export resolution.
+    this.canvas.width  = actualWidth;
+    this.canvas.height = actualHeight;
+    this.resize(cols, rows);
+
+    return { actualWidth, actualHeight, token };
+  }
+
+  /**
+   * Restore canvas and grid to the pre-export dimensions.
+   * @param token — the value returned by resizeForExport()
+   */
+  restoreExportResize(token: { cols: number; rows: number; canvasW: number; canvasH: number }): void {
+    this.canvas.width  = token.canvasW;
+    this.canvas.height = token.canvasH;
+    this.resize(token.cols, token.rows);
+  }
+
+  /** Saved live AudioContext while an audio export pass is active. */
+  private _savedAudioContext: AudioContext | null = null;
+
+  /**
+   * Swap the engine's AudioContext for an OfflineAudioContext proxy so that
+   * audio calls made during tickExportFrame() schedule nodes into the offline
+   * timeline instead of playing live.
+   *
+   * Pass ANY object that satisfies the AudioContext surface used by user code
+   * (e.g. a Proxy wrapping an OfflineAudioContext whose currentTime is
+   * overridden to return the synthetic elapsed time).
+   */
+  beginAudioExport(ctx: BaseAudioContext): void {
+    this._savedAudioContext = this.audioContext;
+    this.audioContext = ctx as AudioContext;
+  }
+
+  /**
+   * Restore the live AudioContext after an audio export pass.
+   */
+  endAudioExport(): void {
+    if (this._savedAudioContext) {
+      this.audioContext = this._savedAudioContext;
+      this._savedAudioContext = null;
+    }
+  }
+
+  /**
+   * Tick one engine frame with synthetic time for video export.
+   * Must be called after pauseForExport(). Does NOT schedule a new rAF.
+   * @param elapsed — total seconds from start of export
+   * @param delta   — time step in seconds (1/fps)
+   */
+  tickExportFrame(elapsed: number, delta: number): void {
+    this.elapsedTime = elapsed;
+    this.deltaTime   = delta;
+    this.runFrame();
     this.frameCount++;
-    requestAnimationFrame((ts) => this.mainLoop(ts));
   }
 
   /**
@@ -5311,6 +5548,7 @@ ${exportVars}
         doc.handlers.update(this.deltaTime);
       } catch (error) {
         console.error('Error in update handler:', error);
+        this.recordUserHandlerError('update', error);
       }
     }
   }
@@ -5340,6 +5578,7 @@ ${exportVars}
       doc.handlers.render();
     } catch (error) {
       console.error('Error in render handler:', error);
+      this.recordUserHandlerError('render', error);
     }
     
     // Render modules last (so they can overlay)
@@ -6451,5 +6690,41 @@ ${exportVars}
    */
   getModuleLoader(): ModuleLoader {
     return this.moduleLoader;
+  }
+
+  /**
+   * Return the most recently dropped file (the last file the user dragged onto
+   * the engine). Used by the export panel as a fallback audio source when the
+   * document code doesn't call captureForExport().
+   */
+  getLastDroppedFile(): { bytes: Uint8Array; mime: string; name: string } | null {
+    const dropped = this.lastDroppedFile;
+    if (!dropped) return null;
+    return {
+      bytes: dropped.bytes,
+      mime:  String(dropped.mime  ?? ''),
+      name:  String(dropped.name  ?? ''),
+    };
+  }
+
+  /** Last error thrown by a user-supplied update/render handler, or null. */
+  private _lastUserHandlerError: { handler: string; error: unknown } | null = null;
+
+  /**
+   * Called internally when an update or render handler throws.
+   * Stores the error so the export panel can surface it in the progress UI.
+   */
+  private recordUserHandlerError(handler: string, error: unknown): void {
+    this._lastUserHandlerError = { handler, error };
+  }
+
+  /** Read (but do not clear) the last user handler error. */
+  getLastUserHandlerError(): { handler: string; error: unknown } | null {
+    return this._lastUserHandlerError;
+  }
+
+  /** Clear any stored user handler error (call before starting an export). */
+  clearLastUserHandlerError(): void {
+    this._lastUserHandlerError = null;
   }
 }
