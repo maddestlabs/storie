@@ -51,9 +51,12 @@ export class WebGPURenderer {
       powerPreference: 'high-performance'
     });
     
+    // Scale font size to physical pixels so glyph atlas is rasterized at
+    // native device resolution (crisp on HiDPI / Retina displays).
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
     this.atlas = new GlyphAtlas({
       fontFamily: config.fontFamily || '\'3270-regular\', \'Consolas\', \'Monaco\', monospace',
-      fontSize: config.fontSize || 16
+      fontSize: (config.fontSize || 16) * dpr
     });
     
     this.terminalRenderer = new TerminalRenderer(
@@ -98,15 +101,19 @@ export class WebGPURenderer {
   resize(width: number, height: number): void {
     this.width = width;
     this.height = height;
-    
-    // Update canvas size
-    const charWidth = this.atlas.getCharWidth();
-    const charHeight = this.atlas.getCharHeight();
-    this.canvas.width = width * charWidth;
-    this.canvas.height = height * charHeight;
-    
-    // Resize terminal renderer
+
+    // Canvas dimensions are managed externally (viewport-driven, DPR-aware).
+    // Pass the current physical canvas size to the terminal renderer so its
+    // uniforms stay consistent with the backing buffer.
     this.terminalRenderer.resize(width, height, this.canvas.width, this.canvas.height);
+  }
+
+  getCharWidth(): number {
+    return this.atlas.getCharWidth();
+  }
+
+  getCharHeight(): number {
+    return this.atlas.getCharHeight();
   }
   
   getWidth(): number {

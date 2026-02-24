@@ -122,6 +122,29 @@ export const ColorUtils = {
     if (typeof color === 'number') {
       return color;
     }
+
+    // CSS hex string: #rgb, #rgba, #rrggbb, #rrggbbaa
+    if (typeof color === 'string') {
+      const s = color.trim();
+      if (s.startsWith('#')) {
+        const h = s.slice(1);
+        let r = 0, g = 0, b = 0, a = 0xFF;
+        if (h.length === 3 || h.length === 4) {
+          r = parseInt(h[0]! + h[0]!, 16);
+          g = parseInt(h[1]! + h[1]!, 16);
+          b = parseInt(h[2]! + h[2]!, 16);
+          if (h.length === 4) a = parseInt(h[3]! + h[3]!, 16);
+        } else if (h.length === 6 || h.length === 8) {
+          r = parseInt(h.slice(0, 2), 16);
+          g = parseInt(h.slice(2, 4), 16);
+          b = parseInt(h.slice(4, 6), 16);
+          if (h.length === 8) a = parseInt(h.slice(6, 8), 16);
+        }
+        if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) {
+          return ((r & 0xFF) << 24) | ((g & 0xFF) << 16) | ((b & 0xFF) << 8) | (a & 0xFF);
+        }
+      }
+    }
     
     // Legacy object format
     if (color && typeof color === 'object' && 'r' in color && 'g' in color && 'b' in color) {

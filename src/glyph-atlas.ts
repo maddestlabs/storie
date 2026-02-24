@@ -297,6 +297,10 @@ export class GlyphAtlas {
     return this.charHeight;
   }
 
+  getFontSize(): number {
+    return this.fontSize;
+  }
+
   /**
    * Get canvas for debugging
    */

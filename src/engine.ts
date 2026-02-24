@@ -195,6 +195,10 @@ export class StorieEngine {
   
   // Deferred shader chain (applied after WebGPU init)
   private pendingShaderChain: { chainStr: string; source: string } | null = null;
+
+  // Desired pixel dimensions from frontmatter `width:` / `height:`.
+  // Used by the host page to scale the canvas to fit the viewport.
+  private frontmatterViewport: { width: number; height: number } | null = null;
   
   // 3D Canvas system
   private worldsRenderer: WorldsRenderer | null = null;
@@ -613,10 +617,16 @@ export class StorieEngine {
    * When these disagree, the browser scales the canvas, causing stretched output.
    */
   private syncCanvasElementSizeToBuffer(): void {
-    const w = this.canvas.width;
-    const h = this.canvas.height;
-    if (w > 0) this.canvas.style.width = `${w}px`;
-    if (h > 0) this.canvas.style.height = `${h}px`;
+    // Set the CSS display size to logical (device-independent) pixels so the
+    // browser shows the canvas at its natural viewport size without any
+    // implicit DPR upscaling. The backing buffer is already at physical
+    // resolution (set by the entry-point before the engine is constructed).
+    if (typeof window === 'undefined') return;
+    const dpr = window.devicePixelRatio || 1;
+    const logicalW = this.canvas.width / dpr;
+    const logicalH = this.canvas.height / dpr;
+    if (logicalW > 0) this.canvas.style.width = `${logicalW}px`;
+    if (logicalH > 0) this.canvas.style.height = `${logicalH}px`;
   }
 
   private initHostSync(cfg?: EngineConfig['host']): void {
@@ -1210,6 +1220,10 @@ export class StorieEngine {
         write: (x: number, y: number, text: string, fg?: Color, bg?: Color) => {
           const layer = this.layers.getActive();
           layer.write(x, y, text, fg, bg);
+        },
+        fill: (x: number, y: number, w: number, h: number, char: string = ' ', fg?: Color, bg?: Color) => {
+          const layer = this.layers.getActive();
+          layer.fill(x, y, w, h, char, fg, bg);
         },
         clear: (bgColor?: Color) => {
           const layer = this.layers.getActive();
@@ -2363,6 +2377,35 @@ export class StorieEngine {
          *   random.toSeed(42.7)      // → 42
          */
         toSeed: (val: number | string): number => toSfxSeed(val),
+      },
+
+      /**
+       * Host system utilities — execute in the trusted engine context so
+       * the SES sandbox never needs access to `document` or `URL`.
+       */
+      sys: {
+        /**
+         * Trigger a browser "Save As" download with raw bytes.
+         * Creates a temporary object URL, clicks a hidden anchor, then revokes.
+         */
+        download: (bytes: Uint8Array, filename: string, mime?: string): void => {
+          try {
+            // Slice to a plain ArrayBuffer so TypeScript's BlobPart types are satisfied
+            // regardless of whether the Uint8Array sits on a SharedArrayBuffer.
+            const ab   = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+            const blob = new Blob([ab], { type: mime ?? 'application/octet-stream' });
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement('a');
+            a.href     = url;
+            a.download = String(filename ?? 'download');
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 10_000);
+          } catch (e) {
+            console.warn('[sys.download] failed:', e);
+          }
+        },
       },
 
       /**
@@ -3931,6 +3974,17 @@ export class StorieEngine {
         }
       }
       
+      // Viewport dimensions from frontmatter (optional).
+      // Let the host page scale the canvas to fit the window at the requested aspect ratio.
+      const fmW = Number(parsed.metadata.width);
+      const fmH = Number(parsed.metadata.height);
+      this.frontmatterViewport = (Number.isFinite(fmW) && fmW > 0 && Number.isFinite(fmH) && fmH > 0)
+        ? { width: fmW, height: fmH }
+        : null;
+      if (this.frontmatterViewport) {
+        console.log(`  Viewport constraint (frontmatter): ${fmW}x${fmH}px`);
+      }
+
       // Log exposed frontmatter variables (for debugging)
       const frontmatterKeys = Object.keys(parsed.metadata);
       if (frontmatterKeys.length > 0) {
@@ -4244,8 +4298,12 @@ export class StorieEngine {
       let currentScope = this.sandbox.getScope(documentId) || {};
       let scopeVarNames = Object.keys(currentScope).filter(k => !['init', 'update', 'render', 'input', 'drop', '__enterHandlers'].includes(k));
       
-      // Second pass: re-execute UNtransformed with exports to create proper closures
-      // This allows functions to reference variables in their closure
+      // Second pass: re-execute with scope-guarded var initializers + exports to create
+      // proper closures.  `var NAME = EXPR` is rewritten to
+      //   `var NAME = ('NAME' in scope) ? scope.NAME : (EXPR);`
+      // so that on hot-reload the IIFE-local binding is seeded from the already-persisted
+      // scope value rather than the default EXPR.  This means functions that close over
+      // `NAME` always see live state across hot-reloads without any `scope.*` boilerplate.
       if (scopeVarNames.length > 0 && globalBlocks.length > 0) {
         console.log(`  Re-executing global blocks to create closures for ${scopeVarNames.length} variables`);
         // Some scope keys may come from direct `scope.foo = ...` assignments rather than
@@ -4253,12 +4311,20 @@ export class StorieEngine {
         // Wrap in try/catch to only export when a binding exists.
         const exports = scopeVarNames.map(k => `  try { scope.${k} = ${k}; } catch (e) {}` ).join('\n');
         
-        // Pass API globals as IIFE parameters so they're accessible inside the function
-        const apiParams = 'term, termCanvas, layer, key, mouse, drop, doc, host, scene, tui, gui, getStyle, theme, modules, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY, termWidth, termHeight, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, worlds';
+        // Pass API globals as IIFE parameters so they're accessible inside the function.
+        // NOTE: Dynamic/per-frame values (termWidth, termHeight, mouseX/Y, etc.) are intentionally
+        // NOT listed here — they would be captured as snapshot values at IIFE execution time
+        // (document-load time) rather than returning the live value on each call.  Those names
+        // are still accessible inside the IIFE via the compartment's getter-based globals, which
+        // always reflect the current engine state (e.g. after viewport constraint resize).
+        const apiParams = 'term, termCanvas, layer, key, mouse, drop, doc, host, scene, tui, gui, getStyle, theme, modules, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, worlds';
         
         for (const code of globalBlocks) {
+          // Rewrite top-level `var NAME = EXPR` for known scope vars so the IIFE-local
+          // binding is initialised from the persisted scope value on hot-reload.
+          const persistedCode = this.sandbox.rewriteVarsForPersistence(code, scopeVarNames);
           const wrappedCode = `(function(${apiParams}) {
-${code}
+${persistedCode}
 ${exports}
 })(${apiParams});`;
           this.sandbox.executeCodeBlock(documentId, wrappedCode, true); // Skip transform on second pass
@@ -4961,24 +5027,17 @@ ${exportVars}
 
     // Treat section width/height as character columns/rows when generating
     // section textures. This makes defaultSectionHeight behave like “rows of text”.
-    const fontSizePx = 16;
+    //
+    // Use atlas charW/charH (physical pixels) so that the texture dimensions and
+    // drawn font size are consistent with get3DCardXScaleFactor(), which also
+    // reads from the atlas. Mismatched metrics caused visible X-compression of
+    // card content (scale factor used physical px, texture used hardcoded logical px).
+    const atlas = (this.renderer instanceof WebGPURenderer) ? this.renderer.getAtlas() : null;
+    const fontSizePx = atlas ? atlas.getFontSize() : 16;
     const fontStack = "'3270-regular', 'Consolas', 'Monaco', monospace";
     const texturePadding = 12;
-
-    const measureCanvas = new OffscreenCanvas(1, 1);
-    const measureCtx = measureCanvas.getContext('2d', { alpha: true });
-    if (!measureCtx) return;
-    measureCtx.textBaseline = 'top';
-    measureCtx.textAlign = 'left';
-    measureCtx.font = `${fontSizePx}px ${fontStack}`;
-    const m = measureCtx.measureText('M');
-    const measuredCharW = Math.max(1, Math.ceil(m.width));
-    const measuredCharH = Math.max(
-      1,
-      (m.fontBoundingBoxAscent && m.fontBoundingBoxDescent)
-        ? Math.ceil(m.fontBoundingBoxAscent + m.fontBoundingBoxDescent)
-        : Math.ceil(fontSizePx * 1.25)
-    );
+    const measuredCharW = Math.max(1, atlas ? atlas.getCharWidth() : 9);
+    const measuredCharH = Math.max(1, atlas ? atlas.getCharHeight() : 20);
     const baseLineHeight = Math.max(1, Math.round(measuredCharH * 1.25));
 
     for (const layout of this.section3DLayouts) {
@@ -4993,8 +5052,8 @@ ${exportVars}
 
       const minW = 256;
       const minH = 128;
-      const maxW = 1024;
-      const maxH = 1024;
+      const maxW = 2048;
+      const maxH = 2048;  // allow for DPR-scaled physical font sizes
 
       const desiredW = Math.round(layout.width * measuredCharW + texturePadding * 2);
       const desiredH = Math.round(layout.height * baseLineHeight + texturePadding * 2);
@@ -5642,6 +5701,16 @@ ${exportVars}
   }
 
   /**
+   * Return the pixel dimensions requested by the current document's frontmatter
+   * (`width:` / `height:` keys), or `null` if not specified.
+   * The host page uses this to scale the canvas to fit the viewport while
+   * preserving the requested aspect ratio.
+   */
+  getViewportConstraint(): { width: number; height: number } | null {
+    return this.frontmatterViewport;
+  }
+
+  /**
    * Resize the engine
    */
   resize(width: number, height: number): void {
@@ -5889,6 +5958,9 @@ ${exportVars}
       return;
     }
 
+    // Resume AudioContext on any key press (satisfies browser autoplay policy).
+    if (action === 'press') this.audioContext.resume().catch(() => {});
+
     const doc = this.getActiveDocument();
 
     // Built-in 3D link navigation (canvas.nim parity)
@@ -5958,6 +6030,9 @@ ${exportVars}
       e.preventDefault();
       return;
     }
+
+    // Resume AudioContext on any mouse press (satisfies browser autoplay policy).
+    if (action === 'press') this.audioContext.resume().catch(() => {});
 
     const doc = this.getActiveDocument();
 

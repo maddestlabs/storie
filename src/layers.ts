@@ -61,6 +61,27 @@ export class Layer {
     if (bg !== undefined) cell.bg = ColorUtils.from(bg);
   }
 
+  /**
+   * Fill a rectangular region with a character and optional colors.
+   * Clamps to the layer bounds automatically.
+   */
+  fill(x: number, y: number, w: number, h: number, char: string = ' ', fg?: Color | any, bg?: Color | any): void {
+    const fgColor = fg !== undefined ? ColorUtils.from(fg) : undefined;
+    const bgColor = bg !== undefined ? ColorUtils.from(bg) : undefined;
+    const x1 = Math.max(0, x);
+    const y1 = Math.max(0, y);
+    const x2 = Math.min(this.width,  x + w);
+    const y2 = Math.min(this.height, y + h);
+    for (let row = y1; row < y2; row++) {
+      for (let col = x1; col < x2; col++) {
+        const cell = this.buffer[row][col];
+        cell.char = char;
+        if (fgColor !== undefined) cell.fg = fgColor;
+        if (bgColor !== undefined) cell.bg = bgColor;
+      }
+    }
+  }
+
   clear(bgColor?: Color): void {
     const bg = bgColor || COLORS.BLACK;
     this.defaultBg = bg;

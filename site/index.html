@@ -190,7 +190,9 @@ This demo showcases:
   <script type="module">
     // Import the built engine
     // Cache-bust the module URL so WebView2 doesn't reuse an older bundle across runs.
-    import { StorieEngine } from './storie.es.js?v=tauri-2026-02-20-3';
+    // Cache-buster is replaced during `npm run build` so WebViews don't keep
+    // serving a stale storie.es.js across rebuilds.
+    import { StorieEngine } from './storie.es.js?v=__BUILD_ID__';
 
     /**
      * Parse URL parameters to load content from various sources
@@ -520,10 +522,18 @@ This demo showcases:
         // On a normal refresh, cached fonts can become available between our
         // bootstrap measurement and the renderer's GlyphAtlas measurement,
         // causing canvas buffer size != CSS size (visible X stretch).
+        // Measure at physical pixel density (fontSize × DPR) so this measurement
+        // stays consistent with GlyphAtlas, which also rasterizes at fontSize × DPR.
+        // Fonts don't scale linearly with size (sub-pixel rounding), so measuring at
+        // a different size than the atlas causes a per-column width mismatch that
+        // accumulates into a visible gap at the right edge of the terminal.
+        const dpr = window.devicePixelRatio || 1;
+        const physicalFontSize = fontSize * dpr;
+
         if (document.fonts && document.fonts.ready) {
           try {
             await document.fonts.ready;
-            await document.fonts.load(`${fontSize}px '${fontFamily}'`);
+            await document.fonts.load(`${physicalFontSize}px '${fontFamily}'`);
             console.log('✓ Font ready for measurement');
           } catch (e) {
             console.log('⚠ Font readiness check failed, continuing anyway');
@@ -532,30 +542,35 @@ This demo showcases:
 
         const tempCanvas = document.createElement('canvas');
         const tempCtx = tempCanvas.getContext('2d');
-        tempCtx.font = `${fontSize}px '${fontFamily}', 'Consolas', 'Monaco', monospace`;
+        tempCtx.font = `${physicalFontSize}px '${fontFamily}', 'Consolas', 'Monaco', monospace`;
         tempCtx.textBaseline = 'top';
-        
-        const metrics = tempCtx.measureText('M');
-        const charWidth = Math.ceil(metrics.width);
 
+        const metrics = tempCtx.measureText('M');
+        // Physical char size (matches atlas internals).
+        const charWidthPhysical = Math.ceil(metrics.width);
         // Match GlyphAtlas / terminal renderer behavior: use actual font bbox height
         // (or a padded fallback) so grid math matches the renderer.
-        const charHeight = (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent)
+        const charHeightPhysical = (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent)
           ? Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent)
-          : Math.ceil(fontSize * 1.25);
+          : Math.ceil(physicalFontSize * 1.25);
+        // Logical (CSS-pixel) sizes used to compute how many cells fit the viewport.
+        const charWidth = charWidthPhysical / dpr;
+        const charHeight = charHeightPhysical / dpr;
+
+        console.log(`✓ Measured font: ${charWidthPhysical}x${charHeightPhysical}px physical (${charWidth}x${charHeight} logical) per character`);
         
-        console.log(`✓ Measured font: ${charWidth}x${charHeight}px per character`);
-        
-        // Calculate grid size based on actual measured font dimensions
+        // Calculate grid size based on actual measured font dimensions.
         // Use ceil so the canvas fully covers the container without leaving a
         // remainder strip on the right/bottom when the viewport isn't an exact
         // multiple of the cell size.
         const gridWidth = Math.ceil(window.innerWidth / charWidth);
         const gridHeight = Math.ceil(window.innerHeight / charHeight);
-        
-        // Set canvas size to fill viewport (internal resolution)
-        canvas.width = gridWidth * charWidth;
-        canvas.height = gridHeight * charHeight;
+
+        // Set canvas backing buffer to exactly gridCells × physicalCharSize.
+        // This guarantees zero gap: the terminal shader spaces cells by
+        // charWidthPhysical, so the content fills the buffer exactly.
+        canvas.width = gridWidth * charWidthPhysical;
+        canvas.height = gridHeight * charHeightPhysical;
         
         // Create engine with measured grid size
         const engine = new StorieEngine(canvas, {
@@ -578,22 +593,53 @@ This demo showcases:
         }
 
         console.log(`✓ S|torie engine initialized (${gridWidth}x${gridHeight}) [${IS_TAURI ? 'Tauri native' : 'browser'}]`);
-        
+
+        // Apply viewport constraint from frontmatter `width:` / `height:` if present.
+        // The document may request a specific pixel aspect ratio (e.g. portrait 1080×2400);
+        // we scale that to fit entirely within the current browser window.
+        const applyDocumentViewport = () => {
+          const vc = engine.getViewportConstraint();
+          const newDpr = window.devicePixelRatio || 1;
+          if (vc) {
+            // Constrained: fit the requested aspect ratio inside the window.
+            const scale  = Math.min(window.innerWidth / vc.width, window.innerHeight / vc.height);
+            const cssW   = Math.floor(vc.width  * scale);
+            const cssH   = Math.floor(vc.height * scale);
+            const leftPx = Math.round((window.innerWidth  - cssW) / 2);
+            const topPx  = Math.round((window.innerHeight - cssH) / 2);
+            const newGridW = Math.max(1, Math.ceil(cssW / charWidth));
+            const newGridH = Math.max(1, Math.ceil(cssH / charHeight));
+            // Resize engine first — this sets the canvas backing buffer size
+            // internally (via syncCanvasElementSizeToBuffer) and reconfigures
+            // compositor/WebGPU with consistent state.
+            canvas.width  = Math.round(cssW * newDpr);
+            canvas.height = Math.round(cssH * newDpr);
+            engine.resize(newGridW, newGridH);
+            // Position using explicit pixels — avoids percentage+transform
+            // edge cases with position:absolute inside a flex container.
+            canvas.style.left      = leftPx + 'px';
+            canvas.style.top       = topPx  + 'px';
+            canvas.style.transform = '';
+            console.log(`✓ Constrained viewport ${vc.width}x${vc.height}px → ${newGridW}x${newGridH} cells (${cssW}x${cssH} CSS px @ ${leftPx},${topPx})`);
+          } else {
+            // Unconstrained: restore default full-viewport positioning.
+            canvas.style.left      = '0';
+            canvas.style.top       = '0';
+            canvas.style.transform = '';
+            const newGridW = Math.ceil(window.innerWidth  / charWidth);
+            const newGridH = Math.ceil(window.innerHeight / charHeight);
+            canvas.width  = Math.round(window.innerWidth  * newDpr);
+            canvas.height = Math.round(window.innerHeight * newDpr);
+            engine.resize(newGridW, newGridH);
+            console.log(`✓ Resized to ${newGridW}x${newGridH}`);
+          }
+        };
+
         // Handle window resize
         let resizeTimeout;
         const handleResize = () => {
           clearTimeout(resizeTimeout);
-          resizeTimeout = setTimeout(() => {
-            const newGridWidth = Math.ceil(window.innerWidth / charWidth);
-            const newGridHeight = Math.ceil(window.innerHeight / charHeight);
-            
-            // Update canvas size
-            canvas.width = newGridWidth * charWidth;
-            canvas.height = newGridHeight * charHeight;
-            
-            engine.resize(newGridWidth, newGridHeight);
-            console.log(`✓ Resized to ${newGridWidth}x${newGridHeight}`);
-          }, 250);
+          resizeTimeout = setTimeout(applyDocumentViewport, 250);
         };
         
         window.addEventListener('resize', handleResize);
@@ -678,6 +724,11 @@ This demo showcases:
         await engine.start();
         console.log('✓ Engine started');
 
+        // Apply viewport constraint now that frontmatter is known and WebGPU
+        // is fully initialised. Must come after start() so compositor/textures
+        // are resized correctly when a constraint is active.
+        applyDocumentViewport();
+
         // Hide startup loading screen now that the engine is running
         const loadingEl = document.getElementById('loading');
         if (loadingEl) loadingEl.style.display = 'none';
@@ -694,16 +745,8 @@ This demo showcases:
           await engine.applyShaderChain(shaderChain, 'url');
         }
         
-        // Ensure proper sizing after layout and font are complete
-        // Use a short delay to ensure layout is fully settled
-        setTimeout(() => {
-          const finalGridWidth = Math.ceil(window.innerWidth / charWidth);
-          const finalGridHeight = Math.ceil(window.innerHeight / charHeight);
-          if (finalGridWidth !== gridWidth || finalGridHeight !== gridHeight) {
-            engine.resize(finalGridWidth, finalGridHeight);
-            console.log(`✓ Initial resize to ${finalGridWidth}x${finalGridHeight}`);
-          }
-        }, 100);
+        // Ensure proper sizing after layout and font are complete.
+        setTimeout(applyDocumentViewport, 100);
         
       } catch (error) {
         console.error(`✗ Error: ${error.message}`, error);

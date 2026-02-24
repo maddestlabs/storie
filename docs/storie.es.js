@@ -97,6 +97,27 @@ const ColorUtils = {
     if (typeof color === "number") {
       return color;
     }
+    if (typeof color === "string") {
+      const s = color.trim();
+      if (s.startsWith("#")) {
+        const h = s.slice(1);
+        let r2 = 0, g = 0, b = 0, a = 255;
+        if (h.length === 3 || h.length === 4) {
+          r2 = parseInt(h[0] + h[0], 16);
+          g = parseInt(h[1] + h[1], 16);
+          b = parseInt(h[2] + h[2], 16);
+          if (h.length === 4) a = parseInt(h[3] + h[3], 16);
+        } else if (h.length === 6 || h.length === 8) {
+          r2 = parseInt(h.slice(0, 2), 16);
+          g = parseInt(h.slice(2, 4), 16);
+          b = parseInt(h.slice(4, 6), 16);
+          if (h.length === 8) a = parseInt(h.slice(6, 8), 16);
+        }
+        if (Number.isFinite(r2) && Number.isFinite(g) && Number.isFinite(b)) {
+          return (r2 & 255) << 24 | (g & 255) << 16 | (b & 255) << 8 | a & 255;
+        }
+      }
+    }
     if (color && typeof color === "object" && "r" in color && "g" in color && "b" in color) {
       const r2 = Math.round(color.r) & 255;
       const g = Math.round(color.g) & 255;
@@ -180,6 +201,26 @@ class Layer {
     cell.char = char;
     if (fg !== void 0) cell.fg = ColorUtils.from(fg);
     if (bg !== void 0) cell.bg = ColorUtils.from(bg);
+  }
+  /**
+   * Fill a rectangular region with a character and optional colors.
+   * Clamps to the layer bounds automatically.
+   */
+  fill(x, y, w, h, char = " ", fg, bg) {
+    const fgColor = fg !== void 0 ? ColorUtils.from(fg) : void 0;
+    const bgColor = bg !== void 0 ? ColorUtils.from(bg) : void 0;
+    const x1 = Math.max(0, x);
+    const y1 = Math.max(0, y);
+    const x2 = Math.min(this.width, x + w);
+    const y2 = Math.min(this.height, y + h);
+    for (let row = y1; row < y2; row++) {
+      for (let col = x1; col < x2; col++) {
+        const cell = this.buffer[row][col];
+        cell.char = char;
+        if (fgColor !== void 0) cell.fg = fgColor;
+        if (bgColor !== void 0) cell.bg = bgColor;
+      }
+    }
   }
   clear(bgColor) {
     const bg = bgColor || COLORS.BLACK;
@@ -477,8 +518,8 @@ class Canvas2DRenderer {
     }
   }
   setupCanvas() {
-    this.canvas.width = this.width * this.cellWidth;
-    this.canvas.height = this.height * this.cellHeight;
+    const dpr = typeof window !== "undefined" && window.devicePixelRatio || 1;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.ctx.font = `${this.fontSize}px ${this.fontFamily}`;
     this.ctx.textBaseline = "top";
     this.ctx.textAlign = "left";
@@ -488,6 +529,12 @@ class Canvas2DRenderer {
     this.width = width;
     this.height = height;
     this.setupCanvas();
+  }
+  getCharWidth() {
+    return this.cellWidth;
+  }
+  getCharHeight() {
+    return this.cellHeight;
   }
   getWidth() {
     return this.width;
@@ -858,6 +905,9 @@ class GlyphAtlas {
   }
   getCharHeight() {
     return this.charHeight;
+  }
+  getFontSize() {
+    return this.fontSize;
   }
   /**
    * Get canvas for debugging
@@ -1267,9 +1317,10 @@ class WebGPURenderer {
       canvas,
       powerPreference: "high-performance"
     });
+    const dpr = typeof window !== "undefined" && window.devicePixelRatio || 1;
     this.atlas = new GlyphAtlas({
       fontFamily: config.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace",
-      fontSize: config.fontSize || 16
+      fontSize: (config.fontSize || 16) * dpr
     });
     this.terminalRenderer = new TerminalRenderer(
       this.context,
@@ -1303,11 +1354,13 @@ class WebGPURenderer {
   resize(width, height) {
     this.width = width;
     this.height = height;
-    const charWidth = this.atlas.getCharWidth();
-    const charHeight = this.atlas.getCharHeight();
-    this.canvas.width = width * charWidth;
-    this.canvas.height = height * charHeight;
     this.terminalRenderer.resize(width, height, this.canvas.width, this.canvas.height);
+  }
+  getCharWidth() {
+    return this.atlas.getCharWidth();
+  }
+  getCharHeight() {
+    return this.atlas.getCharHeight();
   }
   getWidth() {
     return this.width;
@@ -9318,6 +9371,13 @@ class ScriptSandbox {
         termCanvas: this.api.termCanvas,
         layer: this.api.layer,
         key: this.api.key,
+        // Polling key-state map: keys.has('ArrowLeft'), keys.isDown('Space')
+        keys: {
+          has: (k) => apiRef.key.down(k),
+          isDown: (k) => apiRef.key.down(k),
+          pressed: (k) => apiRef.key.pressed(k),
+          released: (k) => apiRef.key.released(k)
+        },
         mouse: this.api.mouse,
         // Dropped file API (binary-safe)
         drop: this.api.drop,
@@ -9506,7 +9566,9 @@ class ScriptSandbox {
         // URL parameter helper (safe — resolved in host context before entering SES)
         getParam: this.api.getParam,
         // Seeded / random utilities (same PRNG as the engine)
-        random: this.api.random
+        random: this.api.random,
+        // Host system utilities (download, etc.) — run in trusted context
+        sys: this.api.sys
         // NO ACCESS TO:
         // - fetch (network)
         // - localStorage (storage)
@@ -9558,21 +9620,34 @@ class ScriptSandbox {
   }
   /**
    * Auto-binding for initialization blocks (raw `js` blocks only)
-   * 
+   *
    * Transforms top-level variable declarations to scope assignments:
-   * - `let x = 10;` → `scope.x = scope.x ?? 10;`
+   * - `var x = 10;`   → `scope.x = ('x' in scope) ? scope.x : (10);`   (persists null/0/false)
+   * - `let x = 10;`   → `scope.x = scope.x ?? (10);`                   (utilities / constants)
    * - `function foo() {}` → `scope.foo = function foo() {}`
-   * 
+   *
+   * `var` uses the strict `'in scope'` guard so that null, false, 0, etc. are
+   * treated as valid persisted values and are never overwritten on hot-reload.
+   * `let`/`const` use `??` — they're typically utility functions / pure constants
+   * where re-initialization is fine.
+   *
    * This ONLY applies to raw `js` blocks (no lifecycle annotation).
    * Lifecycle blocks (on:*) are wrapped by the engine with proper
    * import/export, so local vars stay local.
-   * 
+   *
    * Variables inside functions, loops, etc. remain untouched (only flush-left).
    */
   autoBindVariables(code) {
     let transformedCode = code;
     transformedCode = transformedCode.replace(
-      /^(let|const|var)\s+(\w+)\s*=\s*([^;]+);/gm,
+      /^var\s+(\w+)\s*=\s*([^;]+);/gm,
+      (_m, varName, value) => {
+        console.log(`  📝 Persisting var: ${varName}`);
+        return `scope.${varName} = ('${varName}' in scope) ? scope.${varName} : (${value});`;
+      }
+    );
+    transformedCode = transformedCode.replace(
+      /^(let|const)\s+(\w+)\s*=\s*([^;]+);/gm,
       (_m, _kw, varName, value) => {
         console.log(`  📝 Persisting variable: ${varName}`);
         return `scope.${varName} = scope.${varName} ?? (${value});`;
@@ -9593,6 +9668,136 @@ class ScriptSandbox {
       }
     );
     return transformedCode;
+  }
+  /**
+   * Walk forward from `start` in `code` and return the index of the first `;`
+   * that is at bracket-depth 0 (not inside `()`, `[]`, `{}`, strings, or comments).
+   * Returns `code.length` if no such semicolon is found (handles ASI / trailing
+   * expressions at end of file).
+   */
+  findTopLevelStatementEnd(code, start) {
+    let i = start;
+    let depth = 0;
+    let inLineComment = false;
+    let inBlockComment = false;
+    let inString = null;
+    while (i < code.length) {
+      const c2 = code[i];
+      const c22 = code[i + 1];
+      if (inLineComment) {
+        if (c2 === "\n") inLineComment = false;
+        i++;
+        continue;
+      }
+      if (inBlockComment) {
+        if (c2 === "*" && c22 === "/") {
+          inBlockComment = false;
+          i += 2;
+          continue;
+        }
+        i++;
+        continue;
+      }
+      if (inString) {
+        if (c2 === "\\") {
+          i += 2;
+          continue;
+        }
+        if (inString === "`") {
+          if (c2 === "`") {
+            inString = null;
+            i++;
+            continue;
+          }
+          if (c2 === "$" && c22 === "{") {
+            depth++;
+            i += 2;
+            continue;
+          }
+        } else {
+          if (c2 === inString) {
+            inString = null;
+            i++;
+            continue;
+          }
+        }
+        i++;
+        continue;
+      }
+      if (c2 === "/" && c22 === "/") {
+        inLineComment = true;
+        i += 2;
+        continue;
+      }
+      if (c2 === "/" && c22 === "*") {
+        inBlockComment = true;
+        i += 2;
+        continue;
+      }
+      if (c2 === '"' || c2 === "'" || c2 === "`") {
+        inString = c2;
+        i++;
+        continue;
+      }
+      if (c2 === "(" || c2 === "[" || c2 === "{") {
+        depth++;
+        i++;
+        continue;
+      }
+      if (c2 === ")" || c2 === "]" || c2 === "}") {
+        if (depth > 0) depth--;
+        i++;
+        continue;
+      }
+      if (c2 === ";" && depth === 0) return i;
+      i++;
+    }
+    return i;
+  }
+  /**
+   * Rewrite top-level `var NAME = EXPR` for known scope vars so that the
+   * IIFE-local binding is seeded from the already-persisted scope value on
+   * hot-reload, falling back to the original expression only on first load.
+   *
+   * Before: `var state = { score: 0, buf: null };`
+   * After:  `var state = ('state' in scope) ? scope.state : ({ score: 0, buf: null });`
+   *
+   * This correctly handles multiline initializers (objects, arrays, arrow fns)
+   * because depth is tracked through the full expression, not per-line.
+   * It also handles `null`, `false`, `0`, `''` as valid persisted values.
+   *
+   * Only `var` declarations are rewritten — `const`/`let` are utilities/constants
+   * whose re-initialization on hot-reload is intentional.
+   */
+  rewriteVarsForPersistence(code, varNames) {
+    if (varNames.length === 0) return code;
+    const names = new Set(varNames);
+    const out = [];
+    let i = 0;
+    const n = code.length;
+    while (i < n) {
+      const atLineStart = i === 0 || code[i - 1] === "\n";
+      if (atLineStart) {
+        const remaining = code.slice(i);
+        const m = /^var\s+(\w+)\s*=\s*/.exec(remaining);
+        if (m && names.has(m[1])) {
+          const name = m[1];
+          const exprStart = i + m[0].length;
+          const stmtEnd = this.findTopLevelStatementEnd(code, exprStart);
+          const expr = code.slice(exprStart, stmtEnd).trim();
+          out.push(`var ${name} = ('${name}' in scope) ? scope.${name} : (${expr});`);
+          i = stmtEnd + 1;
+          while (i < n && code[i] !== "\n") i++;
+          if (i < n) {
+            out.push("\n");
+            i++;
+          }
+          continue;
+        }
+      }
+      out.push(code[i++]);
+    }
+    return out.join("");
   }
   /**
    * Execute user code and extract init/update/render/input handlers from scope
@@ -19466,6 +19671,9 @@ class StorieEngine {
     __publicField(this, "lastShaderCellSize", null);
     // Deferred shader chain (applied after WebGPU init)
     __publicField(this, "pendingShaderChain", null);
+    // Desired pixel dimensions from frontmatter `width:` / `height:`.
+    // Used by the host page to scale the canvas to fit the viewport.
+    __publicField(this, "frontmatterViewport", null);
     // 3D Canvas system
     __publicField(this, "worldsRenderer", null);
     __publicField(this, "camera3D", null);
@@ -19764,10 +19972,12 @@ class StorieEngine {
    * When these disagree, the browser scales the canvas, causing stretched output.
    */
   syncCanvasElementSizeToBuffer() {
-    const w = this.canvas.width;
-    const h = this.canvas.height;
-    if (w > 0) this.canvas.style.width = `${w}px`;
-    if (h > 0) this.canvas.style.height = `${h}px`;
+    if (typeof window === "undefined") return;
+    const dpr = window.devicePixelRatio || 1;
+    const logicalW = this.canvas.width / dpr;
+    const logicalH = this.canvas.height / dpr;
+    if (logicalW > 0) this.canvas.style.width = `${logicalW}px`;
+    if (logicalH > 0) this.canvas.style.height = `${logicalH}px`;
   }
   initHostSync(cfg) {
     if (typeof window === "undefined" || typeof URL === "undefined") return;
@@ -20225,6 +20435,10 @@ class StorieEngine {
         write: (x, y, text, fg, bg) => {
           const layer = this.layers.getActive();
           layer.write(x, y, text, fg, bg);
+        },
+        fill: (x, y, w, h, char = " ", fg, bg) => {
+          const layer = this.layers.getActive();
+          layer.fill(x, y, w, h, char, fg, bg);
         },
         clear: (bgColor) => {
           const layer = this.layers.getActive();
@@ -21323,6 +21537,32 @@ class StorieEngine {
          *   random.toSeed(42.7)      // → 42
          */
         toSeed: (val) => toSfxSeed(val)
+      },
+      /**
+       * Host system utilities — execute in the trusted engine context so
+       * the SES sandbox never needs access to `document` or `URL`.
+       */
+      sys: {
+        /**
+         * Trigger a browser "Save As" download with raw bytes.
+         * Creates a temporary object URL, clicks a hidden anchor, then revokes.
+         */
+        download: (bytes, filename, mime) => {
+          try {
+            const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+            const blob = new Blob([ab], { type: mime ?? "application/octet-stream" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = String(filename ?? "download");
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 1e4);
+          } catch (e) {
+            console.warn("[sys.download] failed:", e);
+          }
+        }
       },
       /**
        * Safely read a URL query parameter by name.
@@ -22625,6 +22865,12 @@ class StorieEngine {
           this.pendingShaderChain = { chainStr: shadersStr, source: "frontmatter" };
         }
       }
+      const fmW = Number(parsed.metadata.width);
+      const fmH = Number(parsed.metadata.height);
+      this.frontmatterViewport = Number.isFinite(fmW) && fmW > 0 && Number.isFinite(fmH) && fmH > 0 ? { width: fmW, height: fmH } : null;
+      if (this.frontmatterViewport) {
+        console.log(`  Viewport constraint (frontmatter): ${fmW}x${fmH}px`);
+      }
       const frontmatterKeys = Object.keys(parsed.metadata);
       if (frontmatterKeys.length > 0) {
         console.log(`  Exposed ${frontmatterKeys.length} frontmatter variable(s) as globals:`, frontmatterKeys.join(", "));
@@ -22876,10 +23122,11 @@ class StorieEngine {
       if (scopeVarNames.length > 0 && globalBlocks.length > 0) {
         console.log(`  Re-executing global blocks to create closures for ${scopeVarNames.length} variables`);
         const exports$1 = scopeVarNames.map((k) => `  try { scope.${k} = ${k}; } catch (e) {}`).join("\n");
-        const apiParams = "term, termCanvas, layer, key, mouse, drop, doc, host, scene, tui, gui, getStyle, theme, modules, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY, termWidth, termHeight, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, worlds";
+        const apiParams = "term, termCanvas, layer, key, mouse, drop, doc, host, scene, tui, gui, getStyle, theme, modules, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii, drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, worlds";
         for (const code of globalBlocks) {
+          const persistedCode = this.sandbox.rewriteVarsForPersistence(code, scopeVarNames);
           const wrappedCode = `(function(${apiParams}) {
-${code}
+${persistedCode}
 ${exports$1}
 })(${apiParams});`;
           this.sandbox.executeCodeBlock(documentId, wrappedCode, true);
@@ -23412,21 +23659,12 @@ ${exportVars}
     const view = getCameraViewMatrix(this.camera3D);
     const proj = getCameraProjectionMatrix(this.camera3D, aspect);
     const viewProj = mat4Multiply(proj, view);
-    const fontSizePx = 16;
+    const atlas = this.renderer instanceof WebGPURenderer ? this.renderer.getAtlas() : null;
+    const fontSizePx = atlas ? atlas.getFontSize() : 16;
     const fontStack = "'3270-regular', 'Consolas', 'Monaco', monospace";
     const texturePadding = 12;
-    const measureCanvas = new OffscreenCanvas(1, 1);
-    const measureCtx = measureCanvas.getContext("2d", { alpha: true });
-    if (!measureCtx) return;
-    measureCtx.textBaseline = "top";
-    measureCtx.textAlign = "left";
-    measureCtx.font = `${fontSizePx}px ${fontStack}`;
-    const m = measureCtx.measureText("M");
-    const measuredCharW = Math.max(1, Math.ceil(m.width));
-    const measuredCharH = Math.max(
-      1,
-      m.fontBoundingBoxAscent && m.fontBoundingBoxDescent ? Math.ceil(m.fontBoundingBoxAscent + m.fontBoundingBoxDescent) : Math.ceil(fontSizePx * 1.25)
-    );
+    const measuredCharW = Math.max(1, atlas ? atlas.getCharWidth() : 9);
+    const measuredCharH = Math.max(1, atlas ? atlas.getCharHeight() : 20);
     const baseLineHeight = Math.max(1, Math.round(measuredCharH * 1.25));
     for (const layout of this.section3DLayouts) {
       if (!layout.visible) continue;
@@ -23436,8 +23674,8 @@ ${exportVars}
       if (layout.texture) continue;
       const minW = 256;
       const minH = 128;
-      const maxW = 1024;
-      const maxH = 1024;
+      const maxW = 2048;
+      const maxH = 2048;
       const desiredW = Math.round(layout.width * measuredCharW + texturePadding * 2);
       const desiredH = Math.round(layout.height * baseLineHeight + texturePadding * 2);
       const widthPx = Math.max(minW, Math.min(maxW, desiredW));
@@ -23949,6 +24187,15 @@ ${content}`.trim();
     }
   }
   /**
+   * Return the pixel dimensions requested by the current document's frontmatter
+   * (`width:` / `height:` keys), or `null` if not specified.
+   * The host page uses this to scale the canvas to fit the viewport while
+   * preserving the requested aspect ratio.
+   */
+  getViewportConstraint() {
+    return this.frontmatterViewport;
+  }
+  /**
    * Resize the engine
    */
   resize(width, height) {
@@ -24137,6 +24384,8 @@ ${content}`.trim();
       }
       return;
     }
+    if (action === "press") this.audioContext.resume().catch(() => {
+    });
     const doc = this.getActiveDocument();
     let handledBy3D = false;
     if (action === "press" && this.worldsEnabled && this.camera3D && this.worldsLinkKeyHandlingEnabled) {
@@ -24191,6 +24440,8 @@ ${content}`.trim();
       e.preventDefault();
       return;
     }
+    if (action === "press") this.audioContext.resume().catch(() => {
+    });
     const doc = this.getActiveDocument();
     const rect = this.canvas.getBoundingClientRect();
     const cssX = e.clientX - rect.left;

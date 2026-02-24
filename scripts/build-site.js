@@ -2,7 +2,7 @@
  * Build script: Copy site files to docs/ after library build
  */
 
-import { copyFileSync, mkdirSync, readdirSync, statSync, existsSync, writeFileSync } from 'fs';
+import { copyFileSync, mkdirSync, readdirSync, statSync, existsSync, writeFileSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -47,6 +47,22 @@ console.log('📦 Building S|torie...\n');
 
 console.log('Copying site files to docs/...');
 copyDir(siteDir, docsDir);
+
+// Bust caches for the JS library import in docs/index.html.
+// Tauri/WebView environments can aggressively cache module URLs; if the query
+// string is fixed, a rebuild may still load an old bundle.
+try {
+  const indexPath = join(docsDir, 'index.html');
+  if (existsSync(indexPath)) {
+    const buildId = new Date().toISOString();
+    const html = readFileSync(indexPath, 'utf8');
+    const nextHtml = html.replace(/__BUILD_ID__/g, buildId);
+    writeFileSync(indexPath, nextHtml);
+    console.log(`  Updated: index.html cache-buster (?v=${buildId})`);
+  }
+} catch (e) {
+  console.warn('  ⚠ Failed to update index.html cache-buster:', e);
+}
 
 // Create warning README
 const warningReadme = `# ⚠️ AUTO-GENERATED DIRECTORY

@@ -69,6 +69,7 @@ export interface SandboxAPI {
   // Terminal text API
   term: {
     write: (x: number, y: number, text: string, fg?: any, bg?: any) => void;
+    fill: (x: number, y: number, w: number, h: number, char?: string, fg?: any, bg?: any) => void;
     clear: (bgColor?: any) => void;
     layerID: string;
   };
@@ -222,7 +223,26 @@ export interface SandboxAPI {
      */
     toSeed: (val: number | string) => number;
   };
-  
+
+  /**
+   * Host system utilities. Runs in trusted context — outside the SES sandbox.
+   * Safe to use for file I/O that must touch the browser environment.
+   */
+  sys: {
+    /**
+     * Trigger a browser "Save As" download with the supplied bytes.
+     * The operation is invisible to the sandbox; no URL or DOM handle is returned.
+     *
+     * @param bytes    Raw file data to download.
+     * @param filename Suggested filename shown in the browser save dialog.
+     * @param mime     MIME type (defaults to 'application/octet-stream').
+     *
+     * Example:
+     *   sys.download(modifiedMp3Bytes, 'track.mp3', 'audio/mpeg');
+     */
+    download: (bytes: Uint8Array, filename: string, mime?: string) => void;
+  };
+
   // Native Browser APIs
   audio: {
     // Shared AudioContext instance
@@ -783,6 +803,13 @@ export class ScriptSandbox {
         termCanvas: this.api.termCanvas,
         layer: this.api.layer,
         key: this.api.key,
+        // Polling key-state map: keys.has('ArrowLeft'), keys.isDown('Space')
+        keys: {
+          has:      (k: string) => apiRef.key.down(k),
+          isDown:   (k: string) => apiRef.key.down(k),
+          pressed:  (k: string) => apiRef.key.pressed(k),
+          released: (k: string) => apiRef.key.released(k),
+        },
         mouse: this.api.mouse,
 
         // Dropped file API (binary-safe)
@@ -988,7 +1015,10 @@ export class ScriptSandbox {
 
         // Seeded / random utilities (same PRNG as the engine)
         random: this.api.random,
-        
+
+        // Host system utilities (download, etc.) — run in trusted context
+        sys: this.api.sys,
+
         // NO ACCESS TO:
         // - fetch (network)
         // - localStorage (storage)
@@ -1048,34 +1078,48 @@ export class ScriptSandbox {
   
   /**
    * Auto-binding for initialization blocks (raw `js` blocks only)
-   * 
+   *
    * Transforms top-level variable declarations to scope assignments:
-   * - `let x = 10;` → `scope.x = scope.x ?? 10;`
+   * - `var x = 10;`   → `scope.x = ('x' in scope) ? scope.x : (10);`   (persists null/0/false)
+   * - `let x = 10;`   → `scope.x = scope.x ?? (10);`                   (utilities / constants)
    * - `function foo() {}` → `scope.foo = function foo() {}`
-   * 
+   *
+   * `var` uses the strict `'in scope'` guard so that null, false, 0, etc. are
+   * treated as valid persisted values and are never overwritten on hot-reload.
+   * `let`/`const` use `??` — they're typically utility functions / pure constants
+   * where re-initialization is fine.
+   *
    * This ONLY applies to raw `js` blocks (no lifecycle annotation).
    * Lifecycle blocks (on:*) are wrapped by the engine with proper
    * import/export, so local vars stay local.
-   * 
+   *
    * Variables inside functions, loops, etc. remain untouched (only flush-left).
    */
   private autoBindVariables(code: string): string {
     let transformedCode = code;
-    
-    // Transform ONLY top-level (flush-left) variable declarations
-    // Note: The ^ anchor ensures we only match at the start of lines
-    
-    // Transform: let x = value; -> scope.x = scope.x ?? (value);
+
+    // Transform ONLY top-level (flush-left) variable declarations.
+    // The ^ anchor + gm flags ensure we only match at the start of lines.
+
+    // `var NAME = value;`  →  scope-guarded with strict 'in' check (preserves null/0/false)
     transformedCode = transformedCode.replace(
-      /^(let|const|var)\s+(\w+)\s*=\s*([^;]+);/gm,
+      /^var\s+(\w+)\s*=\s*([^;]+);/gm,
+      (_m, varName, value) => {
+        console.log(`  📝 Persisting var: ${varName}`);
+        return `scope.${varName} = ('${varName}' in scope) ? scope.${varName} : (${value});`;
+      }
+    );
+
+    // `let/const NAME = value;`  →  nullish-coalescing (re-init is fine for constants/utilities)
+    transformedCode = transformedCode.replace(
+      /^(let|const)\s+(\w+)\s*=\s*([^;]+);/gm,
       (_m, _kw, varName, value) => {
         console.log(`  📝 Persisting variable: ${varName}`);
-        // Use ?? to preserve existing scope values (allows re-initialization)
         return `scope.${varName} = scope.${varName} ?? (${value});`;
       }
     );
-    
-    // Transform: let x; -> scope.x = scope.x ?? undefined;
+
+    // `var/let/const NAME;`  →  undefined sentinel
     transformedCode = transformedCode.replace(
       /^(let|const|var)\s+(\w+)\s*;/gm,
       (_m, _kw, varName) => {
@@ -1083,8 +1127,8 @@ export class ScriptSandbox {
         return `scope.${varName} = scope.${varName} ?? undefined;`;
       }
     );
-    
-    // Transform: function foo(...) { -> scope.foo = function foo(...) {
+
+    // `function foo(...) {`  →  `scope.foo = function foo(...) {`
     transformedCode = transformedCode.replace(
       /^function\s+(\w+)\s*\(/gm,
       (_m, funcName) => {
@@ -1092,8 +1136,119 @@ export class ScriptSandbox {
         return `scope.${funcName} = function ${funcName}(`;
       }
     );
-    
+
     return transformedCode;
+  }
+
+  /**
+   * Walk forward from `start` in `code` and return the index of the first `;`
+   * that is at bracket-depth 0 (not inside `()`, `[]`, `{}`, strings, or comments).
+   * Returns `code.length` if no such semicolon is found (handles ASI / trailing
+   * expressions at end of file).
+   */
+  private findTopLevelStatementEnd(code: string, start: number): number {
+    let i = start;
+    let depth = 0;
+    let inLineComment = false;
+    let inBlockComment = false;
+    let inString: null | '"' | "'" | '`' = null;
+
+    while (i < code.length) {
+      const c  = code[i];
+      const c2 = code[i + 1];
+
+      if (inLineComment) {
+        if (c === '\n') inLineComment = false;
+        i++; continue;
+      }
+
+      if (inBlockComment) {
+        if (c === '*' && c2 === '/') { inBlockComment = false; i += 2; continue; }
+        i++; continue;
+      }
+
+      if (inString) {
+        if (c === '\\') { i += 2; continue; } // escape sequence
+        if (inString === '`') {
+          if (c === '`') { inString = null; i++; continue; }
+          if (c === '$' && c2 === '{') { depth++; i += 2; continue; } // template interpolation
+        } else {
+          if (c === inString) { inString = null; i++; continue; }
+        }
+        i++; continue;
+      }
+
+      // Not inside a string or comment.
+      if (c === '/' && c2 === '/') { inLineComment = true;  i += 2; continue; }
+      if (c === '/' && c2 === '*') { inBlockComment = true; i += 2; continue; }
+      if (c === '"' || c === "'" || c === '`') { inString = c as any; i++; continue; }
+
+      if (c === '(' || c === '[' || c === '{') { depth++; i++; continue; }
+      if (c === ')' || c === ']' || c === '}') {
+        if (depth > 0) depth--;
+        i++; continue;
+      }
+
+      if (c === ';' && depth === 0) return i;
+
+      i++;
+    }
+
+    return i; // end of input (no semicolon found)
+  }
+
+  /**
+   * Rewrite top-level `var NAME = EXPR` for known scope vars so that the
+   * IIFE-local binding is seeded from the already-persisted scope value on
+   * hot-reload, falling back to the original expression only on first load.
+   *
+   * Before: `var state = { score: 0, buf: null };`
+   * After:  `var state = ('state' in scope) ? scope.state : ({ score: 0, buf: null });`
+   *
+   * This correctly handles multiline initializers (objects, arrays, arrow fns)
+   * because depth is tracked through the full expression, not per-line.
+   * It also handles `null`, `false`, `0`, `''` as valid persisted values.
+   *
+   * Only `var` declarations are rewritten — `const`/`let` are utilities/constants
+   * whose re-initialization on hot-reload is intentional.
+   */
+  rewriteVarsForPersistence(code: string, varNames: string[]): string {
+    if (varNames.length === 0) return code;
+    const names = new Set(varNames);
+
+    const out: string[] = [];
+    let i = 0;
+    const n = code.length;
+
+    while (i < n) {
+      // We only attempt a rewrite at the start of a line (column 0).
+      const atLineStart = i === 0 || code[i - 1] === '\n';
+
+      if (atLineStart) {
+        const remaining = code.slice(i);
+        const m = /^var\s+(\w+)\s*=\s*/.exec(remaining);
+
+        if (m && names.has(m[1])) {
+          const name     = m[1];
+          const exprStart = i + m[0].length;
+          const stmtEnd   = this.findTopLevelStatementEnd(code, exprStart);
+          const expr      = code.slice(exprStart, stmtEnd).trim();
+
+          out.push(`var ${name} = ('${name}' in scope) ? scope.${name} : (${expr});`);
+
+          // Advance past the semicolon, then consume the rest of the line
+          // (which should be empty / just whitespace) and the newline itself.
+          i = stmtEnd + 1; // skip `;`
+          while (i < n && code[i] !== '\n') i++; // skip trailing whitespace on line
+          if (i < n) { out.push('\n'); i++; }     // re-emit newline
+          continue;
+        }
+      }
+
+      out.push(code[i++]);
+    }
+
+    return out.join('');
   }
   
   /**

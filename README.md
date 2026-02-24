@@ -60,7 +60,7 @@ https://maddestlabs.github.io/storie?content=browser:my-draft
 
 ## Video Export
 
-Video export is now built in. Access Export panel with `CTRL-SHIFT-E`. The feature only works with local filesystem which is required for feasible storage. It works from a locally hosted repo; just clone the repo and serve /docs/index.html with any basic web server. Or more easily, use Codespaces directly on GitHub (no download needed).
+Video export uses browser tech to render at any resolution and frame rate but it requires file system access for feasible storage so it only works when hosted locally or via GitHub Codespaces. Just clone the repo and serve /docs/index.html with any basic web server. Then access Export panel with `CTRL-SHIFT-E`.
 
 ## History
 

@@ -73,14 +73,17 @@ export class Canvas2DRenderer {
   }
 
   private setupCanvas(): void {
-    this.canvas.width = this.width * this.cellWidth;
-    this.canvas.height = this.height * this.cellHeight;
-    
+    // Canvas dimensions are managed externally (viewport-driven, DPR-aware).
+    // Apply the device pixel ratio as a context transform so all draw calls
+    // are specified in logical (CSS) pixels and rendered at physical resolution.
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
     // Configure context
     this.ctx.font = `${this.fontSize}px ${this.fontFamily}`;
     this.ctx.textBaseline = 'top';
     this.ctx.textAlign = 'left';
-    
+
     // Enable smoother text rendering
     this.ctx.imageSmoothingEnabled = true;
   }
@@ -88,7 +91,16 @@ export class Canvas2DRenderer {
   resize(width: number, height: number): void {
     this.width = width;
     this.height = height;
+    // Re-apply context transform in case the canvas buffer was resized externally.
     this.setupCanvas();
+  }
+
+  getCharWidth(): number {
+    return this.cellWidth;
+  }
+
+  getCharHeight(): number {
+    return this.cellHeight;
   }
 
   getWidth(): number {
