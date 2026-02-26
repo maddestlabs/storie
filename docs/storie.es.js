@@ -10110,6 +10110,347 @@ function extractWGSLBlocks(source) {
   }
   return shaders;
 }
+function parseTimestamp(ts) {
+  const s = ts.trim().replace(",", ".");
+  const parts = s.split(":");
+  if (parts.length === 3) {
+    const h = parseFloat(parts[0]);
+    const m = parseFloat(parts[1]);
+    const sec2 = parseFloat(parts[2]);
+    if (Number.isFinite(h) && Number.isFinite(m) && Number.isFinite(sec2))
+      return Math.round((h * 3600 + m * 60 + sec2) * 1e3);
+  } else if (parts.length === 2) {
+    const m = parseFloat(parts[0]);
+    const sec2 = parseFloat(parts[1]);
+    if (Number.isFinite(m) && Number.isFinite(sec2))
+      return Math.round((m * 60 + sec2) * 1e3);
+  }
+  const sec = parseFloat(s);
+  if (Number.isFinite(sec)) return Math.round(sec * 1e3);
+  return NaN;
+}
+function parseTTMLTime(expr) {
+  const s = expr.trim();
+  if (!s) return NaN;
+  const metricMatch = s.match(/^(\d+(?:\.\d+)?)(ms|s|t|f|h|m)$/i);
+  if (metricMatch) {
+    const val = parseFloat(metricMatch[1]);
+    const unit = metricMatch[2].toLowerCase();
+    if (unit === "ms") return Math.round(val);
+    if (unit === "s") return Math.round(val * 1e3);
+    if (unit === "t") return Math.round(val / 1e4);
+    if (unit === "h") return Math.round(val * 36e5);
+    if (unit === "m") return Math.round(val * 6e4);
+    if (unit === "f") return Math.round(val / 30 * 1e3);
+  }
+  const colonParts = s.split(":");
+  if (colonParts.length >= 3) {
+    const h = parseFloat(colonParts[0]);
+    const m = parseFloat(colonParts[1]);
+    const secStr = colonParts[2].replace(",", ".");
+    const sec = parseFloat(secStr);
+    if (Number.isFinite(h) && Number.isFinite(m) && Number.isFinite(sec))
+      return Math.round((h * 3600 + m * 60 + sec) * 1e3);
+  }
+  return NaN;
+}
+function stripTags(s) {
+  return s.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+}
+function decodeEntities(s) {
+  return s.replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&apos;/gi, "'").replace(/&quot;/gi, '"').replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+}
+function finish(entries2) {
+  return entries2.filter((e) => e.text.trim().length > 0).sort((a, b) => a.ms - b.ms);
+}
+function parseTimedNative(text) {
+  const entries2 = [];
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    const sep = t.indexOf("|");
+    if (sep < 0) continue;
+    const ms = parseFloat(t.slice(0, sep).trim());
+    if (!Number.isFinite(ms) || ms < 0) continue;
+    entries2.push({ ms, text: t.slice(sep + 1) });
+  }
+  return finish(entries2);
+}
+function parseSRT(text) {
+  const entries2 = [];
+  const blocks = text.trim().split(/\n\s*\n/);
+  for (const block of blocks) {
+    const lines = block.trim().split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lines.length < 2) continue;
+    let tsLine = lines[0];
+    let textStart = 1;
+    if (!tsLine.includes("-->")) {
+      tsLine = lines[1] ?? "";
+      textStart = 2;
+    }
+    if (!tsLine.includes("-->")) continue;
+    const [startStr] = tsLine.split("-->");
+    const ms = parseTimestamp((startStr == null ? void 0 : startStr.trim()) ?? "");
+    if (isNaN(ms)) continue;
+    const textLines = lines.slice(textStart).join(" ");
+    entries2.push({ ms, text: stripTags(textLines) });
+  }
+  return finish(entries2);
+}
+function parseWebVTT(text) {
+  var _a;
+  const entries2 = [];
+  const src = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const blocks = src.trim().split(/\n\s*\n/);
+  for (const block of blocks) {
+    const lines = block.trim().split("\n").map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) continue;
+    if (lines[0].startsWith("WEBVTT") || lines[0].startsWith("NOTE") || lines[0].startsWith("STYLE") || lines[0].startsWith("REGION")) continue;
+    let tsLine = "";
+    let textStart = 0;
+    for (let i = 0; i < Math.min(lines.length, 2); i++) {
+      if (lines[i].includes("-->")) {
+        tsLine = lines[i];
+        textStart = i + 1;
+        break;
+      }
+    }
+    if (!tsLine) continue;
+    const tsParts = tsLine.split("-->");
+    const ms = parseTimestamp(((_a = tsParts[0]) == null ? void 0 : _a.trim()) ?? "");
+    if (isNaN(ms)) continue;
+    const textLines = lines.slice(textStart).join(" ");
+    entries2.push({ ms, text: stripTags(textLines) });
+  }
+  return finish(entries2);
+}
+function parseTTML(text) {
+  const entries2 = [];
+  const divRe = /<div\b([^>]*)>([\s\S]*?)<\/div>/gi;
+  const pRe = /<p\b([^>]*)>([\s\S]*?)<\/p>/gi;
+  const attrRe = /\b(begin|dur|end|timeContainer)\s*=\s*["']([^"']*)["']/gi;
+  function extractAttrs(attrStr) {
+    const out = {};
+    let m;
+    attrRe.lastIndex = 0;
+    while ((m = attrRe.exec(attrStr)) !== null)
+      out[m[1].toLowerCase()] = m[2];
+    return out;
+  }
+  function processBlock(htmlFragment, divOffsetMs) {
+    pRe.lastIndex = 0;
+    let pm;
+    while ((pm = pRe.exec(htmlFragment)) !== null) {
+      const attrs = extractAttrs(pm[1]);
+      const begin = attrs["begin"] ? parseTTMLTime(attrs["begin"]) : NaN;
+      if (isNaN(begin)) continue;
+      const ms = divOffsetMs + begin;
+      const raw = decodeEntities(
+        (pm[2] ?? "").replace(/<br\s*\/?>/gi, " ").replace(/<[^>]*>/g, "")
+      ).replace(/\s+/g, " ").trim();
+      if (raw) entries2.push({ ms, text: raw });
+    }
+  }
+  divRe.lastIndex = 0;
+  let dm;
+  let foundDivs = false;
+  while ((dm = divRe.exec(text)) !== null) {
+    foundDivs = true;
+    const divAttrs = extractAttrs(dm[1]);
+    const divOffset = divAttrs["begin"] ? parseTTMLTime(divAttrs["begin"]) || 0 : 0;
+    processBlock(dm[2], divOffset);
+  }
+  if (!foundDivs) processBlock(text, 0);
+  return finish(entries2);
+}
+function parseWhisperJSON(obj) {
+  const entries2 = [];
+  const segments = obj["segments"];
+  if (!Array.isArray(segments)) return entries2;
+  for (const seg of segments) {
+    const start = Number(seg["start"]);
+    const t = String(seg["text"] ?? "").trim();
+    if (Number.isFinite(start) && t)
+      entries2.push({ ms: Math.round(start * 1e3), text: t });
+  }
+  return finish(entries2);
+}
+const WORDS_PER_LINE = 8;
+const WORD_BREAK_GAP_MS = 600;
+function groupWords(words, startKey, wordKey, msScale) {
+  const entries2 = [];
+  let lineWords = [];
+  let lineStart = NaN;
+  let prevEnd = NaN;
+  function flush() {
+    if (lineWords.length && Number.isFinite(lineStart))
+      entries2.push({ ms: Math.round(lineStart * msScale), text: lineWords.join(" ") });
+    lineWords = [];
+    lineStart = NaN;
+    prevEnd = NaN;
+  }
+  for (const w of words) {
+    const word = String(w[wordKey] ?? w["text"] ?? w["word"] ?? "").trim();
+    const start = Number(w[startKey] ?? w["start"] ?? w["startTime"] ?? 0);
+    const end = Number(w["end"] ?? w["endTime"] ?? w["duration"] ?? start);
+    if (!word || !Number.isFinite(start)) continue;
+    const startMs = start * msScale;
+    if (!lineWords.length) {
+      lineStart = start;
+    } else if (startMs - prevEnd * msScale > WORD_BREAK_GAP_MS || lineWords.length >= WORDS_PER_LINE) {
+      flush();
+      lineStart = start;
+    }
+    lineWords.push(word);
+    prevEnd = end;
+  }
+  flush();
+  return entries2;
+}
+function parseASRJSON(obj) {
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+  if (Array.isArray(obj["segments"]) && ((_b = (_a = obj["segments"][0]) == null ? void 0 : _a.hasOwnProperty) == null ? void 0 : _b.call(_a, "start"))) {
+    const result = parseWhisperJSON(obj);
+    if (result.length) return result;
+  }
+  if (Array.isArray(obj["utterances"])) {
+    const entries2 = [];
+    for (const u of obj["utterances"]) {
+      const ms = Number(u["start"]);
+      const t = String(u["text"] ?? "").trim();
+      if (Number.isFinite(ms) && t) entries2.push({ ms, text: t });
+    }
+    if (entries2.length) return finish(entries2);
+  }
+  if (Array.isArray(obj["words"]) && obj["words"].length) {
+    const firstStart = Number(((_c = obj["words"][0]) == null ? void 0 : _c["start"]) ?? 0);
+    const msScale = firstStart > 1e3 ? 1 : 1e3;
+    const result = groupWords(obj["words"], "start", "text", msScale);
+    if (result.length) return finish(result);
+  }
+  if (Array.isArray(obj["monologues"])) {
+    const entries2 = [];
+    for (const mono of obj["monologues"]) {
+      const elems = mono["elements"];
+      if (!Array.isArray(elems)) continue;
+      const words = elems.filter((e) => e["type"] === "text" || !e["type"]);
+      const result = groupWords(words, "ts", "value", 1e3);
+      entries2.push(...result);
+    }
+    if (entries2.length) return finish(entries2);
+  }
+  if (Array.isArray(obj["results"])) {
+    const entries2 = [];
+    for (const res of obj["results"]) {
+      const alts = res["alternatives"];
+      if (!Array.isArray(alts) || !alts.length) continue;
+      const alt = alts[0];
+      if (Array.isArray(alt["words"])) {
+        const words = alt["words"].map((w) => {
+          var _a2, _b2, _c2, _d2;
+          return {
+            start: Number(((_a2 = w["startTime"]) == null ? void 0 : _a2.seconds) ?? 0) + Number(((_b2 = w["startTime"]) == null ? void 0 : _b2.nanos) ?? 0) / 1e9,
+            end: Number(((_c2 = w["endTime"]) == null ? void 0 : _c2.seconds) ?? 0) + Number(((_d2 = w["endTime"]) == null ? void 0 : _d2.nanos) ?? 0) / 1e9,
+            text: String(w["word"] ?? "")
+          };
+        });
+        entries2.push(...groupWords(words, "start", "text", 1e3));
+      } else if (typeof alt["transcript"] === "string" && alt["transcript"].trim()) {
+        entries2.push({ ms: 0, text: alt["transcript"].trim() });
+      }
+    }
+    if (entries2.length) return finish(entries2);
+  }
+  if (Array.isArray(obj["recognizedPhrases"])) {
+    const entries2 = [];
+    for (const p of obj["recognizedPhrases"]) {
+      const ticks = Number(p["offsetInTicks"] ?? p["offset"] ?? NaN);
+      let ms;
+      if (Number.isFinite(ticks)) {
+        ms = Math.round(ticks / 1e4);
+      } else {
+        const offsetStr = p["offset"];
+        ms = typeof offsetStr === "string" ? parseTimestamp(offsetStr) : NaN;
+      }
+      if (isNaN(ms)) continue;
+      const nBest = p["nBest"];
+      const t = Array.isArray(nBest) && nBest.length ? String(((_d = nBest[0]) == null ? void 0 : _d["lexical"]) ?? ((_e = nBest[0]) == null ? void 0 : _e["display"]) ?? "") : String(p["text"] ?? "");
+      if (t.trim()) entries2.push({ ms, text: t.trim() });
+    }
+    if (entries2.length) return finish(entries2);
+  }
+  try {
+    const chan = (_i = (_h = (_g = (_f = obj["results"]) == null ? void 0 : _f["channels"]) == null ? void 0 : _g[0]) == null ? void 0 : _h["alternatives"]) == null ? void 0 : _i[0];
+    if (chan) {
+      const sentences = (_k = (_j = chan["paragraphs"]) == null ? void 0 : _j["paragraphs"]) == null ? void 0 : _k.flatMap((p) => p["sentences"] ?? []);
+      if (Array.isArray(sentences) && sentences.length) {
+        const entries2 = sentences.map((s) => ({
+          ms: Math.round(Number(s["start"] ?? 0) * 1e3),
+          text: String(s["text"] ?? "").trim()
+        })).filter((e) => e.text);
+        if (entries2.length) return finish(entries2);
+      }
+      if (Array.isArray(chan["words"])) {
+        const result = groupWords(chan["words"], "start", "word", 1e3);
+        if (result.length) return finish(result);
+      }
+    }
+  } catch {
+  }
+  if (Array.isArray(obj)) {
+    const arr = obj;
+    const entries2 = [];
+    for (const item of arr) {
+      const start = Number(item["start"] ?? item["offset"] ?? item["begin"] ?? NaN);
+      const t = String(item["text"] ?? item["transcript"] ?? item["content"] ?? "").trim();
+      if (Number.isFinite(start) && t) {
+        const msScale = start > 1e3 ? 1 : 1e3;
+        entries2.push({ ms: Math.round(start * msScale), text: t });
+      }
+    }
+    if (entries2.length) return finish(entries2);
+  }
+  return [];
+}
+function parseTimedJSON(text) {
+  let obj;
+  try {
+    obj = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  if (typeof obj !== "object" || obj === null) return [];
+  if ("segments" in obj) return parseWhisperJSON(obj);
+  return parseASRJSON(obj);
+}
+function detectTimedFormat(text) {
+  const head = text.trimStart().slice(0, 256);
+  if (/^WEBVTT/i.test(head)) return "vtt";
+  if (/^<\?xml|^<tt[\s>]/i.test(head)) return "ttml";
+  if (/^\s*\{/i.test(head) || /^\s*\[/i.test(head)) return "json";
+  if (/^\d+\s*\n\s*\d{1,2}:\d{2}:\d{2}[,\.]\d{3}\s+-->/.test(head)) return "srt";
+  if (/^\d{1,2}:\d{2}:\d{2}[,\.]\d{3}\s+-->/.test(head)) return "srt";
+  return "native";
+}
+function parseTimedFormat(text, format = "auto") {
+  const fmt = format === "auto" ? detectTimedFormat(text) : format;
+  switch (fmt) {
+    case "native":
+      return parseTimedNative(text);
+    case "srt":
+      return parseSRT(text);
+    case "vtt":
+      return parseWebVTT(text);
+    case "ttml":
+      return parseTTML(text);
+    case "whisper":
+      return parseTimedJSON(text);
+    case "json":
+      return parseTimedJSON(text);
+    default:
+      return parseTimedNative(text);
+  }
+}
 async function parseMarkdown(source) {
   const normalizedSource = source.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const expandedSource = await expandMagicBlocks(normalizedSource);
@@ -10133,13 +10474,56 @@ async function parseMarkdown(source) {
     );
   }
   const metadata = extractFrontmatter(expandedSource);
+  const timedBlocks = extractTimedBlocks(codeBlocks);
   return {
     sections,
     codeBlocks,
     metadata,
     wgslShaders,
-    blobBlocks
+    blobBlocks,
+    timedBlocks
   };
+}
+function _parseTimedMs(v2) {
+  if (v2 === void 0 || v2 === null) return void 0;
+  if (typeof v2 === "number" && Number.isFinite(v2)) return Math.max(0, v2);
+  const s = String(v2).trim().toLowerCase();
+  const msMatch = s.match(/^(\d+(?:\.\d+)?)\s*ms$/);
+  if (msMatch) return Math.max(0, parseFloat(msMatch[1]));
+  const sMatch = s.match(/^(\d+(?:\.\d+)?)\s*s$/);
+  if (sMatch) return Math.max(0, parseFloat(sMatch[1]) * 1e3);
+  const n = parseFloat(s);
+  if (Number.isFinite(n)) return Math.max(0, n);
+  return void 0;
+}
+function _parseHeadingDirective(rawTitle) {
+  const lastBrace = rawTitle.lastIndexOf("{");
+  if (lastBrace >= 0) {
+    try {
+      const jsonPart = rawTitle.slice(lastBrace);
+      const obj = JSON.parse(jsonPart);
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+        const displayTitle = rawTitle.slice(0, lastBrace).trim();
+        const timedMs = _parseTimedMs(obj["timed"]);
+        return { displayTitle, directive: obj, timedMs };
+      }
+    } catch {
+    }
+  }
+  return { displayTitle: rawTitle, directive: null, timedMs: void 0 };
+}
+function extractTimedBlocks(codeBlocks) {
+  var _a, _b;
+  const out = [];
+  for (const block of codeBlocks) {
+    if (block.lang !== "timed") continue;
+    const name = String(((_a = block.metadata) == null ? void 0 : _a["name"]) ?? "").trim();
+    const formatHint = String(((_b = block.metadata) == null ? void 0 : _b["format"]) ?? "auto").trim().toLowerCase();
+    const entries2 = parseTimedFormat(block.code, formatHint);
+    entries2.sort((a, b) => a.ms - b.ms);
+    out.push({ name, entries: entries2, startLine: block.startLine, endLine: block.endLine });
+  }
+  return out;
 }
 function extractBlobBlocks(codeBlocks) {
   var _a, _b, _c, _d;
@@ -10260,13 +10644,16 @@ function extractSections(source) {
     const endLine = nextHeading ? nextHeading.line - 1 : lines.length - 1;
     const contentLines = lines.slice(heading.line + 1, endLine + 1);
     const content = contentLines.join("\n").trim();
+    const { displayTitle, directive, timedMs } = _parseHeadingDirective(heading.title);
     const section = {
-      title: heading.title,
+      title: displayTitle,
       level: heading.level,
       content,
       startLine: heading.line,
       endLine,
-      children: []
+      children: [],
+      ...timedMs !== void 0 ? { timedMs } : {},
+      ...directive ? { directive } : {}
     };
     while (stack.length > 0 && stack[stack.length - 1].level >= heading.level) {
       stack.pop();
@@ -14083,16 +14470,68 @@ class GUISystem {
     return this.widgetManager;
   }
 }
-function createGUIAPI(getMetrics, isTrustedUserInput) {
+function createGUIAPI(getMetrics, isTrustedUserInput, getPixelScale) {
+  const safeGetScale = () => {
+    try {
+      if (typeof getPixelScale === "function") {
+        const s = getPixelScale();
+        const sx = Number(s == null ? void 0 : s.scaleX);
+        const sy = Number(s == null ? void 0 : s.scaleY);
+        if (Number.isFinite(sx) && sx > 0 && Number.isFinite(sy) && sy > 0) {
+          return { scaleX: sx, scaleY: sy };
+        }
+      }
+    } catch {
+    }
+    const dpr = typeof window !== "undefined" && window.devicePixelRatio ? Number(window.devicePixelRatio) : 1;
+    const v2 = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+    return { scaleX: v2, scaleY: v2 };
+  };
+  const scaleBounds = (bounds) => {
+    if (!bounds) return bounds;
+    const { scaleX, scaleY } = safeGetScale();
+    const x = Number(bounds.x);
+    const y = Number(bounds.y);
+    const width = Number(bounds.width);
+    const height = Number(bounds.height);
+    if (![x, y, width, height].every(Number.isFinite)) return bounds;
+    return {
+      x: x * scaleX,
+      y: y * scaleY,
+      width: width * scaleX,
+      height: height * scaleY
+    };
+  };
+  const scaleLength = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return value;
+    const { scaleX, scaleY } = safeGetScale();
+    const s = Math.max(scaleX, scaleY);
+    return n * s;
+  };
   const api = {
     _system: null,
+    _boundsSpace: "css",
     /**
      * Initialize GUI system
      * Call this in on:init
      */
-    init() {
+    init(options) {
+      this._boundsSpace = options && options.boundsSpace === "device" ? "device" : "css";
       this._system = new GUISystem();
       return this._system;
+    },
+    _normalizeConfig(config) {
+      if (!config || typeof config !== "object") return config;
+      const space = config.boundsSpace === "device" || this._boundsSpace === "device" ? "device" : "css";
+      if (space === "device") {
+        return config;
+      }
+      const next = { ...config };
+      if (next.bounds) next.bounds = scaleBounds(next.bounds);
+      if (typeof next.padding === "number") next.padding = scaleLength(next.padding);
+      if (typeof next.gap === "number") next.gap = scaleLength(next.gap);
+      return next;
     },
     /**
      * Get the current GUI system instance
@@ -14115,7 +14554,7 @@ function createGUIAPI(getMetrics, isTrustedUserInput) {
       if (!this._system) {
         throw new Error("GUI system not initialized. Call gui.init() first.");
       }
-      return this._system.createButton(config);
+      return this._system.createButton(this._normalizeConfig(config));
     },
     /**
      * Create a label widget
@@ -14133,7 +14572,7 @@ function createGUIAPI(getMetrics, isTrustedUserInput) {
       if (!this._system) {
         throw new Error("GUI system not initialized. Call gui.init() first.");
       }
-      return this._system.createLabel(config);
+      return this._system.createLabel(this._normalizeConfig(config));
     },
     /**
      * Create a checkbox widget
@@ -14151,7 +14590,7 @@ function createGUIAPI(getMetrics, isTrustedUserInput) {
       if (!this._system) {
         throw new Error("GUI system not initialized. Call gui.init() first.");
       }
-      return this._system.createCheckbox(config);
+      return this._system.createCheckbox(this._normalizeConfig(config));
     },
     /**
      * Create a slider widget
@@ -14171,7 +14610,7 @@ function createGUIAPI(getMetrics, isTrustedUserInput) {
       if (!this._system) {
         throw new Error("GUI system not initialized. Call gui.init() first.");
       }
-      return this._system.createSlider(config);
+      return this._system.createSlider(this._normalizeConfig(config));
     },
     /**
      * Create a text field widget
@@ -14180,7 +14619,7 @@ function createGUIAPI(getMetrics, isTrustedUserInput) {
       if (!this._system) {
         throw new Error("GUI system not initialized. Call gui.init() first.");
       }
-      return this._system.createTextField(config);
+      return this._system.createTextField(this._normalizeConfig(config));
     },
     /**
      * Create a text editor widget (multi-line)
@@ -14189,7 +14628,7 @@ function createGUIAPI(getMetrics, isTrustedUserInput) {
       if (!this._system) {
         throw new Error("GUI system not initialized. Call gui.init() first.");
       }
-      return this._system.createTextEditor(config);
+      return this._system.createTextEditor(this._normalizeConfig(config));
     },
     /**
      * Create a markdown view widget (flow layout inside bounds)
@@ -14198,7 +14637,7 @@ function createGUIAPI(getMetrics, isTrustedUserInput) {
       if (!this._system) {
         throw new Error("GUI system not initialized. Call gui.init() first.");
       }
-      return this._system.createMarkdownView(config);
+      return this._system.createMarkdownView(this._normalizeConfig(config));
     },
     /**
      * Create a simple layout helper container for stacking widgets.
@@ -14221,7 +14660,7 @@ function createGUIAPI(getMetrics, isTrustedUserInput) {
       if (!this._system) {
         throw new Error("GUI system not initialized. Call gui.init() first.");
       }
-      return this._system.createContainer(config);
+      return this._system.createContainer(this._normalizeConfig(config));
     },
     /**
      * Update GUI with input state (pixel coordinates)
@@ -16593,7 +17032,7 @@ function computeYawPitchFromForward(forward) {
   const pitch = Math.asin(clamp$3(-fy, -1, 1));
   return { x: pitch, y: yaw, z: 0 };
 }
-function focusOnSectionFit(camera, layout, viewportAspect, fill = 0.9, distanceLimits = {}) {
+function focusOnSectionFit(camera, layout, viewportAspect, fill = 0.9, distanceLimits = {}, options) {
   var _a, _b;
   const safeAspect = Number.isFinite(viewportAspect) && viewportAspect > 0 ? viewportAspect : 1;
   const safeFill = clamp$3(fill, 0.05, 0.99);
@@ -16615,11 +17054,23 @@ function focusOnSectionFit(camera, layout, viewportAspect, fill = 0.9, distanceL
   });
   const normalWorld = vec3Normalize(mat4TransformDirection(rotOnly, { x: 0, y: 0, z: 1 }));
   const forward = vec3Scale(normalWorld, -1);
-  const rotation = computeYawPitchFromForward(forward);
+  const baseRotation = computeYawPitchFromForward(forward);
+  const positionOffset = options == null ? void 0 : options.positionOffset;
+  const rotationOffset = options == null ? void 0 : options.rotationOffset;
   const target = {
-    x: layout.transform.position.x + normalWorld.x * distance2,
-    y: layout.transform.position.y + normalWorld.y * distance2,
-    z: layout.transform.position.z + normalWorld.z * distance2
+    x: layout.transform.position.x + normalWorld.x * distance2 + ((positionOffset == null ? void 0 : positionOffset.x) ?? 0),
+    y: layout.transform.position.y + normalWorld.y * distance2 + ((positionOffset == null ? void 0 : positionOffset.y) ?? 0),
+    z: layout.transform.position.z + normalWorld.z * distance2 + ((positionOffset == null ? void 0 : positionOffset.z) ?? 0)
+  };
+  if (options == null ? void 0 : options.keepRotation) {
+    camera.targetRotation = null;
+    setCameraTarget(camera, target);
+    return;
+  }
+  const rotation = {
+    x: baseRotation.x + ((rotationOffset == null ? void 0 : rotationOffset.x) ?? 0),
+    y: baseRotation.y + ((rotationOffset == null ? void 0 : rotationOffset.y) ?? 0),
+    z: baseRotation.z + ((rotationOffset == null ? void 0 : rotationOffset.z) ?? 0)
   };
   setCameraTarget(camera, target, rotation);
 }
@@ -16734,16 +17185,23 @@ function getDefaultWorldsConfig() {
     sectionBackground: "surface"
   };
 }
-function focusOnSection(camera, layout, distance2 = 50) {
+function focusOnSection(camera, layout, distance2 = 50, options) {
+  const positionOffset = options == null ? void 0 : options.positionOffset;
+  const rotationOffset = options == null ? void 0 : options.rotationOffset;
   const target = {
-    x: layout.transform.position.x,
-    y: layout.transform.position.y,
-    z: layout.transform.position.z + distance2
+    x: layout.transform.position.x + ((positionOffset == null ? void 0 : positionOffset.x) ?? 0),
+    y: layout.transform.position.y + ((positionOffset == null ? void 0 : positionOffset.y) ?? 0),
+    z: layout.transform.position.z + distance2 + ((positionOffset == null ? void 0 : positionOffset.z) ?? 0)
   };
+  if (options == null ? void 0 : options.keepRotation) {
+    camera.targetRotation = null;
+    setCameraTarget(camera, target);
+    return;
+  }
   const rotation = {
-    x: layout.transform.rotation.x,
-    y: layout.transform.rotation.y,
-    z: 0
+    x: layout.transform.rotation.x + ((rotationOffset == null ? void 0 : rotationOffset.x) ?? 0),
+    y: layout.transform.rotation.y + ((rotationOffset == null ? void 0 : rotationOffset.y) ?? 0),
+    z: (rotationOffset == null ? void 0 : rotationOffset.z) ?? 0
   };
   setCameraTarget(camera, target, rotation);
 }
@@ -16828,6 +17286,7 @@ class WorldsRenderer {
           cameraPos: vec4<f32>,
           cameraRight: vec4<f32>,
           cameraUp: vec4<f32>,
+          cameraForward: vec4<f32>,
           // x=hasRuledLines, y=hasPaperNoise, z=noiseStrength, w=reserved
           bgFlags: vec4<f32>,
         };
@@ -16855,16 +17314,31 @@ class WorldsRenderer {
         }
 
         fn paperCoordFromScreenUv(uv: vec2<f32>) -> vec2<f32> {
-          // Linear, camera-oriented background mapping.
-          // Uses camera right/up (projected into XY) so the paper rotates with
-          // the camera/section yaw, without ray-plane perspective warping.
-          // params1: x=viewW, y=viewH
-          let viewW = uniforms.params1.x;
-          let viewH = uniforms.params1.y;
-          let delta = (uv - vec2<f32>(0.5, 0.5)) * vec2<f32>(viewW, viewH);
-          let rightXY = uniforms.cameraRight.xy;
-          let upXY = uniforms.cameraUp.xy;
-          return uniforms.cameraPos.xy + rightXY * delta.x + upXY * delta.y;
+          // Perspective-correct mapping: cast a ray through the current pixel
+          // and intersect with a world-space XY plane at z = params1.z.
+          //
+          // params1: x=aspect, y=tanHalfFov, z=planeZ, w=reserved
+          let aspect = uniforms.params1.x;
+          let tanHalfFov = uniforms.params1.y;
+          let planeZ = uniforms.params1.z;
+
+          // NDC: x,y in [-1,1] with y up.
+          let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+          let xCam = ndc.x * aspect * tanHalfFov;
+          let yCam = ndc.y * tanHalfFov;
+
+          // Camera basis is in world space.
+          var dir = uniforms.cameraRight.xyz * xCam + uniforms.cameraUp.xyz * yCam + uniforms.cameraForward.xyz;
+          dir = normalize(dir);
+
+          // Intersect with plane z = planeZ.
+          let dz = dir.z;
+          if (abs(dz) < 1e-5) {
+            return uniforms.cameraPos.xy;
+          }
+          let t = (planeZ - uniforms.cameraPos.z) / dz;
+          let p = uniforms.cameraPos.xyz + dir * t;
+          return p.xy;
         }
 
         fn hash21(p: vec2<f32>) -> f32 {
@@ -16916,7 +17390,8 @@ class WorldsRenderer {
           let isBackground = uniforms.params0.x < 0.0;
           var outColor = texColor;
 
-          // Full-screen paper pass only (no per-card paper).
+          // Full-screen paper pass only. Section textures are rendered with a
+          // transparent background so paper shows through from behind.
           if (isBackground && uniforms.paperParams.w > 0.5) {
             let coord = paperCoordFromScreenUv(input.uv);
             outColor = sampleBackgroundAt(coord);
@@ -17144,6 +17619,7 @@ class WorldsRenderer {
     ]);
     const cameraRight = new Float32Array([viewMatrix[0], viewMatrix[4], viewMatrix[8], 0]);
     const cameraUp = new Float32Array([viewMatrix[1], viewMatrix[5], viewMatrix[9], 0]);
+    const cameraForward = new Float32Array([-viewMatrix[2], -viewMatrix[6], -viewMatrix[10], 0]);
     if (paperEnabled) {
       if (!this.backgroundTexture) {
         console.warn("WorldsRenderer missing backgroundTexture");
@@ -17168,10 +17644,9 @@ class WorldsRenderer {
           1
         ]);
         const params0 = new Float32Array([-1, -1, 0, 0]);
-        const dist = Math.max(1, Math.abs(camera.position.z));
-        const viewH = 2 * dist * Math.tan(camera.fov * 0.5);
-        const viewW = viewH * aspect;
-        const params1 = new Float32Array([viewW, viewH, dist, 0]);
+        const zVals = layouts.filter((l) => l.visible).map((l) => l.transform.position.z).sort((a, b) => a - b);
+        const planeZ = zVals.length ? zVals[zVals.length / 2 | 0] : 0;
+        const params1 = new Float32Array([aspect, Math.tan(camera.fov * 0.5), planeZ, 0]);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 0, mvp);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
@@ -17181,7 +17656,8 @@ class WorldsRenderer {
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
-        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, new Float32Array(bgFlags));
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, cameraForward);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 208, new Float32Array(bgFlags));
         const bindGroup = this.createBindGroupForTexture(this.backgroundTexture, uniformOffset);
         if (bindGroup) {
           pass.setBindGroup(0, bindGroup);
@@ -17244,7 +17720,8 @@ class WorldsRenderer {
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, new Float32Array([0, 0, 0, 0]));
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, cameraForward);
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 208, new Float32Array([0, 0, 0, 0]));
       const bindGroup = this.createBindGroupForTexture(layout.texture, uniformOffset);
       if (!bindGroup) continue;
       pass.setBindGroup(0, bindGroup);
@@ -17263,7 +17740,7 @@ class WorldsRenderer {
       entries: [
         {
           binding: 0,
-          resource: { buffer: this.uniformBuffer, offset: uniformOffset, size: 208 }
+          resource: { buffer: this.uniformBuffer, offset: uniformOffset, size: 224 }
         },
         {
           binding: 1,
@@ -20227,6 +20704,12 @@ class StorieEngine {
       const doc = engine.documents.get(docId);
       return doc && doc._stfxrStore ? doc._stfxrStore : null;
     };
+    const getTimedStore = (documentId) => {
+      const docId = engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId);
+      return doc && doc._timedStore ? doc._timedStore : null;
+    };
     const MAX_STFXR_BAKED_BYTES = 16 * 1024 * 1024;
     const estimateAudioBufferBytes2 = (buffer) => {
       const frames = buffer.length;
@@ -20558,7 +21041,13 @@ class StorieEngine {
           const d = engine.getActiveDocument();
           if (!d) return [];
           const flat = flattenSections(d.sections);
-          return flat.map((s, index) => ({ index, title: s.title, level: s.level }));
+          return flat.map((s, index) => ({
+            index,
+            title: s.title,
+            level: s.level,
+            ...s.timedMs !== void 0 ? { timedMs: s.timedMs } : {},
+            ...s.directive ? { directive: s.directive } : {}
+          }));
         },
         sectionCount: () => {
           const d = engine.getActiveDocument();
@@ -20567,6 +21056,45 @@ class StorieEngine {
         },
         outline: () => {
           return engine.getOutlineNodes();
+        },
+        timedBlock: (name) => {
+          const store = getTimedStore();
+          if (!store) return [];
+          const block = store.get(String(name));
+          return block ? block.entries.map((e) => ({ ms: e.ms, text: e.text })) : [];
+        },
+        timedBlocks: () => {
+          const store = getTimedStore();
+          if (!store) return [];
+          return Array.from(store.keys());
+        },
+        atTime: (name, timeSec) => {
+          const store = getTimedStore();
+          if (!store) return null;
+          const block = store.get(String(name));
+          if (!block || block.entries.length === 0) return null;
+          const nowMs = Number(timeSec) * 1e3;
+          let lo = 0, hi = block.entries.length - 1, result = -1;
+          while (lo <= hi) {
+            const mid = lo + hi >> 1;
+            if (block.entries[mid].ms <= nowMs) {
+              result = mid;
+              lo = mid + 1;
+            } else hi = mid - 1;
+          }
+          if (result < 0) return null;
+          const e = block.entries[result];
+          return { ms: e.ms, text: e.text };
+        },
+        setTimedBlock: (name, entries2) => {
+          const docId = engine.activeDocumentId;
+          if (!docId) return;
+          const doc = engine.documents.get(docId);
+          if (!doc) return;
+          if (!doc._timedStore) doc._timedStore = /* @__PURE__ */ new Map();
+          const store = doc._timedStore;
+          const sorted = Array.from(entries2).filter((e) => Number.isFinite(e.ms) && e.ms >= 0).sort((a, b) => a.ms - b.ms);
+          store.set(String(name), { name: String(name), entries: sorted });
         }
       },
       // Shared scene state (read-only on clients; host can write).
@@ -20666,7 +21194,21 @@ class StorieEngine {
             charHeight: (atlas == null ? void 0 : atlas.getCharHeight()) ?? 16
           };
         },
-        () => this.inputDispatchDepth > 0
+        () => this.inputDispatchDepth > 0,
+        () => {
+          try {
+            const rect = this.canvas.getBoundingClientRect();
+            const scaleX = rect.width > 0 ? this.canvas.width / rect.width : 0;
+            const scaleY = rect.height > 0 ? this.canvas.height / rect.height : 0;
+            if (Number.isFinite(scaleX) && scaleX > 0 && Number.isFinite(scaleY) && scaleY > 0) {
+              return { scaleX, scaleY };
+            }
+          } catch {
+          }
+          const dpr = typeof window !== "undefined" && window.devicePixelRatio ? Number(window.devicePixelRatio) : 1;
+          const v2 = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+          return { scaleX: v2, scaleY: v2 };
+        }
       ),
       // Theme API
       getStyle: (name) => this.getStyle(name),
@@ -21561,6 +22103,14 @@ class StorieEngine {
             setTimeout(() => URL.revokeObjectURL(url), 1e4);
           } catch (e) {
             console.warn("[sys.download] failed:", e);
+          }
+        },
+        parseTimed: (text, format) => {
+          try {
+            return parseTimedFormat(String(text ?? ""), format ?? "auto");
+          } catch (e) {
+            console.warn("[sys.parseTimed] failed:", e);
+            return [];
           }
         }
       },
@@ -22581,13 +23131,49 @@ class StorieEngine {
             if (!engine.camera3D) return;
             engine.camera3D.target = { x, y, z };
           },
-          focusOnSection: (sectionIndex, distance2 = 50) => {
+          focusOnSection: (sectionIndex, distance2 = 50, options) => {
             if (!engine.camera3D) return;
-            engine.request3DCameraFocus({ kind: "focus", sectionIndex, distance: distance2 });
+            const keepRotation = !!(options == null ? void 0 : options.keepRotation);
+            const positionOffset = options == null ? void 0 : options.positionOffset;
+            const rotationOffset = options == null ? void 0 : options.rotationOffset;
+            const normVec = (v2) => {
+              if (!v2 || typeof v2 !== "object") return void 0;
+              const x = Number(v2.x);
+              const y = Number(v2.y);
+              const z = Number(v2.z);
+              if (![x, y, z].every(Number.isFinite)) return void 0;
+              return { x, y, z };
+            };
+            engine.request3DCameraFocus({
+              kind: "focus",
+              sectionIndex,
+              distance: distance2,
+              ...keepRotation ? { keepRotation: true } : {},
+              ...normVec(positionOffset) ? { positionOffset: normVec(positionOffset) } : {},
+              ...normVec(rotationOffset) ? { rotationOffset: normVec(rotationOffset) } : {}
+            });
           },
-          focusOnSectionFit: (sectionIndex, fill = 0.9) => {
+          focusOnSectionFit: (sectionIndex, fill = 0.9, options) => {
             if (!engine.camera3D) return;
-            engine.request3DCameraFocus({ kind: "fit", sectionIndex, fill });
+            const keepRotation = !!(options == null ? void 0 : options.keepRotation);
+            const positionOffset = options == null ? void 0 : options.positionOffset;
+            const rotationOffset = options == null ? void 0 : options.rotationOffset;
+            const normVec = (v2) => {
+              if (!v2 || typeof v2 !== "object") return void 0;
+              const x = Number(v2.x);
+              const y = Number(v2.y);
+              const z = Number(v2.z);
+              if (![x, y, z].every(Number.isFinite)) return void 0;
+              return { x, y, z };
+            };
+            engine.request3DCameraFocus({
+              kind: "fit",
+              sectionIndex,
+              fill,
+              ...keepRotation ? { keepRotation: true } : {},
+              ...normVec(positionOffset) ? { positionOffset: normVec(positionOffset) } : {},
+              ...normVec(rotationOffset) ? { rotationOffset: normVec(rotationOffset) } : {}
+            });
           },
           setFOV: (fov) => {
             if (!engine.camera3D) return;
@@ -22893,6 +23479,18 @@ class StorieEngine {
           blobStore.set(name, { name, mime, encoding, data });
         }
         console.log(`  Found ${blobStore.size} blob block(s)`);
+      }
+      const timedStore = /* @__PURE__ */ new Map();
+      if (parsed.timedBlocks && parsed.timedBlocks.length > 0) {
+        for (const b of parsed.timedBlocks) {
+          const name = String(b.name ?? "").trim();
+          if (!name) continue;
+          if (timedStore.has(name)) {
+            console.warn(`  [timed] Duplicate name "${name}"; last one wins.`);
+          }
+          timedStore.set(name, { name, entries: b.entries });
+        }
+        console.log(`  Found ${timedStore.size} timed block(s)`);
       }
       const asciiStore = /* @__PURE__ */ new Map();
       for (const b of parsed.codeBlocks) {
@@ -23232,6 +23830,7 @@ ${exportVars}
         _figletStore: figletStore,
         _ansiStore: ansiStore,
         _stfxrStore: stfxrStore,
+        _timedStore: timedStore,
         _stfxrBakedStore: /* @__PURE__ */ new Map()
       });
       this.activeDocumentId = documentId;
@@ -24459,7 +25058,13 @@ ${content}`.trim();
         } else {
           this.setCurrent3DSection(picked.layout.sectionIndex);
           const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
-          focusOnSectionFit(this.camera3D, picked.layout, aspect, 0.9, { min: 60, max: 400 });
+          const style = this.lastApplied3DCameraFocus;
+          const focusOptions = style ? {
+            ...style.keepRotation ? { keepRotation: true } : {},
+            ...style.positionOffset ? { positionOffset: style.positionOffset } : {},
+            ...style.rotationOffset ? { rotationOffset: style.rotationOffset } : {}
+          } : void 0;
+          focusOnSectionFit(this.camera3D, picked.layout, aspect, 0.9, { min: 60, max: 400 }, focusOptions);
         }
       }
     }
@@ -24616,7 +25221,13 @@ ${content}`.trim();
         const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
         const cardXScaleFactor = this.get3DCardXScaleFactor();
         const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
-        focusOnSectionFit(this.camera3D, proxyLayout, aspect, 0.9, { min: 60, max: 400 });
+        const style = this.lastApplied3DCameraFocus;
+        const focusOptions = style ? {
+          ...style.keepRotation ? { keepRotation: true } : {},
+          ...style.positionOffset ? { positionOffset: style.positionOffset } : {},
+          ...style.rotationOffset ? { rotationOffset: style.rotationOffset } : {}
+        } : void 0;
+        focusOnSectionFit(this.camera3D, proxyLayout, aspect, 0.9, { min: 60, max: 400 }, focusOptions);
       }
       return;
     }
@@ -24661,22 +25272,36 @@ ${content}`.trim();
       this.lastApplied3DCameraFocus = {
         kind: "focus",
         sectionIndex: layout.sectionIndex,
-        distance: req.distance
+        distance: req.distance,
+        ...req.keepRotation ? { keepRotation: true } : {},
+        ...req.positionOffset ? { positionOffset: req.positionOffset } : {},
+        ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}
       };
     } else {
       this.lastApplied3DCameraFocus = {
         kind: "fit",
         sectionIndex: layout.sectionIndex,
-        fill: req.fill
+        fill: req.fill,
+        ...req.keepRotation ? { keepRotation: true } : {},
+        ...req.positionOffset ? { positionOffset: req.positionOffset } : {},
+        ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}
       };
     }
     if (req.kind === "focus") {
-      focusOnSection(this.camera3D, layout, req.distance);
+      focusOnSection(this.camera3D, layout, req.distance, {
+        ...req.keepRotation ? { keepRotation: true } : {},
+        ...req.positionOffset ? { positionOffset: req.positionOffset } : {},
+        ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}
+      });
     } else {
       const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
       const cardXScaleFactor = this.get3DCardXScaleFactor();
       const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
-      focusOnSectionFit(this.camera3D, proxyLayout, aspect, req.fill);
+      focusOnSectionFit(this.camera3D, proxyLayout, aspect, req.fill, {}, {
+        ...req.keepRotation ? { keepRotation: true } : {},
+        ...req.positionOffset ? { positionOffset: req.positionOffset } : {},
+        ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}
+      });
     }
   }
   refocus3DForCurrentViewport() {
@@ -24685,12 +25310,20 @@ ${content}`.trim();
     const layout = this.section3DLayouts.find((l) => l.sectionIndex === this.lastApplied3DCameraFocus.sectionIndex);
     if (!layout) return;
     if (this.lastApplied3DCameraFocus.kind === "focus") {
-      focusOnSection(this.camera3D, layout, this.lastApplied3DCameraFocus.distance);
+      focusOnSection(this.camera3D, layout, this.lastApplied3DCameraFocus.distance, {
+        ...this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {},
+        ...this.lastApplied3DCameraFocus.positionOffset ? { positionOffset: this.lastApplied3DCameraFocus.positionOffset } : {},
+        ...this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {}
+      });
     } else {
       const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
       const cardXScaleFactor = this.get3DCardXScaleFactor();
       const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
-      focusOnSectionFit(this.camera3D, proxyLayout, aspect, this.lastApplied3DCameraFocus.fill);
+      focusOnSectionFit(this.camera3D, proxyLayout, aspect, this.lastApplied3DCameraFocus.fill, {}, {
+        ...this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {},
+        ...this.lastApplied3DCameraFocus.positionOffset ? { positionOffset: this.lastApplied3DCameraFocus.positionOffset } : {},
+        ...this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {}
+      });
     }
   }
   applyPending3DCameraFocus() {

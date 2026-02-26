@@ -10,6 +10,7 @@ import { WebGPURenderer } from './webgpu-renderer.js';
 import { Compositor } from './compositor.js';
 import { ScriptSandbox } from './sandbox.js';
 import { parseMarkdown, flattenSections } from './markdown.js';
+import { parseTimedFormat, type TimedFormat } from './timed-parsers.js';
 import { getTheme, applyTheme, THEMES } from './themes.js';
 import { ModuleLoader } from './modules/loader.js';
 import { createTUIAPI } from './tui-api.js';
@@ -206,14 +207,42 @@ export class StorieEngine {
   private section3DLayouts: Section3DLayout[] = [];
 
   private pending3DCameraFocus:
-    | { kind: 'focus'; sectionIndex: number | string; distance: number }
-    | { kind: 'fit'; sectionIndex: number | string; fill: number }
+    | {
+        kind: 'focus';
+        sectionIndex: number | string;
+        distance: number;
+        keepRotation?: boolean;
+        positionOffset?: { x: number; y: number; z: number };
+        rotationOffset?: { x: number; y: number; z: number };
+      }
+    | {
+        kind: 'fit';
+        sectionIndex: number | string;
+        fill: number;
+        keepRotation?: boolean;
+        positionOffset?: { x: number; y: number; z: number };
+        rotationOffset?: { x: number; y: number; z: number };
+      }
     | null = null;
 
   // Last focus request that was actually applied (used to re-frame on resize).
   private lastApplied3DCameraFocus:
-    | { kind: 'focus'; sectionIndex: number; distance: number }
-    | { kind: 'fit'; sectionIndex: number; fill: number }
+    | {
+        kind: 'focus';
+        sectionIndex: number;
+        distance: number;
+        keepRotation?: boolean;
+        positionOffset?: { x: number; y: number; z: number };
+        rotationOffset?: { x: number; y: number; z: number };
+      }
+    | {
+        kind: 'fit';
+        sectionIndex: number;
+        fill: number;
+        keepRotation?: boolean;
+        positionOffset?: { x: number; y: number; z: number };
+        rotationOffset?: { x: number; y: number; z: number };
+      }
     | null = null;
   private worldsConfig: WorldsConfig = getDefaultWorldsConfig();
   private worldsEnabled: boolean = false;
@@ -948,6 +977,13 @@ export class StorieEngine {
       return (doc && doc._stfxrStore) ? (doc._stfxrStore as Map<string, any>) : null;
     };
 
+    const getTimedStore = (documentId?: string): Map<string, { name: string; entries: Array<{ ms: number; text: string }> }> | null => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId) as any;
+      return (doc && doc._timedStore) ? (doc._timedStore as Map<string, any>) : null;
+    };
+
     type StfxrBakedEntry = {
       id: string;
       name: string;
@@ -1335,9 +1371,15 @@ export class StorieEngine {
       doc: {
         sectionsFlat: () => {
           const d = engine.getActiveDocument();
-          if (!d) return [] as Array<{ index: number; title: string; level: number }>;
+          if (!d) return [] as Array<{ index: number; title: string; level: number; timedMs?: number; directive?: Record<string, any> }>;
           const flat = flattenSections(d.sections);
-          return flat.map((s, index) => ({ index, title: s.title, level: s.level }));
+          return flat.map((s, index) => ({
+            index,
+            title: s.title,
+            level: s.level,
+            ...(s.timedMs    !== undefined ? { timedMs:   s.timedMs   } : {}),
+            ...(s.directive               ? { directive: s.directive } : {}),
+          }));
         },
         sectionCount: () => {
           const d = engine.getActiveDocument();
@@ -1346,7 +1388,49 @@ export class StorieEngine {
         },
         outline: () => {
           return engine.getOutlineNodes();
-        }
+        },
+        timedBlock: (name: string) => {
+          const store = getTimedStore();
+          if (!store) return [] as Array<{ ms: number; text: string }>;
+          const block = store.get(String(name));
+          return block ? block.entries.map((e: any) => ({ ms: e.ms, text: e.text })) : [];
+        },
+        timedBlocks: () => {
+          const store = getTimedStore();
+          if (!store) return [] as string[];
+          return Array.from(store.keys());
+        },
+        atTime: (name: string, timeSec: number) => {
+          const store = getTimedStore();
+          if (!store) return null;
+          const block = store.get(String(name));
+          if (!block || block.entries.length === 0) return null;
+          const nowMs = Number(timeSec) * 1000;
+          // Binary search: find last entry with ms ≤ nowMs.
+          let lo = 0, hi = block.entries.length - 1, result = -1;
+          while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (block.entries[mid]!.ms <= nowMs) { result = mid; lo = mid + 1; }
+            else hi = mid - 1;
+          }
+          if (result < 0) return null;
+          const e = block.entries[result]!;
+          return { ms: e.ms, text: e.text };
+        },
+        setTimedBlock: (name: string, entries: Array<{ ms: number; text: string }>) => {
+          // Ensure the store exists (it may not have been created if the document
+          // has no static ```timed blocks).
+          const docId = engine.activeDocumentId;
+          if (!docId) return;
+          const doc = engine.documents.get(docId) as any;
+          if (!doc) return;
+          if (!doc._timedStore) doc._timedStore = new Map();
+          const store = doc._timedStore as Map<string, { name: string; entries: Array<{ ms: number; text: string }> }>;
+          const sorted = Array.from(entries)
+            .filter(e => Number.isFinite(e.ms) && e.ms >= 0)
+            .sort((a, b) => a.ms - b.ms);
+          store.set(String(name), { name: String(name), entries: sorted });
+        },
       },
 
       // Shared scene state (read-only on clients; host can write).
@@ -1453,7 +1537,24 @@ export class StorieEngine {
             charHeight: atlas?.getCharHeight() ?? 16
           };
         },
-        () => this.inputDispatchDepth > 0
+        () => this.inputDispatchDepth > 0,
+        () => {
+          try {
+            const rect = this.canvas.getBoundingClientRect();
+            const scaleX = rect.width > 0 ? (this.canvas.width / rect.width) : 0;
+            const scaleY = rect.height > 0 ? (this.canvas.height / rect.height) : 0;
+            if (Number.isFinite(scaleX) && scaleX > 0 && Number.isFinite(scaleY) && scaleY > 0) {
+              return { scaleX, scaleY };
+            }
+          } catch {
+            // ignore
+          }
+          const dpr = (typeof window !== 'undefined' && (window as any).devicePixelRatio)
+            ? Number((window as any).devicePixelRatio)
+            : 1;
+          const v = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+          return { scaleX: v, scaleY: v };
+        }
       ),
       
       // Theme API
@@ -2404,6 +2505,14 @@ export class StorieEngine {
             setTimeout(() => URL.revokeObjectURL(url), 10_000);
           } catch (e) {
             console.warn('[sys.download] failed:', e);
+          }
+        },
+        parseTimed: (text: string, format?: string): Array<{ ms: number; text: string }> => {
+          try {
+            return parseTimedFormat(String(text ?? ''), (format ?? 'auto') as TimedFormat);
+          } catch (e) {
+            console.warn('[sys.parseTimed] failed:', e);
+            return [];
           }
         },
       },
@@ -3628,14 +3737,66 @@ export class StorieEngine {
             engine.camera3D.target = { x, y, z };
           },
           
-          focusOnSection: (sectionIndex: number | string, distance: number = 50) => {
+          focusOnSection: (
+            sectionIndex: number | string,
+            distance: number = 50,
+            options?: {
+              keepRotation?: boolean;
+              positionOffset?: { x: number; y: number; z: number };
+              rotationOffset?: { x: number; y: number; z: number };
+            }
+          ) => {
             if (!engine.camera3D) return;
-            engine.request3DCameraFocus({ kind: 'focus', sectionIndex, distance });
+            const keepRotation = !!(options as any)?.keepRotation;
+            const positionOffset = (options as any)?.positionOffset;
+            const rotationOffset = (options as any)?.rotationOffset;
+            const normVec = (v: any) => {
+              if (!v || typeof v !== 'object') return undefined;
+              const x = Number(v.x);
+              const y = Number(v.y);
+              const z = Number(v.z);
+              if (![x, y, z].every(Number.isFinite)) return undefined;
+              return { x, y, z };
+            };
+            engine.request3DCameraFocus({
+              kind: 'focus',
+              sectionIndex,
+              distance,
+              ...(keepRotation ? { keepRotation: true } : {}),
+              ...(normVec(positionOffset) ? { positionOffset: normVec(positionOffset)! } : {}),
+              ...(normVec(rotationOffset) ? { rotationOffset: normVec(rotationOffset)! } : {}),
+            });
           },
 
-          focusOnSectionFit: (sectionIndex: number | string, fill: number = 0.9) => {
+          focusOnSectionFit: (
+            sectionIndex: number | string,
+            fill: number = 0.9,
+            options?: {
+              keepRotation?: boolean;
+              positionOffset?: { x: number; y: number; z: number };
+              rotationOffset?: { x: number; y: number; z: number };
+            }
+          ) => {
             if (!engine.camera3D) return;
-            engine.request3DCameraFocus({ kind: 'fit', sectionIndex, fill });
+            const keepRotation = !!(options as any)?.keepRotation;
+            const positionOffset = (options as any)?.positionOffset;
+            const rotationOffset = (options as any)?.rotationOffset;
+            const normVec = (v: any) => {
+              if (!v || typeof v !== 'object') return undefined;
+              const x = Number(v.x);
+              const y = Number(v.y);
+              const z = Number(v.z);
+              if (![x, y, z].every(Number.isFinite)) return undefined;
+              return { x, y, z };
+            };
+            engine.request3DCameraFocus({
+              kind: 'fit',
+              sectionIndex,
+              fill,
+              ...(keepRotation ? { keepRotation: true } : {}),
+              ...(normVec(positionOffset) ? { positionOffset: normVec(positionOffset)! } : {}),
+              ...(normVec(rotationOffset) ? { rotationOffset: normVec(rotationOffset)! } : {}),
+            });
           },
           
           setFOV: (fov: number) => {
@@ -4014,6 +4175,20 @@ export class StorieEngine {
           blobStore.set(name, { name, mime, encoding, data });
         }
         console.log(`  Found ${blobStore.size} blob block(s)`);
+      }
+
+      // Build timed lyric/transcript store (```timed name:...)
+      const timedStore = new Map<string, { name: string; entries: Array<{ ms: number; text: string }> }>();
+      if (parsed.timedBlocks && parsed.timedBlocks.length > 0) {
+        for (const b of parsed.timedBlocks) {
+          const name = String(b.name ?? '').trim();
+          if (!name) continue;
+          if (timedStore.has(name)) {
+            console.warn(`  [timed] Duplicate name "${name}"; last one wins.`);
+          }
+          timedStore.set(name, { name, entries: b.entries });
+        }
+        console.log(`  Found ${timedStore.size} timed block(s)`);
       }
 
       // Build ASCII store (```ascii name:...)
@@ -4463,6 +4638,7 @@ ${exportVars}
         _figletStore: figletStore,
         _ansiStore: ansiStore,
         _stfxrStore: stfxrStore,
+        _timedStore: timedStore,
         _stfxrBakedStore: new Map()
       } as any);
       
@@ -6063,7 +6239,19 @@ ${exportVars}
           const aspect = this.canvas.width > 0 && this.canvas.height > 0
             ? this.canvas.width / this.canvas.height
             : 1;
-          focusOnSectionFit(this.camera3D, picked.layout, aspect, 0.9, { min: 60, max: 400 });
+
+          // Preserve the caller's preferred focus style (e.g. keepRotation for
+          // “tilted infinite canvas” demos).
+          const style = this.lastApplied3DCameraFocus;
+          const focusOptions = style
+            ? {
+                ...(style.keepRotation ? { keepRotation: true } : {}),
+                ...(style.positionOffset ? { positionOffset: style.positionOffset } : {}),
+                ...(style.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
+              }
+            : undefined;
+
+          focusOnSectionFit(this.camera3D, picked.layout, aspect, 0.9, { min: 60, max: 400 }, focusOptions);
         }
       }
     }
@@ -6282,7 +6470,19 @@ ${exportVars}
           : 1;
         const cardXScaleFactor = this.get3DCardXScaleFactor();
         const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
-        focusOnSectionFit(this.camera3D, proxyLayout as any, aspect, 0.9, { min: 60, max: 400 });
+
+        // Preserve focus style (keepRotation/offsets) so internal link clicks
+        // don't reset the global camera tilt.
+        const style = this.lastApplied3DCameraFocus;
+        const focusOptions = style
+          ? {
+              ...(style.keepRotation ? { keepRotation: true } : {}),
+              ...(style.positionOffset ? { positionOffset: style.positionOffset } : {}),
+              ...(style.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
+            }
+          : undefined;
+
+        focusOnSectionFit(this.camera3D, proxyLayout as any, aspect, 0.9, { min: 60, max: 400 }, focusOptions);
       }
       return;
     }
@@ -6313,8 +6513,22 @@ ${exportVars}
 
   private request3DCameraFocus(
     req:
-      | { kind: 'focus'; sectionIndex: number | string; distance: number }
-      | { kind: 'fit'; sectionIndex: number | string; fill: number }
+      | {
+          kind: 'focus';
+          sectionIndex: number | string;
+          distance: number;
+          keepRotation?: boolean;
+          positionOffset?: { x: number; y: number; z: number };
+          rotationOffset?: { x: number; y: number; z: number };
+        }
+      | {
+          kind: 'fit';
+          sectionIndex: number | string;
+          fill: number;
+          keepRotation?: boolean;
+          positionOffset?: { x: number; y: number; z: number };
+          rotationOffset?: { x: number; y: number; z: number };
+        }
   ): void {
     // If layouts aren’t ready yet (common during on:init), remember the intent
     // and apply it once parsing/layout generation completes.
@@ -6343,25 +6557,39 @@ ${exportVars}
       this.lastApplied3DCameraFocus = {
         kind: 'focus',
         sectionIndex: layout.sectionIndex,
-        distance: req.distance
+        distance: req.distance,
+        ...(req.keepRotation ? { keepRotation: true } : {}),
+        ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
+        ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
       };
     } else {
       this.lastApplied3DCameraFocus = {
         kind: 'fit',
         sectionIndex: layout.sectionIndex,
-        fill: req.fill
+        fill: req.fill,
+        ...(req.keepRotation ? { keepRotation: true } : {}),
+        ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
+        ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
       };
     }
 
     if (req.kind === 'focus') {
-      focusOnSection(this.camera3D, layout, req.distance);
+      focusOnSection(this.camera3D, layout, req.distance, {
+        ...(req.keepRotation ? { keepRotation: true } : {}),
+        ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
+        ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
+      });
     } else {
       const aspect = this.canvas.width > 0 && this.canvas.height > 0
         ? this.canvas.width / this.canvas.height
         : 1;
       const cardXScaleFactor = this.get3DCardXScaleFactor();
       const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
-      focusOnSectionFit(this.camera3D, proxyLayout as any, aspect, req.fill);
+      focusOnSectionFit(this.camera3D, proxyLayout as any, aspect, req.fill, {}, {
+        ...(req.keepRotation ? { keepRotation: true } : {}),
+        ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
+        ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
+      });
     }
   }
 
@@ -6373,14 +6601,22 @@ ${exportVars}
     if (!layout) return;
 
     if (this.lastApplied3DCameraFocus.kind === 'focus') {
-      focusOnSection(this.camera3D, layout, this.lastApplied3DCameraFocus.distance);
+      focusOnSection(this.camera3D, layout, this.lastApplied3DCameraFocus.distance, {
+        ...(this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {}),
+        ...(this.lastApplied3DCameraFocus.positionOffset ? { positionOffset: this.lastApplied3DCameraFocus.positionOffset } : {}),
+        ...(this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {}),
+      });
     } else {
       const aspect = this.canvas.width > 0 && this.canvas.height > 0
         ? this.canvas.width / this.canvas.height
         : 1;
       const cardXScaleFactor = this.get3DCardXScaleFactor();
       const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
-      focusOnSectionFit(this.camera3D, proxyLayout as any, aspect, this.lastApplied3DCameraFocus.fill);
+      focusOnSectionFit(this.camera3D, proxyLayout as any, aspect, this.lastApplied3DCameraFocus.fill, {}, {
+        ...(this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {}),
+        ...(this.lastApplied3DCameraFocus.positionOffset ? { positionOffset: this.lastApplied3DCameraFocus.positionOffset } : {}),
+        ...(this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {}),
+      });
     }
   }
 

@@ -143,6 +143,14 @@ tui.render();  // Draws all widgets
 
 **Coordinate System:** Pixel-based (absolute screen coordinates)
 
+**Note on HiDPI / mobile:** GUI widget `bounds` are interpreted as **CSS pixels (logical pixels)** by default and are automatically scaled to match the canvas backing-store resolution. This keeps layouts consistent on iOS/Retina devices.
+
+If you already compute bounds in **device/backing-store pixels**, disable the auto-scaling:
+
+```js
+gui.init({ boundsSpace: 'device' });
+```
+
 The GUI system provides retained-mode widgets rendered using WebGPU primitives (rectangles and text). Perfect for modern game UIs with mouse interaction.
 
 ### Available Widgets
@@ -158,7 +166,7 @@ The GUI system provides retained-mode widgets rendered using WebGPU primitives (
 // Initialize the GUI system (call in on:init)
 gui.init();
 
-// Create widgets (bounds in pixels)
+// Create widgets (bounds in CSS pixels)
 const button = gui.createButton({
   bounds: { x: 20, y: 80, width: 260, height: 50 },
   label: 'Click Me'

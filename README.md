@@ -5,16 +5,20 @@ The abominal little engine that probably shouldn't. Build stuff using Markdown w
 Check it out: [Intro](https://maddestlabs.github.io/storie/)
 
 Demos:
+- [strain](https://maddestlabs.github.io/storie/?content=strain) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/strain.md)
 - [her.md](https://maddestlabs.github.io/storie/?content=her) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/her.md)
 - [depths.md](https://maddestlabs.github.io/storie/?content=depths&font=Courier+Prime) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/depths.md)
+- [audio-lyrics.md](https://maddestlabs.github.io/storie?content=audio-lyrics) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/audio-lyrics.md)
 
 Core examples:
-- [edit.md](https://maddestlabs.github.io/storie?content=edit) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/edit.md)
+- [stfxr.md](https://maddestlabs.github.io/storie?content=stfxr) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/stfxr.md)
+- [asciiart.md](https://maddestlabs.github.io/storie?content=asciiart) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/asciiart.md)
+- [magic-shader.md](https://maddestlabs.github.io/storie?content=magic-shader) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/magic-shader.md)
+- [magic-compress.md](https://maddestlabs.github.io/storie?content=magic-compress) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/magic-compress.md)
+- [lyrics.md](https://maddestlabs.github.io/storie?content=lyrics) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/lyrics.md)
 - [hexview.md](https://maddestlabs.github.io/storie?content=hexview) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/hexview.md)
 - [tui-basic.md](https://maddestlabs.github.io/storie?content=tui-basic) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/tui-basic.md)
-
-Gist Example:
-- [storie_rainclock.md](https://maddestlabs.github.io/storie/?content=863a4175989370857ccd67cb5492ac11&shader=crt&font=Zeyada) | [Source Gist](https://gist.github.com/R3V1Z3/863a4175989370857ccd67cb5492ac11)
+- [gui-basic.md](https://maddestlabs.github.io/storie?content=gui-basic) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/gui-basic.md)
 
 The engine is built around GitHub features. No installation needed. Just create a new repo from the S|torie template, update index.md with your own content and it'll auto-compile for the web. Enable GitHub Pages and you'll see that content served live within moments. GitHub Actions take care of the full compilation process.
 

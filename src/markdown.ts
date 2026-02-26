@@ -3,9 +3,10 @@
  * Sections are hierarchical based on heading levels (h1-h6)
  */
 
-import type { Section, CodeBlock, MarkdownDocument, BlobBlock, BlobEncoding } from './types.js';
+import type { Section, CodeBlock, MarkdownDocument, BlobBlock, BlobEncoding, TimedBlock, TimedEntry } from './types.js';
 import { expandMagicBlocks, decompressString } from './magic.js';
 import { extractWGSLBlocks } from './wgsl-parser.js';
+import { parseTimedFormat, type TimedFormat } from './timed-parsers.js';
 
 interface HeadingMatch {
   level: number;
@@ -48,16 +49,109 @@ export async function parseMarkdown(source: string): Promise<MarkdownDocument> {
     );
   }
   const metadata = extractFrontmatter(expandedSource);
+  const timedBlocks = extractTimedBlocks(codeBlocks);
 
   return {
     sections,
     codeBlocks,
     metadata,
     wgslShaders,
-    blobBlocks
+    blobBlocks,
+    timedBlocks
   };
 }
 
+// ── Heading directive helpers ──────────────────────────────────────────────────
+
+/**
+ * Parse a millisecond value from a directive field.
+ * Accepts: number, "4000", "4000ms", "4.5s".
+ * Returns `undefined` for unrecognised / missing values.
+ */
+function _parseTimedMs(v: any): number | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v === 'number' && Number.isFinite(v)) return Math.max(0, v);
+  const s = String(v).trim().toLowerCase();
+  // "4000ms" or "4000"
+  const msMatch = s.match(/^(\d+(?:\.\d+)?)\s*ms$/);
+  if (msMatch) return Math.max(0, parseFloat(msMatch[1]!));
+  // "4.5s"
+  const sMatch = s.match(/^(\d+(?:\.\d+)?)\s*s$/);
+  if (sMatch) return Math.max(0, parseFloat(sMatch[1]!) * 1000);
+  // bare number string
+  const n = parseFloat(s);
+  if (Number.isFinite(n)) return Math.max(0, n);
+  return undefined;
+}
+
+/**
+ * Look for a trailing JSON object at the end of a heading title, e.g.
+ *   `# First Verse {"timed": "4000ms", "x": "400"}`
+ *
+ * Returns the display title (text before the `{`), the parsed directive
+ * object, and the extracted `timedMs` in milliseconds.
+ * If no valid JSON object suffix is found, returns the original title
+ * with null directive and undefined timedMs.
+ */
+function _parseHeadingDirective(rawTitle: string): {
+  displayTitle: string;
+  directive: Record<string, any> | null;
+  timedMs: number | undefined;
+} {
+  const lastBrace = rawTitle.lastIndexOf('{');
+  if (lastBrace >= 0) {
+    try {
+      const jsonPart = rawTitle.slice(lastBrace);
+      const obj = JSON.parse(jsonPart);
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+        const displayTitle = rawTitle.slice(0, lastBrace).trim();
+        const timedMs = _parseTimedMs(obj['timed']);
+        return { displayTitle, directive: obj, timedMs };
+      }
+    } catch {
+      // Not a directive — treat the whole string as the title.
+    }
+  }
+  return { displayTitle: rawTitle, directive: null, timedMs: undefined };
+}
+
+// ── Timed block extraction ────────────────────────────────────────────
+
+/**
+ * Extract all ```timed name:... fenced blocks from parsed code blocks.
+ *
+ * The fence info line supports an optional `format:` hint that tells the
+ * parser which timed-text dialect to use:
+ *
+ *   ```timed name:lyrics format:srt
+ *   ```timed name:lyrics format:vtt
+ *   ```timed name:lyrics format:ttml
+ *   ```timed name:lyrics format:json
+ *   ```timed name:lyrics format:native   (default Storie ms|text format)
+ *
+ * When `format` is absent the format is auto-detected from the content.
+ * Entries are always sorted ascending by `ms` before being stored.
+ */
+function extractTimedBlocks(codeBlocks: CodeBlock[]): TimedBlock[] {
+  const out: TimedBlock[] = [];
+
+  for (const block of codeBlocks) {
+    if (block.lang !== "timed") continue;
+
+    const name = String(block.metadata?.["name"] ?? "").trim();
+
+    // Optional format hint on the fence info line: `format:srt` etc.
+    const formatHint = (String(block.metadata?.["format"] ?? "auto").trim().toLowerCase()) as TimedFormat;
+
+    const entries: TimedEntry[] = parseTimedFormat(block.code, formatHint);
+    // parseTimedFormat guarantees sorted output, but sort again as a safety net.
+    entries.sort((a, b) => a.ms - b.ms);
+
+    out.push({ name, entries, startLine: block.startLine, endLine: block.endLine });
+  }
+
+  return out;
+}
 function extractBlobBlocks(codeBlocks: CodeBlock[]): BlobBlock[] {
   const out: BlobBlock[] = [];
 
@@ -220,13 +314,16 @@ function extractSections(source: string): Section[] {
     const contentLines = lines.slice(heading.line + 1, endLine + 1);
     const content = contentLines.join('\n').trim();
 
+    const { displayTitle, directive, timedMs } = _parseHeadingDirective(heading.title);
     const section: Section = {
-      title: heading.title,
+      title: displayTitle,
       level: heading.level,
       content,
       startLine: heading.line,
       endLine,
-      children: []
+      children: [],
+      ...(timedMs !== undefined ? { timedMs } : {}),
+      ...(directive            ? { directive } : {}),
     };
 
     // Pop from stack until we find a parent

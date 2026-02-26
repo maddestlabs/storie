@@ -138,6 +138,7 @@ export class WorldsRenderer {
           cameraPos: vec4<f32>,
           cameraRight: vec4<f32>,
           cameraUp: vec4<f32>,
+          cameraForward: vec4<f32>,
           // x=hasRuledLines, y=hasPaperNoise, z=noiseStrength, w=reserved
           bgFlags: vec4<f32>,
         };
@@ -165,16 +166,31 @@ export class WorldsRenderer {
         }
 
         fn paperCoordFromScreenUv(uv: vec2<f32>) -> vec2<f32> {
-          // Linear, camera-oriented background mapping.
-          // Uses camera right/up (projected into XY) so the paper rotates with
-          // the camera/section yaw, without ray-plane perspective warping.
-          // params1: x=viewW, y=viewH
-          let viewW = uniforms.params1.x;
-          let viewH = uniforms.params1.y;
-          let delta = (uv - vec2<f32>(0.5, 0.5)) * vec2<f32>(viewW, viewH);
-          let rightXY = uniforms.cameraRight.xy;
-          let upXY = uniforms.cameraUp.xy;
-          return uniforms.cameraPos.xy + rightXY * delta.x + upXY * delta.y;
+          // Perspective-correct mapping: cast a ray through the current pixel
+          // and intersect with a world-space XY plane at z = params1.z.
+          //
+          // params1: x=aspect, y=tanHalfFov, z=planeZ, w=reserved
+          let aspect = uniforms.params1.x;
+          let tanHalfFov = uniforms.params1.y;
+          let planeZ = uniforms.params1.z;
+
+          // NDC: x,y in [-1,1] with y up.
+          let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+          let xCam = ndc.x * aspect * tanHalfFov;
+          let yCam = ndc.y * tanHalfFov;
+
+          // Camera basis is in world space.
+          var dir = uniforms.cameraRight.xyz * xCam + uniforms.cameraUp.xyz * yCam + uniforms.cameraForward.xyz;
+          dir = normalize(dir);
+
+          // Intersect with plane z = planeZ.
+          let dz = dir.z;
+          if (abs(dz) < 1e-5) {
+            return uniforms.cameraPos.xy;
+          }
+          let t = (planeZ - uniforms.cameraPos.z) / dz;
+          let p = uniforms.cameraPos.xyz + dir * t;
+          return p.xy;
         }
 
         fn hash21(p: vec2<f32>) -> f32 {
@@ -226,7 +242,8 @@ export class WorldsRenderer {
           let isBackground = uniforms.params0.x < 0.0;
           var outColor = texColor;
 
-          // Full-screen paper pass only (no per-card paper).
+          // Full-screen paper pass only. Section textures are rendered with a
+          // transparent background so paper shows through from behind.
           if (isBackground && uniforms.paperParams.w > 0.5) {
             let coord = paperCoordFromScreenUv(input.uv);
             outColor = sampleBackgroundAt(coord);
@@ -467,6 +484,9 @@ export class WorldsRenderer {
     // Right = first column, Up = second column.
     const cameraRight = new Float32Array([viewMatrix[0], viewMatrix[4], viewMatrix[8], 0]);
     const cameraUp = new Float32Array([viewMatrix[1], viewMatrix[5], viewMatrix[9], 0]);
+    // Forward is -Z axis in view space; in our lookAt matrix the third column
+    // is the camera's backward (zAxis = normalize(eye - target)).
+    const cameraForward = new Float32Array([-viewMatrix[2], -viewMatrix[6], -viewMatrix[10], 0]);
 
     // Full-screen paper background pass (drawn into the 3D layer).
     if (paperEnabled) {
@@ -485,12 +505,17 @@ export class WorldsRenderer {
         // Background mode is signaled via params0.x < 0.
         const params0 = new Float32Array([-1, -1, 0, 0]);
 
-        // Use camera Z as a rough view distance; this makes uv->world scale
-        // respond to zooming and keeps the paper stable during easing.
-        const dist = Math.max(1, Math.abs(camera.position.z));
-        const viewH = 2 * dist * Math.tan(camera.fov * 0.5);
-        const viewW = viewH * aspect;
-        const params1 = new Float32Array([viewW, viewH, dist, 0]);
+        // Paper plane selection: use the median Z of visible cards as the
+        // background sampling plane. This keeps the paper “under” the sections
+        // without baking per-card paper.
+        const zVals = layouts
+          .filter(l => l.visible)
+          .map(l => l.transform.position.z)
+          .sort((a, b) => a - b);
+        const planeZ = zVals.length ? zVals[(zVals.length / 2) | 0]! : 0;
+
+        // params1: x=aspect, y=tanHalfFov, z=planeZ, w=reserved
+        const params1 = new Float32Array([aspect, Math.tan(camera.fov * 0.5), planeZ, 0]);
 
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 0, mvp);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
@@ -501,7 +526,8 @@ export class WorldsRenderer {
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
-        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, new Float32Array(bgFlags));
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, cameraForward);
+        this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 208, new Float32Array(bgFlags));
 
         const bindGroup = this.createBindGroupForTexture(this.backgroundTexture, uniformOffset);
         if (bindGroup) {
@@ -586,7 +612,8 @@ export class WorldsRenderer {
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, new Float32Array([0, 0, 0, 0]));
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, cameraForward);
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 208, new Float32Array([0, 0, 0, 0]));
       
       // Create bind group for this section (texture + uniforms)
       const bindGroup = this.createBindGroupForTexture(layout.texture, uniformOffset);
@@ -617,7 +644,7 @@ export class WorldsRenderer {
       entries: [
         {
           binding: 0,
-          resource: { buffer: this.uniformBuffer, offset: uniformOffset, size: 208 }
+          resource: { buffer: this.uniformBuffer, offset: uniformOffset, size: 224 }
         },
         {
           binding: 1,

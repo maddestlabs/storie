@@ -134,10 +134,15 @@ worlds.camera.getRotation()  // Returns {x, y, z}
 worlds.camera.moveTo(x, y, z)
 
 // Focus on section
-worlds.camera.focusOnSection(sectionIndex, distance = 50)
+worlds.camera.focusOnSection(sectionIndex, distance = 50, options?)
+
+// options (all optional)
+// - keepRotation: boolean           // if true, focus moves position only
+// - positionOffset: {x,y,z}         // adds a world-space offset to the computed target position
+// - rotationOffset: {x,y,z}         // adds an offset (radians) to the computed target rotation
 
 // Focus and fit the whole card in view
-worlds.camera.focusOnSectionFit(sectionIndex, fill = 0.9)
+worlds.camera.focusOnSectionFit(sectionIndex, fill = 0.9, options?)
 
 // Field of view
 worlds.camera.setFOV(fov)  // fov in radians (default: Math.PI/4)

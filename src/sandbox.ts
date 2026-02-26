@@ -128,7 +128,7 @@ export interface SandboxAPI {
   // Document metadata API (read-only)
   // Indices match Worlds's depth-first section layout order.
   doc: {
-    sectionsFlat: () => Array<{ index: number; title: string; level: number }>;
+    sectionsFlat: () => Array<{ index: number; title: string; level: number; timedMs?: number; directive?: Record<string, any> }>;
     sectionCount: () => number;
     outline: () => Array<{
       index: number;
@@ -138,6 +138,39 @@ export interface SandboxAPI {
       firstChildIndex: number | null;
       lastDescendantIndex: number;
     }>;
+    /**
+     * Returns all entries for a named ```timed block, sorted ascending by ms.
+     * Returns [] when the block does not exist.
+     */
+    timedBlock: (name: string) => Array<{ ms: number; text: string }>;
+    /**
+     * Returns the names of every ```timed block in the current document.
+     */
+    timedBlocks: () => string[];
+    /**
+     * Returns the last entry whose `ms` timestamp is ≤ `timeSec * 1000`,
+     * i.e. the lyric line that should be showing at the given audio position.
+     * Returns `null` when the playhead is before the first entry.
+     *
+     * Example:
+     *   const line = doc.atTime('lyrics', audio.currentTime);
+     *   if (line) display(line.text);
+     */
+    atTime: (name: string, timeSec: number) => { ms: number; text: string } | null;
+    /**
+     * Inject or replace a named timed block's entries at runtime.
+     * Useful inside `on:drop` handlers to load SRT/VTT/JSON subtitle files.
+     *
+     * Entries are sorted ascending by `ms` automatically.
+     * Passing an empty array clears the block so it falls back to the
+     * static block defined in the document (if any).
+     *
+     * Example:
+     *   on:drop — read a .srt file, parse it, inject as 'lyrics':
+     *   const entries = sys.parseTimed(new TextDecoder().decode(file.bytes));
+     *   doc.setTimedBlock('lyrics', entries);
+     */
+    setTimedBlock: (name: string, entries: Array<{ ms: number; text: string }>) => void;
   };
 
   // Host Sync info (read-only)
@@ -241,6 +274,25 @@ export interface SandboxAPI {
      *   sys.download(modifiedMp3Bytes, 'track.mp3', 'audio/mpeg');
      */
     download: (bytes: Uint8Array, filename: string, mime?: string) => void;
+    /**
+     * Parse timed-text content from a string and return a sorted array of
+     * `{ ms: number; text: string }` entries ready to use with
+     * `doc.setTimedBlock()` or `doc.atTime()`.
+     *
+     * Supported formats (auto-detected when `format` is omitted):
+     *   'native'  — Storie `ms|text` format (default)
+     *   'srt'     — SubRip (.srt)
+     *   'vtt'     — WebVTT (.vtt)
+     *   'ttml'    — TTML / DFXP (.ttml)
+     *   'json'    — Generic ASR JSON (Whisper, AssemblyAI, Rev.ai, Azure, Google)
+     *
+     * Example:
+     *   const text    = new TextDecoder().decode(file.bytes);
+     *   const entries = sys.parseTimed(text);          // auto-detect
+     *   const entries = sys.parseTimed(text, 'srt');   // explicit
+     *   doc.setTimedBlock('lyrics', entries);
+     */
+    parseTimed: (text: string, format?: string) => Array<{ ms: number; text: string }>;
   };
 
   // Native Browser APIs
@@ -686,8 +738,24 @@ export interface SandboxAPI {
       setPosition: (x: number, y: number, z: number) => void;
       setRotation: (x: number, y: number, z: number) => void;
       moveTo: (x: number, y: number, z: number) => void;
-      focusOnSection: (sectionIndex: number | string, distance?: number) => void;
-      focusOnSectionFit: (sectionIndex: number | string, fill?: number) => void;
+      focusOnSection: (
+        sectionIndex: number | string,
+        distance?: number,
+        options?: {
+          keepRotation?: boolean;
+          positionOffset?: { x: number; y: number; z: number };
+          rotationOffset?: { x: number; y: number; z: number };
+        }
+      ) => void;
+      focusOnSectionFit: (
+        sectionIndex: number | string,
+        fill?: number,
+        options?: {
+          keepRotation?: boolean;
+          positionOffset?: { x: number; y: number; z: number };
+          rotationOffset?: { x: number; y: number; z: number };
+        }
+      ) => void;
       setFOV: (fov: number) => void;
       setEaseSpeed: (position: number, rotation: number) => void;
       getPosition: () => { x: number; y: number; z: number };

@@ -119,8 +119,8 @@ How section entry is determined:
 - `worlds.camera.getRotation()`
 
 Focus helpers:
-- `worlds.camera.focusOnSection(sectionIndexOrTitle, distance?)`
-- `worlds.camera.focusOnSectionFit(sectionIndexOrTitle, fill?)`
+- `worlds.camera.focusOnSection(sectionIndexOrTitle, distance?, options?)`
+- `worlds.camera.focusOnSectionFit(sectionIndexOrTitle, fill?, options?)`
 
 `sectionIndexOrTitle` can be:
 - a numeric section index (`0..N-1`), or

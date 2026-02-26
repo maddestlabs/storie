@@ -1,9 +1,9 @@
 ---
 name: "St|rain"
-theme: "neonopia"
+theme: "neotopia"
 width: 1080
 height: 2400
-shaders: "bloom+lightvignette+crt"
+shaders: "zerorain+lightvignette+bloom+crt"
 ---
 
 Binary strains of rain fall. Type `0` or `1` to match the **bottom digit** of each falling strain.  
@@ -20,7 +20,7 @@ A strain reaching the bottom ends the game.
 ```stfxr name:rain_hit
 {
   "nodes": [
-    { "kind": "oscVoice", "id": "v", "oscType": "triangle",
+    { "kind": "oscVoice", "id": "v", "oscType": "noise",
       "freqHz": { "kind": "rand", "min": 660, "max": 1100 },
       "gain": 0.22, "stopAfter": 0.11 }
   ],
@@ -91,8 +91,7 @@ if (!scope.g) {
     score:    0,
     seed:     Math.floor(Math.random() * 1000000),
     rng:      null,
-    strains:  [],
-    sparks:   []
+    strains:  []
   };
 }
 var g = scope.g;  // local alias for convenience
@@ -106,7 +105,7 @@ function makeStrain(col, r) {
   var size = rInt(r, STRAIN_MIN, STRAIN_MAX);
   var digits = [];
   for (var i = 0; i < size; i++) {
-    digits.push({ value: r() < 0.5 ? '0' : '1', row: -(size - i), drift: 0 });
+    digits.push({ value: r() < 0.5 ? '0' : '1', row: -(size - i) * ui.metrics.charHeight, drift: 0 });
   }
   return {
     col,
@@ -116,15 +115,6 @@ function makeStrain(col, r) {
     highlight:    size - 1,
     destroyTimer: -1,
     gameover:     false
-  };
-}
-
-function makeSpark(col, row) {
-  return {
-    col, row,
-    vx:   (Math.random() - 0.5) * 3.0,
-    vy:   (Math.random() - 0.5) * 2.5,
-    life: 1.0
   };
 }
 
@@ -156,7 +146,6 @@ function handleDigit(key) {
       var hitRow = Math.floor(cur.row);
       s.highlight--;
       sfx('rain_hit', 0.38);
-      spawnSparks(s.col, hitRow, 2);
       if (s.highlight < 0) scoreUp(s);
     } else {
       s.highlight = s.strainSize - 1;
@@ -164,15 +153,10 @@ function handleDigit(key) {
   }
 }
 
-function spawnSparks(col, row, n) {
-  //for (var i = 0; i < n; i++) g.sparks.push(makeSpark(col, row));
-}
-
 function scoreUp(s) {
   g.score += s.strainSize;
   s.destroyTimer = DESTROY_DUR;
   sfx('rain_clear', 0.45);
-  for (var i = 0; i < s.digits.length; i++) spawnSparks(s.col, Math.floor(s.digits[i].row), 3);
 }
 
 // ── Mode transitions ──────────────────────────────────────────────────────
@@ -182,7 +166,6 @@ function startGame() {
   g.gameMode = 'play';
   g.score   = 0;
   g.strains = [];
-  g.sparks  = [];
   sfx('rain_start', 0.4);
 }
 
@@ -191,7 +174,6 @@ function restartGame() {
   g.gameMode = 'play';
   g.score   = 0;
   g.strains = [];
-  g.sparks  = [];
 }
 
 function doGameOver() {
@@ -208,10 +190,10 @@ function updateStrains(dt) {
     var s = g.strains[i];
     for (var j = 0; j < s.digits.length; j++) {
       var d = s.digits[j];
-      d.row += s.speed * dt;
+      d.row += s.speed * ui.metrics.charHeight * dt;
       if (s.destroyTimer > 0) {
-        d.drift += (Math.random() - 0.5) * 1.2;
-        d.row   += (Math.random() - 0.5) * 0.6;
+        d.drift += (Math.random() - 0.5) * 1.2 * ui.metrics.charWidth;
+        d.row   += (Math.random() - 0.5) * 0.6 * ui.metrics.charHeight;
       }
     }
     if (s.destroyTimer > 0) {
@@ -219,8 +201,7 @@ function updateStrains(dt) {
       if (s.destroyTimer <= 0) { g.strains.splice(i, 1); continue; }
     } else if (!s.gameover) {
       var bottom = s.digits[s.digits.length - 1];
-        var th = getTermHeight();
-        if (bottom.row >= th && g.gameMode === 'play') {
+        if (bottom.row >= ui.metrics.canvasHeight && g.gameMode === 'play') {
         s.gameover = true;
         doGameOver();
         return;
@@ -229,48 +210,28 @@ function updateStrains(dt) {
   }
 }
 
-function updateSparks(dt) {
-  for (var i = g.sparks.length - 1; i >= 0; i--) {
-    var p = g.sparks[i];
-    p.col  += p.vx * dt * 7;
-    p.row  += p.vy * dt * 7;
-    p.life -= dt * 3.8;
-    if (p.life <= 0) g.sparks.splice(i, 1);
-  }
-}
-
 // ── Draw ──────────────────────────────────────────────────────────────────
 function drawStrains() {
+  var cW = ui.metrics.charWidth;
+  var cH = ui.metrics.charHeight;
+  var canW = ui.metrics.canvasWidth;
+  var canH = ui.metrics.canvasHeight;
   for (var si = 0; si < g.strains.length; si++) {
     var s = g.strains[si];
     var dying = s.destroyTimer > 0;
     for (var i = 0; i < s.digits.length; i++) {
       var d = s.digits[i];
-      var col = Math.floor(s.col + (dying ? d.drift : 0));
-      var row = Math.floor(d.row);
-        var tw = getTermWidth();
-        var th = getTermHeight();
-        if (col < 0 || col >= tw || row < 0 || row >= th) continue;
+      var px = s.col * cW + (dying ? d.drift : 0);
+      var py = d.row;
+      if (px < 0 || px >= canW || py < -cH || py >= canH) continue;
       var fg;
       if (dying)                        fg = s.destroyTimer > DESTROY_DUR * 0.5 ? C_FADE1 : C_FADE2;
       else if (i > s.highlight)         fg = C_DONE;
       else if (i === s.highlight)       fg = C_TARGET;
       else if (i === s.digits.length-1) fg = C_LEAD;
       else                              fg = C_PENDING;
-      term.write(col, row, d.value, fg);
+      ui.text(d.value, px, py, fg);
     }
-  }
-}
-
-function drawSparks() {
-  for (var i = 0; i < g.sparks.length; i++) {
-    var p = g.sparks[i];
-    var c = Math.floor(p.col), row = Math.floor(p.row);
-      var tw = getTermWidth();
-      var th = getTermHeight();
-      if (c < 0 || c >= tw || row < 0 || row >= th) continue;
-    var v = Math.min(Math.floor(p.life * 220), 255);
-    term.write(c, row, '.', ((v << 24) | (v << 16) | (v << 8) | 0xFF) >>> 0);
   }
 }
 
@@ -290,7 +251,7 @@ function drawMenu() {
   var th = getTermHeight();
   var cx = Math.floor(tw / 2);
   var cy = Math.floor(th / 2);
-  var title = '0RA1N';
+  var title = 'St|rain';
   term.write(cx - Math.floor(title.length / 2), cy - 4, title, C_TITLE);
   if (g.gameMode === 'start') {
     var s1 = '[S]tart';
@@ -349,8 +310,6 @@ if (event.type === 'mouse' && event.action === 'press') {
 if (!scope.g.rng) return;
 var dt = Math.min(getDelta(), 0.05);
 
-updateSparks(dt);
-
 if (scope.g.gameMode === 'play' || scope.g.gameMode === 'gameover') {
   updateStrains(dt);
 }
@@ -370,7 +329,6 @@ term.layerID = 'default';
 term.clear();
 
 drawStrains();
-drawSparks();
 drawHUD();
 
 if (scope.g.gameMode !== 'play') {

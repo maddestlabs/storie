@@ -181,6 +181,20 @@ export interface Section {
   startLine: number;
   endLine: number;
   children: Section[];
+  /**
+   * Millisecond start time parsed from a heading directive, e.g.
+   * `# Chorus {"timed": "32000ms"}` → timedMs = 32000.
+   * When present the section can be advanced automatically when
+   * `audio.currentTime * 1000 >= section.timedMs`.
+   */
+  timedMs?: number;
+  /**
+   * Full directive object parsed from the heading suffix, e.g.
+   * `{"timed":"32000ms", "x":"400", "y":"600"}`.
+   * The `timed` key is consumed and stored as `timedMs`; any other keys
+   * are left here for user scripts to interpret freely.
+   */
+  directive?: Record<string, any>;
 }
 
 export interface CodeBlock {
@@ -200,6 +214,36 @@ export interface WGSLShader {
   uniforms: string[];          // Parsed uniform field names
   bindings: number[];          // Detected @binding() numbers
   workgroupSize: [number, number, number]; // For compute shaders
+}
+
+// ── Timed lyric / transcript blocks (```timed name:...) ─────────────────────
+
+/**
+ * A single timestamped entry in a timed block.
+ * `ms`   — playhead position in milliseconds at which this text becomes active.
+ * `text` — the line or word to display.
+ */
+export interface TimedEntry {
+  ms: number;
+  text: string;
+}
+
+/**
+ * A named set of timestamped entries parsed from a ```timed fenced block.
+ * Entries are guaranteed sorted by `ms` ascending.
+ *
+ * Example block:
+ * ```timed name:lyrics
+ * 0|Intro line
+ * 2400|First verse line one
+ * 5200|First verse line two
+ * ```
+ */
+export interface TimedBlock {
+  name: string;
+  entries: TimedEntry[];
+  startLine: number;
+  endLine: number;
 }
 
 export type BlobEncoding = 'base64' | 'hex';
@@ -224,6 +268,7 @@ export interface MarkdownDocument {
   metadata: Record<string, any>;
   wgslShaders?: WGSLShader[];  // Parsed WGSL shaders from ```wgsl blocks
   blobBlocks?: BlobBlock[];    // Parsed binary blobs from ```blob blocks
+  timedBlocks?: TimedBlock[];  // Parsed timed lyric/transcript blocks from ```timed blocks
 }
 
 export interface InputEvent {

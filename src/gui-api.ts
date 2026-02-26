@@ -13,19 +13,89 @@ import { GUITextEditor } from './ui/gui/texteditor.js';
  */
 export function createGUIAPI(
   getMetrics: () => { charWidth: number; charHeight: number },
-  isTrustedUserInput?: () => boolean
+  isTrustedUserInput?: () => boolean,
+  getPixelScale?: () => { scaleX: number; scaleY: number }
 ) {
+  const safeGetScale = (): { scaleX: number; scaleY: number } => {
+    try {
+      if (typeof getPixelScale === 'function') {
+        const s = getPixelScale();
+        const sx = Number((s as any)?.scaleX);
+        const sy = Number((s as any)?.scaleY);
+        if (Number.isFinite(sx) && sx > 0 && Number.isFinite(sy) && sy > 0) {
+          return { scaleX: sx, scaleY: sy };
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    const dpr = (typeof window !== 'undefined' && (window as any).devicePixelRatio)
+      ? Number((window as any).devicePixelRatio)
+      : 1;
+    const v = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+    return { scaleX: v, scaleY: v };
+  };
+
+  const scaleBounds = (bounds: any): any => {
+    if (!bounds) return bounds;
+    const { scaleX, scaleY } = safeGetScale();
+    const x = Number(bounds.x);
+    const y = Number(bounds.y);
+    const width = Number(bounds.width);
+    const height = Number(bounds.height);
+    if (![x, y, width, height].every(Number.isFinite)) return bounds;
+    return {
+      x: x * scaleX,
+      y: y * scaleY,
+      width: width * scaleX,
+      height: height * scaleY
+    };
+  };
+
+  const scaleLength = (value: any): any => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return value;
+    const { scaleX, scaleY } = safeGetScale();
+    // When X/Y scale differ (mobile viewport quirks), prefer the larger so
+    // padding/gap doesn't collapse and cause overlaps.
+    const s = Math.max(scaleX, scaleY);
+    return n * s;
+  };
+
   // Store GUI system in the API object itself to avoid closure issues with SES
   const api: any = {
     _system: null as GUISystem | null,
+    _boundsSpace: 'css' as 'css' | 'device',
     
     /**
      * Initialize GUI system
      * Call this in on:init
      */
-    init() {
+    init(options?: { boundsSpace?: 'css' | 'device' }) {
+      this._boundsSpace = (options && (options as any).boundsSpace === 'device') ? 'device' : 'css';
       this._system = new GUISystem();
       return this._system;
+    },
+
+    _normalizeConfig(config: any) {
+      if (!config || typeof config !== 'object') return config;
+      const space = (config as any).boundsSpace === 'device' || this._boundsSpace === 'device'
+        ? 'device'
+        : 'css';
+
+      if (space === 'device') {
+        return config;
+      }
+
+      // Treat provided bounds as CSS pixels and scale to backing-store pixels.
+      const next: any = { ...config };
+      if (next.bounds) next.bounds = scaleBounds(next.bounds);
+
+      // Layout helpers also use pixel lengths.
+      if (typeof next.padding === 'number') next.padding = scaleLength(next.padding);
+      if (typeof next.gap === 'number') next.gap = scaleLength(next.gap);
+      return next;
     },
     
     /**
@@ -50,7 +120,7 @@ export function createGUIAPI(
       if (!this._system) {
         throw new Error('GUI system not initialized. Call gui.init() first.');
       }
-      return this._system.createButton(config);
+      return this._system.createButton(this._normalizeConfig(config));
     },
     
     /**
@@ -69,7 +139,7 @@ export function createGUIAPI(
       if (!this._system) {
         throw new Error('GUI system not initialized. Call gui.init() first.');
       }
-      return this._system.createLabel(config);
+      return this._system.createLabel(this._normalizeConfig(config));
     },
     
     /**
@@ -88,7 +158,7 @@ export function createGUIAPI(
       if (!this._system) {
         throw new Error('GUI system not initialized. Call gui.init() first.');
       }
-      return this._system.createCheckbox(config);
+      return this._system.createCheckbox(this._normalizeConfig(config));
     },
     
     /**
@@ -109,7 +179,7 @@ export function createGUIAPI(
       if (!this._system) {
         throw new Error('GUI system not initialized. Call gui.init() first.');
       }
-      return this._system.createSlider(config);
+      return this._system.createSlider(this._normalizeConfig(config));
     },
 
     /**
@@ -119,7 +189,7 @@ export function createGUIAPI(
       if (!this._system) {
         throw new Error('GUI system not initialized. Call gui.init() first.');
       }
-      return this._system.createTextField(config);
+      return this._system.createTextField(this._normalizeConfig(config));
     },
 
     /**
@@ -129,7 +199,7 @@ export function createGUIAPI(
       if (!this._system) {
         throw new Error('GUI system not initialized. Call gui.init() first.');
       }
-      return this._system.createTextEditor(config);
+      return this._system.createTextEditor(this._normalizeConfig(config));
     },
 
     /**
@@ -139,7 +209,7 @@ export function createGUIAPI(
       if (!this._system) {
         throw new Error('GUI system not initialized. Call gui.init() first.');
       }
-      return this._system.createMarkdownView(config);
+      return this._system.createMarkdownView(this._normalizeConfig(config));
     },
 
     /**
@@ -163,7 +233,7 @@ export function createGUIAPI(
       if (!this._system) {
         throw new Error('GUI system not initialized. Call gui.init() first.');
       }
-      return this._system.createContainer(config);
+      return this._system.createContainer(this._normalizeConfig(config));
     },
     
     /**

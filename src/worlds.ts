@@ -427,7 +427,12 @@ export function focusOnSectionFit(
   layout: Section3DLayout,
   viewportAspect: number,
   fill: number = 0.9,
-  distanceLimits: { min?: number; max?: number } = {}
+  distanceLimits: { min?: number; max?: number } = {},
+  options?: {
+    keepRotation?: boolean;
+    positionOffset?: Vec3;
+    rotationOffset?: Vec3;
+  }
 ): void {
   const safeAspect = Number.isFinite(viewportAspect) && viewportAspect > 0 ? viewportAspect : 1;
   const safeFill = clamp(fill, 0.05, 0.99);
@@ -457,12 +462,26 @@ export function focusOnSectionFit(
 
   // Camera forward should point at the section center; to face the front, forward is -normal.
   const forward = vec3Scale(normalWorld, -1);
-  const rotation = computeYawPitchFromForward(forward);
+  const baseRotation = computeYawPitchFromForward(forward);
 
+  const positionOffset = options?.positionOffset;
+  const rotationOffset = options?.rotationOffset;
   const target = {
-    x: layout.transform.position.x + normalWorld.x * distance,
-    y: layout.transform.position.y + normalWorld.y * distance,
-    z: layout.transform.position.z + normalWorld.z * distance,
+    x: layout.transform.position.x + normalWorld.x * distance + (positionOffset?.x ?? 0),
+    y: layout.transform.position.y + normalWorld.y * distance + (positionOffset?.y ?? 0),
+    z: layout.transform.position.z + normalWorld.z * distance + (positionOffset?.z ?? 0),
+  };
+
+  if (options?.keepRotation) {
+    camera.targetRotation = null;
+    setCameraTarget(camera, target);
+    return;
+  }
+
+  const rotation = {
+    x: baseRotation.x + (rotationOffset?.x ?? 0),
+    y: baseRotation.y + (rotationOffset?.y ?? 0),
+    z: baseRotation.z + (rotationOffset?.z ?? 0),
   };
 
   setCameraTarget(camera, target, rotation);
@@ -650,20 +669,33 @@ export function getDefaultWorldsConfig(): WorldsConfig {
 export function focusOnSection(
   camera: Camera3D,
   layout: Section3DLayout,
-  distance: number = 50
+  distance: number = 50,
+  options?: {
+    keepRotation?: boolean;
+    positionOffset?: Vec3;
+    rotationOffset?: Vec3;
+  }
 ): void {
   // Calculate camera position to view the section
+  const positionOffset = options?.positionOffset;
+  const rotationOffset = options?.rotationOffset;
   const target = {
-    x: layout.transform.position.x,
-    y: layout.transform.position.y,
-    z: layout.transform.position.z + distance
+    x: layout.transform.position.x + (positionOffset?.x ?? 0),
+    y: layout.transform.position.y + (positionOffset?.y ?? 0),
+    z: layout.transform.position.z + distance + (positionOffset?.z ?? 0)
   };
 
   // Calculate rotation to look at section
+  if (options?.keepRotation) {
+    camera.targetRotation = null;
+    setCameraTarget(camera, target);
+    return;
+  }
+
   const rotation = {
-    x: layout.transform.rotation.x,
-    y: layout.transform.rotation.y,
-    z: 0
+    x: layout.transform.rotation.x + (rotationOffset?.x ?? 0),
+    y: layout.transform.rotation.y + (rotationOffset?.y ?? 0),
+    z: (rotationOffset?.z ?? 0)
   };
 
   setCameraTarget(camera, target, rotation);

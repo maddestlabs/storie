@@ -1,26 +1,36 @@
 ---
 title: "Depths Beckon"
 author: "Maddest Labs"
-theme: "solardark"
+theme: "solarlight"
 fontsize: 22
 font: "Courier+Prime"
-shaders: "lightvignette"
+shaders: "handcam+blurgradual+lightvignette"
 ---
 
 ```javascript on:init
+// Camera styling helpers
+const deg = d => d * Math.PI / 180;
+const CAMERA_BASE_ROT = { x: deg(-4), y: deg(4), z: 0 };
+
 worlds.enable();
 console.log('✓ 3D Canvas enabled!');
 worlds.config.setDefaults({
   defaultSectionWidth: 100,        // Default width
   defaultSectionHeight: 24,       // Default height
-  autoLayoutSpacing: 150,         // Spacing between auto-laid-out sections (world units)
+  autoLayoutSpacing: 50,         // Spacing between auto-laid-out sections (world units)
   sectionBorderEnabled: false,     // Draw a border around each section card
   sectionBackground: 'paper+ruledlines',   // Section card background: 'surface' | 'ruledlines' | 'bg' | 'bgAlt' | 'accent1' | '#RRGGBB' | 0xRRGGBBAA
 });
-worlds.camera.setPosition(0, 0, 250);
-worlds.camera.setRotation(0, 10, 0.5);
-worlds.camera.setEaseSpeed(0.018, 0.012);
-worlds.camera.focusOnSection(0, 50);
+
+// “Looking down” at an infinite canvas feel:
+worlds.camera.setPosition(0, 55, 320);
+worlds.camera.setRotation(CAMERA_BASE_ROT.x, CAMERA_BASE_ROT.y, CAMERA_BASE_ROT.z);
+// Optional: narrower FOV reads as a touch more “zoomed” / cinematic.
+worlds.camera.setFOV(deg(42));
+worlds.camera.setEaseSpeed(0.18, 0.12);
+
+// Navigate to the first section, but keep our camera tilt.
+worlds.camera.focusOnSectionFit(0, 0.9, { keepRotation: true });
 ```
 
 # Entrance
