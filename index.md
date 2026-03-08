@@ -1,178 +1,36 @@
 ---
 title: "t|Storie ꭲꭼꭱꮇꮖꮑꭺꮮ ꭼꮑᏽꮖꮑꭼ"
 author: "Maddest Labs"
-theme: "neotopia"
-shaders: "invert+ruledlines+paper"
-targetFPS: 60
+theme: "neonopia"
 ---
 
-# Background Grid {"showHeading": false, "hidden": false, "x": 200, "y": 20, "z": -3, "width": 100, "height": 40}
-
-```ansi
-[38;2;0;217;142m  ▄ [0m [1;37m█[0m [38;2;100;100;100m▄▄▄▄   ▄                     [0m
-[38;2;0;217;142m ▄█▄[0m [1;37m█[0m [38;2;100;100;100m█     ▄█▄  ▄▄▄▄ ▄▄▄▄ ▄  ▄▄▄▄▄[0m
-[38;2;0;217;142m  █ [0m [1;37m█[0m [38;2;100;100;100m▀▀▀▀▄  █   █  █ █    █  █▄▄▄█[0m
-[38;2;0;217;142m  █ [0m [1;37m█[0m [38;2;100;100;100m    █  █   █  █ █    █  █    [0m
-[38;2;0;217;142m  ▀▀[0m [1;37m█[0m [38;2;100;100;100m▀▀▀▀   ▀▀  ▀▀▀▀ ▀    ▀  ▀▀▀▀▀[0m
-```
-
-```nim on:init
-# t|Storie Interactive Walkthrough
-# Learn about features through an interactive journey
-
-# Track progress through the walkthrough
-var visitedMarkdown = false
-var visitedCanvas = false
-var visitedFrontmatter = false
-var visitedRendering = false
-var visitedInteractive = false
-var explorerLevel = 0
-
-# Initialize canvas system - start at section 1
-initCanvas(1)
-
-# Create a background layer for particles (z-index -1 renders below default layer)
-addLayer("background", -1)
-
-particleInit("sparkles", 100)
-particleInit("techbubbles", 100)
-particleInit("fire", 100)
-var accentStyle = getStyle("heading")
-var defaultStyle = getStyle("default")
-
-# Configure sparkles (manual emission on click)
-particleConfigureSparkles("sparkles", 10.0)
-# Use background-only shader to only affect background colors
-particleSetShader("sparkles", "background")
-# Set color range around accent color with ±40 deviation for nice variation
-particleSetColorRangeFromStyle("sparkles", accentStyle, 20)
-particleSetEmitterPos("sparkles", float(termWidth / 2), float(termHeight / 2))
-# Speed up sparkles with higher velocity range
-particleSetVelocityRange("sparkles", -15.0, -15.0, 15.0, 15.0)
-# Set short lifetime so particles disappear quickly
-particleSetLifeRange("sparkles", 0.2, 0.5)
-# Disable automatic emission - only emit on manual clicks
-particleSetEmitRate("sparkles", 0.0)
-
-# Configure fire effect rising from bottom (always active)
-particleConfigureFire("techbubbles", 10.0, false)
-particleSetBackgroundFromStyle("techbubbles", defaultStyle)
-particleSetForegroundFromStyle("techbubbles", accentStyle)
-particleSetEmitterPos("techbubbles", 0, termHeight)
-particleSetEmitterSize("techbubbles", termWidth, float(termHeight) / 2)
-particleSetLifeRange("techbubbles", 3.0, 5.0)
-particleSetVelocityRange("techbubbles", 0.0, -20.0, 0.0, -40.0)
-particleSetChars("techbubbles", "....o")
-
-# Configure fire at bottom
-particleConfigureFire("fire", 70.0)
-particleSetEmitterPos("fire", float(termWidth / 2), float(termHeight - 1))
-particleSetEmitterSize("fire", 30.0, 1.0)
-particleSetBackgroundFromStyle("fire", defaultStyle)
-
-var inFinalStats = false
-var metrics = getSectionMetrics()
-
-# Track mouse state for continuous particle emission
-var mouseDown = false
-var mouseX = 0
-var mouseY = 0
-
-# Track angle for sparkles oval motion
-var sparklesAngle = 0.0
-
-# Initialize displacement for grid effect (Horizontal Wave - Ocean waves)
-# Apply to the z-3 layer where the grid renders
-var gridLayerIndex = -3  # The grid section has z:-3
-initDisplacement(0, gridLayerIndex, 0, 0, 100, 40, 0.52)
-```
-
-```nim on:input
-# Handle keyboard and mouse input for canvas navigation
-
-if event.type == "key":
-  if event.action == "press":
-    # Pass key events to canvas system
-    var handled = canvasHandleKey(event.keyCode, 0)
-    if handled:
-      return true
-  return false
-elif event.type == "mouse":
-  # Always track mouse position (during press, release, and move)
-  if event.action == "release":
-    var handled = canvasHandleMouse(event.x, event.y, event.button, false)
-    if handled:
-      return true
-```
-
-```nim on:render
-# Clear background layer and render techbubbles underneath
-clear("background", true)
-particleRender("techbubbles", "background")
-
-# Clear the z-3 layer before canvas renders the grid to it
-clear("z-3", true)
-
-# Clear default layer and render canvas content (now uses transparency!)
-clear("default", true)
-canvasRender()
-
-# Apply wave displacement to the grid layer only (z-3)
-# This creates an ocean wave effect on the electrical grid
-drawDisplacementInPlace("z-3")
-
-# Render foreground particles on top
-if inFinalStats:
-  particleRender("fire", "default")
-particleRender("sparkles", "default")
-```
-
-```nim on:update
-canvasUpdate()
-
-# Update displacement animation for subtle grid wave effect
-updateDisplacement()
-
-mouseX = mouseX
-mouseY = mouseY
-
-# Move sparkles in oval path around center of screen
-sparklesAngle += deltaTime * 2.0  # Adjust speed (2.0 radians per second)
-var centerX = float(termWidth) / 2.0
-var centerY = float(termHeight) / 2.0
-var radiusX = float(termWidth) / 3.0  # Horizontal radius of oval
-var radiusY = float(termHeight) / 3.0  # Vertical radius of oval
-var sparklesX = centerX + radiusX * cos(sparklesAngle)
-var sparklesY = centerY + radiusY * sin(sparklesAngle)
-particleSetEmitterPos("sparkles", sparklesX, sparklesY)
-particleEmit("sparkles", 5)
-
-# Update all active particle systems
-particleUpdate("sparkles", deltaTime)
-
-# Update fire rising from bottom (always active)
-particleSetEmitterPos("techbubbles", 0.0, float(termHeight - 1))
-particleSetEmitterSize("techbubbles", float(termWidth), 1.0)
-particleUpdate("techbubbles", deltaTime)
-
-# Update fire emitter position to bottom of current section
-if inFinalStats:
-  metrics = getSectionMetrics()
-  particleSetEmitterPos("fire", metrics.x, metrics.y - 1)
-  particleUpdate("fire", deltaTime)
+```javascript on:init
+worlds.enable();
+console.log('✓ 3D Canvas enabled!');
+worlds.config.setDefaults({
+  defaultSectionWidth: 60,        // Default width
+  defaultSectionHeight: 24,       // Default height
+  autoLayoutSpacing: 150,         // Spacing between auto-laid-out sections (world units)
+  sectionBorderEnabled: false,     // Draw a border around each section card
+  sectionBackground: 'bg',   // Section card background: 'surface' | 'bg' | 'bgAlt' | 'accent1' | '#RRGGBB' | 0xRRGGBBAA
+});
+worlds.camera.setPosition(0, 0, 250);
+worlds.camera.setRotation(0, 10, 0.5);
+worlds.camera.setEaseSpeed(0.08, 0.12);
+worlds.camera.focusOnSection(0, 50);
 ```
 
 # Welcome to
 ⠀
-```ansi
-[38;2;0;217;142m  ▄ [0m [1;37m█[0m [38;2;100;100;100m▄▄▄▄   ▄                     [0m
-[38;2;0;217;142m ▄█▄[0m [1;37m█[0m [38;2;100;100;100m█     ▄█▄  ▄▄▄▄ ▄▄▄▄ ▄  ▄▄▄▄▄[0m
-[38;2;0;217;142m  █ [0m [1;37m█[0m [38;2;100;100;100m▀▀▀▀▄  █   █  █ █    █  █▄▄▄█[0m
-[38;2;0;217;142m  █ [0m [1;37m█[0m [38;2;100;100;100m    █  █   █  █ █    █  █    [0m
-[38;2;0;217;142m  ▀▀[0m [1;37m█[0m [38;2;100;100;100m▀▀▀▀   ▀▀  ▀▀▀▀ ▀    ▀  ▀▀▀▀▀[0m
+```ascii
+ ▄▄▄▄  █  ▄                     
+█      █ ▄█▄  ▄▄▄▄ ▄▄▄▄ ▄  ▄▄▄▄▄
+ ▀▄▄   █  █   █  █ █    █  █▄▄▄█
+    █  █  █   █  █ █    █  █    
+▀▀▀▀   █  ▀▀  ▀▀▀▀ ▀    ▀  ▀▀▀▀▀
 ```
 ⠀
-The abominable, little terminal engine that could,
+The abominable, little engine that could,
 but probably shouldn't!
 ⠀
 **Ready to explore?**

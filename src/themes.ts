@@ -12,6 +12,17 @@ import type { ThemeColors, ThemeStyleSheet } from './types.js';
  * Format: 0xRRGGBBAA (Red, Green, Blue, Alpha as hex bytes)
  */
 export const THEMES: Record<string, ThemeColors> = {
+  saintbilly: {
+    // Old-western, light theme: parchment-ish gray with a subtle red-brown tint
+    bg:      0xF4EEEAFF,   // Warm paper (slight red-brown)
+    bgAlt:   0xE6DFDAFF,   // Raised paper
+    fg:      0x2A2A2CFF,   // Near-black ink
+    fgAlt:   0x6C6C6EFF,   // Muted gray
+    accent1: 0x7A1414FF,   // Dark red
+    accent2: 0x3A3A3CFF,   // Charcoal (links/secondary)
+    accent3: 0x7D7D80FF,   // Mid gray (tertiary)
+  },
+
   neotopia: {
     bg:      0x001111FF,   // Deep teal
     bgAlt:   0x09343AFF,   // Lighter teal

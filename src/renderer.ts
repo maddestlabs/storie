@@ -5,6 +5,7 @@
 
 import type { Cell, Color } from './types.js';
 import { ColorUtils, COLORS } from './types.js';
+import { getPrimaryFontFamily, tryLoadGoogleFontFamily } from './font-loading.js';
 
 export interface RendererConfig {
   fontFamily?: string;
@@ -61,6 +62,21 @@ export class Canvas2DRenderer {
   
   private async waitForFont(): Promise<void> {
     try {
+      // Best-effort: if the primary family is a Google Font, pull it in.
+      // Time-bounded so offline/native environments don't hang.
+      try {
+        const primary = getPrimaryFontFamily(this.fontFamily);
+        if (primary) {
+          await tryLoadGoogleFontFamily(primary, {
+            timeoutMs: 1500,
+            fontCssPixelSize: this.fontSize,
+            display: 'swap'
+          });
+        }
+      } catch {
+        // ignore
+      }
+
       // Wait for the font to be loaded
       await document.fonts.load(`${this.fontSize}px ${this.fontFamily}`);
       // Update context with loaded font

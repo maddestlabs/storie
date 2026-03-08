@@ -5,6 +5,7 @@
  */
 
 import type { WebGPUContext } from './webgpu-context.js';
+import { getPrimaryFontFamily, tryLoadGoogleFontFamily } from './font-loading.js';
 
 export interface GlyphAtlasConfig {
   fontFamily?: string;
@@ -106,6 +107,21 @@ export class GlyphAtlas {
   async initGPU(context: WebGPUContext): Promise<void> {
     const device = context.getDevice();
     if (!device) throw new Error('WebGPU device not available');
+
+    // If the primary font looks like a Google Font family, try to load it.
+    // This is best-effort and time-bounded; we still proceed with local fallbacks.
+    try {
+      const primary = getPrimaryFontFamily(this.fontFamily);
+      if (primary) {
+        await tryLoadGoogleFontFamily(primary, {
+          timeoutMs: 1500,
+          fontCssPixelSize: this.fontSize,
+          display: 'swap'
+        });
+      }
+    } catch {
+      // ignore
+    }
     
     // Wait for fonts to load
     if (document.fonts && document.fonts.ready) {
@@ -121,6 +137,11 @@ export class GlyphAtlas {
         console.warn('[GlyphAtlas] Font load failed, continuing anyway:', e);
       }
     }
+
+    // IMPORTANT: the constructor measures metrics before fonts are guaranteed
+    // to be available. Re-measure now so charWidth/charHeight match the actual
+    // resolved font face and fontsize.
+    this.initFont();
     
     // Create atlas texture
     this.atlasTexture = device.createTexture({

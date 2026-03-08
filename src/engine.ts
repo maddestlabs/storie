@@ -67,6 +67,13 @@ import {
   type HostRole,
   type HostTransport
 } from './host-sync.js';
+import {
+  DEFAULT_FONT_FALLBACK_STACK,
+  buildFontStack,
+  getPrimaryFontFamily,
+  isProbablyMonospaceFontStack,
+  tryLoadGoogleFontFamily
+} from './font-loading.js';
 
 type ThemeOverride = { theme: ThemeColors; label: string };
 
@@ -175,6 +182,15 @@ export class StorieEngine {
   private compositor: Compositor | null = null;
   private sandbox: ScriptSandbox;
   private api!: SandboxAPI;  // User API (initialized in constructor)
+
+  // Font settings (logical CSS pixels). WebGPU glyph atlas scales by DPR.
+  private fontFamily: string;
+  private fontSize: number;
+
+  // Optional override for Worlds section card text rendering.
+  // If frontmatter requests a proportional font, we keep the terminal grid
+  // monospace but still allow Worlds cards to use the requested font.
+  private worldsCardFontStack: string | null = null;
   
   // Native browser APIs (shared instances)
   private audioContext: AudioContext;
@@ -324,6 +340,9 @@ export class StorieEngine {
       }>
     | null = null;
   private pendingWorldsOverview: { enabled: boolean; options?: WorldsOverviewOptions } | null = null;
+
+  // Cache last computed auto-layout step sizes so we don't rewrite positions every frame.
+  private worldsAutoLayoutCache: { cols: number; stepX: number; stepY: number } | null = null;
 
   // Dropped-file handling (binary-safe)
   private lastDroppedFile: DroppedFile | null = null;
@@ -500,8 +519,9 @@ export class StorieEngine {
     for (const idx of candidates) {
       const l = this.section3DLayouts[idx];
       if (!l) continue;
-      maxWorldW = Math.max(maxWorldW, l.width * (l.transform.scale?.x ?? 1));
-      maxWorldH = Math.max(maxWorldH, l.height * (l.transform.scale?.y ?? 1));
+      const s = this.get3DCardWorldSize(l);
+      maxWorldW = Math.max(maxWorldW, s.width);
+      maxWorldH = Math.max(maxWorldH, s.height);
     }
     const stepX = maxWorldW + padding;
     const stepY = maxWorldH + padding;
@@ -531,8 +551,9 @@ export class StorieEngine {
     for (const idx of candidates) {
       const l = this.section3DLayouts[idx];
       if (!l) continue;
-      const w = l.width * (l.transform.scale?.x ?? 1);
-      const h = l.height * (l.transform.scale?.y ?? 1);
+      const s = this.get3DCardWorldSize(l);
+      const w = s.width;
+      const h = s.height;
       minX = Math.min(minX, l.transform.position.x - w / 2);
       maxX = Math.max(maxX, l.transform.position.x + w / 2);
       minY = Math.min(minY, l.transform.position.y - h / 2);
@@ -567,6 +588,9 @@ export class StorieEngine {
     this.width = config.width || 80;
     this.height = config.height || 24;
 
+    this.fontFamily = config.fontFamily || DEFAULT_FONT_FALLBACK_STACK;
+    this.fontSize = config.fontSize || 16;
+
     const configuredMaxDropBytes = typeof config.maxDropBytes === 'number' ? config.maxDropBytes : 50 * 1024 * 1024;
     this.maxDropBytes = configuredMaxDropBytes > 0 ? configuredMaxDropBytes : Infinity;
 
@@ -594,8 +618,8 @@ export class StorieEngine {
     if (preferWebGPU && navigator.gpu) {
       console.log('✓ WebGPU available, will attempt initialization');
       this.renderer = new WebGPURenderer(canvas, {
-        fontFamily: config.fontFamily,
-        fontSize: config.fontSize,
+        fontFamily: this.fontFamily,
+        fontSize: this.fontSize,
         // When WebGPU is available we initialize the compositor, which expects
         // the terminal renderer to render into an offscreen texture.
         renderToTexture: true
@@ -603,8 +627,8 @@ export class StorieEngine {
     } else {
       console.log('✓ Using Canvas2D renderer');
       this.renderer = new Canvas2DRenderer(canvas, {
-        fontFamily: config.fontFamily,
-        fontSize: config.fontSize
+        fontFamily: this.fontFamily,
+        fontSize: this.fontSize
       });
     }
     
@@ -3328,9 +3352,16 @@ export class StorieEngine {
         
         // Shader chain API
         setChain: async (shaderNames: string[]) => {
+          // Allow calls before WebGPU init: defer until ShaderChainManager exists.
           if (!engine.shaderChainManager) {
-            console.warn('ShaderChainManager not available (WebGPU not initialized)');
-            return false;
+            const chainStr = Array.isArray(shaderNames) ? shaderNames.filter(Boolean).join('+') : '';
+            if (chainStr) {
+              console.log('[Engine] Deferring shader chain until WebGPU init (api):', chainStr);
+              engine.pendingShaderChain = { chainStr, source: 'api' };
+              return true;
+            }
+            engine.pendingShaderChain = null;
+            return true;
           }
           try {
             return await engine.shaderChainManager.activateChain(shaderNames, 'api');
@@ -3341,18 +3372,25 @@ export class StorieEngine {
         },
         
         getChain: () => {
-          if (!engine.shaderChainManager) return [];
-          return engine.shaderChainManager.getActiveChain();
+          if (engine.shaderChainManager) return engine.shaderChainManager.getActiveChain();
+          if (engine.pendingShaderChain?.chainStr) {
+            // Best-effort: expose the deferred chain as if it were active.
+            return engine.pendingShaderChain.chainStr.split('+').map(s => s.trim()).filter(Boolean);
+          }
+          return [];
         },
         
         clearChain: () => {
-          if (!engine.shaderChainManager) return;
-          engine.shaderChainManager.clearChain();
+          if (engine.shaderChainManager) {
+            engine.shaderChainManager.clearChain();
+            return;
+          }
+          engine.pendingShaderChain = null;
         },
         
         hasChain: () => {
-          if (!engine.shaderChainManager) return false;
-          return engine.shaderChainManager.hasActiveChain();
+          if (engine.shaderChainManager) return engine.shaderChainManager.hasActiveChain();
+          return !!engine.pendingShaderChain?.chainStr;
         },
         
         chainInfo: () => {
@@ -3736,6 +3774,82 @@ export class StorieEngine {
             if (!engine.camera3D) return;
             engine.camera3D.target = { x, y, z };
           },
+
+          shake: {
+            setEnabled: (enabled: boolean) => {
+              if (!engine.camera3D) return;
+              if (!engine.camera3D.shake) {
+                engine.camera3D.shake = {
+                  enabled: false,
+                  strength: 1,
+                  seed: Math.random(),
+                  translate: { x: 0, y: 0, z: 0 },
+                  rotate: { x: 0, y: 0, z: 0 },
+                  rate: 0.17,
+                };
+              }
+              engine.camera3D.shake.enabled = !!enabled;
+              if (!enabled && engine.camera3D._shakeState) {
+                engine.camera3D._shakeState.time = 0;
+                engine.camera3D._shakeState.pos = { x: 0, y: 0, z: 0 };
+                engine.camera3D._shakeState.posVel = { x: 0, y: 0, z: 0 };
+                engine.camera3D._shakeState.rot = { x: 0, y: 0, z: 0 };
+                engine.camera3D._shakeState.rotVel = { x: 0, y: 0, z: 0 };
+              }
+            },
+
+            setParams: (params: any) => {
+              if (!engine.camera3D) return;
+              if (!engine.camera3D.shake) {
+                engine.camera3D.shake = {
+                  enabled: false,
+                  strength: 1,
+                  seed: Math.random(),
+                  translate: { x: 0, y: 0, z: 0 },
+                  rotate: { x: 0, y: 0, z: 0 },
+                  rate: 0.17,
+                };
+              }
+
+              const s = engine.camera3D.shake;
+              if (typeof params?.strength === 'number' && Number.isFinite(params.strength)) s.strength = params.strength;
+              if (typeof params?.seed === 'number' && Number.isFinite(params.seed)) s.seed = params.seed;
+              if (typeof params?.rate === 'number' && Number.isFinite(params.rate)) s.rate = params.rate;
+
+              if (params?.translate && typeof params.translate === 'object') {
+                if (typeof params.translate.x === 'number' && Number.isFinite(params.translate.x)) s.translate.x = params.translate.x;
+                if (typeof params.translate.y === 'number' && Number.isFinite(params.translate.y)) s.translate.y = params.translate.y;
+                if (typeof params.translate.z === 'number' && Number.isFinite(params.translate.z)) s.translate.z = params.translate.z;
+              }
+              if (params?.rotate && typeof params.rotate === 'object') {
+                if (typeof params.rotate.x === 'number' && Number.isFinite(params.rotate.x)) s.rotate.x = params.rotate.x;
+                if (typeof params.rotate.y === 'number' && Number.isFinite(params.rotate.y)) s.rotate.y = params.rotate.y;
+                if (typeof params.rotate.z === 'number' && Number.isFinite(params.rotate.z)) s.rotate.z = params.rotate.z;
+              }
+            },
+
+            getParams: () => {
+              if (!engine.camera3D?.shake) {
+                return {
+                  enabled: false,
+                  strength: 1,
+                  seed: 0,
+                  rate: 0.17,
+                  translate: { x: 0, y: 0, z: 0 },
+                  rotate: { x: 0, y: 0, z: 0 },
+                };
+              }
+              const s = engine.camera3D.shake;
+              return {
+                enabled: !!s.enabled,
+                strength: Number.isFinite(s.strength) ? s.strength : 1,
+                seed: Number.isFinite(s.seed) ? s.seed : 0,
+                rate: Number.isFinite(s.rate) ? s.rate : 0.17,
+                translate: { x: s.translate.x, y: s.translate.y, z: s.translate.z },
+                rotate: { x: s.rotate.x, y: s.rotate.y, z: s.rotate.z },
+              };
+            }
+          },
           
           focusOnSection: (
             sectionIndex: number | string,
@@ -3854,6 +3968,7 @@ export class StorieEngine {
           }
           if (transform.position) {
             layout.transform.position = { ...transform.position };
+            layout.autoPositioned = false;
           }
           if (transform.rotation) {
             // Convert degrees to radians
@@ -3893,6 +4008,27 @@ export class StorieEngine {
             if (config.defaultSectionHeight !== undefined) {
               engine.worldsConfig.defaultSectionHeight = config.defaultSectionHeight;
             }
+            if ((config as any).sectionSizeUnits !== undefined) {
+              const next = (config as any).sectionSizeUnits;
+              if (next === 'text' || next === 'px') {
+                const prev = (engine.worldsConfig as any).sectionSizeUnits;
+                (engine.worldsConfig as any).sectionSizeUnits = next;
+                if (prev !== next) {
+                  engine.clear3DSectionTextures();
+                }
+              }
+            }
+
+            if ((config as any).sectionOverflow !== undefined) {
+              const next = (config as any).sectionOverflow;
+              if (next === 'clip' || next === 'expand' || next === 'expand-y') {
+                const prev = (engine.worldsConfig as any).sectionOverflow;
+                (engine.worldsConfig as any).sectionOverflow = next;
+                if (prev !== next) {
+                  engine.clear3DSectionTextures();
+                }
+              }
+            }
             if (config.cameraFov !== undefined) {
               engine.worldsConfig.cameraFov = config.cameraFov;
             }
@@ -3907,6 +4043,19 @@ export class StorieEngine {
             }
             if (config.rotationEaseSpeed !== undefined) {
               engine.worldsConfig.rotationEaseSpeed = config.rotationEaseSpeed;
+            }
+
+            if ((config as any).keepRotation !== undefined) {
+              (engine.worldsConfig as any).keepRotation = !!(config as any).keepRotation;
+            }
+            if ((config as any).screenSpaceRecenter !== undefined) {
+              (engine.worldsConfig as any).screenSpaceRecenter = !!(config as any).screenSpaceRecenter;
+            }
+            if ((config as any).screenSpaceRecenterIters !== undefined) {
+              const v = Number((config as any).screenSpaceRecenterIters);
+              if (Number.isFinite(v)) {
+                (engine.worldsConfig as any).screenSpaceRecenterIters = Math.max(1, Math.min(12, Math.floor(v)));
+              }
             }
             if (config.autoLayoutEnabled !== undefined) {
               engine.worldsConfig.autoLayoutEnabled = config.autoLayoutEnabled;
@@ -3948,7 +4097,15 @@ export class StorieEngine {
               }
             }
 
+            if (config.sectionBackgroundPaperNoiseStrength !== undefined) {
+              const v = config.sectionBackgroundPaperNoiseStrength;
+              if (Number.isFinite(v as any)) {
+                engine.worldsConfig.sectionBackgroundPaperNoiseStrength = Math.max(0, Math.min(1, v as number));
+              }
+            }
+
             engine.applyWorldsLayoutCallback();
+            engine.reflowWorldsAutoLayout();
           },
           
           getDefaults: () => {
@@ -3999,6 +4156,163 @@ export class StorieEngine {
   /**
    * Load a markdown document and execute its code with lifecycle hooks
    */
+  private async applyFrontmatterFontConfig(metadata: Record<string, any>): Promise<void> {
+    // Only meaningful in a browser environment.
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+    const rawFont = metadata?.font ?? metadata?.fontFamily ?? metadata?.['font-family'];
+    const rawSize = metadata?.fontsize ?? metadata?.fontSize;
+
+    const normalizedRawFont = rawFont ? String(rawFont).replace(/\+/g, ' ').trim() : null;
+
+    const nextSize = Number.isFinite(Number(rawSize)) && Number(rawSize) > 0 ? Number(rawSize) : this.fontSize;
+    const requestedFontStack = normalizedRawFont ? buildFontStack(normalizedRawFont, DEFAULT_FONT_FALLBACK_STACK) : null;
+    let nextFontFamily = requestedFontStack ?? this.fontFamily;
+    let nextWorldsCardFontStack: string | null = null;
+
+    // Best-effort preload of Google Fonts (if applicable). This avoids the
+    // first frame rasterizing fallback glyphs into the atlas.
+    if (normalizedRawFont) {
+      try {
+        const primary = getPrimaryFontFamily(nextFontFamily);
+        if (primary) {
+          await tryLoadGoogleFontFamily(primary, {
+            timeoutMs: 1500,
+            fontCssPixelSize: nextSize,
+            display: 'swap'
+          });
+        }
+      } catch {
+        // ignore
+      }
+
+      // Guardrail: terminal rendering assumes a fixed cell width. If the
+      // requested font resolves to a proportional face, alignment breaks.
+      // In that case, fall back to the default monospace stack for the terminal,
+      // but still allow Worlds cards to render with the requested font.
+      try {
+        if (document.fonts && document.fonts.ready) {
+          await Promise.race([
+            document.fonts.ready,
+            new Promise(resolve => setTimeout(resolve, 750))
+          ]);
+        }
+        if (document.fonts && document.fonts.load) {
+          await Promise.race([
+            document.fonts.load(`${nextSize}px ${nextFontFamily}`),
+            new Promise(resolve => setTimeout(resolve, 750))
+          ]);
+        }
+        if (!isProbablyMonospaceFontStack(nextFontFamily, { fontCssPixelSize: nextSize })) {
+          nextWorldsCardFontStack = nextFontFamily;
+          console.warn('[Engine] Requested font is not monospace; using monospace for terminal grid and requested font for Worlds cards:', {
+            requested: nextFontFamily,
+            terminalFallback: DEFAULT_FONT_FALLBACK_STACK
+          });
+          nextFontFamily = DEFAULT_FONT_FALLBACK_STACK;
+        }
+      } catch {
+        // ignore (best-effort)
+      }
+    }
+
+    const changed =
+      nextSize !== this.fontSize ||
+      nextFontFamily !== this.fontFamily ||
+      nextWorldsCardFontStack !== this.worldsCardFontStack;
+    if (!changed) return;
+
+    if (this.running) {
+      // We can safely apply Worlds card font changes at runtime by regenerating
+      // section textures. Terminal font/size changes require restart.
+      const terminalChanged = nextSize !== this.fontSize || nextFontFamily !== this.fontFamily;
+      if (terminalChanged) {
+        console.warn('[Engine] Frontmatter font specified, but engine is already running. Restart required to apply terminal font changes:', {
+          fontFamily: nextFontFamily,
+          fontSize: nextSize
+        });
+        return;
+      }
+
+      if (nextWorldsCardFontStack !== this.worldsCardFontStack) {
+        this.worldsCardFontStack = nextWorldsCardFontStack;
+        try {
+          this.clear3DSectionTextures();
+        } catch {
+          // ignore
+        }
+        console.log('[Engine] Applied Worlds card font override at runtime:', this.worldsCardFontStack);
+      }
+      return;
+    }
+
+    this.fontFamily = nextFontFamily;
+    this.fontSize = nextSize;
+    this.worldsCardFontStack = nextWorldsCardFontStack;
+
+    // Recreate renderer with updated font settings (safe before start()).
+    if (this.renderer instanceof WebGPURenderer && navigator.gpu) {
+      this.renderer = new WebGPURenderer(this.canvas, {
+        fontFamily: this.fontFamily,
+        fontSize: this.fontSize,
+        renderToTexture: true
+      });
+    } else {
+      this.renderer = new Canvas2DRenderer(this.canvas, {
+        fontFamily: this.fontFamily,
+        fontSize: this.fontSize
+      });
+    }
+
+    this.renderer.resize(this.width, this.height);
+    this.syncCanvasElementSizeToBuffer();
+
+    console.log(`[Engine] Applied frontmatter font: ${this.fontFamily} @ ${this.fontSize}px`);
+  }
+
+  private measureFontMetrics(fontStack: string, fontSizePx: number): {
+    charW: number;
+    charH: number;
+    baseLineHeight: number;
+  } {
+    // Best-effort measurement in the same pixel space as the section textures.
+    // This is used for Worlds card sizing and for matching the card quad aspect.
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext('2d', { alpha: true } as any) as CanvasRenderingContext2D | null;
+      if (!ctx) {
+        const fallbackH = Math.max(1, Math.round(fontSizePx));
+        return { charW: Math.max(1, Math.round(fontSizePx * 0.6)), charH: fallbackH, baseLineHeight: Math.max(1, Math.round(fallbackH * 1.25)) };
+      }
+
+      ctx.textBaseline = 'top';
+      ctx.textAlign = 'left';
+      ctx.font = `${fontSizePx}px ${fontStack}`;
+
+      // For proportional fonts, using a single glyph like 'M' can wildly
+      // overestimate typical advance width, making section cards far wider
+      // than expected. Use an average across a representative sample.
+      const sample = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      const wMetrics = ctx.measureText(sample);
+      const wAvg = Math.max(1, Math.ceil((wMetrics.width || (fontSizePx * 0.6 * sample.length)) / sample.length));
+
+      // Height should consider tall/descender glyphs.
+      const hMetrics = ctx.measureText('Mg');
+      const ascent = (hMetrics as any).actualBoundingBoxAscent;
+      const descent = (hMetrics as any).actualBoundingBoxDescent;
+      const hRaw = Number.isFinite(ascent) && Number.isFinite(descent)
+        ? Math.max(1, Math.ceil(ascent + descent))
+        : Math.max(1, Math.round(fontSizePx));
+      const baseLineHeight = Math.max(1, Math.round(hRaw * 1.25));
+      return { charW: wAvg, charH: hRaw, baseLineHeight };
+    } catch {
+      const fallbackH = Math.max(1, Math.round(fontSizePx));
+      return { charW: Math.max(1, Math.round(fontSizePx * 0.6)), charH: fallbackH, baseLineHeight: Math.max(1, Math.round(fallbackH * 1.25)) };
+    }
+  }
+
   async loadMarkdown(documentId: string, markdown: string): Promise<boolean> {
     try {
       console.log(`Loading document: ${documentId}`);
@@ -4007,6 +4321,10 @@ export class StorieEngine {
       const parsed = await parseMarkdown(markdown);
       console.log(`  Found ${parsed.sections.length} sections`);
       console.log(`  Found ${parsed.codeBlocks.length} code blocks`);
+
+      // Apply frontmatter font settings early (best-effort). This is most useful
+      // when the host loads markdown before `engine.start()` (e.g. the default site).
+      await this.applyFrontmatterFontConfig(parsed.metadata);
 
       // Treat each load as a full content swap.
       // This ensures drag-and-drop (browser + native) fully replaces the
@@ -4099,6 +4417,7 @@ export class StorieEngine {
       if (this.worldsRenderer) {
         this.section3DLayouts = createSection3DLayouts(parsed.sections, this.worldsConfig);
         console.log(`  Created 3D layouts for ${this.section3DLayouts.length} sections`);
+        this.reflowWorldsAutoLayout();
         this.applyPending3DCameraFocus();
         this.applyWorldsLayoutCallback(parsed.sections);
         this.applyPendingWorldsOverview();
@@ -4722,9 +5041,7 @@ ${exportVars}
         console.warn('⚠ WebGPU init failed, falling back to Canvas2D');
         // Create Canvas2D fallback
         const canvas = (this.renderer as any).canvas;
-        const fontFamily = (this.renderer as any).fontFamily;
-        const fontSize = (this.renderer as any).fontSize;
-        this.renderer = new Canvas2DRenderer(canvas, { fontFamily, fontSize });
+        this.renderer = new Canvas2DRenderer(canvas, { fontFamily: this.fontFamily, fontSize: this.fontSize });
         this.renderer.resize(this.width, this.height);
         this.syncCanvasElementSizeToBuffer();
       } else if (this.renderer instanceof WebGPURenderer) {
@@ -4749,7 +5066,7 @@ ${exportVars}
           // Initialize 3D Canvas renderer
           if (!this.worldsRenderer) {
             try {
-              this.worldsRenderer = new WorldsRenderer(device, this.canvas.width, this.canvas.height);
+              this.worldsRenderer = new WorldsRenderer(device, this.canvas.width, this.canvas.height, this.shaderManager);
               await this.worldsRenderer.init();
               if (!this.camera3D) {
                 this.camera3D = createCamera3D();
@@ -4932,21 +5249,50 @@ ${exportVars}
           // Whole-card hover invert disabled (we highlight links instead)
           const backgroundChain = this.parseWorldsSectionBackgroundChain();
           const proceduralBackground = this.isWorldsSectionBackgroundProceduralChainEnabled();
-          const backgroundConfig = proceduralBackground
+          const hasRuledLines = backgroundChain.includes('ruledlines') || backgroundChain.includes('ruled-lines') || backgroundChain.includes('ruled_lines');
+          const hasPaper = backgroundChain.includes('paper');
+
+          // Paper grain in the Worlds background shader is intentionally subtle,
+          // but on light themes it can read as “nothing” when used without
+          // ruled lines. Use a slightly stronger default for paper-only.
+          const defaultPaperNoiseStrength = hasPaper && !hasRuledLines ? 0.22 : 0.06;
+          const configuredPaperNoiseStrength = (this.worldsConfig as any).sectionBackgroundPaperNoiseStrength;
+          const paperNoiseStrength = Number.isFinite(configuredPaperNoiseStrength)
+            ? Math.max(0, Math.min(1, configuredPaperNoiseStrength))
+            : defaultPaperNoiseStrength;
+
+          // Check for shader background
+          const shaderInfo = this.parseWorldsSectionBackgroundShader();
+
+          // For shader-based backgrounds, we need a stable mapping from world
+          // coords -> background UVs. Treat `coordScale` as an engine-level
+          // parameter (world tiling frequency). Do NOT fall back to a shader's
+          // `scale` uniform here because many background shaders use `scale`
+          // internally (e.g. as a noise frequency), and coupling the two makes
+          // the background appear massively zoomed.
+          const shaderCoordScaleRaw = shaderInfo?.uniforms
+            ? (shaderInfo.uniforms as any).coordScale
+            : undefined;
+          const shaderCoordScale = Number.isFinite(shaderCoordScaleRaw as any)
+            ? (shaderCoordScaleRaw as number)
+            : 1;
+          
+          const backgroundConfig = proceduralBackground || shaderInfo
             ? {
                 enabled: true,
                 chain: backgroundChain,
+                shaderName: shaderInfo?.name,
+                shaderUniforms: shaderInfo?.uniforms,
                 paperColor: this.resolveWorldsSectionBackground(),
                 lineColor: this.withAlpha(this.getStyle('dim').fg, 0x40),
-                scale: 1,
+                scale: shaderInfo ? shaderCoordScale : 1,
                 spacing: 1,
                 thickness: 0.06,
-                noiseStrength: 0.06,
+                noiseStrength: paperNoiseStrength,
               }
             : undefined;
 
-          const cardXScaleFactor = this.get3DCardXScaleFactor();
-          this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig, cardXScaleFactor);
+          this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig);
         }
 
         // Render GPU UI into its own texture (if created)
@@ -5201,8 +5547,9 @@ ${exportVars}
     const proj = getCameraProjectionMatrix(this.camera3D, aspect);
     const viewProj = mat4Multiply(proj, view);
 
-    // Treat section width/height as character columns/rows when generating
-    // section textures. This makes defaultSectionHeight behave like “rows of text”.
+    // Section sizing can be:
+    // - text units (legacy): width/height are columns/rows
+    // - pixels: width/height are content box pixels (padding is added)
     //
     // Use atlas charW/charH (physical pixels) so that the texture dimensions and
     // drawn font size are consistent with get3DCardXScaleFactor(), which also
@@ -5210,11 +5557,39 @@ ${exportVars}
     // card content (scale factor used physical px, texture used hardcoded logical px).
     const atlas = (this.renderer instanceof WebGPURenderer) ? this.renderer.getAtlas() : null;
     const fontSizePx = atlas ? atlas.getFontSize() : 16;
-    const fontStack = "'3270-regular', 'Consolas', 'Monaco', monospace";
+    const fontStack =
+      this.worldsCardFontStack ||
+      this.fontFamily ||
+      "'3270-regular', 'Consolas', 'Monaco', monospace";
     const texturePadding = 12;
-    const measuredCharW = Math.max(1, atlas ? atlas.getCharWidth() : 9);
-    const measuredCharH = Math.max(1, atlas ? atlas.getCharHeight() : 20);
-    const baseLineHeight = Math.max(1, Math.round(measuredCharH * 1.25));
+    const measured = this.measureFontMetrics(fontStack, fontSizePx);
+    const measuredCharW = Math.max(1, measured.charW);
+    const measuredCharH = Math.max(1, measured.charH);
+    const baseLineHeight = Math.max(1, measured.baseLineHeight);
+
+    let worldSizeChanged = false;
+
+    const overflowCfg = (this.worldsConfig as any).sectionOverflow;
+    const overflowMode: 'clip' | 'expand' | 'expand-y' = (overflowCfg === 'expand' || overflowCfg === 'expand-y') ? overflowCfg : 'clip';
+    const layoutOverflow: 'clip' | 'expand' = overflowMode === 'clip' ? 'clip' : 'expand';
+
+    // Measurement context for proportional font widths (independent of card size).
+    const measureCtx = (() => {
+      if (!this.worldsCardFontStack) return null;
+      try {
+        const c = document.createElement('canvas');
+        c.width = 16;
+        c.height = 16;
+        const ctx = c.getContext('2d', { alpha: true } as any) as CanvasRenderingContext2D | null;
+        if (!ctx) return null;
+        ctx.textBaseline = 'top';
+        ctx.textAlign = 'left';
+        ctx.font = `${fontSizePx}px ${fontStack}`;
+        return ctx;
+      } catch {
+        return null;
+      }
+    })();
 
     for (const layout of this.section3DLayouts) {
       if (!layout.visible) continue;
@@ -5224,20 +5599,118 @@ ${exportVars}
       }
 
       // Only rasterize once per section for now.
-      if (layout.texture) continue;
+      if (layout.texture) {
+        const existing = this.sectionTextureCache.get(layout.sectionIndex);
+        if (existing) {
+          const prevW = layout.worldWidth;
+          const prevH = layout.worldHeight;
+          this.set3DLayoutWorldSizeFromPixels(layout, existing.width, existing.height, baseLineHeight);
+          if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
+        }
+        continue;
+      }
 
       const minW = 256;
       const minH = 128;
-      const maxW = 2048;
-      const maxH = 2048;  // allow for DPR-scaled physical font sizes
+      const deviceMax = (device.limits && (device.limits as any).maxTextureDimension2D)
+        ? Number((device.limits as any).maxTextureDimension2D)
+        : 2048;
+      const maxW = Math.max(256, Math.min(2048, deviceMax));
+      const maxH = Math.max(256, Math.min(2048, deviceMax));  // allow for DPR-scaled physical font sizes
 
-      const desiredW = Math.round(layout.width * measuredCharW + texturePadding * 2);
-      const desiredH = Math.round(layout.height * baseLineHeight + texturePadding * 2);
-      const widthPx = Math.max(minW, Math.min(maxW, desiredW));
-      const heightPx = Math.max(minH, Math.min(maxH, desiredH));
+      const units = (this.worldsConfig as any).sectionSizeUnits === 'px' ? 'px' : 'text';
+      const desiredW = units === 'px'
+        ? Math.round(layout.width + texturePadding * 2)
+        : Math.round(layout.width * measuredCharW + texturePadding * 2);
+      const desiredH = units === 'px'
+        ? Math.round(layout.height + texturePadding * 2)
+        : Math.round(layout.height * baseLineHeight + texturePadding * 2);
+      let widthPx = Math.max(minW, Math.min(maxW, desiredW));
+      let heightPx = Math.max(minH, Math.min(maxH, desiredH));
 
-      const canvas = new OffscreenCanvas(widthPx, heightPx);
-      const ctx = canvas.getContext('2d', { alpha: true });
+      const title = (layout.displayTitle || layout.sectionTitle || '').trim();
+      const content = (layout.content || '').trim();
+      const markdown = `# ${title}\n\n${content}`.trim();
+      const nodes = parseMarkdownLite(markdown);
+
+      // Expand overflow: do a cheap layout pass to compute required pixel size,
+      // then grow the texture/card within device limits.
+      if (overflowMode === 'expand' || overflowMode === 'expand-y') {
+        const base = this.getStyle('default');
+        const dim = this.getStyle('dim');
+        const heading = this.getStyle('heading');
+        const link = this.getStyle('link');
+        const code = this.getStyle('code');
+        const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
+        const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
+        const shaderBg = !!this.parseWorldsSectionBackgroundShader();
+        const surfaceBg = this.resolveWorldsSectionBackground();
+
+        const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
+        const mdStyle: MarkdownStyle = {
+          fg: base.fg,
+          mutedFg: dim.fg,
+          headingFg: heading.fg,
+          linkFg: link.fg,
+          codeFg: code.fg,
+          codeBg: code.bg,
+          bg: mdBg,
+        };
+
+        const measureTextWidth = this.worldsCardFontStack && measureCtx
+          ? (text: string) => measureCtx.measureText(text).width
+          : undefined;
+
+        const probe = layoutMarkdownDocument(
+          nodes,
+          { x: 0, y: 0, width: widthPx, height: heightPx },
+          { charW: measuredCharW, charH: measuredCharH, measureTextWidth },
+          mdStyle,
+          0,
+          texturePadding,
+          { overflow: 'expand' }
+        );
+
+        const reqW = Math.ceil(probe.contentWidth + texturePadding * 2);
+        const reqH = Math.ceil(probe.contentHeight + texturePadding * 2);
+        if (overflowMode === 'expand') {
+          widthPx = Math.max(widthPx, Math.max(minW, Math.min(maxW, reqW)));
+        }
+        heightPx = Math.max(heightPx, Math.max(minH, Math.min(maxH, reqH)));
+      }
+
+      // Update world sizing immediately so auto-layout spacing can be computed
+      // from the real (clamped) pixel card size.
+      {
+        const prevW = layout.worldWidth;
+        const prevH = layout.worldHeight;
+        this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
+        if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
+      }
+
+      let canvas: OffscreenCanvas | HTMLCanvasElement;
+      try {
+        if (typeof OffscreenCanvas !== 'undefined') {
+          canvas = new OffscreenCanvas(widthPx, heightPx);
+        } else {
+          const c = document.createElement('canvas');
+          c.width = widthPx;
+          c.height = heightPx;
+          canvas = c;
+        }
+      } catch {
+        // Some environments throw on OffscreenCanvas construction.
+        const c = document.createElement('canvas');
+        c.width = widthPx;
+        c.height = heightPx;
+        canvas = c;
+      }
+
+      const isOffscreenCanvas = (typeof OffscreenCanvas !== 'undefined') && (canvas instanceof OffscreenCanvas);
+      const ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null =
+        isOffscreenCanvas
+          ? (canvas.getContext('2d', { alpha: true } as any) as OffscreenCanvasRenderingContext2D | null)
+          : ((canvas as HTMLCanvasElement).getContext('2d', { alpha: true } as any) as CanvasRenderingContext2D | null);
       if (!ctx) {
         continue;
       }
@@ -5266,12 +5739,13 @@ ${exportVars}
       const code = this.getStyle('code');
       const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
       const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
+      const shaderBg = !!this.parseWorldsSectionBackgroundShader();
       const surfaceBg = this.resolveWorldsSectionBackground();
       const borderStyle = this.getStyle('border');
 
       // If the 3D shader (procedural) or this path (baked) will draw paper,
       // keep the section texture background transparent so paper shows through.
-      const mdBg = (proceduralRuledPaper || bakedRuledPaper) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
+      const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
 
       const mdStyle: MarkdownStyle = {
         fg: base.fg,
@@ -5282,19 +5756,20 @@ ${exportVars}
         codeBg: code.bg,
         bg: mdBg,
       };
-
-      const title = (layout.displayTitle || layout.sectionTitle || '').trim();
-      const content = (layout.content || '').trim();
-      const markdown = `# ${title}\n\n${content}`.trim();
-
-      const nodes = parseMarkdownLite(markdown);
       const result = layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: widthPx, height: heightPx },
-        { charW, charH },
+        {
+          charW,
+          charH,
+          // If a proportional font is being used for Worlds cards, advance and
+          // wrap using actual pixel widths to avoid visible spacing artifacts.
+          measureTextWidth: this.worldsCardFontStack ? (text: string) => ctx.measureText(text).width : undefined,
+        },
         mdStyle,
         0,
-        texturePadding
+        texturePadding,
+        { overflow: layoutOverflow }
       );
 
       // Draw ops into the Canvas2D surface
@@ -5331,26 +5806,77 @@ ${exportVars}
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
       });
 
+      let uploaded = false;
       try {
         device.queue.copyExternalImageToTexture(
-          { source: canvas },
+          { source: canvas as any },
           { texture },
           { width: widthPx, height: heightPx }
         );
+        uploaded = true;
       } catch {
-        // Fallback path for implementations that don't accept OffscreenCanvas directly.
-        const bitmap = canvas.transferToImageBitmap();
-        device.queue.copyExternalImageToTexture(
-          { source: bitmap },
-          { texture },
-          { width: widthPx, height: heightPx }
-        );
-        bitmap.close();
+        // Fallback path for implementations that don't accept OffscreenCanvas/Canvas directly.
+        try {
+          if (isOffscreenCanvas && typeof (canvas as any).transferToImageBitmap === 'function') {
+            const bitmap: ImageBitmap = (canvas as any).transferToImageBitmap();
+            device.queue.copyExternalImageToTexture(
+              { source: bitmap },
+              { texture },
+              { width: widthPx, height: heightPx }
+            );
+            bitmap.close();
+            uploaded = true;
+          }
+        } catch (error) {
+          console.warn('[Worlds] Failed to upload section texture; skipping this card:', error);
+          try { texture.destroy(); } catch { /* ignore */ }
+          continue;
+        }
+      }
+
+      // Final fallback: upload raw pixels via writeTexture (slower, but widely supported).
+      if (!uploaded) {
+        try {
+          const imageData = (ctx as any).getImageData?.(0, 0, widthPx, heightPx);
+          if (imageData && imageData.data) {
+            const unpaddedBytesPerRow = widthPx * 4;
+            const bytesPerRow = Math.ceil(unpaddedBytesPerRow / 256) * 256;
+            const padded = new Uint8Array(bytesPerRow * heightPx);
+
+            // Copy row-by-row into padded buffer.
+            for (let y = 0; y < heightPx; y++) {
+              const srcStart = y * unpaddedBytesPerRow;
+              const dstStart = y * bytesPerRow;
+              padded.set(imageData.data.subarray(srcStart, srcStart + unpaddedBytesPerRow), dstStart);
+            }
+
+            device.queue.writeTexture(
+              { texture },
+              padded,
+              { bytesPerRow },
+              { width: widthPx, height: heightPx }
+            );
+            uploaded = true;
+          }
+        } catch (error) {
+          console.warn('[Worlds] writeTexture fallback failed; skipping this card:', error);
+        }
+      }
+
+      if (!uploaded) {
+        try { texture.destroy(); } catch { /* ignore */ }
+        continue;
       }
 
       layout.texture = texture;
       this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx });
       this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
+
+      this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
+    }
+
+    if (worldSizeChanged) {
+      this.reflowWorldsAutoLayout();
     }
   }
 
@@ -5365,11 +5891,90 @@ ${exportVars}
         layout.texture = null;
       }
       layout.highlightUvRect = undefined;
+      layout.worldWidth = undefined;
+      layout.worldHeight = undefined;
     }
     this.sectionTextureCache.clear();
     this.sectionLinkRegionsCache.clear();
     this.hovered3DLink = null;
     this.focused3DLink = null;
+    this.worldsAutoLayoutCache = null;
+  }
+
+  private set3DLayoutWorldSizeFromPixels(
+    layout: Section3DLayout,
+    widthPx: number,
+    heightPx: number,
+    pixelsPerWorldUnit: number
+  ): void {
+    const ppu = Number.isFinite(pixelsPerWorldUnit) && pixelsPerWorldUnit > 0 ? pixelsPerWorldUnit : 1;
+    const w = Number.isFinite(widthPx) && widthPx > 0 ? (widthPx / ppu) : null;
+    const h = Number.isFinite(heightPx) && heightPx > 0 ? (heightPx / ppu) : null;
+    if (w && h && Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+      layout.worldWidth = w;
+      layout.worldHeight = h;
+    }
+  }
+
+  private reflowWorldsAutoLayout(): void {
+    if (!this.section3DLayouts || this.section3DLayouts.length === 0) return;
+    if (this.worldsOverviewEnabled) return;
+
+    const autoEnabled = this.worldsConfig.autoLayoutEnabled !== false;
+    if (!autoEnabled) return;
+
+    const cols = Math.max(1, Math.floor(this.worldsConfig.autoLayoutColumns ?? 3));
+
+    // Legacy meaning: autoLayoutSpacing is a fixed step size.
+    // New behavior: never let the step be smaller than the largest card.
+    const baseStep = Number.isFinite(this.worldsConfig.autoLayoutSpacing ?? NaN)
+      ? (this.worldsConfig.autoLayoutSpacing as number)
+      : 200;
+    const padding = 20;
+
+    // Compute required step sizes from card world dimensions.
+    let maxW = 0;
+    let maxH = 0;
+    for (const l of this.section3DLayouts) {
+      if (!l || !l.autoPositioned) continue;
+      const s = this.get3DCardWorldSize(l);
+      maxW = Math.max(maxW, s.width);
+      maxH = Math.max(maxH, s.height);
+    }
+    if (!(maxW > 0) || !(maxH > 0)) return;
+
+    const stepX = Math.max(baseStep, maxW + padding);
+    const stepY = Math.max(baseStep, maxH + padding);
+
+    if (
+      this.worldsAutoLayoutCache &&
+      this.worldsAutoLayoutCache.cols === cols &&
+      Math.abs(this.worldsAutoLayoutCache.stepX - stepX) < 1e-6 &&
+      Math.abs(this.worldsAutoLayoutCache.stepY - stepY) < 1e-6
+    ) {
+      return;
+    }
+    this.worldsAutoLayoutCache = { cols, stepX, stepY };
+
+    const xCenter = (cols - 1) / 2;
+
+    for (const l of this.section3DLayouts) {
+      if (!l || !l.autoPositioned) continue;
+      const col = l.sectionIndex % cols;
+      const row = Math.floor(l.sectionIndex / cols);
+      const x = (col - xCenter) * stepX;
+      const y = -row * stepY;
+      l.transform.position = { x, y, z: l.transform.position.z };
+    }
+  }
+
+  private get3DCardWorldSize(layout: Section3DLayout): { width: number; height: number } {
+    const baseW = layout.worldWidth ?? (layout.width * this.get3DCardXScaleFactor(layout));
+    const baseH = layout.worldHeight ?? layout.height;
+    return {
+      width: baseW * (layout.transform.scale?.x ?? 1),
+      height: baseH * (layout.transform.scale?.y ?? 1),
+    };
   }
 
   private parseHexColorToPackedColor(hex: string): Color | null {
@@ -5410,6 +6015,40 @@ ${exportVars}
     return [trimmed.toLowerCase()];
   }
 
+  private parseWorldsSectionBackgroundShader(): { name: string; uniforms: Record<string, number | number[]> } | null {
+    const v: any = (this.worldsConfig as any).sectionBackground;
+    if (typeof v !== 'string') return null;
+    
+    // Check if it's a shader reference (starts with shader:)
+    if (v.startsWith('shader:')) {
+      const shaderSpec = v.substring(7).trim();
+      const [name, ...uniformSpecs] = shaderSpec.split(';');
+      
+      const uniforms: Record<string, number | number[]> = {};
+      for (const spec of uniformSpecs) {
+        const [key, value] = spec.split('=');
+        if (key && value) {
+          const trimmedKey = key.trim();
+          const trimmedValue = value.trim();
+          
+          // Try to parse as number or array
+          if (trimmedValue.includes(',')) {
+            uniforms[trimmedKey] = trimmedValue.split(',').map(s => parseFloat(s.trim())).filter(n => !isNaN(n));
+          } else {
+            const num = parseFloat(trimmedValue);
+            if (!isNaN(num)) {
+              uniforms[trimmedKey] = num;
+            }
+          }
+        }
+      }
+      
+      return { name: name.trim(), uniforms };
+    }
+    
+    return null;
+  }
+
   private isWorldsSectionBackgroundProceduralChainEnabled(): boolean {
     const chain = this.parseWorldsSectionBackgroundChain();
 
@@ -5426,7 +6065,7 @@ ${exportVars}
   }
 
   private drawRuledLines2D(
-    ctx: OffscreenCanvasRenderingContext2D,
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
     widthPx: number,
     heightPx: number,
     paperColor: Color,
@@ -5532,6 +6171,11 @@ ${exportVars}
     const texturePadding = 12;
     const baseLineHeight = Math.max(1, Math.round(charH * 1.25));
 
+    let worldSizeChanged = false;
+    const overflowCfg = (this.worldsConfig as any).sectionOverflow;
+    const overflowMode: 'clip' | 'expand' | 'expand-y' = (overflowCfg === 'expand' || overflowCfg === 'expand-y') ? overflowCfg : 'clip';
+    const layoutOverflow: 'clip' | 'expand' = overflowMode === 'clip' ? 'clip' : 'expand';
+
     if (!this.sectionWebGPUUIRenderer) {
       // Internal texture is unused for this renderer; we only use flushTo().
       this.sectionWebGPUUIRenderer = new WebGPUUIRenderer(device, atlas, 1, 1);
@@ -5549,10 +6193,11 @@ ${exportVars}
     const code = this.getStyle('code');
     const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
     const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
+    const shaderBg = !!this.parseWorldsSectionBackgroundShader();
     const surfaceBg = this.resolveWorldsSectionBackground();
     const borderStyle = this.getStyle('border');
 
-    const mdBg = (proceduralRuledPaper || bakedRuledPaper) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
+    const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
 
     const style: MarkdownStyle = {
       fg: base.fg,
@@ -5581,27 +6226,59 @@ ${exportVars}
       const maxW = 1024;
       const maxH = 1024;
 
-      const desiredW = Math.round(layout.width * charW + texturePadding * 2);
-      const desiredH = Math.round(layout.height * baseLineHeight + texturePadding * 2);
+      const units = (this.worldsConfig as any).sectionSizeUnits === 'px' ? 'px' : 'text';
+      const desiredW = units === 'px'
+        ? Math.round(layout.width + texturePadding * 2)
+        : Math.round(layout.width * charW + texturePadding * 2);
+      const desiredH = units === 'px'
+        ? Math.round(layout.height + texturePadding * 2)
+        : Math.round(layout.height * baseLineHeight + texturePadding * 2);
 
-      const widthPx = Math.max(minW, Math.min(maxW, desiredW));
-      const heightPx = Math.max(minH, Math.min(maxH, desiredH));
+      let widthPx = Math.max(minW, Math.min(maxW, desiredW));
+      let heightPx = Math.max(minH, Math.min(maxH, desiredH));
+
+      const title = (layout.displayTitle || layout.sectionTitle || '').trim();
+      const content = (layout.content || '').trim();
+      const markdown = `# ${title}\n\n${content}`.trim();
+      const nodes = parseMarkdownLite(markdown);
+
+      if (overflowMode === 'expand' || overflowMode === 'expand-y') {
+        const probe = layoutMarkdownDocument(
+          nodes,
+          { x: 0, y: 0, width: widthPx, height: heightPx },
+          { charW, charH },
+          style,
+          0,
+          texturePadding,
+          { overflow: 'expand' }
+        );
+        const reqW = Math.ceil(probe.contentWidth + texturePadding * 2);
+        const reqH = Math.ceil(probe.contentHeight + texturePadding * 2);
+        if (overflowMode === 'expand') {
+          widthPx = Math.max(widthPx, Math.max(minW, Math.min(maxW, reqW)));
+        }
+        heightPx = Math.max(heightPx, Math.max(minH, Math.min(maxH, reqH)));
+      }
+
+      {
+        const prevW = layout.worldWidth;
+        const prevH = layout.worldHeight;
+        this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
+        if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
+      }
 
       const existing = this.sectionTextureCache.get(layout.sectionIndex);
       if (existing && existing.width === widthPx && existing.height === heightPx && layout.texture) {
         // Texture already matches current size; ensure link regions are present.
         if (!this.sectionLinkRegionsCache.has(layout.sectionIndex)) {
-          const title = (layout.displayTitle || layout.sectionTitle || '').trim();
-          const content = (layout.content || '').trim();
-          const markdown = `# ${title}\n\n${content}`.trim();
-          const nodes = parseMarkdownLite(markdown);
           const result = layoutMarkdownDocument(
             nodes,
             { x: 0, y: 0, width: widthPx, height: heightPx },
             { charW, charH },
             style,
             0,
-            texturePadding
+            texturePadding,
+            { overflow: layoutOverflow }
           );
           this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
         }
@@ -5624,18 +6301,14 @@ ${exportVars}
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
       });
 
-      const title = (layout.displayTitle || layout.sectionTitle || '').trim();
-      const content = (layout.content || '').trim();
-      const markdown = `# ${title}\n\n${content}`.trim();
-
-      const nodes = parseMarkdownLite(markdown);
       const result = layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: widthPx, height: heightPx },
         { charW, charH },
         style,
         0,
-        texturePadding
+        texturePadding,
+        { overflow: layoutOverflow }
       );
 
       this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
@@ -5675,23 +6348,48 @@ ${exportVars}
 
       layout.texture = texture;
       this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx });
+
+      this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
+    }
+
+    if (worldSizeChanged) {
+      this.reflowWorldsAutoLayout();
     }
   }
 
-  private get3DCardXScaleFactor(): number {
+  private get3DCardXScaleFactor(layout?: Section3DLayout): number {
     // Section card sizes (layout.width/layout.height) are specified in logical
-    // text units (columns/rows). Section textures are generated in pixel space
-    // using terminal font metrics (charW and baseline height). If we scale the
-    // quad purely by cols/rows, the card world aspect ratio won't match the
-    // texture pixel aspect ratio, which shows up as an X-stretch of sections.
+    // text units (columns/rows). Section textures are generated in pixel space.
+    // To avoid X-stretch (and card overlap) we want the quad's world aspect
+    // ratio to match the texture pixel aspect ratio.
+    //
+    // Best: when we have actual texture dimensions for this section, derive a
+    // per-card factor directly from widthPx/heightPx.
+    if (layout) {
+      const dims = this.sectionTextureCache.get(layout.sectionIndex);
+      if (dims && dims.width > 0 && dims.height > 0 && layout.width > 0 && layout.height > 0) {
+        const pixelAspect = dims.width / dims.height;
+        const logicalAspect = layout.width / layout.height;
+        const factor = pixelAspect / logicalAspect;
+        if (Number.isFinite(factor) && factor > 0) return factor;
+      }
+    }
+
+    // Fallback: estimate from current font metrics.
     if (!(this.renderer instanceof WebGPURenderer)) return 1;
 
     const atlas = this.renderer.getAtlas();
-    const charW = atlas ? atlas.getCharWidth() : 0;
-    const charH = atlas ? atlas.getCharHeight() : 0;
-    if (!(charW > 0 && charH > 0)) return 1;
+    const fontSizePx = atlas ? atlas.getFontSize() : 16;
+    const fontStack =
+      this.worldsCardFontStack ||
+      this.fontFamily ||
+      "'3270-regular', 'Consolas', 'Monaco', monospace";
 
-    const baseLineHeight = Math.max(1, Math.round(charH * 1.25));
+    const measured = this.measureFontMetrics(fontStack, fontSizePx);
+    const charW = measured.charW;
+    const baseLineHeight = measured.baseLineHeight;
+    if (!(charW > 0 && baseLineHeight > 0)) return 1;
+
     const factor = charW / baseLineHeight;
     return Number.isFinite(factor) && factor > 0 ? factor : 1;
   }
@@ -6235,23 +6933,18 @@ ${exportVars}
           this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
           this.activate3DLink(linkHit.region.url);
         } else {
-          this.setCurrent3DSection(picked.layout.sectionIndex);
-          const aspect = this.canvas.width > 0 && this.canvas.height > 0
-            ? this.canvas.width / this.canvas.height
-            : 1;
-
-          // Preserve the caller's preferred focus style (e.g. keepRotation for
-          // “tilted infinite canvas” demos).
+          // Preserve the caller's preferred focus style and zoom (fill).
+          // This makes demo-defined camera framing “sticky” across navigation.
           const style = this.lastApplied3DCameraFocus;
-          const focusOptions = style
-            ? {
-                ...(style.keepRotation ? { keepRotation: true } : {}),
-                ...(style.positionOffset ? { positionOffset: style.positionOffset } : {}),
-                ...(style.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
-              }
-            : undefined;
-
-          focusOnSectionFit(this.camera3D, picked.layout, aspect, 0.9, { min: 60, max: 400 }, focusOptions);
+          const fill = style?.kind === 'fit' ? style.fill : 0.9;
+          this.request3DCameraFocus({
+            kind: 'fit',
+            sectionIndex: picked.layout.sectionIndex,
+            fill,
+            ...(style?.keepRotation ? { keepRotation: true } : {}),
+            ...(style?.positionOffset ? { positionOffset: style.positionOffset } : {}),
+            ...(style?.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
+          });
         }
       }
     }
@@ -6324,18 +7017,19 @@ ${exportVars}
 
     let best: { layout: Section3DLayout; dist: number; u: number; v: number } | null = null;
 
-    const cardXScaleFactor = this.get3DCardXScaleFactor();
-
     for (const layout of this.section3DLayouts) {
       if (!layout.visible || !layout.texture) continue;
+
+      const baseW = layout.worldWidth ?? (layout.width * this.get3DCardXScaleFactor(layout));
+      const baseH = layout.worldHeight ?? layout.height;
 
       // Match renderer's model matrix: apply width/height into scale.
       const sectionTransform = {
         position: layout.transform.position,
         rotation: layout.transform.rotation,
         scale: {
-          x: layout.transform.scale.x * layout.width * cardXScaleFactor,
-          y: layout.transform.scale.y * layout.height,
+          x: layout.transform.scale.x * baseW,
+          y: layout.transform.scale.y * baseH,
           z: layout.transform.scale.z,
         },
       };
@@ -6464,25 +7158,18 @@ ${exportVars}
       });
 
       if (layout) {
-        this.setCurrent3DSection(layout.sectionIndex);
-        const aspect = this.canvas.width > 0 && this.canvas.height > 0
-          ? this.canvas.width / this.canvas.height
-          : 1;
-        const cardXScaleFactor = this.get3DCardXScaleFactor();
-        const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
-
-        // Preserve focus style (keepRotation/offsets) so internal link clicks
-        // don't reset the global camera tilt.
+        // Use the engine focus request path so fill/options stay sticky and we
+        // don't accidentally reset camera framing or rotation.
         const style = this.lastApplied3DCameraFocus;
-        const focusOptions = style
-          ? {
-              ...(style.keepRotation ? { keepRotation: true } : {}),
-              ...(style.positionOffset ? { positionOffset: style.positionOffset } : {}),
-              ...(style.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
-            }
-          : undefined;
-
-        focusOnSectionFit(this.camera3D, proxyLayout as any, aspect, 0.9, { min: 60, max: 400 }, focusOptions);
+        const fill = style?.kind === 'fit' ? style.fill : 0.9;
+        this.request3DCameraFocus({
+          kind: 'fit',
+          sectionIndex: layout.sectionIndex,
+          fill,
+          ...(style?.keepRotation ? { keepRotation: true } : {}),
+          ...(style?.positionOffset ? { positionOffset: style.positionOffset } : {}),
+          ...(style?.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
+        });
       }
       return;
     }
@@ -6498,13 +7185,14 @@ ${exportVars}
   }
 
   private get3DCardModelMatrix(layout: Section3DLayout): Float32Array {
-    const cardXScaleFactor = this.get3DCardXScaleFactor();
+    const baseW = layout.worldWidth ?? (layout.width * this.get3DCardXScaleFactor(layout));
+    const baseH = layout.worldHeight ?? layout.height;
     const sectionTransform = {
       position: layout.transform.position,
       rotation: layout.transform.rotation,
       scale: {
-        x: layout.transform.scale.x * layout.width * cardXScaleFactor,
-        y: layout.transform.scale.y * layout.height,
+        x: layout.transform.scale.x * baseW,
+        y: layout.transform.scale.y * baseH,
         z: layout.transform.scale.z,
       },
     };
@@ -6550,7 +7238,14 @@ ${exportVars}
       return;
     }
 
-    this.setCurrent3DSection(layout.sectionIndex);
+    const cfg: any = this.worldsConfig as any;
+    const defaultKeepRotation = !!cfg.keepRotation;
+    const defaultRecenter = !!cfg.screenSpaceRecenter;
+    const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
+    const keepRotation = (req as any).keepRotation !== undefined ? !!(req as any).keepRotation : defaultKeepRotation;
+    const recenterOpts = keepRotation && defaultRecenter
+      ? { screenSpaceRecenter: true, screenSpaceRecenterIters: defaultRecenterIters }
+      : {};
 
     // Remember last applied focus (use resolved numeric section index).
     if (req.kind === 'focus') {
@@ -6558,7 +7253,7 @@ ${exportVars}
         kind: 'focus',
         sectionIndex: layout.sectionIndex,
         distance: req.distance,
-        ...(req.keepRotation ? { keepRotation: true } : {}),
+        ...(keepRotation ? { keepRotation: true } : {}),
         ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
         ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
       };
@@ -6567,28 +7262,32 @@ ${exportVars}
         kind: 'fit',
         sectionIndex: layout.sectionIndex,
         fill: req.fill,
-        ...(req.keepRotation ? { keepRotation: true } : {}),
+        ...(keepRotation ? { keepRotation: true } : {}),
         ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
         ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
       };
     }
 
+    // Now that lastApplied is updated, navigation + host sync can use the
+    // correct fill/distance.
+    this.setCurrent3DSection(layout.sectionIndex);
+
     if (req.kind === 'focus') {
       focusOnSection(this.camera3D, layout, req.distance, {
-        ...(req.keepRotation ? { keepRotation: true } : {}),
+        ...(keepRotation ? { keepRotation: true } : {}),
         ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
         ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
+        ...recenterOpts,
       });
     } else {
       const aspect = this.canvas.width > 0 && this.canvas.height > 0
         ? this.canvas.width / this.canvas.height
         : 1;
-      const cardXScaleFactor = this.get3DCardXScaleFactor();
-      const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
-      focusOnSectionFit(this.camera3D, proxyLayout as any, aspect, req.fill, {}, {
-        ...(req.keepRotation ? { keepRotation: true } : {}),
+      focusOnSectionFit(this.camera3D, layout, aspect, req.fill, {}, {
+        ...(keepRotation ? { keepRotation: true } : {}),
         ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
         ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
+        ...recenterOpts,
       });
     }
   }
@@ -6601,21 +7300,33 @@ ${exportVars}
     if (!layout) return;
 
     if (this.lastApplied3DCameraFocus.kind === 'focus') {
+      const cfg: any = this.worldsConfig as any;
+      const defaultRecenter = !!cfg.screenSpaceRecenter;
+      const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
+      const recenterOpts = this.lastApplied3DCameraFocus.keepRotation && defaultRecenter
+        ? { screenSpaceRecenter: true, screenSpaceRecenterIters: defaultRecenterIters }
+        : {};
       focusOnSection(this.camera3D, layout, this.lastApplied3DCameraFocus.distance, {
         ...(this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {}),
         ...(this.lastApplied3DCameraFocus.positionOffset ? { positionOffset: this.lastApplied3DCameraFocus.positionOffset } : {}),
         ...(this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {}),
+        ...recenterOpts,
       });
     } else {
       const aspect = this.canvas.width > 0 && this.canvas.height > 0
         ? this.canvas.width / this.canvas.height
         : 1;
-      const cardXScaleFactor = this.get3DCardXScaleFactor();
-      const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
-      focusOnSectionFit(this.camera3D, proxyLayout as any, aspect, this.lastApplied3DCameraFocus.fill, {}, {
+      const cfg: any = this.worldsConfig as any;
+      const defaultRecenter = !!cfg.screenSpaceRecenter;
+      const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
+      const recenterOpts = this.lastApplied3DCameraFocus.keepRotation && defaultRecenter
+        ? { screenSpaceRecenter: true, screenSpaceRecenterIters: defaultRecenterIters }
+        : {};
+      focusOnSectionFit(this.camera3D, layout, aspect, this.lastApplied3DCameraFocus.fill, {}, {
         ...(this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {}),
         ...(this.lastApplied3DCameraFocus.positionOffset ? { positionOffset: this.lastApplied3DCameraFocus.positionOffset } : {}),
         ...(this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {}),
+        ...recenterOpts,
       });
     }
   }
@@ -6639,8 +7350,9 @@ ${exportVars}
     // Keep this narrowly scoped to navigation only (no arbitrary messaging).
     const h = this.hostSync;
     if (h && h.getSessionInfo().role === 'host') {
-      h.sendGotoSectionFit(sectionIndex, 0.9);
-      h.sendSceneFit(sectionIndex, this.sceneState.revealStep, 0.9);
+      const fill = this.lastApplied3DCameraFocus?.kind === 'fit' ? this.lastApplied3DCameraFocus.fill : 0.9;
+      h.sendGotoSectionFit(sectionIndex, fill);
+      h.sendSceneFit(sectionIndex, this.sceneState.revealStep, fill);
     }
 
     this.runSectionEnterHandlers(sectionIndex);
@@ -6793,6 +7505,7 @@ ${exportVars}
 
         if (out.position) {
           layout.transform.position = { ...out.position };
+          layout.autoPositioned = false;
         }
         if (out.rotation) {
           // Callback rotation is degrees (matches setSectionTransform API)
@@ -6817,6 +7530,10 @@ ${exportVars}
     // Layout changes imply textures may need to be regenerated at different sizes.
     // Keep it simple: clear texture cache so cards re-rasterize on demand.
     this.clear3DSectionTextures();
+
+    // If the callback only partially specified positions, keep the remaining
+    // auto-laid-out cards non-overlapping.
+    this.reflowWorldsAutoLayout();
   }
 
   private is3DCardPossiblyVisible(viewProj: Float32Array, layout: Section3DLayout): boolean {

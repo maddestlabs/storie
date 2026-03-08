@@ -1,7 +1,7 @@
 ---
 title: ANSI Art Demo
 theme: "solarlight"
-shaders: "ruledlines+paper"
+shaders: "ruledlines+saintbilly"
 ---
 
 # ANSI Art Support

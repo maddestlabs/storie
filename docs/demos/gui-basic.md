@@ -1,7 +1,7 @@
 ---
 name: "Retained GUI Demo (Storie)"
 theme: "neonopia"
-shaders: "invert+paper"
+shaders: "paper+invert"
 ---
 
 A demo showing retained-mode graphical UI widgets with mouse and keyboard input.

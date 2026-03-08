@@ -15,6 +15,8 @@ export type DocNode =
 export interface TextMetrics {
   charW: number;
   charH: number;
+  /** Optional: when provided, layout uses this for pixel-accurate wrapping/advances (proportional fonts). */
+  measureTextWidth?: (text: string) => number;
 }
 
 export interface LayoutBox {
@@ -50,5 +52,6 @@ export interface LinkRegion {
 export interface LayoutResult {
   ops: DrawOp[];
   linkRegions: LinkRegion[];
+  contentWidth: number;
   contentHeight: number;
 }

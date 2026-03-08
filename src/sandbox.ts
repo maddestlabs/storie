@@ -738,6 +738,24 @@ export interface SandboxAPI {
       setPosition: (x: number, y: number, z: number) => void;
       setRotation: (x: number, y: number, z: number) => void;
       moveTo: (x: number, y: number, z: number) => void;
+      shake: {
+        setEnabled: (enabled: boolean) => void;
+        setParams: (params: {
+          strength?: number;
+          seed?: number;
+          rate?: number;
+          translate?: { x?: number; y?: number; z?: number };
+          rotate?: { x?: number; y?: number; z?: number };
+        }) => void;
+        getParams: () => {
+          enabled: boolean;
+          strength: number;
+          seed: number;
+          rate: number;
+          translate: { x: number; y: number; z: number };
+          rotate: { x: number; y: number; z: number };
+        };
+      };
       focusOnSection: (
         sectionIndex: number | string,
         distance?: number,

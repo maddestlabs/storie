@@ -92,6 +92,74 @@ How section entry is determined:
   - You click a card (non-link area)
   - You call `worlds.camera.focusOnSection(...)` or `focusOnSectionFit(...)`
 
+## Backgrounds
+
+Worlds supports both procedural and custom shader backgrounds that move with the 3D camera.
+
+### Procedural Backgrounds
+
+Use built-in effects via `sectionBackground`:
+
+```js
+worlds.config.setDefaults({
+  sectionBackground: 'paper+ruledlines'  // Notebook-style background
+});
+```
+
+Available procedural effects:
+- `paper`: Textured paper with optional noise
+- `ruledlines`: Notebook ruled lines
+- Combine with `+`: `paper+ruledlines`
+
+### Shader Backgrounds
+
+Use custom WGSL fragment shaders as backgrounds:
+
+```js
+worlds.config.setDefaults({
+  sectionBackground: 'shader:myShader;speed=1.0;intensity=0.8'
+});
+```
+
+Or use built-in shaders from `docs/shaders/`:
+
+```js
+worlds.config.setDefaults({
+  sectionBackground: 'shader:lightvignette;vignetteStart=0.5;vignetteLvl=20.0'
+});
+```
+
+For paper texture backgrounds, use the dedicated paper-background shader:
+
+```js
+worlds.config.setDefaults({
+  sectionBackground: 'shader:paper-background;paperNoise=1.0;noiseIntensity=0.3'
+});
+```
+
+Define the shader in your markdown:
+
+```wgsl
+```wgsl fragment:myShader
+struct Uniforms {
+  time: f32,
+  resolution: vec2f,
+  speed: f32,
+  intensity: f32,
+};
+
+@group(0) @binding(2) var<uniform> uniforms: Uniforms;
+
+@fragment
+fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
+  // Your shader code here
+  return vec4f(1.0, 0.0, 0.0, 1.0);
+}
+```
+```
+
+Shader backgrounds maintain world-space coordinates, so they move naturally with camera movement.
+
 ## API Reference
 
 ### `worlds`

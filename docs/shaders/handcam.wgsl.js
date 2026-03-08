@@ -9,6 +9,7 @@
 // - strength: overall intensity (0..2)
 // - blur: cheap blur amount (0..2)
 // - zoom: zoom-in factor to hide edges (>= 1.0, typical 1.01..1.15)
+// - seed: per-run seed (0..1) to break repeating patterns
 
 function getShaderConfig() {
   return {
@@ -42,21 +43,40 @@ struct Uniforms {
   strength: f32,
   blur: f32,
   zoom: f32,
-  _pad1: f32,
+  seed: f32,
 }
 @group(0) @binding(2) var<uniform> uniforms: Uniforms;
 
-fn hash11(x: f32) -> f32 {
-  return fract(sin(x * 127.1) * 43758.5453123);
+// 2D value noise + fBm (less obviously periodic than 1D smooth noise)
+fn hash12(p: vec2f) -> f32 {
+  var p3 = fract(vec3f(p.x, p.y, p.x) * 0.1031);
+  p3 += dot(p3, p3.yzx + vec3f(33.33));
+  return fract((p3.x + p3.y) * p3.z);
 }
 
-fn smoothNoise1(t: f32) -> f32 {
-  let i = floor(t);
-  let f = fract(t);
-  let a = hash11(i);
-  let b = hash11(i + 1.0);
+fn valueNoise2(p: vec2f) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+
+  let a = hash12(i + vec2f(0.0, 0.0));
+  let b = hash12(i + vec2f(1.0, 0.0));
+  let c = hash12(i + vec2f(0.0, 1.0));
+  let d = hash12(i + vec2f(1.0, 1.0));
+
   let u = f * f * (3.0 - 2.0 * f);
-  return mix(a, b, u);
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+fn fbm2(p: vec2f) -> f32 {
+  var f = 0.0;
+  var a = 0.5;
+  var x = p;
+  for (var i = 0; i < 4; i = i + 1) {
+    f += a * valueNoise2(x);
+    x = x * 2.03 + vec2f(17.7, 9.2);
+    a *= 0.5;
+  }
+  return f;
 }
 
 fn rotX(p: vec3f, a: f32) -> vec3f {
@@ -87,19 +107,30 @@ fn handcamUv(uv: vec2f) -> vec2f {
   let s = clamp(uniforms.strength, 0.0, 2.0);
   let res = max(uniforms.resolution, vec2f(1.0, 1.0));
 
-  let nx = smoothNoise1(t * 1.30 + 10.0) - 0.5;
-  let ny = smoothNoise1(t * 1.05 + 20.0) - 0.5;
-  let nb = smoothNoise1(t * 1.80 + 30.0) - 0.5;
+  // Sample 2D fBm along a time “track”; seed de-correlates runs.
+  let base = vec2f(t * 0.17, uniforms.seed * 19.19);
+
+  // Domain warp to reduce residual patterning / looping.
+  let warp = vec2f(
+    fbm2(base + vec2f(12.3, 4.7)),
+    fbm2(base + vec2f(3.1, 27.9))
+  );
+  let p2 = base + (warp - 0.5) * 3.0;
+
+  // Decorrelated channels in [-0.5, 0.5]
+  let nx = fbm2(p2 + vec2f(10.0, 20.0)) - 0.5;
+  let ny = fbm2(p2 + vec2f(30.0, 40.0)) - 0.5;
+  let nb = fbm2(p2 + vec2f(50.0, 60.0)) - 0.5;
 
   // Rotation around X/Y in radians.
   let angX = nx * 0.18 * s;
   let angY = ny * 0.22 * s;
-  let angZ = (smoothNoise1(t * 1.55 + 60.0) - 0.5) * 0.10 * s;
+  let angZ = (fbm2(p2 + vec2f(70.0, 80.0)) - 0.5) * 0.10 * s;
 
   // Subtle translation in *pixels* (stable across resolutions).
   // At strength=1, this is roughly a few pixels.
-  let panXpx = (smoothNoise1(t * 2.20 + 40.0) - 0.5) * 6.0 * s;
-  let panYpx = (smoothNoise1(t * 1.95 + 50.0) - 0.5) * 5.0 * s;
+  let panXpx = (fbm2(p2 + vec2f(90.0, 100.0)) - 0.5) * 6.0 * s;
+  let panYpx = (fbm2(p2 + vec2f(110.0, 120.0)) - 0.5) * 5.0 * s;
   let panNdc = vec2f((panXpx / res.x) * 2.0, (panYpx / res.y) * 2.0);
 
   // Z wobble drives a mild perspective skew.
@@ -153,7 +184,8 @@ fn fragmentMain(
     uniforms: {
       strength: 0.1,
       blur: 0.15,
-      zoom: 1.005
+      zoom: 1.005,
+      seed: Math.random()
     }
   };
 }

@@ -1,5 +1,5 @@
 ---
-title: "S|torie ꭼꮑᏽꮖꮑꭼ"
+title: "t|Storie ꭲꭼꭱꮇꮖꮑꭺꮮ ꭼꮑᏽꮖꮑꭼ"
 author: "Maddest Labs"
 theme: "neonopia"
 ---
@@ -8,7 +8,7 @@ theme: "neonopia"
 worlds.enable();
 console.log('✓ 3D Canvas enabled!');
 worlds.config.setDefaults({
-  defaultSectionWidth: 100,        // Default width
+  defaultSectionWidth: 60,        // Default width
   defaultSectionHeight: 24,       // Default height
   autoLayoutSpacing: 150,         // Spacing between auto-laid-out sections (world units)
   sectionBorderEnabled: false,     // Draw a border around each section card

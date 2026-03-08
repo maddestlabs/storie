@@ -34,6 +34,9 @@ export class ShaderChainManager {
   
   // Intermediate textures for multi-pass rendering
   private intermediateTextures: GPUTexture[] = [];
+
+  // WGSL include cache (URL -> resolved text)
+  private includeCache: Map<string, string> = new Map();
   
   // Constants
   private readonly MAX_CHAIN_LENGTH = 8;
@@ -184,7 +187,8 @@ export class ShaderChainManager {
       
       // Convert shader config to WGSLShader format
       // The combined code includes both vertex and fragment shaders
-      const combinedCode = config.vertexShader + '\n' + config.fragmentShader;
+      const combinedCodeRaw = config.vertexShader + '\n' + config.fragmentShader;
+      const combinedCode = await this.resolveWgslIncludes(combinedCodeRaw, './shaders/');
       
       // Parse uniforms from the shader config or extract from code
       const uniformNames: string[] = config.uniforms ? Object.keys(config.uniforms) : [];
@@ -213,6 +217,61 @@ export class ShaderChainManager {
       console.error(`[ShaderChain] Failed to load built-in shader "${name}":`, error);
       throw error;
     }
+  }
+
+  private async resolveWgslIncludes(code: string, baseUrl: string): Promise<string> {
+    // WGSL `#include` preprocessor. This is intentionally minimal:
+    // - Only supports: #include "relative/path.wgsl"
+    // - Resolves relative to `baseUrl` (typically "./shaders/")
+    // - Recursively resolves nested includes
+    // - Detects cycles
+    const includeRe = /^\s*#include\s+"([^"]+)"\s*$/gm;
+
+    const resolveOne = async (src: string, seen: Set<string>): Promise<string> => {
+      const matches = Array.from(src.matchAll(includeRe));
+      if (matches.length === 0) return src;
+
+      let out = '';
+      let lastIndex = 0;
+      for (const m of matches) {
+        const fullMatch = m[0];
+        const includePath = m[1];
+        const index = m.index ?? 0;
+
+        out += src.slice(lastIndex, index);
+        lastIndex = index + fullMatch.length;
+
+        // Basic path join: baseUrl is expected to end with '/'
+        const url = includePath.startsWith('./') || includePath.startsWith('../')
+          ? baseUrl + includePath
+          : baseUrl + includePath;
+
+        if (seen.has(url)) {
+          throw new Error(`[ShaderChain] #include cycle detected: ${url}`);
+        }
+
+        let text = this.includeCache.get(url);
+        if (text === undefined) {
+          const resp = await fetch(url);
+          if (!resp.ok) {
+            throw new Error(`[ShaderChain] Failed to fetch #include: ${url} (${resp.status} ${resp.statusText})`);
+          }
+          text = await resp.text();
+          this.includeCache.set(url, text);
+        }
+
+        const nestedSeen = new Set(seen);
+        nestedSeen.add(url);
+        const resolved = await resolveOne(text, nestedSeen);
+        out += `\n// begin include: ${includePath}\n${resolved}\n// end include: ${includePath}\n`;
+      }
+
+      out += src.slice(lastIndex);
+      // There could be includes introduced by previous substitutions.
+      return resolveOne(out, seen);
+    };
+
+    return resolveOne(code, new Set());
   }
 
   /**

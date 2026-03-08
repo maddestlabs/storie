@@ -13,11 +13,16 @@ import {
   mat4Multiply
 } from './worlds.js';
 import { ColorUtils, type Color } from './types.js';
+import { ShaderManager } from './shader-manager.js';
 
 type WorldsBackgroundConfig = {
   enabled: boolean;
   /** Procedural layer chain, e.g. ['ruledlines','paper'] */
   chain: string[];
+  /** Custom shader name for background generation */
+  shaderName?: string;
+  /** Runtime uniforms for custom shader */
+  shaderUniforms?: Record<string, number | number[]>;
   paperColor: Color;
   lineColor: Color;
   /** Coordinate scale applied to projected coords before sampling. */
@@ -33,6 +38,7 @@ type WorldsBackgroundConfig = {
 export class WorldsRenderer {
   private device: GPUDevice;
   private renderPipeline: GPURenderPipeline | null = null;
+  private shaderManager: ShaderManager;
   
   // Buffers
   private vertexBuffer: GPUBuffer | null = null;
@@ -43,6 +49,10 @@ export class WorldsRenderer {
   private uniformCapacity: number = 0;
 
   private backgroundTexture: GPUTexture | null = null;
+  private backgroundShaderTexture: GPUTexture | null = null;
+
+  // Avoid repeatedly fetching/evaluating the same built-in shader.
+  private loadingBuiltinShaders: Set<string> = new Set();
   
   // Render to offscreen texture (for compositor)
   private renderTexture: GPUTexture | null = null;
@@ -52,11 +62,14 @@ export class WorldsRenderer {
   private height: number;
   private format: GPUTextureFormat;
 
-  constructor(device: GPUDevice, width: number, height: number) {
+  constructor(device: GPUDevice, width: number, height: number, shaderManager?: ShaderManager) {
     this.device = device;
     this.width = width;
     this.height = height;
     this.format = navigator.gpu.getPreferredCanvasFormat();
+    
+    // Use provided shader manager or create our own
+    this.shaderManager = shaderManager || new ShaderManager(device, this.format);
     
     // Create render texture immediately so compositor can register it
     this.createRenderTexture();
@@ -68,6 +81,9 @@ export class WorldsRenderer {
   async init(): Promise<void> {
     // Note: Render texture already created in constructor
     // Do NOT recreate it here or compositor will have stale reference
+    
+    // Initialize shader manager
+    await this.shaderManager.init();
     
     // Create render pipeline
     await this.createRenderPipeline(this.format);
@@ -98,11 +114,30 @@ export class WorldsRenderer {
       { bytesPerRow: 4 },
       { width: 1, height: 1 }
     );
+
+    // Full-size shader background texture (render target + sampled in the 3D pipeline).
+    this.backgroundShaderTexture = this.device.createTexture({
+      size: { width: this.width, height: this.height },
+      format: this.format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+    });
     
     // Create depth texture
     this.createDepthTexture();
     
     // (init log removed)
+  }
+
+  private requestBuiltinShaderLoad(shaderName: string): void {
+    const name = String(shaderName ?? '').trim();
+    if (!name) return;
+    if (this.shaderManager.hasShader(name)) return;
+    if (this.loadingBuiltinShaders.has(name)) return;
+
+    this.loadingBuiltinShaders.add(name);
+    void this.shaderManager.ensureBuiltinShader(name).finally(() => {
+      this.loadingBuiltinShaders.delete(name);
+    });
   }
 
   /**
@@ -139,13 +174,14 @@ export class WorldsRenderer {
           cameraRight: vec4<f32>,
           cameraUp: vec4<f32>,
           cameraForward: vec4<f32>,
-          // x=hasRuledLines, y=hasPaperNoise, z=noiseStrength, w=reserved
+          // x=hasRuledLines, y=hasPaperNoise, z=noiseStrength, w=useShaderBackground
           bgFlags: vec4<f32>,
         };
         
         @group(0) @binding(0) var<uniform> uniforms: Uniforms;
         @group(0) @binding(1) var textureSampler: sampler;
         @group(0) @binding(2) var textureData: texture_2d<f32>;
+        @group(0) @binding(3) var backgroundShaderTexture: texture_2d<f32>;
         
         struct VertexInput {
           @location(0) position: vec3<f32>,
@@ -201,6 +237,21 @@ export class WorldsRenderer {
           return h;
         }
 
+        fn modF32(x: f32, y: f32) -> f32 {
+          let yy = max(0.0001, y);
+          return x - floor(x / yy) * yy;
+        }
+
+        fn periodicLineMask(y: f32, period: f32, thickness: f32) -> f32 {
+          let p = max(0.0001, period);
+          let t = modF32(y, p);
+          // AA in the same units as y/period. Using derivatives of y avoids
+          // discontinuities around the mod() wrap.
+          let aa = max(0.0001, abs(dpdx(y)) + abs(dpdy(y)));
+          // Line from t=0..thickness with smooth AA falloff.
+          return 1.0 - smoothstep(thickness, thickness + aa, t);
+        }
+
         fn sampleBackgroundAt(coordIn: vec2<f32>) -> vec4<f32> {
           let enabled = uniforms.paperParams.w;
           if (enabled < 0.5) {
@@ -209,28 +260,68 @@ export class WorldsRenderer {
 
           let scale = uniforms.paperParams.x;
           let spacing = max(0.0001, uniforms.paperParams.y);
-          let thickness = clamp(uniforms.paperParams.z, 0.0, 0.5);
+          let thicknessFrac = clamp(uniforms.paperParams.z, 0.0, 0.5);
 
           let coord = coordIn * scale;
 
           // Base paper
           var rgb = uniforms.paperColor.rgb;
 
-          // Optional paper grain
-          if (uniforms.bgFlags.y > 0.5) {
-            let s = clamp(uniforms.bgFlags.z, 0.0, 1.0);
-            let n = hash21(floor(coord * 8.0));
-            let grain = (n - 0.5) * 2.0; // -1..1
-            rgb = clamp(rgb + vec3<f32>(grain) * (0.08 * s), vec3<f32>(0.0), vec3<f32>(1.0));
+          // Optional paper grain (apply after ruled-lines so it remains visible
+          // when lines are enabled, and so grain affects lines too).
+          let paperStrength = select(0.0, clamp(uniforms.bgFlags.z, 0.0, 1.0), uniforms.bgFlags.y > 0.5);
+          var paperGrain: f32 = 0.0;
+          if (paperStrength > 0.0) {
+            // Cheap multi-octave grain (no gradients): hash at a few scales.
+            let n0 = hash21(floor(coord * 8.0));
+            let n1 = hash21(floor(coord * 23.0));
+            let n2 = hash21(floor(coord * 61.0));
+            let n = n0 * 0.6 + n1 * 0.3 + n2 * 0.1;
+            paperGrain = (n - 0.5) * 2.0; // -1..1
           }
 
-          // Optional ruled lines
+          // Optional ruled lines (notebook-style): minor + major + alternating tint.
+          // Mirrors the compositor ruledlines shader structure (multiply-like blend).
           if (uniforms.bgFlags.x > 0.5) {
             let y = coord.y;
-            let phase = fract(y / spacing);
-            let mask = select(0.0, 1.0, phase < thickness);
-            let t = mask * uniforms.lineColor.a;
-            rgb = mix(rgb, uniforms.lineColor.rgb, t);
+
+            // Major line period is spacing (world units after scale).
+            let majorPeriod = spacing;
+            let majorThickness = max(0.00005, thicknessFrac * majorPeriod);
+
+            // Minor lines are a subtle higher-frequency texture.
+            let minorPeriod = max(0.0001, majorPeriod * 0.2);
+            let minorThickness = max(0.00003, majorThickness * 0.6);
+
+            // Theme-derived alpha is intentionally subtle (~0.25). Boost it
+            // to better match the compositor ruledlines shader default (~0.6).
+            let lineOpacity = clamp(uniforms.lineColor.a * 2.4, 0.0, 1.0);
+            // Treat lineColor.rgb as a multiplicative darkening factor (<1 = darker).
+            let baseFactor = clamp(uniforms.lineColor.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+
+            // Blend factors (closer to 1.0 = subtler).
+            let darkBlend = mix(vec3<f32>(1.0), baseFactor, lineOpacity);
+            let lightBlend = mix(vec3<f32>(1.0), mix(vec3<f32>(1.0), baseFactor, 0.4), lineOpacity * 0.8);
+            let altBlend = mix(vec3<f32>(1.0), mix(vec3<f32>(1.0), baseFactor, 0.2), lineOpacity * 0.35);
+
+            let lightMask = periodicLineMask(y, minorPeriod, minorThickness);
+            let darkMask = periodicLineMask(y, majorPeriod, majorThickness);
+
+            // Alternate tint every 2 major lines (subtle banding).
+            let lineNumber = floor(y / majorPeriod);
+            let altPhase = modF32(lineNumber, 2.0);
+            let altMask = select(0.0, 1.0, altPhase < 1.0);
+
+            rgb = rgb * mix(vec3<f32>(1.0), lightBlend, lightMask);
+            rgb = rgb * mix(vec3<f32>(1.0), altBlend, altMask);
+            rgb = rgb * mix(vec3<f32>(1.0), darkBlend, darkMask);
+          }
+
+          if (paperStrength > 0.0) {
+            // Multiplicative grain reads better on light themes and stays
+            // visible under multiply-blended ruled lines.
+            let g = 0.10 * paperStrength;
+            rgb = clamp(rgb * (1.0 + vec3<f32>(paperGrain) * g), vec3<f32>(0.0), vec3<f32>(1.0));
           }
 
           return vec4<f32>(rgb, 1.0);
@@ -245,8 +336,19 @@ export class WorldsRenderer {
           // Full-screen paper pass only. Section textures are rendered with a
           // transparent background so paper shows through from behind.
           if (isBackground && uniforms.paperParams.w > 0.5) {
-            let coord = paperCoordFromScreenUv(input.uv);
-            outColor = sampleBackgroundAt(coord);
+            if (uniforms.bgFlags.w > 0.5) {
+              // Use custom shader background texture (world-locked mapping)
+              // Map the ray/plane intersection coord into a repeatable UV domain.
+              let coord = paperCoordFromScreenUv(input.uv);
+              var uv2 = fract(coord * uniforms.paperParams.x);
+              // Avoid sampling exactly at the clamp edge.
+              uv2 = uv2 * 0.999 + vec2<f32>(0.0005, 0.0005);
+              outColor = textureSample(backgroundShaderTexture, textureSampler, uv2);
+            } else {
+              // Use procedural background
+              let coord = paperCoordFromScreenUv(input.uv);
+              outColor = sampleBackgroundAt(coord);
+            }
           }
 
           // params0.z is full-card hover flag (1 = hovered)
@@ -402,8 +504,7 @@ export class WorldsRenderer {
     camera: Camera3D,
     layouts: Section3DLayout[],
     hoveredSectionIndex: number | null = null,
-    background?: WorldsBackgroundConfig,
-    cardXScaleFactor: number = 1
+    background?: WorldsBackgroundConfig
   ): void {
     if (!this.renderPipeline || !this.vertexBuffer || !this.indexBuffer || !this.renderTexture) {
       console.warn('WorldsRenderer not fully initialized');
@@ -471,12 +572,20 @@ export class WorldsRenderer {
     const hasRuledLines = chain.some(s => s === 'ruledlines' || s === 'ruled-lines' || s === 'ruled_lines');
     const hasPaper = chain.some(s => s === 'paper');
     const noiseStrength = paperEnabled ? (Number.isFinite(background!.noiseStrength) ? background!.noiseStrength : 0.06) : 0;
-    const bgFlags = paperEnabled ? [hasRuledLines ? 1 : 0, hasPaper ? 1 : 0, noiseStrength, 0] : [0, 0, 0, 0];
+    const shaderName = background?.shaderName;
+    if (paperEnabled && shaderName && !this.shaderManager.hasShader(shaderName)) {
+      // Kick off async load; we'll start using it on a later frame.
+      this.requestBuiltinShaderLoad(shaderName);
+    }
 
+    const useShaderBackground = paperEnabled && !!shaderName && this.shaderManager.hasShader(shaderName);
+    const bgFlags = paperEnabled ? [hasRuledLines ? 1 : 0, hasPaper ? 1 : 0, noiseStrength, useShaderBackground ? 1 : 0] : [0, 0, 0, 0];
+
+    const camPos = camera.effectivePosition ?? camera.position;
     const cameraPos = new Float32Array([
-      camera.position.x,
-      camera.position.y,
-      camera.position.z,
+      camPos.x,
+      camPos.y,
+      camPos.z,
       1,
     ]);
 
@@ -493,6 +602,50 @@ export class WorldsRenderer {
       if (!this.backgroundTexture) {
         console.warn('WorldsRenderer missing backgroundTexture');
       } else {
+        // Check if using custom shader for background
+        const shaderName = background!.shaderName;
+        if (shaderName && this.shaderManager.hasShader(shaderName) && this.backgroundShaderTexture) {
+          // Set shader uniforms if provided
+          if (background!.shaderUniforms) {
+            for (const [uniformName, value] of Object.entries(background!.shaderUniforms)) {
+              if (this.shaderManager.hasUniform(shaderName, uniformName)) {
+                this.shaderManager.setUniform(shaderName, uniformName, value);
+              }
+            }
+          }
+          
+          // Activate the shader
+          this.shaderManager.setActiveShader(shaderName);
+          
+          // Create a temporary texture for shader input (transparent)
+          const tempTexture = this.device.createTexture({
+            size: { width: this.width, height: this.height },
+            format: this.format,
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
+          });
+          
+          // Clear temp texture to transparent
+          const clearEncoder = this.device.createCommandEncoder();
+          const clearPass = clearEncoder.beginRenderPass({
+            colorAttachments: [{
+              view: tempTexture.createView(),
+              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+              loadOp: 'clear',
+              storeOp: 'store'
+            }]
+          });
+          clearPass.end();
+          this.device.queue.submit([clearEncoder.finish()]);
+          
+          // Apply shader to render background
+          const shaderEncoder = this.device.createCommandEncoder();
+          this.shaderManager.applyShader(tempTexture, this.backgroundShaderTexture, shaderEncoder);
+          this.device.queue.submit([shaderEncoder.finish()]);
+          
+          // Clean up temp texture
+          tempTexture.destroy();
+        }
+        
         const uniformOffset = 0;
         // Map local quad (-0.5..0.5) to clip-space (-1..1).
         const mvp = new Float32Array([
@@ -542,14 +695,17 @@ export class WorldsRenderer {
     for (let i = 0; i < layouts.length; i++) {
       const layout = layouts[i];
       if (!layout.visible || !layout.texture) continue;
+
+      const baseW = (layout.worldWidth ?? layout.width);
+      const baseH = (layout.worldHeight ?? layout.height);
       
       // Apply section dimensions to transform scale
       const sectionTransform: Transform3D = {
         position: layout.transform.position,
         rotation: layout.transform.rotation,
         scale: {
-          x: layout.transform.scale.x * layout.width * cardXScaleFactor,
-          y: layout.transform.scale.y * layout.height,
+          x: layout.transform.scale.x * baseW,
+          y: layout.transform.scale.y * baseH,
           z: layout.transform.scale.z
         }
       };
@@ -597,7 +753,7 @@ export class WorldsRenderer {
       const hover = hoveredSectionIndex !== null && layout.sectionIndex === hoveredSectionIndex ? 1.0 : 0.0;
       const rect = layout.highlightUvRect;
       const highlightEnabled = rect ? 1.0 : 0.0;
-      const params0 = new Float32Array([layout.width, layout.height, hover, highlightEnabled]);
+      const params0 = new Float32Array([baseW, baseH, hover, highlightEnabled]);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
 
       const params1 = rect
@@ -638,6 +794,9 @@ export class WorldsRenderer {
    */
   private createBindGroupForTexture(texture: GPUTexture, uniformOffset: number): GPUBindGroup | null {
     if (!this.renderPipeline || !this.uniformBuffer || !this.sampler) return null;
+
+    const shaderBgTexture = this.backgroundShaderTexture ?? this.backgroundTexture;
+    if (!shaderBgTexture) return null;
     
     return this.device.createBindGroup({
       layout: this.renderPipeline.getBindGroupLayout(0),
@@ -653,6 +812,10 @@ export class WorldsRenderer {
         {
           binding: 2,
           resource: texture.createView()
+        },
+        {
+          binding: 3,
+          resource: shaderBgTexture.createView()
         }
       ]
     });
@@ -671,6 +834,15 @@ export class WorldsRenderer {
     }
     this.createDepthTexture();
     this.createRenderTexture();
+
+    if (this.backgroundShaderTexture) {
+      this.backgroundShaderTexture.destroy();
+    }
+    this.backgroundShaderTexture = this.device.createTexture({
+      size: { width: this.width, height: this.height },
+      format: this.format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+    });
   }
 
   /**
@@ -690,5 +862,6 @@ export class WorldsRenderer {
     this.depthTexture?.destroy();
     this.renderTexture?.destroy();
     this.backgroundTexture?.destroy();
+    this.backgroundShaderTexture?.destroy();
   }
 }

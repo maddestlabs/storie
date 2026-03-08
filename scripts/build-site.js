@@ -5,6 +5,7 @@
 import { copyFileSync, mkdirSync, readdirSync, statSync, existsSync, writeFileSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -44,6 +45,9 @@ function copyDir(src, dest) {
 }
 
 console.log('📦 Building S|torie...\n');
+
+console.log('Generating favicons...');
+execSync('npm run generate-favicons', { stdio: 'inherit' });
 
 console.log('Copying site files to docs/...');
 copyDir(siteDir, docsDir);

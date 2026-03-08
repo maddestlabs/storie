@@ -192,7 +192,7 @@ This demo showcases:
     // Cache-bust the module URL so WebView2 doesn't reuse an older bundle across runs.
     // Cache-buster is replaced during `npm run build` so WebViews don't keep
     // serving a stale storie.es.js across rebuilds.
-    import { StorieEngine } from './storie.es.js?v=2026-02-25T22:59:19.215Z';
+    import { StorieEngine } from './storie.es.js?v=2026-03-08T02:25:17.579Z';
 
     /**
      * Parse URL parameters to load content from various sources
@@ -513,10 +513,159 @@ This demo showcases:
       try {
         // Get canvas
         const canvas = document.getElementById('canvas');
+
+        // ── Load markdown first (so we can honor frontmatter font settings) ──
+        let markdown = null;
+        let source = 'embedded';
         
-        // Measure actual font dimensions
-        const fontFamily = '3270-regular';
-        const fontSize = 16;
+        try {
+          const contentSource = await parseContentSource();
+          
+          if (contentSource) {
+            markdown = contentSource.content;
+            source = contentSource.source;
+            console.log('✓ Loaded from ' + source);
+          }
+        } catch (error) {
+          console.error('✗ Error loading from URL parameter:', error);
+          // Fall through to try index.md
+        }
+        
+        // If no content from URL params, try to load index.md
+        if (!markdown) {
+          try {
+            const response = await fetch('index.md');
+            if (response.ok) {
+              markdown = await response.text();
+              source = 'index.md';
+
+              // Diagnostics: help detect when the request returned something
+              // unexpected (e.g. HTML fallback) and why section parsing might
+              // be empty.
+              const firstLine = (markdown.split('\n')[0] || '').slice(0, 120);
+              const headingLines = markdown
+                .split('\n')
+                .filter(l => l.trimStart().startsWith('#'))
+                .length;
+              console.log(`✓ index.md first line: ${firstLine}`);
+              console.log(`✓ index.md heading lines: ${headingLines}`);
+
+              // Extra diagnostic: print the first heading's codepoints so we
+              // can spot invisible characters between '#' and the title.
+              const firstHeading = markdown.split('\n').find(l => l.trimStart().startsWith('#'));
+              if (firstHeading) {
+                const raw = firstHeading.slice(0, 80);
+                const cps = Array.from(raw).slice(0, 24).map(ch => '0x' + ch.codePointAt(0).toString(16));
+                console.log('✓ index.md first heading (raw):', raw);
+                console.log('✓ index.md first heading codepoints:', cps.join(' '));
+              }
+
+              console.log('✓ Loaded index.md');
+            } else {
+              throw new Error('index.md not found');
+            }
+          } catch (error) {
+            console.log('⚠ index.md not found, using embedded demo');
+            markdown = document.getElementById('markdown').textContent;
+            source = 'embedded';
+          }
+        }
+
+        // ── Frontmatter font parsing (lite) ───────────────────────────────
+        function parseFrontmatterLite(src) {
+          const out = {};
+          const lines = String(src || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+          if ((lines[0] || '').trim() !== '---') return out;
+          let end = -1;
+          for (let i = 1; i < lines.length; i++) {
+            if ((lines[i] || '').trim() === '---') { end = i; break; }
+          }
+          if (end <= 0) return out;
+          for (const line of lines.slice(1, end)) {
+            const m = line.match(/^([\w-]+):\s*(.*)$/);
+            if (!m) continue;
+            const key = (m[1] || '').trim();
+            let value = (m[2] || '').trim();
+            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+              value = value.slice(1, -1);
+            }
+            out[key] = value;
+          }
+          return out;
+        }
+
+        const fm = parseFrontmatterLite(markdown);
+
+        // Frontmatter keys used by demos:
+        // - font: "Rye"
+        // - fontsize: 22
+        const normalizeFontName = (s) => String(s || '').replace(/\+/g, ' ').trim();
+
+        const primaryFont = (fm.font && String(fm.font).trim()) ? normalizeFontName(fm.font) : '3270-regular';
+        const parsedFontSize = Number(fm.fontsize || fm.fontSize);
+        const fontSize = Number.isFinite(parsedFontSize) && parsedFontSize > 0 ? parsedFontSize : 16;
+
+        const fallbackStack = "'3270-regular', 'Consolas', 'Monaco', monospace";
+        const quotedPrimary = `'${primaryFont.replace(/'/g, "\\'")}'`;
+        let fontStack = (primaryFont.toLowerCase() === '3270-regular')
+          ? fallbackStack
+          : `${quotedPrimary}, ${fallbackStack}`;
+
+        function isProbablyMonospaceFontStack(stack, sizePx, tolerancePx = 0.5) {
+          try {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return true;
+            ctx.font = `${sizePx}px ${stack}`;
+            const w1 = ctx.measureText('iiiiiiiiii').width / 10;
+            const w2 = ctx.measureText('WWWWWWWWWW').width / 10;
+            const w3 = ctx.measureText('..........').width / 10;
+            if (![w1, w2, w3].every(Number.isFinite)) return true;
+            if (w1 <= 0 || w2 <= 0 || w3 <= 0) return true;
+            return Math.abs(w1 - w2) <= tolerancePx && Math.abs(w1 - w3) <= tolerancePx;
+          } catch {
+            return true;
+          }
+        }
+
+        async function tryLoadGoogleFont(family, physicalSizePx) {
+          try {
+            if (!family || !document.fonts) return false;
+            const fam = String(family).trim();
+            const lower = fam.toLowerCase();
+            if (!fam) return false;
+            if (['3270-regular', 'consolas', 'monaco', 'monospace', 'serif', 'sans-serif'].includes(lower)) return false;
+
+            // Avoid duplicate stylesheet inserts.
+            const sel = `link[data-storie-google-font="${CSS.escape(fam)}"]`;
+            let link = document.querySelector(sel);
+            if (!link) {
+              const famParam = encodeURIComponent(fam).replace(/%20/g, '+');
+              const href = `https://fonts.googleapis.com/css2?family=${famParam}&display=swap`;
+              link = document.createElement('link');
+              link.rel = 'stylesheet';
+              link.href = href;
+              link.setAttribute('data-storie-google-font', fam);
+              document.head.appendChild(link);
+              await new Promise((resolve) => {
+                const t = setTimeout(resolve, 1500);
+                link.onload = () => { clearTimeout(t); resolve(); };
+                link.onerror = () => { clearTimeout(t); resolve(); };
+              });
+            }
+
+            // Trigger font resolution.
+            await Promise.race([
+              document.fonts.load(`${physicalSizePx}px "${fam}"`),
+              new Promise(resolve => setTimeout(resolve, 1500))
+            ]);
+            return true;
+          } catch {
+            return false;
+          }
+        }
+        
+        // Measure actual font dimensions (must match renderer / glyph atlas)
 
         // Important: ensure the font is actually available *before* measuring.
         // On a normal refresh, cached fonts can become available between our
@@ -530,19 +679,30 @@ This demo showcases:
         const dpr = window.devicePixelRatio || 1;
         const physicalFontSize = fontSize * dpr;
 
+        // Best-effort preload of Google Fonts before measurement so our
+        // bootstrap cell metrics match the glyph atlas.
+        await tryLoadGoogleFont(primaryFont, physicalFontSize);
+
         if (document.fonts && document.fonts.ready) {
           try {
             await document.fonts.ready;
-            await document.fonts.load(`${physicalFontSize}px '${fontFamily}'`);
+            await document.fonts.load(`${physicalFontSize}px ${fontStack}`);
             console.log('✓ Font ready for measurement');
           } catch (e) {
             console.log('⚠ Font readiness check failed, continuing anyway');
           }
         }
 
+        // Guardrail: terminal rendering assumes monospace. If the requested
+        // font resolves to a proportional face, fall back to monospace.
+        if (!isProbablyMonospaceFontStack(fontStack, physicalFontSize)) {
+          console.warn('⚠ Requested font is not monospace; falling back for grid alignment:', primaryFont);
+          fontStack = fallbackStack;
+        }
+
         const tempCanvas = document.createElement('canvas');
         const tempCtx = tempCanvas.getContext('2d');
-        tempCtx.font = `${physicalFontSize}px '${fontFamily}', 'Consolas', 'Monaco', monospace`;
+        tempCtx.font = `${physicalFontSize}px ${fontStack}`;
         tempCtx.textBaseline = 'top';
 
         const metrics = tempCtx.measureText('M');
@@ -576,7 +736,7 @@ This demo showcases:
         const engine = new StorieEngine(canvas, {
           width: gridWidth,
           height: gridHeight,
-          fontFamily: fontFamily,
+          fontFamily: fontStack,
           fontSize: fontSize
         });
 
@@ -644,63 +804,6 @@ This demo showcases:
         
         window.addEventListener('resize', handleResize);
         
-        // Parse content source from URL parameters
-        let markdown = null;
-        let source = 'embedded';
-        
-        try {
-          const contentSource = await parseContentSource();
-          
-          if (contentSource) {
-            markdown = contentSource.content;
-            source = contentSource.source;
-            console.log('✓ Loaded from ' + source);
-          }
-        } catch (error) {
-          console.error('✗ Error loading from URL parameter:', error);
-          // Fall through to try index.md
-        }
-        
-        // If no content from URL params, try to load index.md
-        if (!markdown) {
-          try {
-            const response = await fetch('index.md');
-            if (response.ok) {
-              markdown = await response.text();
-              source = 'index.md';
-
-              // Diagnostics: help detect when the request returned something
-              // unexpected (e.g. HTML fallback) and why section parsing might
-              // be empty.
-              const firstLine = (markdown.split('\n')[0] || '').slice(0, 120);
-              const headingLines = markdown
-                .split('\n')
-                .filter(l => l.trimStart().startsWith('#'))
-                .length;
-              console.log(`✓ index.md first line: ${firstLine}`);
-              console.log(`✓ index.md heading lines: ${headingLines}`);
-
-              // Extra diagnostic: print the first heading's codepoints so we
-              // can spot invisible characters between '#' and the title.
-              const firstHeading = markdown.split('\n').find(l => l.trimStart().startsWith('#'));
-              if (firstHeading) {
-                const raw = firstHeading.slice(0, 80);
-                const cps = Array.from(raw).slice(0, 24).map(ch => '0x' + ch.codePointAt(0).toString(16));
-                console.log('✓ index.md first heading (raw):', raw);
-                console.log('✓ index.md first heading codepoints:', cps.join(' '));
-              }
-
-              console.log('✓ Loaded index.md');
-            } else {
-              throw new Error('index.md not found');
-            }
-          } catch (error) {
-            console.log('⚠ index.md not found, using embedded demo');
-            markdown = document.getElementById('markdown').textContent;
-            source = 'embedded';
-          }
-        }
-        
         // Load markdown
         const loaded = await engine.loadMarkdown('demo', markdown);
         
@@ -713,7 +816,7 @@ This demo showcases:
         
         // Wait for fonts to load before starting
         try {
-          await document.fonts.load(`${fontSize}px '${fontFamily}'`);
+          await document.fonts.load(`${fontSize}px ${fontStack}`);
           console.log('✓ Font loaded');
         } catch (e) {
           console.log('⚠ Font load check failed, continuing anyway');

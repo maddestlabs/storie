@@ -6,7 +6,15 @@
  */
 
 import type { Section } from './types.js';
-import type { Vec3, Transform3D, Camera3D, Section3DLayout, WorldsConfig } from './worlds-types.js';
+import type {
+  Vec3,
+  Transform3D,
+  Camera3D,
+  CameraShakeConfig,
+  CameraShakeState,
+  Section3DLayout,
+  WorldsConfig
+} from './worlds-types.js';
 
 // ============================================================================
 // 3D Math Utilities
@@ -351,6 +359,16 @@ export function mat4FromTransform(transform: Transform3D): Float32Array {
  * Create a new 3D camera
  */
 export function createCamera3D(config: Partial<Camera3D> = {}): Camera3D {
+  const seed = Number.isFinite((config as any)?.shake?.seed) ? (config as any).shake.seed : Math.random();
+  const shakeDefaults: CameraShakeConfig = {
+    enabled: false,
+    strength: 1,
+    seed,
+    translate: vec3(0, 0, 0),
+    rotate: vec3(0, 0, 0),
+    rate: 0.17,
+  };
+
   return {
     position: config.position || vec3(0, 0, 10),
     rotation: config.rotation || vec3(0, 0, 0),
@@ -360,8 +378,118 @@ export function createCamera3D(config: Partial<Camera3D> = {}): Camera3D {
     near: config.near || 0.1,
     far: config.far || 1000,
     positionEaseSpeed: config.positionEaseSpeed || 0.1,
-    rotationEaseSpeed: config.rotationEaseSpeed || 0.1
+    rotationEaseSpeed: config.rotationEaseSpeed || 0.1,
+    effectivePosition: config.position ? { ...config.position } : vec3(0, 0, 10),
+    effectiveRotation: config.rotation ? { ...config.rotation } : vec3(0, 0, 0),
+    shake: {
+      ...shakeDefaults,
+      ...(typeof (config as any).shake === 'object' ? (config as any).shake : {}),
+      translate: {
+        ...shakeDefaults.translate,
+        ...(((config as any).shake?.translate && typeof (config as any).shake.translate === 'object') ? (config as any).shake.translate : {}),
+      },
+      rotate: {
+        ...shakeDefaults.rotate,
+        ...(((config as any).shake?.rotate && typeof (config as any).shake.rotate === 'object') ? (config as any).shake.rotate : {}),
+      },
+    }
   };
+}
+
+function fract(x: number): number {
+  return x - Math.floor(x);
+}
+
+function smoothstep(t: number): number {
+  return t * t * (3 - 2 * t);
+}
+
+function hash2i(ix: number, iy: number, seedInt: number): number {
+  // Deterministic 32-bit hash -> [0, 1)
+  let h = (ix | 0) * 374761393 + (iy | 0) * 668265263 + (seedInt | 0) * 1442695041;
+  h = (h ^ (h >>> 13)) | 0;
+  h = Math.imul(h, 1274126177);
+  h = (h ^ (h >>> 16)) | 0;
+  return ((h >>> 0) / 4294967296);
+}
+
+function valueNoise2(x: number, y: number, seedInt: number): number {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = fract(x);
+  const fy = fract(y);
+
+  const a = hash2i(x0, y0, seedInt);
+  const b = hash2i(x0 + 1, y0, seedInt);
+  const c = hash2i(x0, y0 + 1, seedInt);
+  const d = hash2i(x0 + 1, y0 + 1, seedInt);
+
+  const ux = smoothstep(fx);
+  const uy = smoothstep(fy);
+  const ab = a + (b - a) * ux;
+  const cd = c + (d - c) * ux;
+  return ab + (cd - ab) * uy;
+}
+
+function fbm2(x: number, y: number, seedInt: number): number {
+  let f = 0;
+  let a = 0.5;
+  let px = x;
+  let py = y;
+  for (let i = 0; i < 4; i++) {
+    f += a * valueNoise2(px, py, seedInt);
+    px = px * 2.03 + 17.7;
+    py = py * 2.03 + 9.2;
+    a *= 0.5;
+  }
+  return f;
+}
+
+function spring1(
+  x: number,
+  v: number,
+  target: number,
+  stiffness: number,
+  damping: number,
+  dt: number
+): { x: number; v: number } {
+  // Semi-implicit Euler integration of a damped spring.
+  const a = stiffness * (target - x) - damping * v;
+  v = v + a * dt;
+  x = x + v * dt;
+  return { x, v };
+}
+
+function ensureShakeState(camera: Camera3D): CameraShakeState {
+  if (camera._shakeState) return camera._shakeState;
+  camera._shakeState = {
+    time: 0,
+    pos: vec3(0, 0, 0),
+    posVel: vec3(0, 0, 0),
+    rot: vec3(0, 0, 0),
+    rotVel: vec3(0, 0, 0),
+  };
+  return camera._shakeState;
+}
+
+function computeForwardFromRotation(rotation: Vec3): Vec3 {
+  return {
+    x: Math.sin(rotation.y) * Math.cos(rotation.x),
+    y: -Math.sin(rotation.x),
+    z: -Math.cos(rotation.y) * Math.cos(rotation.x)
+  };
+}
+
+function computeRightUpFromForward(forward: Vec3): { right: Vec3; up: Vec3 } {
+  // Match mat4LookAt's basis construction for consistency.
+  const zAxis = vec3Normalize(vec3Scale(forward, -1));
+  const right = vec3Normalize({ x: zAxis.z, y: 0, z: -zAxis.x });
+  const up = {
+    x: zAxis.y * right.z - zAxis.z * right.y,
+    y: zAxis.z * right.x - zAxis.x * right.z,
+    z: zAxis.x * right.y - zAxis.y * right.x,
+  };
+  return { right, up };
 }
 
 /**
@@ -370,27 +498,126 @@ export function createCamera3D(config: Partial<Camera3D> = {}): Camera3D {
 export function updateCamera3D(camera: Camera3D, _deltaTime: number): void {
   const hasTargetPos = !!camera.target;
   const hasTargetRot = !!camera.targetRotation;
-  if (!hasTargetPos && !hasTargetRot) return;
 
-  if (camera.target) {
+  if (hasTargetPos && camera.target) {
     camera.position = lerpVec3(camera.position, camera.target, camera.positionEaseSpeed);
   }
 
-  if (camera.targetRotation) {
+  if (hasTargetRot && camera.targetRotation) {
     camera.rotation = lerpVec3(camera.rotation, camera.targetRotation, camera.rotationEaseSpeed);
   }
 
-  const posDone = !camera.target || distance(camera.position, camera.target) < 0.01;
-  const rotDone = !camera.targetRotation || distance(camera.rotation, camera.targetRotation) < 0.001;
+  if (hasTargetPos || hasTargetRot) {
+    const posDone = !camera.target || distance(camera.position, camera.target) < 0.01;
+    const rotDone = !camera.targetRotation || distance(camera.rotation, camera.targetRotation) < 0.001;
 
-  if (posDone && camera.target) {
-    camera.position = { ...camera.target };
-    camera.target = null;
+    if (posDone && camera.target) {
+      camera.position = { ...camera.target };
+      camera.target = null;
+    }
+    if (rotDone && camera.targetRotation) {
+      camera.rotation = { ...camera.targetRotation };
+      camera.targetRotation = null;
+    }
   }
-  if (rotDone && camera.targetRotation) {
-    camera.rotation = { ...camera.targetRotation };
-    camera.targetRotation = null;
+
+  // Always refresh effective pose (even when not easing).
+  let effectivePosition: Vec3 = { ...camera.position };
+  let effectiveRotation: Vec3 = { ...camera.rotation };
+
+  const shake = camera.shake;
+  const dt = Number.isFinite(_deltaTime) ? Math.max(0, Math.min(_deltaTime, 0.05)) : 0;
+
+  if (shake && shake.enabled && Number.isFinite(shake.strength) && shake.strength > 0) {
+    const state = ensureShakeState(camera);
+    state.time += dt;
+
+    const strength = clamp(shake.strength, 0, 2);
+    const seed = Number.isFinite(shake.seed) ? shake.seed : 0;
+    const seedInt = ((seed * 1_000_000) | 0) ^ 0x9e3779b9;
+    const t = state.time;
+    const rate = Number.isFinite(shake.rate) ? shake.rate : 0.17;
+
+    // Base 2D domain-warped fBm track.
+    const baseX = t * rate;
+    const baseY = seed * 19.19;
+
+    const warpX = fbm2(baseX + 12.3, baseY + 4.7, seedInt);
+    const warpY = fbm2(baseX + 3.1, baseY + 27.9, seedInt);
+    const p2x = baseX + (warpX - 0.5) * 3.0;
+    const p2y = baseY + (warpY - 0.5) * 3.0;
+
+    const nx = fbm2(p2x + 10.0, p2y + 20.0, seedInt) - 0.5;
+    const ny = fbm2(p2x + 30.0, p2y + 40.0, seedInt) - 0.5;
+    const nz = fbm2(p2x + 50.0, p2y + 60.0, seedInt) - 0.5;
+
+    // Add a small faster component to avoid “slow looping”.
+    const jx = (fbm2(t * (rate * 4.2) + 91.0, baseY + 7.0, seedInt) - 0.5);
+    const jy = (fbm2(t * (rate * 3.7) + 13.0, baseY + 11.0, seedInt) - 0.5);
+    const jz = (fbm2(t * (rate * 4.9) + 41.0, baseY + 19.0, seedInt) - 0.5);
+
+    const nxf = nx * 0.82 + jx * 0.18;
+    const nyf = ny * 0.82 + jy * 0.18;
+    const nzf = nz * 0.82 + jz * 0.18;
+
+    const targetRot = {
+      x: nxf * shake.rotate.x * strength,
+      y: nyf * shake.rotate.y * strength,
+      z: nzf * shake.rotate.z * strength,
+    };
+    const targetPos = {
+      x: (fbm2(p2x + 90.0, p2y + 100.0, seedInt) - 0.5) * shake.translate.x * strength,
+      y: (fbm2(p2x + 110.0, p2y + 120.0, seedInt) - 0.5) * shake.translate.y * strength,
+      z: nzf * shake.translate.z * strength,
+    };
+
+    // Spring-filter offsets for inertia.
+    const rotStiff = 55;
+    const rotDamp = 16;
+    const posStiff = 45;
+    const posDamp = 14;
+
+    const rx = spring1(state.rot.x, state.rotVel.x, targetRot.x, rotStiff, rotDamp, dt);
+    const ry = spring1(state.rot.y, state.rotVel.y, targetRot.y, rotStiff, rotDamp, dt);
+    const rz = spring1(state.rot.z, state.rotVel.z, targetRot.z, rotStiff, rotDamp, dt);
+    state.rot = { x: rx.x, y: ry.x, z: rz.x };
+    state.rotVel = { x: rx.v, y: ry.v, z: rz.v };
+
+    const px = spring1(state.pos.x, state.posVel.x, targetPos.x, posStiff, posDamp, dt);
+    const py = spring1(state.pos.y, state.posVel.y, targetPos.y, posStiff, posDamp, dt);
+    const pz = spring1(state.pos.z, state.posVel.z, targetPos.z, posStiff, posDamp, dt);
+    state.pos = { x: px.x, y: py.x, z: pz.x };
+    state.posVel = { x: px.v, y: py.v, z: pz.v };
+
+    effectiveRotation = {
+      x: camera.rotation.x + state.rot.x,
+      y: camera.rotation.y + state.rot.y,
+      z: camera.rotation.z + state.rot.z,
+    };
+
+    // Apply translation in camera-local axes (right/up/forward).
+    const forward = computeForwardFromRotation(effectiveRotation);
+    const basis = computeRightUpFromForward(forward);
+    effectivePosition = vec3Add(
+      camera.position,
+      vec3Add(
+        vec3Scale(basis.right, state.pos.x),
+        vec3Add(vec3Scale(basis.up, state.pos.y), vec3Scale(forward, state.pos.z))
+      )
+    );
+  } else {
+    // If shake is disabled, reset integrator so re-enabling doesn't jump.
+    if (camera._shakeState) {
+      camera._shakeState.time = 0;
+      camera._shakeState.pos = vec3(0, 0, 0);
+      camera._shakeState.posVel = vec3(0, 0, 0);
+      camera._shakeState.rot = vec3(0, 0, 0);
+      camera._shakeState.rotVel = vec3(0, 0, 0);
+    }
   }
+
+  camera.effectivePosition = effectivePosition;
+  camera.effectiveRotation = effectiveRotation;
 }
 
 /**
@@ -432,13 +659,18 @@ export function focusOnSectionFit(
     keepRotation?: boolean;
     positionOffset?: Vec3;
     rotationOffset?: Vec3;
+    screenSpaceRecenter?: boolean;
+    screenSpaceRecenterIters?: number;
   }
 ): void {
   const safeAspect = Number.isFinite(viewportAspect) && viewportAspect > 0 ? viewportAspect : 1;
   const safeFill = clamp(fill, 0.05, 0.99);
 
-  const worldWidth = layout.width * (layout.transform.scale?.x ?? 1);
-  const worldHeight = layout.height * (layout.transform.scale?.y ?? 1);
+  const baseW = (layout.worldWidth ?? layout.width);
+  const baseH = (layout.worldHeight ?? layout.height);
+
+  const worldWidth = baseW * (layout.transform.scale?.x ?? 1);
+  const worldHeight = baseH * (layout.transform.scale?.y ?? 1);
 
   const vFov = camera.fov;
   const hFov = 2 * Math.atan(Math.tan(vFov / 2) * safeAspect);
@@ -466,14 +698,38 @@ export function focusOnSectionFit(
 
   const positionOffset = options?.positionOffset;
   const rotationOffset = options?.rotationOffset;
-  const target = {
-    x: layout.transform.position.x + normalWorld.x * distance + (positionOffset?.x ?? 0),
-    y: layout.transform.position.y + normalWorld.y * distance + (positionOffset?.y ?? 0),
-    z: layout.transform.position.z + normalWorld.z * distance + (positionOffset?.z ?? 0),
+  const center = {
+    x: layout.transform.position.x + (positionOffset?.x ?? 0),
+    y: layout.transform.position.y + (positionOffset?.y ?? 0),
+    z: layout.transform.position.z + (positionOffset?.z ?? 0),
+  };
+  let target = {
+    x: center.x + normalWorld.x * distance,
+    y: center.y + normalWorld.y * distance,
+    z: center.z + normalWorld.z * distance,
   };
 
-  if (options?.keepRotation) {
+  // Default behavior: rotate to face the section unless keepRotation is
+  // explicitly requested.
+  const keepRotation = options?.keepRotation ?? false;
+
+  if (keepRotation) {
     camera.targetRotation = null;
+
+    // Optional: recenter the focused section in screen space when rotation is
+    // locked (keeps the “tilted camera” look without drifting off-center).
+    const doRecenter = options?.screenSpaceRecenter ?? false;
+    if (doRecenter) {
+      const forward = computeForwardFromRotation(camera.rotation);
+      // Preserve approx distance-to-plane along the section normal.
+      const denom = Math.max(0.2, -vec3Dot(normalWorld, forward));
+      const distAlongForward = distance / denom;
+      target = vec3Sub(center, vec3Scale(forward, distAlongForward));
+
+      const iters = options?.screenSpaceRecenterIters ?? 5;
+      target = recenterCameraToPoint(camera, target, camera.rotation, center, safeAspect, iters);
+    }
+
     setCameraTarget(camera, target);
     return;
   }
@@ -491,20 +747,22 @@ export function focusOnSectionFit(
  * Get camera view matrix
  */
 export function getCameraViewMatrix(camera: Camera3D): Float32Array {
+  const pos = camera.effectivePosition ?? camera.position;
+  const rot = camera.effectiveRotation ?? camera.rotation;
   // Calculate look-at target based on camera position and rotation
   const forward = {
-    x: Math.sin(camera.rotation.y) * Math.cos(camera.rotation.x),
-    y: -Math.sin(camera.rotation.x),
-    z: -Math.cos(camera.rotation.y) * Math.cos(camera.rotation.x)
+    x: Math.sin(rot.y) * Math.cos(rot.x),
+    y: -Math.sin(rot.x),
+    z: -Math.cos(rot.y) * Math.cos(rot.x)
   };
 
   const target = {
-    x: camera.position.x + forward.x,
-    y: camera.position.y + forward.y,
-    z: camera.position.z + forward.z
+    x: pos.x + forward.x,
+    y: pos.y + forward.y,
+    z: pos.z + forward.z
   };
 
-  return mat4LookAt(camera.position, target);
+  return mat4LookAt(pos, target);
 }
 
 /**
@@ -543,6 +801,7 @@ export function parseTransform3D(
 
   // Auto-layout: 3-column grid for sections without explicit position metadata.
   const autoEnabled = config.autoLayoutEnabled !== false;
+  const autoPositioned = autoEnabled && !hasExplicitPosition;
   if (autoEnabled && !hasExplicitPosition) {
     const cols = Math.max(1, Math.floor(config.autoLayoutColumns ?? 3));
     const spacing = Number.isFinite(config.autoLayoutSpacing ?? NaN) ? (config.autoLayoutSpacing as number) : 200;
@@ -582,6 +841,7 @@ export function parseTransform3D(
       rotation: vec3(rotX, rotY, rotZ),
       scale: vec3(scale, scale, 1)
     },
+    autoPositioned,
     width,
     height,
     texture: null,
@@ -647,11 +907,16 @@ export function getDefaultWorldsConfig(): WorldsConfig {
     defaultDepth: -100, // Sections start 100 units in front of camera (negative Z)
     defaultSectionWidth: 60,
     defaultSectionHeight: 20,
+    sectionSizeUnits: 'text',
+    sectionOverflow: 'clip',
     cameraFov: Math.PI / 4, // 45 degrees
     cameraNear: 0.1,
     cameraFar: 1000,
     positionEaseSpeed: 0.1,
     rotationEaseSpeed: 0.15,
+    keepRotation: false,
+    screenSpaceRecenter: false,
+    screenSpaceRecenterIters: 5,
     autoLayoutEnabled: true,
     autoLayoutColumns: 3,
     autoLayoutSpacing: 200,
@@ -661,6 +926,86 @@ export function getDefaultWorldsConfig(): WorldsConfig {
     // Use the theme surface by default (typically bgAlt / elevated panel color)
     sectionBackground: 'surface'
   };
+}
+
+function getViewMatrixForPose(position: Vec3, rotation: Vec3): Float32Array {
+  const forward = {
+    x: Math.sin(rotation.y) * Math.cos(rotation.x),
+    y: -Math.sin(rotation.x),
+    z: -Math.cos(rotation.y) * Math.cos(rotation.x)
+  };
+  const target = {
+    x: position.x + forward.x,
+    y: position.y + forward.y,
+    z: position.z + forward.z
+  };
+  return mat4LookAt(position, target);
+}
+
+function projectToNdc(
+  camera: Camera3D,
+  position: Vec3,
+  rotation: Vec3,
+  point: Vec3,
+  aspect: number
+): { x: number; y: number; z: number } {
+  const view = getViewMatrixForPose(position, rotation);
+  const proj = getCameraProjectionMatrix(camera, aspect);
+  const viewProj = mat4Multiply(proj, view);
+  const r = mat4TransformVec4(viewProj, point.x, point.y, point.z, 1);
+  const invW = r.w !== 0 ? 1 / r.w : 1;
+  return { x: r.x * invW, y: r.y * invW, z: r.z * invW };
+}
+
+function recenterCameraToPoint(
+  camera: Camera3D,
+  basePosition: Vec3,
+  baseRotation: Vec3,
+  point: Vec3,
+  aspect: number,
+  iters: number
+): Vec3 {
+  // Solve for a camera translation (with fixed rotation) such that `point`
+  // projects to NDC (0,0). Uses a tiny finite-difference Jacobian.
+  const forward = computeForwardFromRotation(baseRotation);
+  const basis = computeRightUpFromForward(forward);
+
+  let pos = { ...basePosition };
+  const maxIters = Math.max(1, Math.min(12, Math.floor(iters || 1)));
+
+  for (let i = 0; i < maxIters; i++) {
+    const ndc = projectToNdc(camera, pos, baseRotation, point, aspect);
+    const errX = ndc.x;
+    const errY = ndc.y;
+    if (Math.abs(errX) + Math.abs(errY) < 1e-4) break;
+
+    const eps = 0.5;
+    const posR = vec3Add(pos, vec3Scale(basis.right, eps));
+    const ndcR = projectToNdc(camera, posR, baseRotation, point, aspect);
+    const dxdR = (ndcR.x - ndc.x) / eps;
+    const dydR = (ndcR.y - ndc.y) / eps;
+
+    const posU = vec3Add(pos, vec3Scale(basis.up, eps));
+    const ndcU = projectToNdc(camera, posU, baseRotation, point, aspect);
+    const dxdU = (ndcU.x - ndc.x) / eps;
+    const dydU = (ndcU.y - ndc.y) / eps;
+
+    // Solve 2x2 linear system J * delta = -err.
+    const det = dxdR * dydU - dxdU * dydR;
+    if (Math.abs(det) < 1e-8) break;
+    const invDet = 1 / det;
+    let deltaR = (-errX * dydU - (-errY) * dxdU) * invDet;
+    let deltaU = (dxdR * (-errY) - dydR * (-errX)) * invDet;
+
+    // Clamp step to avoid huge jumps.
+    const maxStep = 50;
+    deltaR = clamp(deltaR, -maxStep, maxStep);
+    deltaU = clamp(deltaU, -maxStep, maxStep);
+
+    pos = vec3Add(pos, vec3Add(vec3Scale(basis.right, deltaR), vec3Scale(basis.up, deltaU)));
+  }
+
+  return pos;
 }
 
 /**
@@ -674,20 +1019,37 @@ export function focusOnSection(
     keepRotation?: boolean;
     positionOffset?: Vec3;
     rotationOffset?: Vec3;
+    screenSpaceRecenter?: boolean;
+    screenSpaceRecenterIters?: number;
   }
 ): void {
   // Calculate camera position to view the section
   const positionOffset = options?.positionOffset;
   const rotationOffset = options?.rotationOffset;
-  const target = {
+  const center = {
     x: layout.transform.position.x + (positionOffset?.x ?? 0),
     y: layout.transform.position.y + (positionOffset?.y ?? 0),
-    z: layout.transform.position.z + distance + (positionOffset?.z ?? 0)
+    z: layout.transform.position.z + (positionOffset?.z ?? 0)
+  };
+  let target = {
+    x: center.x,
+    y: center.y,
+    z: center.z + distance
   };
 
   // Calculate rotation to look at section
-  if (options?.keepRotation) {
+  const keepRotation = options?.keepRotation ?? false;
+
+  if (keepRotation) {
     camera.targetRotation = null;
+
+    // Optional: recenter in screen space when camera has a tilt/yaw.
+    const doRecenter = options?.screenSpaceRecenter ?? false;
+    if (doRecenter) {
+      const forward = computeForwardFromRotation(camera.rotation);
+      target = vec3Sub(center, vec3Scale(forward, distance));
+    }
+
     setCameraTarget(camera, target);
     return;
   }

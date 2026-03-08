@@ -82,19 +82,92 @@ function wrapRuns(runs: Run[], maxChars: number): Run[][] {
   return lines;
 }
 
+function hardBreakByWidth(text: string, maxWidthPx: number, measure: (s: string) => number): string[] {
+  const out: string[] = [];
+  let current = '';
+  for (const ch of text) {
+    const next = current + ch;
+    if (current.length > 0 && measure(next) > maxWidthPx) {
+      out.push(current);
+      current = ch;
+    } else {
+      current = next;
+    }
+  }
+  if (current.length > 0) out.push(current);
+  return out.length > 0 ? out : [''];
+}
+
+function wrapRunsByWidth(runs: Run[], maxWidthPx: number, measure: (s: string) => number): Run[][] {
+  const lines: Run[][] = [];
+  let current: Run[] = [];
+  let usedPx = 0;
+
+  const pushLine = () => {
+    while (current.length > 0 && current[0].kind !== 'newline' && /^\s+$/.test((current[0] as any).text)) current.shift();
+    while (
+      current.length > 0 &&
+      current[current.length - 1].kind !== 'newline' &&
+      /^\s+$/.test((current[current.length - 1] as any).text)
+    ) {
+      current.pop();
+    }
+    lines.push(current);
+    current = [];
+    usedPx = 0;
+  };
+
+  for (const run of runs) {
+    if (run.kind === 'newline') {
+      pushLine();
+      continue;
+    }
+
+    // If at line start, avoid leading whitespace
+    if (current.length === 0 && /^\s+$/.test(run.text)) {
+      continue;
+    }
+
+    const runW = measure(run.text);
+
+    // Hard-break huge tokens that exceed a full line.
+    if (runW > maxWidthPx && !/^\s+$/.test(run.text)) {
+      if (current.length > 0) pushLine();
+      const chunks = hardBreakByWidth(run.text, maxWidthPx, measure);
+      for (const chunk of chunks) {
+        lines.push([{ ...run, text: chunk }]);
+      }
+      continue;
+    }
+
+    if (usedPx + runW > maxWidthPx && current.length > 0) {
+      pushLine();
+    }
+
+    current.push(run);
+    usedPx += runW;
+  }
+
+  if (current.length > 0) pushLine();
+  if (lines.length === 0) lines.push([]);
+  return lines;
+}
+
 export function layoutMarkdownDocument(
   nodes: DocNode[],
   box: LayoutBox,
   metrics: TextMetrics,
   style: MarkdownStyle,
   scrollY: number = 0,
-  padding: number = 10
+  padding: number = 10,
+  options?: { overflow?: 'clip' | 'expand' }
 ): LayoutResult {
   const ops: DrawOp[] = [];
   const linkRegions: LinkRegion[] = [];
 
   const charW = Math.max(1, metrics.charW);
   const charH = Math.max(1, metrics.charH);
+  const measure = typeof metrics.measureTextWidth === 'function' ? metrics.measureTextWidth : null;
 
   const x0 = box.x;
   const y0 = box.y;
@@ -105,10 +178,23 @@ export function layoutMarkdownDocument(
   const baseLineHeight = Math.round(charH * 1.25);
   const paragraphGap = Math.round(charH * 0.75);
 
+  const overflow = options?.overflow === 'expand' ? 'expand' : 'clip';
+
   // Background
   ops.push({ kind: 'rect', x: x0, y: y0, w: box.width, h: box.height, color: style.bg });
 
   let cursorY = y0 + padding - scrollY;
+
+  // Content bounds for measuring required size (excluding the background rect).
+  const contentStartX = x0 + padding;
+  const contentStartY = y0 + padding - scrollY;
+  let contentMaxX = contentStartX;
+  let contentMaxY = contentStartY;
+
+  const bumpMax = (x: number, y: number, w: number, h: number) => {
+    if (w > 0) contentMaxX = Math.max(contentMaxX, x + w);
+    if (h > 0) contentMaxY = Math.max(contentMaxY, y + h);
+  };
 
   const emitTextLine = (line: Run[], lineX: number, lineY: number, fgOverride?: any) => {
     let cx = lineX;
@@ -120,19 +206,26 @@ export function layoutMarkdownDocument(
 
       // code: draw a small background behind the run
       if (run.kind === 'code' && run.text.trim().length > 0) {
-        const w = run.text.length * charW;
+        const w = measure ? measure(run.text) : run.text.length * charW;
         ops.push({ kind: 'rect', x: cx, y: lineY - Math.round(charH * 0.15), w, h: Math.round(charH * 1.15), color: style.codeBg });
+        bumpMax(cx, lineY - Math.round(charH * 0.15), w, Math.round(charH * 1.15));
       }
 
       ops.push({ kind: 'text', text: run.text, x: cx, y: lineY, color });
-
-      if (run.kind === 'link' && run.url && run.text.trim().length > 0) {
-        linkRegions.push({ x: cx, y: lineY, w: run.text.length * charW, h: charH, url: run.url, text: run.text });
-        // underline
-        ops.push({ kind: 'rect', x: cx, y: lineY + charH - 2, w: run.text.length * charW, h: 2, color: style.linkFg });
+      {
+        const w = measure ? measure(run.text) : run.text.length * charW;
+        bumpMax(cx, lineY, w, charH);
       }
 
-      cx += run.text.length * charW;
+      if (run.kind === 'link' && run.url && run.text.trim().length > 0) {
+        const w = measure ? measure(run.text) : run.text.length * charW;
+        linkRegions.push({ x: cx, y: lineY, w, h: charH, url: run.url, text: run.text });
+        // underline
+        ops.push({ kind: 'rect', x: cx, y: lineY + charH - 2, w, h: 2, color: style.linkFg });
+        bumpMax(cx, lineY + charH - 2, w, 2);
+      }
+
+      cx += measure ? measure(run.text) : run.text.length * charW;
     }
   };
 
@@ -153,11 +246,17 @@ export function layoutMarkdownDocument(
       const fg = style.codeFg;
       const codeLines = (node.code || '').replace(/\r\n/g, '\n').split('\n');
       for (const rawLine of codeLines) {
-        if (cursorY > y0 + box.height) break;
+        if (overflow === 'clip' && cursorY > y0 + box.height) break;
         // Preserve trailing spaces visually is hard in a glyph renderer;
         // keep leading/middle spaces and trim only right-side newlines.
         const line = (rawLine ?? '').trimEnd();
-        ops.push({ kind: 'text', text: line, x: x0 + padding, y: cursorY, color: fg });
+        if (!(overflow === 'clip' && cursorY > y0 + box.height)) {
+          ops.push({ kind: 'text', text: line, x: x0 + padding, y: cursorY, color: fg });
+        }
+        {
+          const w = measure ? measure(line) : line.length * charW;
+          bumpMax(x0 + padding, cursorY, w, charH);
+        }
         cursorY += baseLineHeight;
       }
       cursorY += paragraphGap;
@@ -167,7 +266,7 @@ export function layoutMarkdownDocument(
     if (node.kind === 'heading') {
       cursorY += Math.round(charH * 0.25);
       const runs = tokenizeInlines(node.inlines);
-      const lines = wrapRuns(runs, maxChars);
+      const lines = measure ? wrapRunsByWidth(runs, innerW, measure) : wrapRuns(runs, maxChars);
       const fg = style.headingFg;
 
       for (const ln of lines) {
@@ -180,7 +279,7 @@ export function layoutMarkdownDocument(
 
     if (node.kind === 'paragraph') {
       const runs = tokenizeInlines(node.inlines);
-      const lines = wrapRuns(runs, maxChars);
+      const lines = measure ? wrapRunsByWidth(runs, innerW, measure) : wrapRuns(runs, maxChars);
       for (const ln of lines) {
         emitTextLine(ln, x0 + padding, cursorY);
         cursorY += baseLineHeight;
@@ -194,10 +293,13 @@ export function layoutMarkdownDocument(
       const bullet = '- ';
       for (const item of node.items) {
         const itemRuns = [{ kind: 'text' as const, text: bullet }, ...tokenizeInlines(item)];
-        const lines = wrapRuns(itemRuns, Math.max(1, maxChars - indentChars));
+        const lines = measure
+          ? wrapRunsByWidth(itemRuns, Math.max(1, innerW - measure(' '.repeat(indentChars))), measure)
+          : wrapRuns(itemRuns, Math.max(1, maxChars - indentChars));
         let first = true;
         for (const ln of lines) {
-          const x = x0 + padding + (first ? 0 : bullet.length * charW);
+          const bulletIndent = measure ? measure(bullet) : bullet.length * charW;
+          const x = x0 + padding + (first ? 0 : bulletIndent);
           // for wrapped lines, indent without repeating bullet
           emitTextLine(ln, x, cursorY);
           cursorY += baseLineHeight;
@@ -210,6 +312,7 @@ export function layoutMarkdownDocument(
   }
 
   const contentHeight = Math.max(0, cursorY - (y0 + padding - scrollY));
+  const contentWidth = Math.max(0, contentMaxX - (x0 + padding));
 
-  return { ops, linkRegions, contentHeight };
+  return { ops, linkRegions, contentWidth, contentHeight };
 }

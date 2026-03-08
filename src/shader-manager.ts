@@ -58,6 +58,12 @@ export class ShaderManager {
   
   // Active shader
   private activeShader: string | null = null;
+
+  // WGSL include cache (URL -> resolved text)
+  private includeCache: Map<string, string> = new Map();
+
+  // Built-in shader load de-duplication
+  private builtinShaderLoads: Map<string, Promise<boolean>> = new Map();
   
   private initialized: boolean = false;
 
@@ -108,6 +114,83 @@ export class ShaderManager {
   }
 
   /**
+   * Load a built-in shader from `./shaders/{name}.wgsl.js` (same format as ShaderChainManager).
+   * This is best-effort and primarily intended for Worlds background shaders.
+   */
+  async ensureBuiltinShader(name: string, baseUrl: string = './shaders/'): Promise<boolean> {
+    const shaderName = String(name ?? '').trim();
+    if (!shaderName) return false;
+    if (this.hasShader(shaderName)) return true;
+
+    const existing = this.builtinShaderLoads.get(shaderName);
+    if (existing) return await existing;
+
+    const loadPromise = (async (): Promise<boolean> => {
+      try {
+        if (!this.initialized) await this.init();
+
+        const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+        const shaderPath = `${base}${shaderName}.wgsl.js`;
+        console.log(`[ShaderManager] Loading built-in shader: ${shaderPath}`);
+
+        const response = await fetch(shaderPath);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch shader: ${response.status} ${response.statusText}`);
+        }
+
+        const shaderCode = await response.text();
+
+        // Shader file defines: function getShaderConfig() { ... }
+        const evalFunc = new Function(shaderCode + '\nreturn getShaderConfig();');
+        const config = evalFunc();
+
+        if (!config || !config.vertexShader || !config.fragmentShader) {
+          throw new Error('Shader config must include vertexShader and fragmentShader');
+        }
+
+        const combinedCodeRaw = String(config.vertexShader) + '\n' + String(config.fragmentShader);
+        const combinedCode = await this.resolveWgslIncludes(combinedCodeRaw, base);
+
+        const uniforms: string[] = config.uniforms ? Object.keys(config.uniforms) : [];
+        const wgslShader: WGSLShader = {
+          name: shaderName,
+          code: combinedCode,
+          kind: 'fragment',
+          uniforms,
+          bindings: [],
+          workgroupSize: [1, 1, 1]
+        };
+
+        const ok = await this.registerShader(wgslShader);
+        if (!ok) return false;
+
+        if (config.uniforms) {
+          for (const [uniformName, defaultValue] of Object.entries(config.uniforms)) {
+            try {
+              this.setUniform(shaderName, uniformName, defaultValue as number | number[]);
+            } catch {
+              // ignore
+            }
+          }
+        }
+
+        console.log(`[ShaderManager] ✓ Loaded built-in shader: ${shaderName}`);
+        return true;
+      } catch (error) {
+        console.warn(`[ShaderManager] Failed to load built-in shader "${shaderName}":`, error);
+        return false;
+      }
+    })();
+
+    this.builtinShaderLoads.set(shaderName, loadPromise);
+    try {
+      return await loadPromise;
+    } finally {
+      this.builtinShaderLoads.delete(shaderName);
+    }
+  }
+
+  /**
    * Register and compile a WGSL shader from parsed metadata
    */
   async registerShader(shader: WGSLShader): Promise<boolean> {
@@ -131,7 +214,10 @@ export class ShaderManager {
 
       // If we have a pending vertex stage for this name, merge it.
       const pendingVertex = this.pendingVertexShaders.get(shader.name);
-      const mergedCode = this.buildRenderModuleCode(shader.code, pendingVertex?.code);
+      const mergedCodeRaw = this.buildRenderModuleCode(shader.code, pendingVertex?.code);
+      // Allow user-authored WGSL blocks to reuse built-in WGSL snippets.
+      // Includes resolve relative to the built-in shader root: ./shaders/
+      const mergedCode = await this.resolveWgslIncludes(mergedCodeRaw, './shaders/');
       const mergedShader = parseWGSLShader(shader.name, mergedCode);
       mergedShader.kind = 'fragment';
       
@@ -241,6 +327,61 @@ export class ShaderManager {
       console.error(`[ShaderManager] Failed to compile shader ${shader.name}:`, error);
       return false;
     }
+  }
+
+  private async resolveWgslIncludes(code: string, baseUrl: string): Promise<string> {
+    // WGSL `#include` preprocessor.
+    // Supports: #include "relative/path.wgsl"
+    // Resolves relative to `baseUrl` (typically "./shaders/")
+    // Recursively resolves nested includes and detects cycles.
+    const includeRe = /^\s*#include\s+"([^"]+)"\s*$/gm;
+
+    const resolveOne = async (src: string, seen: Set<string>): Promise<string> => {
+      const matches = Array.from(src.matchAll(includeRe));
+      if (matches.length === 0) return src;
+
+      let out = '';
+      let lastIndex = 0;
+      for (const m of matches) {
+        const fullMatch = m[0];
+        const includePath = m[1];
+        const index = m.index ?? 0;
+
+        out += src.slice(lastIndex, index);
+        lastIndex = index + fullMatch.length;
+
+        // Security/sanity: only allow relative includes within the origin.
+        if (includePath.startsWith('/') || includePath.includes('://')) {
+          throw new Error(`[ShaderManager] Unsupported #include path: ${includePath}`);
+        }
+
+        const url = baseUrl + includePath;
+        if (seen.has(url)) {
+          throw new Error(`[ShaderManager] #include cycle detected: ${url}`);
+        }
+
+        let text = this.includeCache.get(url);
+        if (text === undefined) {
+          const resp = await fetch(url);
+          if (!resp.ok) {
+            throw new Error(`[ShaderManager] Failed to fetch #include: ${url} (${resp.status} ${resp.statusText})`);
+          }
+          text = await resp.text();
+          this.includeCache.set(url, text);
+        }
+
+        const nestedSeen = new Set(seen);
+        nestedSeen.add(url);
+        const resolved = await resolveOne(text, nestedSeen);
+        out += `\n// begin include: ${includePath}\n${resolved}\n// end include: ${includePath}\n`;
+      }
+
+      out += src.slice(lastIndex);
+      // There could be includes introduced by substitutions.
+      return resolveOne(out, seen);
+    };
+
+    return resolveOne(code, new Set());
   }
 
   /**

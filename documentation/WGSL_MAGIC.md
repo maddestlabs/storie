@@ -58,6 +58,25 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 - **`wgsl compute:name`** - Compute shaders for GPU computation
 - **`wgsl vertex:name`** - Vertex shaders (optional; can be paired with a fragment shader)
 
+## WGSL `#include` (Shared Shader Primitives)
+
+Storie supports a small preprocessor for WGSL that lets you reuse shared code
+across shaders:
+
+```wgsl
+#include "lib/math.wgsl"
+#include "lib/proc-hash.wgsl"
+```
+
+Notes:
+
+- Includes must use quotes and a relative path: `#include "..."`.
+- Paths are resolved relative to the built-in shader root `./shaders/`.
+  - In the docs site build, this corresponds to `docs/shaders/`.
+- The recommended convention for reusable primitives is:
+  - `docs/shaders/lib/*.wgsl`
+- Nested includes are allowed; cycles are detected and will throw.
+
 ### Vertex + Fragment Pairing (Render Shaders)
 
 For post-processing / full-screen effects, Storie compiles a **render pipeline** from a **fragment shader** plus a **vertex shader**.

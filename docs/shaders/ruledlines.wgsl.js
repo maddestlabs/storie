@@ -23,6 +23,8 @@ fn vertexMain(
         fragmentShader: `@group(0) @binding(0) var contentTexture: texture_2d<f32>;
 @group(0) @binding(1) var contentTextureSampler: sampler;
 
+    #include "lib/math.wgsl"
+
 struct Uniforms {
     time: f32,
     _pad0: f32,
@@ -46,17 +48,6 @@ struct Uniforms {
     _padAlt: f32,
 }
 @group(0) @binding(2) var<uniform> uniforms: Uniforms;
-
-fn isNanF32(x: f32) -> bool {
-    // NaN is the only float where (x != x) is true.
-    return x != x;
-}
-
-fn modF32(x: f32, y: f32) -> f32 {
-    // GLSL-style mod(): x - y * floor(x / y)
-    // (WGSL doesn't have a float % operator in all implementations)
-    return x - y * floor(x / y);
-}
 
 @fragment
 fn fragmentMain(

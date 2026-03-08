@@ -473,6 +473,133 @@ class InputManager {
     this.state.mouseButtonsClicked.clear();
   }
 }
+const DEFAULT_FONT_FALLBACK_STACK = "'3270-regular', 'Consolas', 'Monaco', monospace";
+function normalizeFontFamilyValue(value) {
+  return String(value ?? "").replace(/\+/g, " ").trim();
+}
+function safeCssEscape(value) {
+  const v2 = String(value ?? "");
+  try {
+    const css = globalThis.CSS;
+    if (css && typeof css.escape === "function") return css.escape(v2);
+  } catch {
+  }
+  return v2.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+function isProbablyMonospaceFontStack(fontFamilyOrStack, opts) {
+  if (typeof document === "undefined") return true;
+  const stack = String(fontFamilyOrStack ?? "").trim();
+  if (!stack) return true;
+  const size = Number.isFinite(opts == null ? void 0 : opts.fontCssPixelSize) && opts.fontCssPixelSize > 0 ? opts.fontCssPixelSize : 16;
+  const tol = Number.isFinite(opts == null ? void 0 : opts.tolerancePx) && opts.tolerancePx >= 0 ? opts.tolerancePx : 0.5;
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return true;
+  ctx.font = `${size}px ${stack}`;
+  const w1 = ctx.measureText("iiiiiiiiii").width / 10;
+  const w2 = ctx.measureText("WWWWWWWWWW").width / 10;
+  const w3 = ctx.measureText("..........").width / 10;
+  if (![w1, w2, w3].every(Number.isFinite)) return true;
+  if (w1 <= 0 || w2 <= 0 || w3 <= 0) return true;
+  return Math.abs(w1 - w2) <= tol && Math.abs(w1 - w3) <= tol;
+}
+function getPrimaryFontFamily(fontFamilyOrStack) {
+  var _a;
+  const raw = String(fontFamilyOrStack ?? "").trim();
+  if (!raw) return null;
+  const first = (_a = raw.split(",")[0]) == null ? void 0 : _a.trim();
+  if (!first) return null;
+  const unquoted = first.replace(/^['"]/, "").replace(/['"]$/, "").trim();
+  const normalized = normalizeFontFamilyValue(unquoted);
+  return normalized || null;
+}
+function buildFontStack(primaryFamily, fallbackStack = DEFAULT_FONT_FALLBACK_STACK) {
+  const primary = normalizeFontFamilyValue(String(primaryFamily ?? ""));
+  if (!primary) return fallbackStack;
+  if (primary.includes(",")) return primary;
+  return `'${primary.replace(/'/g, "\\'")}', ${fallbackStack}`;
+}
+function looksLikeGenericFamily(family) {
+  const f = String(family ?? "").trim().toLowerCase();
+  if (!f) return true;
+  return [
+    "serif",
+    "sans-serif",
+    "monospace",
+    "system-ui",
+    "ui-serif",
+    "ui-sans-serif",
+    "ui-monospace",
+    "cursive",
+    "fantasy",
+    "emoji",
+    "math",
+    "fangsong"
+  ].includes(f);
+}
+function googleFontsHref(family, opts) {
+  const fam = normalizeFontFamilyValue(String(family ?? ""));
+  const display = ((opts == null ? void 0 : opts.display) ?? "swap").trim() || "swap";
+  const famParam = encodeURIComponent(fam).replace(/%20/g, "+");
+  const weights = Array.isArray(opts == null ? void 0 : opts.weights) ? opts.weights.filter((w) => Number.isFinite(w) && w > 0) : [];
+  const weightPart = weights.length > 0 ? `:wght@${weights.join(";")}` : "";
+  return `https://fonts.googleapis.com/css2?family=${famParam}${weightPart}&display=${encodeURIComponent(display)}`;
+}
+function timeout(p, ms, fallback) {
+  if (!(ms > 0)) return p;
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(fallback), ms);
+    p.then(
+      (v2) => {
+        clearTimeout(t);
+        resolve(v2);
+      },
+      () => {
+        clearTimeout(t);
+        resolve(fallback);
+      }
+    );
+  });
+}
+async function ensureGoogleFontsStylesheet(family, opts) {
+  if (typeof document === "undefined") return false;
+  if (!document.head) return false;
+  const fam = String(family ?? "").trim();
+  if (!fam || looksLikeGenericFamily(fam)) return false;
+  const lower = fam.toLowerCase();
+  if (lower === "3270-regular" || lower === "consolas" || lower === "monaco") return false;
+  const existing = document.querySelector(`link[data-storie-google-font="${safeCssEscape(fam)}"]`);
+  if (existing) return true;
+  const href = googleFontsHref(fam, { display: opts == null ? void 0 : opts.display, weights: opts == null ? void 0 : opts.weights });
+  const link2 = document.createElement("link");
+  link2.rel = "stylesheet";
+  link2.href = href;
+  link2.setAttribute("data-storie-google-font", fam);
+  const loaded = new Promise((resolve) => {
+    link2.onload = () => resolve(true);
+    link2.onerror = () => resolve(false);
+  });
+  document.head.appendChild(link2);
+  const ok = await timeout(loaded, (opts == null ? void 0 : opts.timeoutMs) ?? 1500, false);
+  return ok;
+}
+async function tryLoadGoogleFontFamily(family, opts) {
+  if (typeof document === "undefined" || !document.fonts) return false;
+  const fam = normalizeFontFamilyValue(String(family ?? ""));
+  if (!fam || looksLikeGenericFamily(fam)) return false;
+  const cssOk = await ensureGoogleFontsStylesheet(fam, {
+    display: opts == null ? void 0 : opts.display,
+    weights: opts == null ? void 0 : opts.weights,
+    timeoutMs: opts == null ? void 0 : opts.timeoutMs
+  });
+  if (!cssOk) return false;
+  const size = Number.isFinite(opts == null ? void 0 : opts.fontCssPixelSize) && opts.fontCssPixelSize > 0 ? opts.fontCssPixelSize : 16;
+  const loadPromise = document.fonts.load(`${size}px "${fam}"`).then(
+    () => true,
+    () => false
+  );
+  return await timeout(loadPromise, (opts == null ? void 0 : opts.timeoutMs) ?? 1500, false);
+}
 class Canvas2DRenderer {
   constructor(canvas, config = {}) {
     __publicField(this, "canvas");
@@ -509,6 +636,17 @@ class Canvas2DRenderer {
   }
   async waitForFont() {
     try {
+      try {
+        const primary = getPrimaryFontFamily(this.fontFamily);
+        if (primary) {
+          await tryLoadGoogleFontFamily(primary, {
+            timeoutMs: 1500,
+            fontCssPixelSize: this.fontSize,
+            display: "swap"
+          });
+        }
+      } catch {
+      }
       await document.fonts.load(`${this.fontSize}px ${this.fontFamily}`);
       this.ctx.font = `${this.fontSize}px ${this.fontFamily}`;
       this.fontLoaded = true;
@@ -764,6 +902,17 @@ class GlyphAtlas {
   async initGPU(context) {
     const device = context.getDevice();
     if (!device) throw new Error("WebGPU device not available");
+    try {
+      const primary = getPrimaryFontFamily(this.fontFamily);
+      if (primary) {
+        await tryLoadGoogleFontFamily(primary, {
+          timeoutMs: 1500,
+          fontCssPixelSize: this.fontSize,
+          display: "swap"
+        });
+      }
+    } catch {
+    }
     if (document.fonts && document.fonts.ready) {
       await document.fonts.ready;
       try {
@@ -774,6 +923,7 @@ class GlyphAtlas {
         console.warn("[GlyphAtlas] Font load failed, continuing anyway:", e);
       }
     }
+    this.initFont();
     this.atlasTexture = device.createTexture({
       size: [this.atlasWidth, this.atlasHeight],
       format: "rgba8unorm",
@@ -10820,6 +10970,23 @@ function flattenSections(sections) {
   return result;
 }
 const THEMES = {
+  saintbilly: {
+    // Old-western, light theme: parchment-ish gray with a subtle red-brown tint
+    bg: 4109298431,
+    // Warm paper (slight red-brown)
+    bgAlt: 3873430271,
+    // Raised paper
+    fg: 707407103,
+    // Near-black ink
+    fgAlt: 1819045631,
+    // Muted gray
+    accent1: 2048136447,
+    // Dark red
+    accent2: 976895231,
+    // Charcoal (links/secondary)
+    accent3: 2105377023
+    // Mid gray (tertiary)
+  },
   neotopia: {
     bg: 1118719,
     // Deep teal
@@ -11267,10 +11434,10 @@ class ModuleLoader extends EventEmitter {
     try {
       const resolver = options.resolver || this.resolver;
       const url = await resolver(name);
-      const timeout = options.timeout || 3e4;
+      const timeout2 = options.timeout || 3e4;
       const loadPromise = this.importModule(url);
       const timeoutPromise = new Promise(
-        (_, reject) => setTimeout(() => reject(new Error(`Module load timeout: ${name}`)), timeout)
+        (_, reject) => setTimeout(() => reject(new Error(`Module load timeout: ${name}`)), timeout2)
       );
       const ModuleClass = await Promise.race([loadPromise, timeoutPromise]);
       const module = new ModuleClass();
@@ -13779,34 +13946,103 @@ function wrapRuns(runs, maxChars) {
   if (lines.length === 0) lines.push([]);
   return lines;
 }
-function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding = 10) {
+function hardBreakByWidth(text, maxWidthPx, measure) {
+  const out = [];
+  let current = "";
+  for (const ch of text) {
+    const next = current + ch;
+    if (current.length > 0 && measure(next) > maxWidthPx) {
+      out.push(current);
+      current = ch;
+    } else {
+      current = next;
+    }
+  }
+  if (current.length > 0) out.push(current);
+  return out.length > 0 ? out : [""];
+}
+function wrapRunsByWidth(runs, maxWidthPx, measure) {
+  const lines = [];
+  let current = [];
+  let usedPx = 0;
+  const pushLine = () => {
+    while (current.length > 0 && current[0].kind !== "newline" && /^\s+$/.test(current[0].text)) current.shift();
+    while (current.length > 0 && current[current.length - 1].kind !== "newline" && /^\s+$/.test(current[current.length - 1].text)) {
+      current.pop();
+    }
+    lines.push(current);
+    current = [];
+    usedPx = 0;
+  };
+  for (const run of runs) {
+    if (run.kind === "newline") {
+      pushLine();
+      continue;
+    }
+    if (current.length === 0 && /^\s+$/.test(run.text)) {
+      continue;
+    }
+    const runW = measure(run.text);
+    if (runW > maxWidthPx && !/^\s+$/.test(run.text)) {
+      if (current.length > 0) pushLine();
+      const chunks = hardBreakByWidth(run.text, maxWidthPx, measure);
+      for (const chunk of chunks) {
+        lines.push([{ ...run, text: chunk }]);
+      }
+      continue;
+    }
+    if (usedPx + runW > maxWidthPx && current.length > 0) {
+      pushLine();
+    }
+    current.push(run);
+    usedPx += runW;
+  }
+  if (current.length > 0) pushLine();
+  if (lines.length === 0) lines.push([]);
+  return lines;
+}
+function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding = 10, options) {
   const ops = [];
   const linkRegions = [];
   const charW = Math.max(1, metrics.charW);
   const charH = Math.max(1, metrics.charH);
+  const measure = typeof metrics.measureTextWidth === "function" ? metrics.measureTextWidth : null;
   const x0 = box.x;
   const y0 = box.y;
   const innerW = Math.max(1, box.width - padding * 2);
   const maxChars = Math.max(1, Math.floor(innerW / charW));
   const baseLineHeight = Math.round(charH * 1.25);
   const paragraphGap = Math.round(charH * 0.75);
+  const overflow = (options == null ? void 0 : options.overflow) === "expand" ? "expand" : "clip";
   ops.push({ kind: "rect", x: x0, y: y0, w: box.width, h: box.height, color: style.bg });
   let cursorY = y0 + padding - scrollY;
+  const contentStartX = x0 + padding;
+  let contentMaxX = contentStartX;
+  const bumpMax = (x, y, w, h) => {
+    if (w > 0) contentMaxX = Math.max(contentMaxX, x + w);
+  };
   const emitTextLine = (line, lineX, lineY, fgOverride) => {
     let cx = lineX;
     for (const run of line) {
       if (run.kind === "newline") continue;
       const color = fgOverride ?? (run.kind === "link" ? style.linkFg : run.kind === "code" ? style.codeFg : style.fg);
       if (run.kind === "code" && run.text.trim().length > 0) {
-        const w = run.text.length * charW;
+        const w = measure ? measure(run.text) : run.text.length * charW;
         ops.push({ kind: "rect", x: cx, y: lineY - Math.round(charH * 0.15), w, h: Math.round(charH * 1.15), color: style.codeBg });
+        bumpMax(cx, lineY - Math.round(charH * 0.15), w);
       }
       ops.push({ kind: "text", text: run.text, x: cx, y: lineY, color });
-      if (run.kind === "link" && run.url && run.text.trim().length > 0) {
-        linkRegions.push({ x: cx, y: lineY, w: run.text.length * charW, h: charH, url: run.url, text: run.text });
-        ops.push({ kind: "rect", x: cx, y: lineY + charH - 2, w: run.text.length * charW, h: 2, color: style.linkFg });
+      {
+        const w = measure ? measure(run.text) : run.text.length * charW;
+        bumpMax(cx, lineY, w);
       }
-      cx += run.text.length * charW;
+      if (run.kind === "link" && run.url && run.text.trim().length > 0) {
+        const w = measure ? measure(run.text) : run.text.length * charW;
+        linkRegions.push({ x: cx, y: lineY, w, h: charH, url: run.url, text: run.text });
+        ops.push({ kind: "rect", x: cx, y: lineY + charH - 2, w, h: 2, color: style.linkFg });
+        bumpMax(cx, lineY + charH - 2, w);
+      }
+      cx += measure ? measure(run.text) : run.text.length * charW;
     }
   };
   for (const node of nodes) {
@@ -13821,9 +14057,15 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
       const fg = style.codeFg;
       const codeLines = (node.code || "").replace(/\r\n/g, "\n").split("\n");
       for (const rawLine of codeLines) {
-        if (cursorY > y0 + box.height) break;
+        if (overflow === "clip" && cursorY > y0 + box.height) break;
         const line = (rawLine ?? "").trimEnd();
-        ops.push({ kind: "text", text: line, x: x0 + padding, y: cursorY, color: fg });
+        if (!(overflow === "clip" && cursorY > y0 + box.height)) {
+          ops.push({ kind: "text", text: line, x: x0 + padding, y: cursorY, color: fg });
+        }
+        {
+          const w = measure ? measure(line) : line.length * charW;
+          bumpMax(x0 + padding, cursorY, w);
+        }
         cursorY += baseLineHeight;
       }
       cursorY += paragraphGap;
@@ -13832,7 +14074,7 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
     if (node.kind === "heading") {
       cursorY += Math.round(charH * 0.25);
       const runs = tokenizeInlines(node.inlines);
-      const lines = wrapRuns(runs, maxChars);
+      const lines = measure ? wrapRunsByWidth(runs, innerW, measure) : wrapRuns(runs, maxChars);
       const fg = style.headingFg;
       for (const ln of lines) {
         emitTextLine(ln, x0 + padding, cursorY, fg);
@@ -13843,7 +14085,7 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
     }
     if (node.kind === "paragraph") {
       const runs = tokenizeInlines(node.inlines);
-      const lines = wrapRuns(runs, maxChars);
+      const lines = measure ? wrapRunsByWidth(runs, innerW, measure) : wrapRuns(runs, maxChars);
       for (const ln of lines) {
         emitTextLine(ln, x0 + padding, cursorY);
         cursorY += baseLineHeight;
@@ -13856,10 +14098,11 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
       const bullet = "- ";
       for (const item of node.items) {
         const itemRuns = [{ kind: "text", text: bullet }, ...tokenizeInlines(item)];
-        const lines = wrapRuns(itemRuns, Math.max(1, maxChars - indentChars));
+        const lines = measure ? wrapRunsByWidth(itemRuns, Math.max(1, innerW - measure(" ".repeat(indentChars))), measure) : wrapRuns(itemRuns, Math.max(1, maxChars - indentChars));
         let first = true;
         for (const ln of lines) {
-          const x = x0 + padding + (first ? 0 : bullet.length * charW);
+          const bulletIndent = measure ? measure(bullet) : bullet.length * charW;
+          const x = x0 + padding + (first ? 0 : bulletIndent);
           emitTextLine(ln, x, cursorY);
           cursorY += baseLineHeight;
           first = false;
@@ -13870,7 +14113,8 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
     }
   }
   const contentHeight = Math.max(0, cursorY - (y0 + padding - scrollY));
-  return { ops, linkRegions, contentHeight };
+  const contentWidth = Math.max(0, contentMaxX - (x0 + padding));
+  return { ops, linkRegions, contentWidth, contentHeight };
 }
 class GUIMarkdownView extends BaseWidget {
   constructor(config) {
@@ -16028,6 +16272,10 @@ class ShaderManager {
     __publicField(this, "resources", null);
     // Active shader
     __publicField(this, "activeShader", null);
+    // WGSL include cache (URL -> resolved text)
+    __publicField(this, "includeCache", /* @__PURE__ */ new Map());
+    // Built-in shader load de-duplication
+    __publicField(this, "builtinShaderLoads", /* @__PURE__ */ new Map());
     __publicField(this, "initialized", false);
     // Support pairing `wgsl vertex:name` + `wgsl fragment:name`
     __publicField(this, "pendingVertexShaders", /* @__PURE__ */ new Map());
@@ -16078,6 +16326,67 @@ class ShaderManager {
     console.log("[ShaderManager] Initialized");
   }
   /**
+   * Load a built-in shader from `./shaders/{name}.wgsl.js` (same format as ShaderChainManager).
+   * This is best-effort and primarily intended for Worlds background shaders.
+   */
+  async ensureBuiltinShader(name, baseUrl = "./shaders/") {
+    const shaderName = String(name ?? "").trim();
+    if (!shaderName) return false;
+    if (this.hasShader(shaderName)) return true;
+    const existing = this.builtinShaderLoads.get(shaderName);
+    if (existing) return await existing;
+    const loadPromise = (async () => {
+      try {
+        if (!this.initialized) await this.init();
+        const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+        const shaderPath = `${base}${shaderName}.wgsl.js`;
+        console.log(`[ShaderManager] Loading built-in shader: ${shaderPath}`);
+        const response = await fetch(shaderPath);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch shader: ${response.status} ${response.statusText}`);
+        }
+        const shaderCode = await response.text();
+        const evalFunc = new Function(shaderCode + "\nreturn getShaderConfig();");
+        const config = evalFunc();
+        if (!config || !config.vertexShader || !config.fragmentShader) {
+          throw new Error("Shader config must include vertexShader and fragmentShader");
+        }
+        const combinedCodeRaw = String(config.vertexShader) + "\n" + String(config.fragmentShader);
+        const combinedCode = await this.resolveWgslIncludes(combinedCodeRaw, base);
+        const uniforms = config.uniforms ? Object.keys(config.uniforms) : [];
+        const wgslShader = {
+          name: shaderName,
+          code: combinedCode,
+          kind: "fragment",
+          uniforms,
+          bindings: [],
+          workgroupSize: [1, 1, 1]
+        };
+        const ok = await this.registerShader(wgslShader);
+        if (!ok) return false;
+        if (config.uniforms) {
+          for (const [uniformName, defaultValue] of Object.entries(config.uniforms)) {
+            try {
+              this.setUniform(shaderName, uniformName, defaultValue);
+            } catch {
+            }
+          }
+        }
+        console.log(`[ShaderManager] ✓ Loaded built-in shader: ${shaderName}`);
+        return true;
+      } catch (error) {
+        console.warn(`[ShaderManager] Failed to load built-in shader "${shaderName}":`, error);
+        return false;
+      }
+    })();
+    this.builtinShaderLoads.set(shaderName, loadPromise);
+    try {
+      return await loadPromise;
+    } finally {
+      this.builtinShaderLoads.delete(shaderName);
+    }
+  }
+  /**
    * Register and compile a WGSL shader from parsed metadata
    */
   async registerShader(shader) {
@@ -16094,7 +16403,8 @@ class ShaderManager {
         return false;
       }
       const pendingVertex = this.pendingVertexShaders.get(shader.name);
-      const mergedCode = this.buildRenderModuleCode(shader.code, pendingVertex == null ? void 0 : pendingVertex.code);
+      const mergedCodeRaw = this.buildRenderModuleCode(shader.code, pendingVertex == null ? void 0 : pendingVertex.code);
+      const mergedCode = await this.resolveWgslIncludes(mergedCodeRaw, "./shaders/");
       const mergedShader = parseWGSLShader(shader.name, mergedCode);
       mergedShader.kind = "fragment";
       const module = this.device.createShaderModule({
@@ -16185,6 +16495,49 @@ class ShaderManager {
       console.error(`[ShaderManager] Failed to compile shader ${shader.name}:`, error);
       return false;
     }
+  }
+  async resolveWgslIncludes(code, baseUrl) {
+    const includeRe = /^\s*#include\s+"([^"]+)"\s*$/gm;
+    const resolveOne = async (src, seen) => {
+      const matches = Array.from(src.matchAll(includeRe));
+      if (matches.length === 0) return src;
+      let out = "";
+      let lastIndex = 0;
+      for (const m of matches) {
+        const fullMatch = m[0];
+        const includePath = m[1];
+        const index = m.index ?? 0;
+        out += src.slice(lastIndex, index);
+        lastIndex = index + fullMatch.length;
+        if (includePath.startsWith("/") || includePath.includes("://")) {
+          throw new Error(`[ShaderManager] Unsupported #include path: ${includePath}`);
+        }
+        const url = baseUrl + includePath;
+        if (seen.has(url)) {
+          throw new Error(`[ShaderManager] #include cycle detected: ${url}`);
+        }
+        let text = this.includeCache.get(url);
+        if (text === void 0) {
+          const resp = await fetch(url);
+          if (!resp.ok) {
+            throw new Error(`[ShaderManager] Failed to fetch #include: ${url} (${resp.status} ${resp.statusText})`);
+          }
+          text = await resp.text();
+          this.includeCache.set(url, text);
+        }
+        const nestedSeen = new Set(seen);
+        nestedSeen.add(url);
+        const resolved = await resolveOne(text, nestedSeen);
+        out += `
+// begin include: ${includePath}
+${resolved}
+// end include: ${includePath}
+`;
+      }
+      out += src.slice(lastIndex);
+      return resolveOne(out, seen);
+    };
+    return resolveOne(code, /* @__PURE__ */ new Set());
   }
   /**
    * Register a set of WGSL shaders in one pass.
@@ -16505,6 +16858,8 @@ class ShaderChainManager {
     __publicField(this, "chainSource", "none");
     // Intermediate textures for multi-pass rendering
     __publicField(this, "intermediateTextures", []);
+    // WGSL include cache (URL -> resolved text)
+    __publicField(this, "includeCache", /* @__PURE__ */ new Map());
     // Constants
     __publicField(this, "MAX_CHAIN_LENGTH", 8);
     __publicField(this, "SUPPORTED_SEPARATORS", ["+", ";", ",", "|"]);
@@ -16616,7 +16971,8 @@ class ShaderChainManager {
       if (!config || !config.vertexShader || !config.fragmentShader) {
         throw new Error("Shader config must include vertexShader and fragmentShader");
       }
-      const combinedCode = config.vertexShader + "\n" + config.fragmentShader;
+      const combinedCodeRaw = config.vertexShader + "\n" + config.fragmentShader;
+      const combinedCode = await this.resolveWgslIncludes(combinedCodeRaw, "./shaders/");
       const uniformNames = config.uniforms ? Object.keys(config.uniforms) : [];
       const wglsShader = {
         name,
@@ -16638,6 +16994,46 @@ class ShaderChainManager {
       console.error(`[ShaderChain] Failed to load built-in shader "${name}":`, error);
       throw error;
     }
+  }
+  async resolveWgslIncludes(code, baseUrl) {
+    const includeRe = /^\s*#include\s+"([^"]+)"\s*$/gm;
+    const resolveOne = async (src, seen) => {
+      const matches = Array.from(src.matchAll(includeRe));
+      if (matches.length === 0) return src;
+      let out = "";
+      let lastIndex = 0;
+      for (const m of matches) {
+        const fullMatch = m[0];
+        const includePath = m[1];
+        const index = m.index ?? 0;
+        out += src.slice(lastIndex, index);
+        lastIndex = index + fullMatch.length;
+        const url = includePath.startsWith("./") || includePath.startsWith("../") ? baseUrl + includePath : baseUrl + includePath;
+        if (seen.has(url)) {
+          throw new Error(`[ShaderChain] #include cycle detected: ${url}`);
+        }
+        let text = this.includeCache.get(url);
+        if (text === void 0) {
+          const resp = await fetch(url);
+          if (!resp.ok) {
+            throw new Error(`[ShaderChain] Failed to fetch #include: ${url} (${resp.status} ${resp.statusText})`);
+          }
+          text = await resp.text();
+          this.includeCache.set(url, text);
+        }
+        const nestedSeen = new Set(seen);
+        nestedSeen.add(url);
+        const resolved = await resolveOne(text, nestedSeen);
+        out += `
+// begin include: ${includePath}
+${resolved}
+// end include: ${includePath}
+`;
+      }
+      out += src.slice(lastIndex);
+      return resolveOne(out, seen);
+    };
+    return resolveOne(code, /* @__PURE__ */ new Set());
   }
   /**
    * Check if there's an active chain
@@ -16981,6 +17377,16 @@ function mat4FromTransform(transform) {
   return m;
 }
 function createCamera3D(config = {}) {
+  var _a, _b, _c;
+  const seed = Number.isFinite((_a = config == null ? void 0 : config.shake) == null ? void 0 : _a.seed) ? config.shake.seed : Math.random();
+  const shakeDefaults = {
+    enabled: false,
+    strength: 1,
+    seed,
+    translate: vec3(0, 0, 0),
+    rotate: vec3(0, 0, 0),
+    rate: 0.17
+  };
   return {
     position: config.position || vec3(0, 0, 10),
     rotation: config.rotation || vec3(0, 0, 0),
@@ -16991,29 +17397,195 @@ function createCamera3D(config = {}) {
     near: config.near || 0.1,
     far: config.far || 1e3,
     positionEaseSpeed: config.positionEaseSpeed || 0.1,
-    rotationEaseSpeed: config.rotationEaseSpeed || 0.1
+    rotationEaseSpeed: config.rotationEaseSpeed || 0.1,
+    effectivePosition: config.position ? { ...config.position } : vec3(0, 0, 10),
+    effectiveRotation: config.rotation ? { ...config.rotation } : vec3(0, 0, 0),
+    shake: {
+      ...shakeDefaults,
+      ...typeof config.shake === "object" ? config.shake : {},
+      translate: {
+        ...shakeDefaults.translate,
+        ...((_b = config.shake) == null ? void 0 : _b.translate) && typeof config.shake.translate === "object" ? config.shake.translate : {}
+      },
+      rotate: {
+        ...shakeDefaults.rotate,
+        ...((_c = config.shake) == null ? void 0 : _c.rotate) && typeof config.shake.rotate === "object" ? config.shake.rotate : {}
+      }
+    }
   };
+}
+function fract(x) {
+  return x - Math.floor(x);
+}
+function smoothstep(t) {
+  return t * t * (3 - 2 * t);
+}
+function hash2i(ix, iy, seedInt) {
+  let h = (ix | 0) * 374761393 + (iy | 0) * 668265263 + (seedInt | 0) * 1442695041;
+  h = h ^ h >>> 13 | 0;
+  h = Math.imul(h, 1274126177);
+  h = h ^ h >>> 16 | 0;
+  return (h >>> 0) / 4294967296;
+}
+function valueNoise2(x, y, seedInt) {
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = fract(x);
+  const fy = fract(y);
+  const a = hash2i(x0, y0, seedInt);
+  const b = hash2i(x0 + 1, y0, seedInt);
+  const c2 = hash2i(x0, y0 + 1, seedInt);
+  const d = hash2i(x0 + 1, y0 + 1, seedInt);
+  const ux = smoothstep(fx);
+  const uy = smoothstep(fy);
+  const ab = a + (b - a) * ux;
+  const cd = c2 + (d - c2) * ux;
+  return ab + (cd - ab) * uy;
+}
+function fbm2(x, y, seedInt) {
+  let f = 0;
+  let a = 0.5;
+  let px = x;
+  let py = y;
+  for (let i = 0; i < 4; i++) {
+    f += a * valueNoise2(px, py, seedInt);
+    px = px * 2.03 + 17.7;
+    py = py * 2.03 + 9.2;
+    a *= 0.5;
+  }
+  return f;
+}
+function spring1(x, v2, target, stiffness, damping, dt) {
+  const a = stiffness * (target - x) - damping * v2;
+  v2 = v2 + a * dt;
+  x = x + v2 * dt;
+  return { x, v: v2 };
+}
+function ensureShakeState(camera) {
+  if (camera._shakeState) return camera._shakeState;
+  camera._shakeState = {
+    time: 0,
+    pos: vec3(0, 0, 0),
+    posVel: vec3(0, 0, 0),
+    rot: vec3(0, 0, 0),
+    rotVel: vec3(0, 0, 0)
+  };
+  return camera._shakeState;
+}
+function computeForwardFromRotation(rotation) {
+  return {
+    x: Math.sin(rotation.y) * Math.cos(rotation.x),
+    y: -Math.sin(rotation.x),
+    z: -Math.cos(rotation.y) * Math.cos(rotation.x)
+  };
+}
+function computeRightUpFromForward(forward) {
+  const zAxis = vec3Normalize(vec3Scale(forward, -1));
+  const right = vec3Normalize({ x: zAxis.z, y: 0, z: -zAxis.x });
+  const up = {
+    x: zAxis.y * right.z - zAxis.z * right.y,
+    y: zAxis.z * right.x - zAxis.x * right.z,
+    z: zAxis.x * right.y - zAxis.y * right.x
+  };
+  return { right, up };
 }
 function updateCamera3D(camera, _deltaTime) {
   const hasTargetPos = !!camera.target;
   const hasTargetRot = !!camera.targetRotation;
-  if (!hasTargetPos && !hasTargetRot) return;
-  if (camera.target) {
+  if (hasTargetPos && camera.target) {
     camera.position = lerpVec3(camera.position, camera.target, camera.positionEaseSpeed);
   }
-  if (camera.targetRotation) {
+  if (hasTargetRot && camera.targetRotation) {
     camera.rotation = lerpVec3(camera.rotation, camera.targetRotation, camera.rotationEaseSpeed);
   }
-  const posDone = !camera.target || distance(camera.position, camera.target) < 0.01;
-  const rotDone = !camera.targetRotation || distance(camera.rotation, camera.targetRotation) < 1e-3;
-  if (posDone && camera.target) {
-    camera.position = { ...camera.target };
-    camera.target = null;
+  if (hasTargetPos || hasTargetRot) {
+    const posDone = !camera.target || distance(camera.position, camera.target) < 0.01;
+    const rotDone = !camera.targetRotation || distance(camera.rotation, camera.targetRotation) < 1e-3;
+    if (posDone && camera.target) {
+      camera.position = { ...camera.target };
+      camera.target = null;
+    }
+    if (rotDone && camera.targetRotation) {
+      camera.rotation = { ...camera.targetRotation };
+      camera.targetRotation = null;
+    }
   }
-  if (rotDone && camera.targetRotation) {
-    camera.rotation = { ...camera.targetRotation };
-    camera.targetRotation = null;
+  let effectivePosition = { ...camera.position };
+  let effectiveRotation = { ...camera.rotation };
+  const shake = camera.shake;
+  const dt = Number.isFinite(_deltaTime) ? Math.max(0, Math.min(_deltaTime, 0.05)) : 0;
+  if (shake && shake.enabled && Number.isFinite(shake.strength) && shake.strength > 0) {
+    const state = ensureShakeState(camera);
+    state.time += dt;
+    const strength = clamp$3(shake.strength, 0, 2);
+    const seed = Number.isFinite(shake.seed) ? shake.seed : 0;
+    const seedInt = (seed * 1e6 | 0) ^ 2654435769;
+    const t = state.time;
+    const rate = Number.isFinite(shake.rate) ? shake.rate : 0.17;
+    const baseX = t * rate;
+    const baseY = seed * 19.19;
+    const warpX = fbm2(baseX + 12.3, baseY + 4.7, seedInt);
+    const warpY = fbm2(baseX + 3.1, baseY + 27.9, seedInt);
+    const p2x = baseX + (warpX - 0.5) * 3;
+    const p2y = baseY + (warpY - 0.5) * 3;
+    const nx = fbm2(p2x + 10, p2y + 20, seedInt) - 0.5;
+    const ny = fbm2(p2x + 30, p2y + 40, seedInt) - 0.5;
+    const nz = fbm2(p2x + 50, p2y + 60, seedInt) - 0.5;
+    const jx = fbm2(t * (rate * 4.2) + 91, baseY + 7, seedInt) - 0.5;
+    const jy = fbm2(t * (rate * 3.7) + 13, baseY + 11, seedInt) - 0.5;
+    const jz = fbm2(t * (rate * 4.9) + 41, baseY + 19, seedInt) - 0.5;
+    const nxf = nx * 0.82 + jx * 0.18;
+    const nyf = ny * 0.82 + jy * 0.18;
+    const nzf = nz * 0.82 + jz * 0.18;
+    const targetRot = {
+      x: nxf * shake.rotate.x * strength,
+      y: nyf * shake.rotate.y * strength,
+      z: nzf * shake.rotate.z * strength
+    };
+    const targetPos = {
+      x: (fbm2(p2x + 90, p2y + 100, seedInt) - 0.5) * shake.translate.x * strength,
+      y: (fbm2(p2x + 110, p2y + 120, seedInt) - 0.5) * shake.translate.y * strength,
+      z: nzf * shake.translate.z * strength
+    };
+    const rotStiff = 55;
+    const rotDamp = 16;
+    const posStiff = 45;
+    const posDamp = 14;
+    const rx = spring1(state.rot.x, state.rotVel.x, targetRot.x, rotStiff, rotDamp, dt);
+    const ry = spring1(state.rot.y, state.rotVel.y, targetRot.y, rotStiff, rotDamp, dt);
+    const rz = spring1(state.rot.z, state.rotVel.z, targetRot.z, rotStiff, rotDamp, dt);
+    state.rot = { x: rx.x, y: ry.x, z: rz.x };
+    state.rotVel = { x: rx.v, y: ry.v, z: rz.v };
+    const px = spring1(state.pos.x, state.posVel.x, targetPos.x, posStiff, posDamp, dt);
+    const py = spring1(state.pos.y, state.posVel.y, targetPos.y, posStiff, posDamp, dt);
+    const pz = spring1(state.pos.z, state.posVel.z, targetPos.z, posStiff, posDamp, dt);
+    state.pos = { x: px.x, y: py.x, z: pz.x };
+    state.posVel = { x: px.v, y: py.v, z: pz.v };
+    effectiveRotation = {
+      x: camera.rotation.x + state.rot.x,
+      y: camera.rotation.y + state.rot.y,
+      z: camera.rotation.z + state.rot.z
+    };
+    const forward = computeForwardFromRotation(effectiveRotation);
+    const basis = computeRightUpFromForward(forward);
+    effectivePosition = vec3Add(
+      camera.position,
+      vec3Add(
+        vec3Scale(basis.right, state.pos.x),
+        vec3Add(vec3Scale(basis.up, state.pos.y), vec3Scale(forward, state.pos.z))
+      )
+    );
+  } else {
+    if (camera._shakeState) {
+      camera._shakeState.time = 0;
+      camera._shakeState.pos = vec3(0, 0, 0);
+      camera._shakeState.posVel = vec3(0, 0, 0);
+      camera._shakeState.rot = vec3(0, 0, 0);
+      camera._shakeState.rotVel = vec3(0, 0, 0);
+    }
   }
+  camera.effectivePosition = effectivePosition;
+  camera.effectiveRotation = effectiveRotation;
 }
 function setCameraTarget(camera, target, rotation) {
   camera.target = { ...target };
@@ -17036,8 +17608,10 @@ function focusOnSectionFit(camera, layout, viewportAspect, fill = 0.9, distanceL
   var _a, _b;
   const safeAspect = Number.isFinite(viewportAspect) && viewportAspect > 0 ? viewportAspect : 1;
   const safeFill = clamp$3(fill, 0.05, 0.99);
-  const worldWidth = layout.width * (((_a = layout.transform.scale) == null ? void 0 : _a.x) ?? 1);
-  const worldHeight = layout.height * (((_b = layout.transform.scale) == null ? void 0 : _b.y) ?? 1);
+  const baseW = layout.worldWidth ?? layout.width;
+  const baseH = layout.worldHeight ?? layout.height;
+  const worldWidth = baseW * (((_a = layout.transform.scale) == null ? void 0 : _a.x) ?? 1);
+  const worldHeight = baseH * (((_b = layout.transform.scale) == null ? void 0 : _b.y) ?? 1);
   const vFov = camera.fov;
   const hFov = 2 * Math.atan(Math.tan(vFov / 2) * safeAspect);
   const halfW = Math.max(1e-6, worldWidth / 2);
@@ -17057,13 +17631,28 @@ function focusOnSectionFit(camera, layout, viewportAspect, fill = 0.9, distanceL
   const baseRotation = computeYawPitchFromForward(forward);
   const positionOffset = options == null ? void 0 : options.positionOffset;
   const rotationOffset = options == null ? void 0 : options.rotationOffset;
-  const target = {
-    x: layout.transform.position.x + normalWorld.x * distance2 + ((positionOffset == null ? void 0 : positionOffset.x) ?? 0),
-    y: layout.transform.position.y + normalWorld.y * distance2 + ((positionOffset == null ? void 0 : positionOffset.y) ?? 0),
-    z: layout.transform.position.z + normalWorld.z * distance2 + ((positionOffset == null ? void 0 : positionOffset.z) ?? 0)
+  const center = {
+    x: layout.transform.position.x + ((positionOffset == null ? void 0 : positionOffset.x) ?? 0),
+    y: layout.transform.position.y + ((positionOffset == null ? void 0 : positionOffset.y) ?? 0),
+    z: layout.transform.position.z + ((positionOffset == null ? void 0 : positionOffset.z) ?? 0)
   };
-  if (options == null ? void 0 : options.keepRotation) {
+  let target = {
+    x: center.x + normalWorld.x * distance2,
+    y: center.y + normalWorld.y * distance2,
+    z: center.z + normalWorld.z * distance2
+  };
+  const keepRotation = (options == null ? void 0 : options.keepRotation) ?? false;
+  if (keepRotation) {
     camera.targetRotation = null;
+    const doRecenter = (options == null ? void 0 : options.screenSpaceRecenter) ?? false;
+    if (doRecenter) {
+      const forward2 = computeForwardFromRotation(camera.rotation);
+      const denom = Math.max(0.2, -vec3Dot(normalWorld, forward2));
+      const distAlongForward = distance2 / denom;
+      target = vec3Sub(center, vec3Scale(forward2, distAlongForward));
+      const iters = (options == null ? void 0 : options.screenSpaceRecenterIters) ?? 5;
+      target = recenterCameraToPoint(camera, target, camera.rotation, center, safeAspect, iters);
+    }
     setCameraTarget(camera, target);
     return;
   }
@@ -17075,17 +17664,19 @@ function focusOnSectionFit(camera, layout, viewportAspect, fill = 0.9, distanceL
   setCameraTarget(camera, target, rotation);
 }
 function getCameraViewMatrix(camera) {
+  const pos = camera.effectivePosition ?? camera.position;
+  const rot = camera.effectiveRotation ?? camera.rotation;
   const forward = {
-    x: Math.sin(camera.rotation.y) * Math.cos(camera.rotation.x),
-    y: -Math.sin(camera.rotation.x),
-    z: -Math.cos(camera.rotation.y) * Math.cos(camera.rotation.x)
+    x: Math.sin(rot.y) * Math.cos(rot.x),
+    y: -Math.sin(rot.x),
+    z: -Math.cos(rot.y) * Math.cos(rot.x)
   };
   const target = {
-    x: camera.position.x + forward.x,
-    y: camera.position.y + forward.y,
-    z: camera.position.z + forward.z
+    x: pos.x + forward.x,
+    y: pos.y + forward.y,
+    z: pos.z + forward.z
   };
-  return mat4LookAt(camera.position, target);
+  return mat4LookAt(pos, target);
 }
 function getCameraProjectionMatrix(camera, aspect) {
   return mat4Perspective(camera.fov, aspect, camera.near, camera.far);
@@ -17097,6 +17688,7 @@ function parseTransform3D(section, sectionIndex, config) {
   let y = parseFloat(metadata.y || "0");
   const z = parseFloat(metadata.z || metadata.depth || String(config.defaultDepth));
   const autoEnabled = config.autoLayoutEnabled !== false;
+  const autoPositioned = autoEnabled && !hasExplicitPosition;
   if (autoEnabled && !hasExplicitPosition) {
     const cols = Math.max(1, Math.floor(config.autoLayoutColumns ?? 3));
     const spacing = Number.isFinite(config.autoLayoutSpacing ?? NaN) ? config.autoLayoutSpacing : 200;
@@ -17125,6 +17717,7 @@ function parseTransform3D(section, sectionIndex, config) {
       rotation: vec3(rotX, rotY, rotZ),
       scale: vec3(scale, scale, 1)
     },
+    autoPositioned,
     width,
     height,
     texture: null,
@@ -17169,12 +17762,17 @@ function getDefaultWorldsConfig() {
     // Sections start 100 units in front of camera (negative Z)
     defaultSectionWidth: 60,
     defaultSectionHeight: 20,
+    sectionSizeUnits: "text",
+    sectionOverflow: "clip",
     cameraFov: Math.PI / 4,
     // 45 degrees
     cameraNear: 0.1,
     cameraFar: 1e3,
     positionEaseSpeed: 0.1,
     rotationEaseSpeed: 0.15,
+    keepRotation: false,
+    screenSpaceRecenter: false,
+    screenSpaceRecenterIters: 5,
     autoLayoutEnabled: true,
     autoLayoutColumns: 3,
     autoLayoutSpacing: 200,
@@ -17185,16 +17783,79 @@ function getDefaultWorldsConfig() {
     sectionBackground: "surface"
   };
 }
+function getViewMatrixForPose(position, rotation) {
+  const forward = {
+    x: Math.sin(rotation.y) * Math.cos(rotation.x),
+    y: -Math.sin(rotation.x),
+    z: -Math.cos(rotation.y) * Math.cos(rotation.x)
+  };
+  const target = {
+    x: position.x + forward.x,
+    y: position.y + forward.y,
+    z: position.z + forward.z
+  };
+  return mat4LookAt(position, target);
+}
+function projectToNdc(camera, position, rotation, point, aspect) {
+  const view = getViewMatrixForPose(position, rotation);
+  const proj = getCameraProjectionMatrix(camera, aspect);
+  const viewProj = mat4Multiply(proj, view);
+  const r2 = mat4TransformVec4(viewProj, point.x, point.y, point.z, 1);
+  const invW = r2.w !== 0 ? 1 / r2.w : 1;
+  return { x: r2.x * invW, y: r2.y * invW, z: r2.z * invW };
+}
+function recenterCameraToPoint(camera, basePosition, baseRotation, point, aspect, iters) {
+  const forward = computeForwardFromRotation(baseRotation);
+  const basis = computeRightUpFromForward(forward);
+  let pos = { ...basePosition };
+  const maxIters = Math.max(1, Math.min(12, Math.floor(iters || 1)));
+  for (let i = 0; i < maxIters; i++) {
+    const ndc = projectToNdc(camera, pos, baseRotation, point, aspect);
+    const errX = ndc.x;
+    const errY = ndc.y;
+    if (Math.abs(errX) + Math.abs(errY) < 1e-4) break;
+    const eps = 0.5;
+    const posR = vec3Add(pos, vec3Scale(basis.right, eps));
+    const ndcR = projectToNdc(camera, posR, baseRotation, point, aspect);
+    const dxdR = (ndcR.x - ndc.x) / eps;
+    const dydR = (ndcR.y - ndc.y) / eps;
+    const posU = vec3Add(pos, vec3Scale(basis.up, eps));
+    const ndcU = projectToNdc(camera, posU, baseRotation, point, aspect);
+    const dxdU = (ndcU.x - ndc.x) / eps;
+    const dydU = (ndcU.y - ndc.y) / eps;
+    const det = dxdR * dydU - dxdU * dydR;
+    if (Math.abs(det) < 1e-8) break;
+    const invDet = 1 / det;
+    let deltaR = (-errX * dydU - -errY * dxdU) * invDet;
+    let deltaU = (dxdR * -errY - dydR * -errX) * invDet;
+    const maxStep = 50;
+    deltaR = clamp$3(deltaR, -maxStep, maxStep);
+    deltaU = clamp$3(deltaU, -maxStep, maxStep);
+    pos = vec3Add(pos, vec3Add(vec3Scale(basis.right, deltaR), vec3Scale(basis.up, deltaU)));
+  }
+  return pos;
+}
 function focusOnSection(camera, layout, distance2 = 50, options) {
   const positionOffset = options == null ? void 0 : options.positionOffset;
   const rotationOffset = options == null ? void 0 : options.rotationOffset;
-  const target = {
+  const center = {
     x: layout.transform.position.x + ((positionOffset == null ? void 0 : positionOffset.x) ?? 0),
     y: layout.transform.position.y + ((positionOffset == null ? void 0 : positionOffset.y) ?? 0),
-    z: layout.transform.position.z + distance2 + ((positionOffset == null ? void 0 : positionOffset.z) ?? 0)
+    z: layout.transform.position.z + ((positionOffset == null ? void 0 : positionOffset.z) ?? 0)
   };
-  if (options == null ? void 0 : options.keepRotation) {
+  let target = {
+    x: center.x,
+    y: center.y,
+    z: center.z + distance2
+  };
+  const keepRotation = (options == null ? void 0 : options.keepRotation) ?? false;
+  if (keepRotation) {
     camera.targetRotation = null;
+    const doRecenter = (options == null ? void 0 : options.screenSpaceRecenter) ?? false;
+    if (doRecenter) {
+      const forward = computeForwardFromRotation(camera.rotation);
+      target = vec3Sub(center, vec3Scale(forward, distance2));
+    }
     setCameraTarget(camera, target);
     return;
   }
@@ -17206,9 +17867,10 @@ function focusOnSection(camera, layout, distance2 = 50, options) {
   setCameraTarget(camera, target, rotation);
 }
 class WorldsRenderer {
-  constructor(device, width, height) {
+  constructor(device, width, height, shaderManager) {
     __publicField(this, "device");
     __publicField(this, "renderPipeline", null);
+    __publicField(this, "shaderManager");
     // Buffers
     __publicField(this, "vertexBuffer", null);
     __publicField(this, "indexBuffer", null);
@@ -17217,6 +17879,9 @@ class WorldsRenderer {
     __publicField(this, "uniformStride", 256);
     __publicField(this, "uniformCapacity", 0);
     __publicField(this, "backgroundTexture", null);
+    __publicField(this, "backgroundShaderTexture", null);
+    // Avoid repeatedly fetching/evaluating the same built-in shader.
+    __publicField(this, "loadingBuiltinShaders", /* @__PURE__ */ new Set());
     // Render to offscreen texture (for compositor)
     __publicField(this, "renderTexture", null);
     __publicField(this, "depthTexture", null);
@@ -17227,12 +17892,14 @@ class WorldsRenderer {
     this.width = width;
     this.height = height;
     this.format = navigator.gpu.getPreferredCanvasFormat();
+    this.shaderManager = shaderManager || new ShaderManager(device, this.format);
     this.createRenderTexture();
   }
   /**
    * Initialize the 3D renderer
    */
   async init() {
+    await this.shaderManager.init();
     await this.createRenderPipeline(this.format);
     this.createGeometryBuffers();
     this.ensureUniformBufferCapacity(64);
@@ -17253,7 +17920,22 @@ class WorldsRenderer {
       { bytesPerRow: 4 },
       { width: 1, height: 1 }
     );
+    this.backgroundShaderTexture = this.device.createTexture({
+      size: { width: this.width, height: this.height },
+      format: this.format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+    });
     this.createDepthTexture();
+  }
+  requestBuiltinShaderLoad(shaderName) {
+    const name = String(shaderName ?? "").trim();
+    if (!name) return;
+    if (this.shaderManager.hasShader(name)) return;
+    if (this.loadingBuiltinShaders.has(name)) return;
+    this.loadingBuiltinShaders.add(name);
+    void this.shaderManager.ensureBuiltinShader(name).finally(() => {
+      this.loadingBuiltinShaders.delete(name);
+    });
   }
   /**
    * Create offscreen render texture
@@ -17287,13 +17969,14 @@ class WorldsRenderer {
           cameraRight: vec4<f32>,
           cameraUp: vec4<f32>,
           cameraForward: vec4<f32>,
-          // x=hasRuledLines, y=hasPaperNoise, z=noiseStrength, w=reserved
+          // x=hasRuledLines, y=hasPaperNoise, z=noiseStrength, w=useShaderBackground
           bgFlags: vec4<f32>,
         };
         
         @group(0) @binding(0) var<uniform> uniforms: Uniforms;
         @group(0) @binding(1) var textureSampler: sampler;
         @group(0) @binding(2) var textureData: texture_2d<f32>;
+        @group(0) @binding(3) var backgroundShaderTexture: texture_2d<f32>;
         
         struct VertexInput {
           @location(0) position: vec3<f32>,
@@ -17349,6 +18032,21 @@ class WorldsRenderer {
           return h;
         }
 
+        fn modF32(x: f32, y: f32) -> f32 {
+          let yy = max(0.0001, y);
+          return x - floor(x / yy) * yy;
+        }
+
+        fn periodicLineMask(y: f32, period: f32, thickness: f32) -> f32 {
+          let p = max(0.0001, period);
+          let t = modF32(y, p);
+          // AA in the same units as y/period. Using derivatives of y avoids
+          // discontinuities around the mod() wrap.
+          let aa = max(0.0001, abs(dpdx(y)) + abs(dpdy(y)));
+          // Line from t=0..thickness with smooth AA falloff.
+          return 1.0 - smoothstep(thickness, thickness + aa, t);
+        }
+
         fn sampleBackgroundAt(coordIn: vec2<f32>) -> vec4<f32> {
           let enabled = uniforms.paperParams.w;
           if (enabled < 0.5) {
@@ -17357,28 +18055,68 @@ class WorldsRenderer {
 
           let scale = uniforms.paperParams.x;
           let spacing = max(0.0001, uniforms.paperParams.y);
-          let thickness = clamp(uniforms.paperParams.z, 0.0, 0.5);
+          let thicknessFrac = clamp(uniforms.paperParams.z, 0.0, 0.5);
 
           let coord = coordIn * scale;
 
           // Base paper
           var rgb = uniforms.paperColor.rgb;
 
-          // Optional paper grain
-          if (uniforms.bgFlags.y > 0.5) {
-            let s = clamp(uniforms.bgFlags.z, 0.0, 1.0);
-            let n = hash21(floor(coord * 8.0));
-            let grain = (n - 0.5) * 2.0; // -1..1
-            rgb = clamp(rgb + vec3<f32>(grain) * (0.08 * s), vec3<f32>(0.0), vec3<f32>(1.0));
+          // Optional paper grain (apply after ruled-lines so it remains visible
+          // when lines are enabled, and so grain affects lines too).
+          let paperStrength = select(0.0, clamp(uniforms.bgFlags.z, 0.0, 1.0), uniforms.bgFlags.y > 0.5);
+          var paperGrain: f32 = 0.0;
+          if (paperStrength > 0.0) {
+            // Cheap multi-octave grain (no gradients): hash at a few scales.
+            let n0 = hash21(floor(coord * 8.0));
+            let n1 = hash21(floor(coord * 23.0));
+            let n2 = hash21(floor(coord * 61.0));
+            let n = n0 * 0.6 + n1 * 0.3 + n2 * 0.1;
+            paperGrain = (n - 0.5) * 2.0; // -1..1
           }
 
-          // Optional ruled lines
+          // Optional ruled lines (notebook-style): minor + major + alternating tint.
+          // Mirrors the compositor ruledlines shader structure (multiply-like blend).
           if (uniforms.bgFlags.x > 0.5) {
             let y = coord.y;
-            let phase = fract(y / spacing);
-            let mask = select(0.0, 1.0, phase < thickness);
-            let t = mask * uniforms.lineColor.a;
-            rgb = mix(rgb, uniforms.lineColor.rgb, t);
+
+            // Major line period is spacing (world units after scale).
+            let majorPeriod = spacing;
+            let majorThickness = max(0.00005, thicknessFrac * majorPeriod);
+
+            // Minor lines are a subtle higher-frequency texture.
+            let minorPeriod = max(0.0001, majorPeriod * 0.2);
+            let minorThickness = max(0.00003, majorThickness * 0.6);
+
+            // Theme-derived alpha is intentionally subtle (~0.25). Boost it
+            // to better match the compositor ruledlines shader default (~0.6).
+            let lineOpacity = clamp(uniforms.lineColor.a * 2.4, 0.0, 1.0);
+            // Treat lineColor.rgb as a multiplicative darkening factor (<1 = darker).
+            let baseFactor = clamp(uniforms.lineColor.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+
+            // Blend factors (closer to 1.0 = subtler).
+            let darkBlend = mix(vec3<f32>(1.0), baseFactor, lineOpacity);
+            let lightBlend = mix(vec3<f32>(1.0), mix(vec3<f32>(1.0), baseFactor, 0.4), lineOpacity * 0.8);
+            let altBlend = mix(vec3<f32>(1.0), mix(vec3<f32>(1.0), baseFactor, 0.2), lineOpacity * 0.35);
+
+            let lightMask = periodicLineMask(y, minorPeriod, minorThickness);
+            let darkMask = periodicLineMask(y, majorPeriod, majorThickness);
+
+            // Alternate tint every 2 major lines (subtle banding).
+            let lineNumber = floor(y / majorPeriod);
+            let altPhase = modF32(lineNumber, 2.0);
+            let altMask = select(0.0, 1.0, altPhase < 1.0);
+
+            rgb = rgb * mix(vec3<f32>(1.0), lightBlend, lightMask);
+            rgb = rgb * mix(vec3<f32>(1.0), altBlend, altMask);
+            rgb = rgb * mix(vec3<f32>(1.0), darkBlend, darkMask);
+          }
+
+          if (paperStrength > 0.0) {
+            // Multiplicative grain reads better on light themes and stays
+            // visible under multiply-blended ruled lines.
+            let g = 0.10 * paperStrength;
+            rgb = clamp(rgb * (1.0 + vec3<f32>(paperGrain) * g), vec3<f32>(0.0), vec3<f32>(1.0));
           }
 
           return vec4<f32>(rgb, 1.0);
@@ -17393,8 +18131,19 @@ class WorldsRenderer {
           // Full-screen paper pass only. Section textures are rendered with a
           // transparent background so paper shows through from behind.
           if (isBackground && uniforms.paperParams.w > 0.5) {
-            let coord = paperCoordFromScreenUv(input.uv);
-            outColor = sampleBackgroundAt(coord);
+            if (uniforms.bgFlags.w > 0.5) {
+              // Use custom shader background texture (world-locked mapping)
+              // Map the ray/plane intersection coord into a repeatable UV domain.
+              let coord = paperCoordFromScreenUv(input.uv);
+              var uv2 = fract(coord * uniforms.paperParams.x);
+              // Avoid sampling exactly at the clamp edge.
+              uv2 = uv2 * 0.999 + vec2<f32>(0.0005, 0.0005);
+              outColor = textureSample(backgroundShaderTexture, textureSampler, uv2);
+            } else {
+              // Use procedural background
+              let coord = paperCoordFromScreenUv(input.uv);
+              outColor = sampleBackgroundAt(coord);
+            }
           }
 
           // params0.z is full-card hover flag (1 = hovered)
@@ -17560,7 +18309,7 @@ class WorldsRenderer {
   /**
    * Render all 3D sections
    */
-  render(camera, layouts, hoveredSectionIndex = null, background, cardXScaleFactor = 1) {
+  render(camera, layouts, hoveredSectionIndex = null, background) {
     if (!this.renderPipeline || !this.vertexBuffer || !this.indexBuffer || !this.renderTexture) {
       console.warn("WorldsRenderer not fully initialized");
       return;
@@ -17610,11 +18359,17 @@ class WorldsRenderer {
     const hasRuledLines = chain.some((s) => s === "ruledlines" || s === "ruled-lines" || s === "ruled_lines");
     const hasPaper = chain.some((s) => s === "paper");
     const noiseStrength = paperEnabled ? Number.isFinite(background.noiseStrength) ? background.noiseStrength : 0.06 : 0;
-    const bgFlags = paperEnabled ? [hasRuledLines ? 1 : 0, hasPaper ? 1 : 0, noiseStrength, 0] : [0, 0, 0, 0];
+    const shaderName = background == null ? void 0 : background.shaderName;
+    if (paperEnabled && shaderName && !this.shaderManager.hasShader(shaderName)) {
+      this.requestBuiltinShaderLoad(shaderName);
+    }
+    const useShaderBackground = paperEnabled && !!shaderName && this.shaderManager.hasShader(shaderName);
+    const bgFlags = paperEnabled ? [hasRuledLines ? 1 : 0, hasPaper ? 1 : 0, noiseStrength, useShaderBackground ? 1 : 0] : [0, 0, 0, 0];
+    const camPos = camera.effectivePosition ?? camera.position;
     const cameraPos = new Float32Array([
-      camera.position.x,
-      camera.position.y,
-      camera.position.z,
+      camPos.x,
+      camPos.y,
+      camPos.z,
       1
     ]);
     const cameraRight = new Float32Array([viewMatrix[0], viewMatrix[4], viewMatrix[8], 0]);
@@ -17624,6 +18379,37 @@ class WorldsRenderer {
       if (!this.backgroundTexture) {
         console.warn("WorldsRenderer missing backgroundTexture");
       } else {
+        const shaderName2 = background.shaderName;
+        if (shaderName2 && this.shaderManager.hasShader(shaderName2) && this.backgroundShaderTexture) {
+          if (background.shaderUniforms) {
+            for (const [uniformName, value] of Object.entries(background.shaderUniforms)) {
+              if (this.shaderManager.hasUniform(shaderName2, uniformName)) {
+                this.shaderManager.setUniform(shaderName2, uniformName, value);
+              }
+            }
+          }
+          this.shaderManager.setActiveShader(shaderName2);
+          const tempTexture = this.device.createTexture({
+            size: { width: this.width, height: this.height },
+            format: this.format,
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
+          });
+          const clearEncoder = this.device.createCommandEncoder();
+          const clearPass = clearEncoder.beginRenderPass({
+            colorAttachments: [{
+              view: tempTexture.createView(),
+              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+              loadOp: "clear",
+              storeOp: "store"
+            }]
+          });
+          clearPass.end();
+          this.device.queue.submit([clearEncoder.finish()]);
+          const shaderEncoder = this.device.createCommandEncoder();
+          this.shaderManager.applyShader(tempTexture, this.backgroundShaderTexture, shaderEncoder);
+          this.device.queue.submit([shaderEncoder.finish()]);
+          tempTexture.destroy();
+        }
         const uniformOffset = 0;
         const mvp = new Float32Array([
           2,
@@ -17668,12 +18454,14 @@ class WorldsRenderer {
     for (let i = 0; i < layouts.length; i++) {
       const layout = layouts[i];
       if (!layout.visible || !layout.texture) continue;
+      const baseW = layout.worldWidth ?? layout.width;
+      const baseH = layout.worldHeight ?? layout.height;
       const sectionTransform = {
         position: layout.transform.position,
         rotation: layout.transform.rotation,
         scale: {
-          x: layout.transform.scale.x * layout.width * cardXScaleFactor,
-          y: layout.transform.scale.y * layout.height,
+          x: layout.transform.scale.x * baseW,
+          y: layout.transform.scale.y * baseH,
           z: layout.transform.scale.z
         }
       };
@@ -17710,7 +18498,7 @@ class WorldsRenderer {
       const hover = hoveredSectionIndex !== null && layout.sectionIndex === hoveredSectionIndex ? 1 : 0;
       const rect = layout.highlightUvRect;
       const highlightEnabled = rect ? 1 : 0;
-      const params0 = new Float32Array([layout.width, layout.height, hover, highlightEnabled]);
+      const params0 = new Float32Array([baseW, baseH, hover, highlightEnabled]);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
       const params1 = rect ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax]) : new Float32Array([0, 0, 0, 0]);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
@@ -17735,6 +18523,8 @@ class WorldsRenderer {
    */
   createBindGroupForTexture(texture, uniformOffset) {
     if (!this.renderPipeline || !this.uniformBuffer || !this.sampler) return null;
+    const shaderBgTexture = this.backgroundShaderTexture ?? this.backgroundTexture;
+    if (!shaderBgTexture) return null;
     return this.device.createBindGroup({
       layout: this.renderPipeline.getBindGroupLayout(0),
       entries: [
@@ -17749,6 +18539,10 @@ class WorldsRenderer {
         {
           binding: 2,
           resource: texture.createView()
+        },
+        {
+          binding: 3,
+          resource: shaderBgTexture.createView()
         }
       ]
     });
@@ -17764,6 +18558,14 @@ class WorldsRenderer {
     }
     this.createDepthTexture();
     this.createRenderTexture();
+    if (this.backgroundShaderTexture) {
+      this.backgroundShaderTexture.destroy();
+    }
+    this.backgroundShaderTexture = this.device.createTexture({
+      size: { width: this.width, height: this.height },
+      format: this.format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
+    });
   }
   /**
    * Get the render texture (for compositor layer)
@@ -17775,13 +18577,14 @@ class WorldsRenderer {
    * Clean up resources
    */
   destroy() {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g;
     (_a = this.vertexBuffer) == null ? void 0 : _a.destroy();
     (_b = this.indexBuffer) == null ? void 0 : _b.destroy();
     (_c = this.uniformBuffer) == null ? void 0 : _c.destroy();
     (_d = this.depthTexture) == null ? void 0 : _d.destroy();
     (_e = this.renderTexture) == null ? void 0 : _e.destroy();
     (_f = this.backgroundTexture) == null ? void 0 : _f.destroy();
+    (_g = this.backgroundShaderTexture) == null ? void 0 : _g.destroy();
   }
 }
 class LineStream {
@@ -20132,6 +20935,13 @@ class StorieEngine {
     __publicField(this, "sandbox");
     __publicField(this, "api");
     // User API (initialized in constructor)
+    // Font settings (logical CSS pixels). WebGPU glyph atlas scales by DPR.
+    __publicField(this, "fontFamily");
+    __publicField(this, "fontSize");
+    // Optional override for Worlds section card text rendering.
+    // If frontmatter requests a proportional font, we keep the terminal grid
+    // monospace but still allow Worlds cards to use the requested font.
+    __publicField(this, "worldsCardFontStack", null);
     // Native browser APIs (shared instances)
     __publicField(this, "audioContext");
     __publicField(this, "canvas2DContext", null);
@@ -20205,6 +21015,8 @@ class StorieEngine {
     __publicField(this, "worldsOverviewEnabled", false);
     __publicField(this, "worldsOverviewSavedTransforms", null);
     __publicField(this, "pendingWorldsOverview", null);
+    // Cache last computed auto-layout step sizes so we don't rewrite positions every frame.
+    __publicField(this, "worldsAutoLayoutCache", null);
     // Dropped-file handling (binary-safe)
     __publicField(this, "lastDroppedFile", null);
     __publicField(this, "dropHandlingCleanup", null);
@@ -20234,6 +21046,8 @@ class StorieEngine {
     this.canvas = canvas;
     this.width = config.width || 80;
     this.height = config.height || 24;
+    this.fontFamily = config.fontFamily || DEFAULT_FONT_FALLBACK_STACK;
+    this.fontSize = config.fontSize || 16;
     const configuredMaxDropBytes = typeof config.maxDropBytes === "number" ? config.maxDropBytes : 50 * 1024 * 1024;
     this.maxDropBytes = configuredMaxDropBytes > 0 ? configuredMaxDropBytes : Infinity;
     this.camera3D = createCamera3D();
@@ -20248,8 +21062,8 @@ class StorieEngine {
     if (preferWebGPU && navigator.gpu) {
       console.log("✓ WebGPU available, will attempt initialization");
       this.renderer = new WebGPURenderer(canvas, {
-        fontFamily: config.fontFamily,
-        fontSize: config.fontSize,
+        fontFamily: this.fontFamily,
+        fontSize: this.fontSize,
         // When WebGPU is available we initialize the compositor, which expects
         // the terminal renderer to render into an offscreen texture.
         renderToTexture: true
@@ -20257,8 +21071,8 @@ class StorieEngine {
     } else {
       console.log("✓ Using Canvas2D renderer");
       this.renderer = new Canvas2DRenderer(canvas, {
-        fontFamily: config.fontFamily,
-        fontSize: config.fontSize
+        fontFamily: this.fontFamily,
+        fontSize: this.fontSize
       });
     }
     this.renderer.resize(this.width, this.height);
@@ -20327,7 +21141,6 @@ class StorieEngine {
     this.setWorldsOverviewEnabled(p.enabled, p.options);
   }
   setWorldsOverviewEnabled(enabled, options) {
-    var _a, _b, _c, _d;
     if (this.hostAudienceView) return;
     if (!this.section3DLayouts || this.section3DLayouts.length === 0 || !this.camera3D) {
       this.pendingWorldsOverview = { enabled: !!enabled, options };
@@ -20394,8 +21207,9 @@ class StorieEngine {
     for (const idx of candidates) {
       const l = this.section3DLayouts[idx];
       if (!l) continue;
-      maxWorldW = Math.max(maxWorldW, l.width * (((_a = l.transform.scale) == null ? void 0 : _a.x) ?? 1));
-      maxWorldH = Math.max(maxWorldH, l.height * (((_b = l.transform.scale) == null ? void 0 : _b.y) ?? 1));
+      const s = this.get3DCardWorldSize(l);
+      maxWorldW = Math.max(maxWorldW, s.width);
+      maxWorldH = Math.max(maxWorldH, s.height);
     }
     const stepX = maxWorldW + padding;
     const stepY = maxWorldH + padding;
@@ -20419,8 +21233,9 @@ class StorieEngine {
     for (const idx of candidates) {
       const l = this.section3DLayouts[idx];
       if (!l) continue;
-      const w = l.width * (((_c = l.transform.scale) == null ? void 0 : _c.x) ?? 1);
-      const h = l.height * (((_d = l.transform.scale) == null ? void 0 : _d.y) ?? 1);
+      const s = this.get3DCardWorldSize(l);
+      const w = s.width;
+      const h = s.height;
       minX = Math.min(minX, l.transform.position.x - w / 2);
       maxX = Math.max(maxX, l.transform.position.x + w / 2);
       minY = Math.min(minY, l.transform.position.y - h / 2);
@@ -22807,8 +23622,14 @@ class StorieEngine {
         // Shader chain API
         setChain: async (shaderNames) => {
           if (!engine.shaderChainManager) {
-            console.warn("ShaderChainManager not available (WebGPU not initialized)");
-            return false;
+            const chainStr = Array.isArray(shaderNames) ? shaderNames.filter(Boolean).join("+") : "";
+            if (chainStr) {
+              console.log("[Engine] Deferring shader chain until WebGPU init (api):", chainStr);
+              engine.pendingShaderChain = { chainStr, source: "api" };
+              return true;
+            }
+            engine.pendingShaderChain = null;
+            return true;
           }
           try {
             return await engine.shaderChainManager.activateChain(shaderNames, "api");
@@ -22818,16 +23639,24 @@ class StorieEngine {
           }
         },
         getChain: () => {
-          if (!engine.shaderChainManager) return [];
-          return engine.shaderChainManager.getActiveChain();
+          var _a;
+          if (engine.shaderChainManager) return engine.shaderChainManager.getActiveChain();
+          if ((_a = engine.pendingShaderChain) == null ? void 0 : _a.chainStr) {
+            return engine.pendingShaderChain.chainStr.split("+").map((s) => s.trim()).filter(Boolean);
+          }
+          return [];
         },
         clearChain: () => {
-          if (!engine.shaderChainManager) return;
-          engine.shaderChainManager.clearChain();
+          if (engine.shaderChainManager) {
+            engine.shaderChainManager.clearChain();
+            return;
+          }
+          engine.pendingShaderChain = null;
         },
         hasChain: () => {
-          if (!engine.shaderChainManager) return false;
-          return engine.shaderChainManager.hasActiveChain();
+          var _a;
+          if (engine.shaderChainManager) return engine.shaderChainManager.hasActiveChain();
+          return !!((_a = engine.pendingShaderChain) == null ? void 0 : _a.chainStr);
         },
         chainInfo: () => {
           if (!engine.shaderChainManager) return null;
@@ -23131,6 +23960,78 @@ class StorieEngine {
             if (!engine.camera3D) return;
             engine.camera3D.target = { x, y, z };
           },
+          shake: {
+            setEnabled: (enabled) => {
+              if (!engine.camera3D) return;
+              if (!engine.camera3D.shake) {
+                engine.camera3D.shake = {
+                  enabled: false,
+                  strength: 1,
+                  seed: Math.random(),
+                  translate: { x: 0, y: 0, z: 0 },
+                  rotate: { x: 0, y: 0, z: 0 },
+                  rate: 0.17
+                };
+              }
+              engine.camera3D.shake.enabled = !!enabled;
+              if (!enabled && engine.camera3D._shakeState) {
+                engine.camera3D._shakeState.time = 0;
+                engine.camera3D._shakeState.pos = { x: 0, y: 0, z: 0 };
+                engine.camera3D._shakeState.posVel = { x: 0, y: 0, z: 0 };
+                engine.camera3D._shakeState.rot = { x: 0, y: 0, z: 0 };
+                engine.camera3D._shakeState.rotVel = { x: 0, y: 0, z: 0 };
+              }
+            },
+            setParams: (params) => {
+              if (!engine.camera3D) return;
+              if (!engine.camera3D.shake) {
+                engine.camera3D.shake = {
+                  enabled: false,
+                  strength: 1,
+                  seed: Math.random(),
+                  translate: { x: 0, y: 0, z: 0 },
+                  rotate: { x: 0, y: 0, z: 0 },
+                  rate: 0.17
+                };
+              }
+              const s = engine.camera3D.shake;
+              if (typeof (params == null ? void 0 : params.strength) === "number" && Number.isFinite(params.strength)) s.strength = params.strength;
+              if (typeof (params == null ? void 0 : params.seed) === "number" && Number.isFinite(params.seed)) s.seed = params.seed;
+              if (typeof (params == null ? void 0 : params.rate) === "number" && Number.isFinite(params.rate)) s.rate = params.rate;
+              if ((params == null ? void 0 : params.translate) && typeof params.translate === "object") {
+                if (typeof params.translate.x === "number" && Number.isFinite(params.translate.x)) s.translate.x = params.translate.x;
+                if (typeof params.translate.y === "number" && Number.isFinite(params.translate.y)) s.translate.y = params.translate.y;
+                if (typeof params.translate.z === "number" && Number.isFinite(params.translate.z)) s.translate.z = params.translate.z;
+              }
+              if ((params == null ? void 0 : params.rotate) && typeof params.rotate === "object") {
+                if (typeof params.rotate.x === "number" && Number.isFinite(params.rotate.x)) s.rotate.x = params.rotate.x;
+                if (typeof params.rotate.y === "number" && Number.isFinite(params.rotate.y)) s.rotate.y = params.rotate.y;
+                if (typeof params.rotate.z === "number" && Number.isFinite(params.rotate.z)) s.rotate.z = params.rotate.z;
+              }
+            },
+            getParams: () => {
+              var _a;
+              if (!((_a = engine.camera3D) == null ? void 0 : _a.shake)) {
+                return {
+                  enabled: false,
+                  strength: 1,
+                  seed: 0,
+                  rate: 0.17,
+                  translate: { x: 0, y: 0, z: 0 },
+                  rotate: { x: 0, y: 0, z: 0 }
+                };
+              }
+              const s = engine.camera3D.shake;
+              return {
+                enabled: !!s.enabled,
+                strength: Number.isFinite(s.strength) ? s.strength : 1,
+                seed: Number.isFinite(s.seed) ? s.seed : 0,
+                rate: Number.isFinite(s.rate) ? s.rate : 0.17,
+                translate: { x: s.translate.x, y: s.translate.y, z: s.translate.z },
+                rotate: { x: s.rotate.x, y: s.rotate.y, z: s.rotate.z }
+              };
+            }
+          },
           focusOnSection: (sectionIndex, distance2 = 50, options) => {
             if (!engine.camera3D) return;
             const keepRotation = !!(options == null ? void 0 : options.keepRotation);
@@ -23220,6 +24121,7 @@ class StorieEngine {
           }
           if (transform.position) {
             layout.transform.position = { ...transform.position };
+            layout.autoPositioned = false;
           }
           if (transform.rotation) {
             layout.transform.rotation = {
@@ -23255,6 +24157,26 @@ class StorieEngine {
             if (config.defaultSectionHeight !== void 0) {
               engine.worldsConfig.defaultSectionHeight = config.defaultSectionHeight;
             }
+            if (config.sectionSizeUnits !== void 0) {
+              const next = config.sectionSizeUnits;
+              if (next === "text" || next === "px") {
+                const prev = engine.worldsConfig.sectionSizeUnits;
+                engine.worldsConfig.sectionSizeUnits = next;
+                if (prev !== next) {
+                  engine.clear3DSectionTextures();
+                }
+              }
+            }
+            if (config.sectionOverflow !== void 0) {
+              const next = config.sectionOverflow;
+              if (next === "clip" || next === "expand" || next === "expand-y") {
+                const prev = engine.worldsConfig.sectionOverflow;
+                engine.worldsConfig.sectionOverflow = next;
+                if (prev !== next) {
+                  engine.clear3DSectionTextures();
+                }
+              }
+            }
             if (config.cameraFov !== void 0) {
               engine.worldsConfig.cameraFov = config.cameraFov;
             }
@@ -23269,6 +24191,18 @@ class StorieEngine {
             }
             if (config.rotationEaseSpeed !== void 0) {
               engine.worldsConfig.rotationEaseSpeed = config.rotationEaseSpeed;
+            }
+            if (config.keepRotation !== void 0) {
+              engine.worldsConfig.keepRotation = !!config.keepRotation;
+            }
+            if (config.screenSpaceRecenter !== void 0) {
+              engine.worldsConfig.screenSpaceRecenter = !!config.screenSpaceRecenter;
+            }
+            if (config.screenSpaceRecenterIters !== void 0) {
+              const v2 = Number(config.screenSpaceRecenterIters);
+              if (Number.isFinite(v2)) {
+                engine.worldsConfig.screenSpaceRecenterIters = Math.max(1, Math.min(12, Math.floor(v2)));
+              }
             }
             if (config.autoLayoutEnabled !== void 0) {
               engine.worldsConfig.autoLayoutEnabled = config.autoLayoutEnabled;
@@ -23307,7 +24241,14 @@ class StorieEngine {
                 engine.clear3DSectionTextures();
               }
             }
+            if (config.sectionBackgroundPaperNoiseStrength !== void 0) {
+              const v2 = config.sectionBackgroundPaperNoiseStrength;
+              if (Number.isFinite(v2)) {
+                engine.worldsConfig.sectionBackgroundPaperNoiseStrength = Math.max(0, Math.min(1, v2));
+              }
+            }
             engine.applyWorldsLayoutCallback();
+            engine.reflowWorldsAutoLayout();
           },
           getDefaults: () => {
             return { ...engine.worldsConfig };
@@ -23353,6 +24294,118 @@ class StorieEngine {
   /**
    * Load a markdown document and execute its code with lifecycle hooks
    */
+  async applyFrontmatterFontConfig(metadata) {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    const rawFont = (metadata == null ? void 0 : metadata.font) ?? (metadata == null ? void 0 : metadata.fontFamily) ?? (metadata == null ? void 0 : metadata["font-family"]);
+    const rawSize = (metadata == null ? void 0 : metadata.fontsize) ?? (metadata == null ? void 0 : metadata.fontSize);
+    const normalizedRawFont = rawFont ? String(rawFont).replace(/\+/g, " ").trim() : null;
+    const nextSize = Number.isFinite(Number(rawSize)) && Number(rawSize) > 0 ? Number(rawSize) : this.fontSize;
+    const requestedFontStack = normalizedRawFont ? buildFontStack(normalizedRawFont, DEFAULT_FONT_FALLBACK_STACK) : null;
+    let nextFontFamily = requestedFontStack ?? this.fontFamily;
+    let nextWorldsCardFontStack = null;
+    if (normalizedRawFont) {
+      try {
+        const primary = getPrimaryFontFamily(nextFontFamily);
+        if (primary) {
+          await tryLoadGoogleFontFamily(primary, {
+            timeoutMs: 1500,
+            fontCssPixelSize: nextSize,
+            display: "swap"
+          });
+        }
+      } catch {
+      }
+      try {
+        if (document.fonts && document.fonts.ready) {
+          await Promise.race([
+            document.fonts.ready,
+            new Promise((resolve) => setTimeout(resolve, 750))
+          ]);
+        }
+        if (document.fonts && document.fonts.load) {
+          await Promise.race([
+            document.fonts.load(`${nextSize}px ${nextFontFamily}`),
+            new Promise((resolve) => setTimeout(resolve, 750))
+          ]);
+        }
+        if (!isProbablyMonospaceFontStack(nextFontFamily, { fontCssPixelSize: nextSize })) {
+          nextWorldsCardFontStack = nextFontFamily;
+          console.warn("[Engine] Requested font is not monospace; using monospace for terminal grid and requested font for Worlds cards:", {
+            requested: nextFontFamily,
+            terminalFallback: DEFAULT_FONT_FALLBACK_STACK
+          });
+          nextFontFamily = DEFAULT_FONT_FALLBACK_STACK;
+        }
+      } catch {
+      }
+    }
+    const changed = nextSize !== this.fontSize || nextFontFamily !== this.fontFamily || nextWorldsCardFontStack !== this.worldsCardFontStack;
+    if (!changed) return;
+    if (this.running) {
+      const terminalChanged = nextSize !== this.fontSize || nextFontFamily !== this.fontFamily;
+      if (terminalChanged) {
+        console.warn("[Engine] Frontmatter font specified, but engine is already running. Restart required to apply terminal font changes:", {
+          fontFamily: nextFontFamily,
+          fontSize: nextSize
+        });
+        return;
+      }
+      if (nextWorldsCardFontStack !== this.worldsCardFontStack) {
+        this.worldsCardFontStack = nextWorldsCardFontStack;
+        try {
+          this.clear3DSectionTextures();
+        } catch {
+        }
+        console.log("[Engine] Applied Worlds card font override at runtime:", this.worldsCardFontStack);
+      }
+      return;
+    }
+    this.fontFamily = nextFontFamily;
+    this.fontSize = nextSize;
+    this.worldsCardFontStack = nextWorldsCardFontStack;
+    if (this.renderer instanceof WebGPURenderer && navigator.gpu) {
+      this.renderer = new WebGPURenderer(this.canvas, {
+        fontFamily: this.fontFamily,
+        fontSize: this.fontSize,
+        renderToTexture: true
+      });
+    } else {
+      this.renderer = new Canvas2DRenderer(this.canvas, {
+        fontFamily: this.fontFamily,
+        fontSize: this.fontSize
+      });
+    }
+    this.renderer.resize(this.width, this.height);
+    this.syncCanvasElementSizeToBuffer();
+    console.log(`[Engine] Applied frontmatter font: ${this.fontFamily} @ ${this.fontSize}px`);
+  }
+  measureFontMetrics(fontStack, fontSizePx) {
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 64;
+      canvas.height = 64;
+      const ctx = canvas.getContext("2d", { alpha: true });
+      if (!ctx) {
+        const fallbackH = Math.max(1, Math.round(fontSizePx));
+        return { charW: Math.max(1, Math.round(fontSizePx * 0.6)), charH: fallbackH, baseLineHeight: Math.max(1, Math.round(fallbackH * 1.25)) };
+      }
+      ctx.textBaseline = "top";
+      ctx.textAlign = "left";
+      ctx.font = `${fontSizePx}px ${fontStack}`;
+      const sample = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      const wMetrics = ctx.measureText(sample);
+      const wAvg = Math.max(1, Math.ceil((wMetrics.width || fontSizePx * 0.6 * sample.length) / sample.length));
+      const hMetrics = ctx.measureText("Mg");
+      const ascent = hMetrics.actualBoundingBoxAscent;
+      const descent = hMetrics.actualBoundingBoxDescent;
+      const hRaw = Number.isFinite(ascent) && Number.isFinite(descent) ? Math.max(1, Math.ceil(ascent + descent)) : Math.max(1, Math.round(fontSizePx));
+      const baseLineHeight = Math.max(1, Math.round(hRaw * 1.25));
+      return { charW: wAvg, charH: hRaw, baseLineHeight };
+    } catch {
+      const fallbackH = Math.max(1, Math.round(fontSizePx));
+      return { charW: Math.max(1, Math.round(fontSizePx * 0.6)), charH: fallbackH, baseLineHeight: Math.max(1, Math.round(fallbackH * 1.25)) };
+    }
+  }
   async loadMarkdown(documentId, markdown) {
     var _a, _b, _c, _d, _e, _f, _g, _h;
     try {
@@ -23360,6 +24413,7 @@ class StorieEngine {
       const parsed = await parseMarkdown(markdown);
       console.log(`  Found ${parsed.sections.length} sections`);
       console.log(`  Found ${parsed.codeBlocks.length} code blocks`);
+      await this.applyFrontmatterFontConfig(parsed.metadata);
       if (this.documents.size > 0 || this.activeDocumentId) {
         try {
           await this.moduleLoader.unloadAll();
@@ -23428,6 +24482,7 @@ class StorieEngine {
       if (this.worldsRenderer) {
         this.section3DLayouts = createSection3DLayouts(parsed.sections, this.worldsConfig);
         console.log(`  Created 3D layouts for ${this.section3DLayouts.length} sections`);
+        this.reflowWorldsAutoLayout();
         this.applyPending3DCameraFocus();
         this.applyWorldsLayoutCallback(parsed.sections);
         this.applyPendingWorldsOverview();
@@ -23897,9 +24952,7 @@ ${exportVars}
       if (!success) {
         console.warn("⚠ WebGPU init failed, falling back to Canvas2D");
         const canvas = this.renderer.canvas;
-        const fontFamily = this.renderer.fontFamily;
-        const fontSize = this.renderer.fontSize;
-        this.renderer = new Canvas2DRenderer(canvas, { fontFamily, fontSize });
+        this.renderer = new Canvas2DRenderer(canvas, { fontFamily: this.fontFamily, fontSize: this.fontSize });
         this.renderer.resize(this.width, this.height);
         this.syncCanvasElementSizeToBuffer();
       } else if (this.renderer instanceof WebGPURenderer) {
@@ -23917,7 +24970,7 @@ ${exportVars}
           }
           if (!this.worldsRenderer) {
             try {
-              this.worldsRenderer = new WorldsRenderer(device, this.canvas.width, this.canvas.height);
+              this.worldsRenderer = new WorldsRenderer(device, this.canvas.width, this.canvas.height, this.shaderManager);
               await this.worldsRenderer.init();
               if (!this.camera3D) {
                 this.camera3D = createCamera3D();
@@ -24055,18 +25108,27 @@ ${exportVars}
           }
           const backgroundChain = this.parseWorldsSectionBackgroundChain();
           const proceduralBackground = this.isWorldsSectionBackgroundProceduralChainEnabled();
-          const backgroundConfig = proceduralBackground ? {
+          const hasRuledLines = backgroundChain.includes("ruledlines") || backgroundChain.includes("ruled-lines") || backgroundChain.includes("ruled_lines");
+          const hasPaper = backgroundChain.includes("paper");
+          const defaultPaperNoiseStrength = hasPaper && !hasRuledLines ? 0.22 : 0.06;
+          const configuredPaperNoiseStrength = this.worldsConfig.sectionBackgroundPaperNoiseStrength;
+          const paperNoiseStrength = Number.isFinite(configuredPaperNoiseStrength) ? Math.max(0, Math.min(1, configuredPaperNoiseStrength)) : defaultPaperNoiseStrength;
+          const shaderInfo = this.parseWorldsSectionBackgroundShader();
+          const shaderCoordScaleRaw = (shaderInfo == null ? void 0 : shaderInfo.uniforms) ? shaderInfo.uniforms.coordScale : void 0;
+          const shaderCoordScale = Number.isFinite(shaderCoordScaleRaw) ? shaderCoordScaleRaw : 1;
+          const backgroundConfig = proceduralBackground || shaderInfo ? {
             enabled: true,
             chain: backgroundChain,
+            shaderName: shaderInfo == null ? void 0 : shaderInfo.name,
+            shaderUniforms: shaderInfo == null ? void 0 : shaderInfo.uniforms,
             paperColor: this.resolveWorldsSectionBackground(),
             lineColor: this.withAlpha(this.getStyle("dim").fg, 64),
-            scale: 1,
+            scale: shaderInfo ? shaderCoordScale : 1,
             spacing: 1,
             thickness: 0.06,
-            noiseStrength: 0.06
+            noiseStrength: paperNoiseStrength
           } : void 0;
-          const cardXScaleFactor = this.get3DCardXScaleFactor();
-          this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig, cardXScaleFactor);
+          this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig);
         }
         if (this.webgpuUIRenderer) {
           const guiAPI = (_b = this.api) == null ? void 0 : _b.gui;
@@ -24251,6 +25313,7 @@ ${exportVars}
     }
   }
   ensure3DSectionTextures(device) {
+    var _a;
     if (!this.worldsEnabled || !this.camera3D) return;
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
@@ -24260,27 +25323,124 @@ ${exportVars}
     const viewProj = mat4Multiply(proj, view);
     const atlas = this.renderer instanceof WebGPURenderer ? this.renderer.getAtlas() : null;
     const fontSizePx = atlas ? atlas.getFontSize() : 16;
-    const fontStack = "'3270-regular', 'Consolas', 'Monaco', monospace";
+    const fontStack = this.worldsCardFontStack || this.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
     const texturePadding = 12;
-    const measuredCharW = Math.max(1, atlas ? atlas.getCharWidth() : 9);
-    const measuredCharH = Math.max(1, atlas ? atlas.getCharHeight() : 20);
-    const baseLineHeight = Math.max(1, Math.round(measuredCharH * 1.25));
+    const measured = this.measureFontMetrics(fontStack, fontSizePx);
+    const measuredCharW = Math.max(1, measured.charW);
+    const measuredCharH = Math.max(1, measured.charH);
+    const baseLineHeight = Math.max(1, measured.baseLineHeight);
+    let worldSizeChanged = false;
+    const overflowCfg = this.worldsConfig.sectionOverflow;
+    const overflowMode = overflowCfg === "expand" || overflowCfg === "expand-y" ? overflowCfg : "clip";
+    const layoutOverflow = overflowMode === "clip" ? "clip" : "expand";
+    const measureCtx = (() => {
+      if (!this.worldsCardFontStack) return null;
+      try {
+        const c2 = document.createElement("canvas");
+        c2.width = 16;
+        c2.height = 16;
+        const ctx = c2.getContext("2d", { alpha: true });
+        if (!ctx) return null;
+        ctx.textBaseline = "top";
+        ctx.textAlign = "left";
+        ctx.font = `${fontSizePx}px ${fontStack}`;
+        return ctx;
+      } catch {
+        return null;
+      }
+    })();
     for (const layout of this.section3DLayouts) {
       if (!layout.visible) continue;
       if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
         continue;
       }
-      if (layout.texture) continue;
+      if (layout.texture) {
+        const existing = this.sectionTextureCache.get(layout.sectionIndex);
+        if (existing) {
+          const prevW = layout.worldWidth;
+          const prevH = layout.worldHeight;
+          this.set3DLayoutWorldSizeFromPixels(layout, existing.width, existing.height, baseLineHeight);
+          if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
+        }
+        continue;
+      }
       const minW = 256;
       const minH = 128;
-      const maxW = 2048;
-      const maxH = 2048;
-      const desiredW = Math.round(layout.width * measuredCharW + texturePadding * 2);
-      const desiredH = Math.round(layout.height * baseLineHeight + texturePadding * 2);
-      const widthPx = Math.max(minW, Math.min(maxW, desiredW));
-      const heightPx = Math.max(minH, Math.min(maxH, desiredH));
-      const canvas = new OffscreenCanvas(widthPx, heightPx);
-      const ctx = canvas.getContext("2d", { alpha: true });
+      const deviceMax = device.limits && device.limits.maxTextureDimension2D ? Number(device.limits.maxTextureDimension2D) : 2048;
+      const maxW = Math.max(256, Math.min(2048, deviceMax));
+      const maxH = Math.max(256, Math.min(2048, deviceMax));
+      const units = this.worldsConfig.sectionSizeUnits === "px" ? "px" : "text";
+      const desiredW = units === "px" ? Math.round(layout.width + texturePadding * 2) : Math.round(layout.width * measuredCharW + texturePadding * 2);
+      const desiredH = units === "px" ? Math.round(layout.height + texturePadding * 2) : Math.round(layout.height * baseLineHeight + texturePadding * 2);
+      let widthPx = Math.max(minW, Math.min(maxW, desiredW));
+      let heightPx = Math.max(minH, Math.min(maxH, desiredH));
+      const title = (layout.displayTitle || layout.sectionTitle || "").trim();
+      const content = (layout.content || "").trim();
+      const markdown = `# ${title}
+
+${content}`.trim();
+      const nodes = parseMarkdownLite(markdown);
+      if (overflowMode === "expand" || overflowMode === "expand-y") {
+        const base2 = this.getStyle("default");
+        const dim2 = this.getStyle("dim");
+        const heading2 = this.getStyle("heading");
+        const link22 = this.getStyle("link");
+        const code2 = this.getStyle("code");
+        const proceduralRuledPaper2 = this.isWorldsSectionBackgroundProceduralChainEnabled();
+        const bakedRuledPaper2 = this.isWorldsSectionBackgroundBakedRuledLines();
+        const shaderBg2 = !!this.parseWorldsSectionBackgroundShader();
+        const surfaceBg2 = this.resolveWorldsSectionBackground();
+        const mdBg2 = proceduralRuledPaper2 || bakedRuledPaper2 || shaderBg2 ? this.withAlpha(surfaceBg2, 0) : surfaceBg2;
+        const mdStyle2 = {
+          fg: base2.fg,
+          mutedFg: dim2.fg,
+          headingFg: heading2.fg,
+          linkFg: link22.fg,
+          codeFg: code2.fg,
+          codeBg: code2.bg,
+          bg: mdBg2
+        };
+        const measureTextWidth = this.worldsCardFontStack && measureCtx ? (text) => measureCtx.measureText(text).width : void 0;
+        const probe = layoutMarkdownDocument(
+          nodes,
+          { x: 0, y: 0, width: widthPx, height: heightPx },
+          { charW: measuredCharW, charH: measuredCharH, measureTextWidth },
+          mdStyle2,
+          0,
+          texturePadding,
+          { overflow: "expand" }
+        );
+        const reqW = Math.ceil(probe.contentWidth + texturePadding * 2);
+        const reqH = Math.ceil(probe.contentHeight + texturePadding * 2);
+        if (overflowMode === "expand") {
+          widthPx = Math.max(widthPx, Math.max(minW, Math.min(maxW, reqW)));
+        }
+        heightPx = Math.max(heightPx, Math.max(minH, Math.min(maxH, reqH)));
+      }
+      {
+        const prevW = layout.worldWidth;
+        const prevH = layout.worldHeight;
+        this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
+        if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
+      }
+      let canvas;
+      try {
+        if (typeof OffscreenCanvas !== "undefined") {
+          canvas = new OffscreenCanvas(widthPx, heightPx);
+        } else {
+          const c2 = document.createElement("canvas");
+          c2.width = widthPx;
+          c2.height = heightPx;
+          canvas = c2;
+        }
+      } catch {
+        const c2 = document.createElement("canvas");
+        c2.width = widthPx;
+        c2.height = heightPx;
+        canvas = c2;
+      }
+      const isOffscreenCanvas = typeof OffscreenCanvas !== "undefined" && canvas instanceof OffscreenCanvas;
+      const ctx = isOffscreenCanvas ? canvas.getContext("2d", { alpha: true }) : canvas.getContext("2d", { alpha: true });
       if (!ctx) {
         continue;
       }
@@ -24296,9 +25456,10 @@ ${exportVars}
       const code = this.getStyle("code");
       const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
       const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
+      const shaderBg = !!this.parseWorldsSectionBackgroundShader();
       const surfaceBg = this.resolveWorldsSectionBackground();
       const borderStyle = this.getStyle("border");
-      const mdBg = proceduralRuledPaper || bakedRuledPaper ? this.withAlpha(surfaceBg, 0) : surfaceBg;
+      const mdBg = proceduralRuledPaper || bakedRuledPaper || shaderBg ? this.withAlpha(surfaceBg, 0) : surfaceBg;
       const mdStyle = {
         fg: base.fg,
         mutedFg: dim.fg,
@@ -24308,19 +25469,20 @@ ${exportVars}
         codeBg: code.bg,
         bg: mdBg
       };
-      const title = (layout.displayTitle || layout.sectionTitle || "").trim();
-      const content = (layout.content || "").trim();
-      const markdown = `# ${title}
-
-${content}`.trim();
-      const nodes = parseMarkdownLite(markdown);
       const result = layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: widthPx, height: heightPx },
-        { charW, charH },
+        {
+          charW,
+          charH,
+          // If a proportional font is being used for Worlds cards, advance and
+          // wrap using actual pixel widths to avoid visible spacing artifacts.
+          measureTextWidth: this.worldsCardFontStack ? (text) => ctx.measureText(text).width : void 0
+        },
         mdStyle,
         0,
-        texturePadding
+        texturePadding,
+        { overflow: layoutOverflow }
       );
       ctx.clearRect(0, 0, widthPx, heightPx);
       if (bakedRuledPaper) {
@@ -24349,24 +25511,73 @@ ${content}`.trim();
         format: "rgba8unorm",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
       });
+      let uploaded = false;
       try {
         device.queue.copyExternalImageToTexture(
           { source: canvas },
           { texture },
           { width: widthPx, height: heightPx }
         );
+        uploaded = true;
       } catch {
-        const bitmap = canvas.transferToImageBitmap();
-        device.queue.copyExternalImageToTexture(
-          { source: bitmap },
-          { texture },
-          { width: widthPx, height: heightPx }
-        );
-        bitmap.close();
+        try {
+          if (isOffscreenCanvas && typeof canvas.transferToImageBitmap === "function") {
+            const bitmap = canvas.transferToImageBitmap();
+            device.queue.copyExternalImageToTexture(
+              { source: bitmap },
+              { texture },
+              { width: widthPx, height: heightPx }
+            );
+            bitmap.close();
+            uploaded = true;
+          }
+        } catch (error) {
+          console.warn("[Worlds] Failed to upload section texture; skipping this card:", error);
+          try {
+            texture.destroy();
+          } catch {
+          }
+          continue;
+        }
+      }
+      if (!uploaded) {
+        try {
+          const imageData = (_a = ctx.getImageData) == null ? void 0 : _a.call(ctx, 0, 0, widthPx, heightPx);
+          if (imageData && imageData.data) {
+            const unpaddedBytesPerRow = widthPx * 4;
+            const bytesPerRow = Math.ceil(unpaddedBytesPerRow / 256) * 256;
+            const padded = new Uint8Array(bytesPerRow * heightPx);
+            for (let y = 0; y < heightPx; y++) {
+              const srcStart = y * unpaddedBytesPerRow;
+              const dstStart = y * bytesPerRow;
+              padded.set(imageData.data.subarray(srcStart, srcStart + unpaddedBytesPerRow), dstStart);
+            }
+            device.queue.writeTexture(
+              { texture },
+              padded,
+              { bytesPerRow },
+              { width: widthPx, height: heightPx }
+            );
+            uploaded = true;
+          }
+        } catch (error) {
+          console.warn("[Worlds] writeTexture fallback failed; skipping this card:", error);
+        }
+      }
+      if (!uploaded) {
+        try {
+          texture.destroy();
+        } catch {
+        }
+        continue;
       }
       layout.texture = texture;
       this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx });
       this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
+      this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
+    }
+    if (worldSizeChanged) {
+      this.reflowWorldsAutoLayout();
     }
   }
   clear3DSectionTextures() {
@@ -24379,11 +25590,65 @@ ${content}`.trim();
         layout.texture = null;
       }
       layout.highlightUvRect = void 0;
+      layout.worldWidth = void 0;
+      layout.worldHeight = void 0;
     }
     this.sectionTextureCache.clear();
     this.sectionLinkRegionsCache.clear();
     this.hovered3DLink = null;
     this.focused3DLink = null;
+    this.worldsAutoLayoutCache = null;
+  }
+  set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, pixelsPerWorldUnit) {
+    const ppu = Number.isFinite(pixelsPerWorldUnit) && pixelsPerWorldUnit > 0 ? pixelsPerWorldUnit : 1;
+    const w = Number.isFinite(widthPx) && widthPx > 0 ? widthPx / ppu : null;
+    const h = Number.isFinite(heightPx) && heightPx > 0 ? heightPx / ppu : null;
+    if (w && h && Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+      layout.worldWidth = w;
+      layout.worldHeight = h;
+    }
+  }
+  reflowWorldsAutoLayout() {
+    if (!this.section3DLayouts || this.section3DLayouts.length === 0) return;
+    if (this.worldsOverviewEnabled) return;
+    const autoEnabled = this.worldsConfig.autoLayoutEnabled !== false;
+    if (!autoEnabled) return;
+    const cols = Math.max(1, Math.floor(this.worldsConfig.autoLayoutColumns ?? 3));
+    const baseStep = Number.isFinite(this.worldsConfig.autoLayoutSpacing ?? NaN) ? this.worldsConfig.autoLayoutSpacing : 200;
+    const padding = 20;
+    let maxW = 0;
+    let maxH = 0;
+    for (const l of this.section3DLayouts) {
+      if (!l || !l.autoPositioned) continue;
+      const s = this.get3DCardWorldSize(l);
+      maxW = Math.max(maxW, s.width);
+      maxH = Math.max(maxH, s.height);
+    }
+    if (!(maxW > 0) || !(maxH > 0)) return;
+    const stepX = Math.max(baseStep, maxW + padding);
+    const stepY = Math.max(baseStep, maxH + padding);
+    if (this.worldsAutoLayoutCache && this.worldsAutoLayoutCache.cols === cols && Math.abs(this.worldsAutoLayoutCache.stepX - stepX) < 1e-6 && Math.abs(this.worldsAutoLayoutCache.stepY - stepY) < 1e-6) {
+      return;
+    }
+    this.worldsAutoLayoutCache = { cols, stepX, stepY };
+    const xCenter = (cols - 1) / 2;
+    for (const l of this.section3DLayouts) {
+      if (!l || !l.autoPositioned) continue;
+      const col = l.sectionIndex % cols;
+      const row = Math.floor(l.sectionIndex / cols);
+      const x = (col - xCenter) * stepX;
+      const y = -row * stepY;
+      l.transform.position = { x, y, z: l.transform.position.z };
+    }
+  }
+  get3DCardWorldSize(layout) {
+    var _a, _b;
+    const baseW = layout.worldWidth ?? layout.width * this.get3DCardXScaleFactor(layout);
+    const baseH = layout.worldHeight ?? layout.height;
+    return {
+      width: baseW * (((_a = layout.transform.scale) == null ? void 0 : _a.x) ?? 1),
+      height: baseH * (((_b = layout.transform.scale) == null ? void 0 : _b.y) ?? 1)
+    };
   }
   parseHexColorToPackedColor(hex) {
     const s = hex.trim();
@@ -24413,6 +25678,32 @@ ${content}`.trim();
       }
     }
     return [trimmed.toLowerCase()];
+  }
+  parseWorldsSectionBackgroundShader() {
+    const v2 = this.worldsConfig.sectionBackground;
+    if (typeof v2 !== "string") return null;
+    if (v2.startsWith("shader:")) {
+      const shaderSpec = v2.substring(7).trim();
+      const [name, ...uniformSpecs] = shaderSpec.split(";");
+      const uniforms = {};
+      for (const spec of uniformSpecs) {
+        const [key, value] = spec.split("=");
+        if (key && value) {
+          const trimmedKey = key.trim();
+          const trimmedValue = value.trim();
+          if (trimmedValue.includes(",")) {
+            uniforms[trimmedKey] = trimmedValue.split(",").map((s) => parseFloat(s.trim())).filter((n) => !isNaN(n));
+          } else {
+            const num = parseFloat(trimmedValue);
+            if (!isNaN(num)) {
+              uniforms[trimmedKey] = num;
+            }
+          }
+        }
+      }
+      return { name: name.trim(), uniforms };
+    }
+    return null;
   }
   isWorldsSectionBackgroundProceduralChainEnabled() {
     const chain = this.parseWorldsSectionBackgroundChain();
@@ -24509,6 +25800,10 @@ ${content}`.trim();
     const charH = atlas ? atlas.getCharHeight() : 16;
     const texturePadding = 12;
     const baseLineHeight = Math.max(1, Math.round(charH * 1.25));
+    let worldSizeChanged = false;
+    const overflowCfg = this.worldsConfig.sectionOverflow;
+    const overflowMode = overflowCfg === "expand" || overflowCfg === "expand-y" ? overflowCfg : "clip";
+    const layoutOverflow = overflowMode === "clip" ? "clip" : "expand";
     if (!this.sectionWebGPUUIRenderer) {
       this.sectionWebGPUUIRenderer = new WebGPUUIRenderer(device, atlas, 1, 1);
     }
@@ -24521,9 +25816,10 @@ ${content}`.trim();
     const code = this.getStyle("code");
     const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
     const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
+    const shaderBg = !!this.parseWorldsSectionBackgroundShader();
     const surfaceBg = this.resolveWorldsSectionBackground();
     const borderStyle = this.getStyle("border");
-    const mdBg = proceduralRuledPaper || bakedRuledPaper ? this.withAlpha(surfaceBg, 0) : surfaceBg;
+    const mdBg = proceduralRuledPaper || bakedRuledPaper || shaderBg ? this.withAlpha(surfaceBg, 0) : surfaceBg;
     const style = {
       fg: base.fg,
       mutedFg: dim.fg,
@@ -24545,26 +25841,51 @@ ${content}`.trim();
       const minH = 128;
       const maxW = 1024;
       const maxH = 1024;
-      const desiredW = Math.round(layout.width * charW + texturePadding * 2);
-      const desiredH = Math.round(layout.height * baseLineHeight + texturePadding * 2);
-      const widthPx = Math.max(minW, Math.min(maxW, desiredW));
-      const heightPx = Math.max(minH, Math.min(maxH, desiredH));
+      const units = this.worldsConfig.sectionSizeUnits === "px" ? "px" : "text";
+      const desiredW = units === "px" ? Math.round(layout.width + texturePadding * 2) : Math.round(layout.width * charW + texturePadding * 2);
+      const desiredH = units === "px" ? Math.round(layout.height + texturePadding * 2) : Math.round(layout.height * baseLineHeight + texturePadding * 2);
+      let widthPx = Math.max(minW, Math.min(maxW, desiredW));
+      let heightPx = Math.max(minH, Math.min(maxH, desiredH));
+      const title = (layout.displayTitle || layout.sectionTitle || "").trim();
+      const content = (layout.content || "").trim();
+      const markdown = `# ${title}
+
+${content}`.trim();
+      const nodes = parseMarkdownLite(markdown);
+      if (overflowMode === "expand" || overflowMode === "expand-y") {
+        const probe = layoutMarkdownDocument(
+          nodes,
+          { x: 0, y: 0, width: widthPx, height: heightPx },
+          { charW, charH },
+          style,
+          0,
+          texturePadding,
+          { overflow: "expand" }
+        );
+        const reqW = Math.ceil(probe.contentWidth + texturePadding * 2);
+        const reqH = Math.ceil(probe.contentHeight + texturePadding * 2);
+        if (overflowMode === "expand") {
+          widthPx = Math.max(widthPx, Math.max(minW, Math.min(maxW, reqW)));
+        }
+        heightPx = Math.max(heightPx, Math.max(minH, Math.min(maxH, reqH)));
+      }
+      {
+        const prevW = layout.worldWidth;
+        const prevH = layout.worldHeight;
+        this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
+        if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
+      }
       const existing = this.sectionTextureCache.get(layout.sectionIndex);
       if (existing && existing.width === widthPx && existing.height === heightPx && layout.texture) {
         if (!this.sectionLinkRegionsCache.has(layout.sectionIndex)) {
-          const title2 = (layout.displayTitle || layout.sectionTitle || "").trim();
-          const content2 = (layout.content || "").trim();
-          const markdown2 = `# ${title2}
-
-${content2}`.trim();
-          const nodes2 = parseMarkdownLite(markdown2);
           const result2 = layoutMarkdownDocument(
-            nodes2,
+            nodes,
             { x: 0, y: 0, width: widthPx, height: heightPx },
             { charW, charH },
             style,
             0,
-            texturePadding
+            texturePadding,
+            { overflow: layoutOverflow }
           );
           this.sectionLinkRegionsCache.set(layout.sectionIndex, result2.linkRegions);
         }
@@ -24582,19 +25903,14 @@ ${content2}`.trim();
         format,
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
       });
-      const title = (layout.displayTitle || layout.sectionTitle || "").trim();
-      const content = (layout.content || "").trim();
-      const markdown = `# ${title}
-
-${content}`.trim();
-      const nodes = parseMarkdownLite(markdown);
       const result = layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: widthPx, height: heightPx },
         { charW, charH },
         style,
         0,
-        texturePadding
+        texturePadding,
+        { overflow: layoutOverflow }
       );
       this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
       ui.clearCommands();
@@ -24626,15 +25942,30 @@ ${content}`.trim();
       ui.flushTo(texture, widthPx, heightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
       layout.texture = texture;
       this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx });
+      this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
+    }
+    if (worldSizeChanged) {
+      this.reflowWorldsAutoLayout();
     }
   }
-  get3DCardXScaleFactor() {
+  get3DCardXScaleFactor(layout) {
+    if (layout) {
+      const dims = this.sectionTextureCache.get(layout.sectionIndex);
+      if (dims && dims.width > 0 && dims.height > 0 && layout.width > 0 && layout.height > 0) {
+        const pixelAspect = dims.width / dims.height;
+        const logicalAspect = layout.width / layout.height;
+        const factor2 = pixelAspect / logicalAspect;
+        if (Number.isFinite(factor2) && factor2 > 0) return factor2;
+      }
+    }
     if (!(this.renderer instanceof WebGPURenderer)) return 1;
     const atlas = this.renderer.getAtlas();
-    const charW = atlas ? atlas.getCharWidth() : 0;
-    const charH = atlas ? atlas.getCharHeight() : 0;
-    if (!(charW > 0 && charH > 0)) return 1;
-    const baseLineHeight = Math.max(1, Math.round(charH * 1.25));
+    const fontSizePx = atlas ? atlas.getFontSize() : 16;
+    const fontStack = this.worldsCardFontStack || this.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
+    const measured = this.measureFontMetrics(fontStack, fontSizePx);
+    const charW = measured.charW;
+    const baseLineHeight = measured.baseLineHeight;
+    if (!(charW > 0 && baseLineHeight > 0)) return 1;
     const factor = charW / baseLineHeight;
     return Number.isFinite(factor) && factor > 0 ? factor : 1;
   }
@@ -25056,15 +26387,16 @@ ${content}`.trim();
           this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
           this.activate3DLink(linkHit.region.url);
         } else {
-          this.setCurrent3DSection(picked.layout.sectionIndex);
-          const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
           const style = this.lastApplied3DCameraFocus;
-          const focusOptions = style ? {
-            ...style.keepRotation ? { keepRotation: true } : {},
-            ...style.positionOffset ? { positionOffset: style.positionOffset } : {},
-            ...style.rotationOffset ? { rotationOffset: style.rotationOffset } : {}
-          } : void 0;
-          focusOnSectionFit(this.camera3D, picked.layout, aspect, 0.9, { min: 60, max: 400 }, focusOptions);
+          const fill = (style == null ? void 0 : style.kind) === "fit" ? style.fill : 0.9;
+          this.request3DCameraFocus({
+            kind: "fit",
+            sectionIndex: picked.layout.sectionIndex,
+            fill,
+            ...(style == null ? void 0 : style.keepRotation) ? { keepRotation: true } : {},
+            ...(style == null ? void 0 : style.positionOffset) ? { positionOffset: style.positionOffset } : {},
+            ...(style == null ? void 0 : style.rotationOffset) ? { rotationOffset: style.rotationOffset } : {}
+          });
         }
       }
     }
@@ -25120,15 +26452,16 @@ ${content}`.trim();
     const farWorld = mat4TransformPoint(invViewProj, { x: ndcX, y: ndcY, z: 1 });
     const rayDirWorld = vec3Normalize(vec3Sub(farWorld, nearWorld));
     let best = null;
-    const cardXScaleFactor = this.get3DCardXScaleFactor();
     for (const layout of this.section3DLayouts) {
       if (!layout.visible || !layout.texture) continue;
+      const baseW = layout.worldWidth ?? layout.width * this.get3DCardXScaleFactor(layout);
+      const baseH = layout.worldHeight ?? layout.height;
       const sectionTransform = {
         position: layout.transform.position,
         rotation: layout.transform.rotation,
         scale: {
-          x: layout.transform.scale.x * layout.width * cardXScaleFactor,
-          y: layout.transform.scale.y * layout.height,
+          x: layout.transform.scale.x * baseW,
+          y: layout.transform.scale.y * baseH,
           z: layout.transform.scale.z
         }
       };
@@ -25217,17 +26550,16 @@ ${content}`.trim();
         return slugify(title) === targetSlug;
       });
       if (layout) {
-        this.setCurrent3DSection(layout.sectionIndex);
-        const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
-        const cardXScaleFactor = this.get3DCardXScaleFactor();
-        const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
         const style = this.lastApplied3DCameraFocus;
-        const focusOptions = style ? {
-          ...style.keepRotation ? { keepRotation: true } : {},
-          ...style.positionOffset ? { positionOffset: style.positionOffset } : {},
-          ...style.rotationOffset ? { rotationOffset: style.rotationOffset } : {}
-        } : void 0;
-        focusOnSectionFit(this.camera3D, proxyLayout, aspect, 0.9, { min: 60, max: 400 }, focusOptions);
+        const fill = (style == null ? void 0 : style.kind) === "fit" ? style.fill : 0.9;
+        this.request3DCameraFocus({
+          kind: "fit",
+          sectionIndex: layout.sectionIndex,
+          fill,
+          ...(style == null ? void 0 : style.keepRotation) ? { keepRotation: true } : {},
+          ...(style == null ? void 0 : style.positionOffset) ? { positionOffset: style.positionOffset } : {},
+          ...(style == null ? void 0 : style.rotationOffset) ? { rotationOffset: style.rotationOffset } : {}
+        });
       }
       return;
     }
@@ -25239,13 +26571,14 @@ ${content}`.trim();
     }
   }
   get3DCardModelMatrix(layout) {
-    const cardXScaleFactor = this.get3DCardXScaleFactor();
+    const baseW = layout.worldWidth ?? layout.width * this.get3DCardXScaleFactor(layout);
+    const baseH = layout.worldHeight ?? layout.height;
     const sectionTransform = {
       position: layout.transform.position,
       rotation: layout.transform.rotation,
       scale: {
-        x: layout.transform.scale.x * layout.width * cardXScaleFactor,
-        y: layout.transform.scale.y * layout.height,
+        x: layout.transform.scale.x * baseW,
+        y: layout.transform.scale.y * baseH,
         z: layout.transform.scale.z
       }
     };
@@ -25267,13 +26600,18 @@ ${content}`.trim();
       console.warn(`Section ${String(req.sectionIndex)} not found`);
       return;
     }
-    this.setCurrent3DSection(layout.sectionIndex);
+    const cfg = this.worldsConfig;
+    const defaultKeepRotation = !!cfg.keepRotation;
+    const defaultRecenter = !!cfg.screenSpaceRecenter;
+    const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
+    const keepRotation = req.keepRotation !== void 0 ? !!req.keepRotation : defaultKeepRotation;
+    const recenterOpts = keepRotation && defaultRecenter ? { screenSpaceRecenter: true, screenSpaceRecenterIters: defaultRecenterIters } : {};
     if (req.kind === "focus") {
       this.lastApplied3DCameraFocus = {
         kind: "focus",
         sectionIndex: layout.sectionIndex,
         distance: req.distance,
-        ...req.keepRotation ? { keepRotation: true } : {},
+        ...keepRotation ? { keepRotation: true } : {},
         ...req.positionOffset ? { positionOffset: req.positionOffset } : {},
         ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}
       };
@@ -25282,25 +26620,26 @@ ${content}`.trim();
         kind: "fit",
         sectionIndex: layout.sectionIndex,
         fill: req.fill,
-        ...req.keepRotation ? { keepRotation: true } : {},
+        ...keepRotation ? { keepRotation: true } : {},
         ...req.positionOffset ? { positionOffset: req.positionOffset } : {},
         ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}
       };
     }
+    this.setCurrent3DSection(layout.sectionIndex);
     if (req.kind === "focus") {
       focusOnSection(this.camera3D, layout, req.distance, {
-        ...req.keepRotation ? { keepRotation: true } : {},
+        ...keepRotation ? { keepRotation: true } : {},
         ...req.positionOffset ? { positionOffset: req.positionOffset } : {},
-        ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}
+        ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {},
+        ...recenterOpts
       });
     } else {
       const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
-      const cardXScaleFactor = this.get3DCardXScaleFactor();
-      const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
-      focusOnSectionFit(this.camera3D, proxyLayout, aspect, req.fill, {}, {
-        ...req.keepRotation ? { keepRotation: true } : {},
+      focusOnSectionFit(this.camera3D, layout, aspect, req.fill, {}, {
+        ...keepRotation ? { keepRotation: true } : {},
         ...req.positionOffset ? { positionOffset: req.positionOffset } : {},
-        ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}
+        ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {},
+        ...recenterOpts
       });
     }
   }
@@ -25310,19 +26649,27 @@ ${content}`.trim();
     const layout = this.section3DLayouts.find((l) => l.sectionIndex === this.lastApplied3DCameraFocus.sectionIndex);
     if (!layout) return;
     if (this.lastApplied3DCameraFocus.kind === "focus") {
+      const cfg = this.worldsConfig;
+      const defaultRecenter = !!cfg.screenSpaceRecenter;
+      const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
+      const recenterOpts = this.lastApplied3DCameraFocus.keepRotation && defaultRecenter ? { screenSpaceRecenter: true, screenSpaceRecenterIters: defaultRecenterIters } : {};
       focusOnSection(this.camera3D, layout, this.lastApplied3DCameraFocus.distance, {
         ...this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {},
         ...this.lastApplied3DCameraFocus.positionOffset ? { positionOffset: this.lastApplied3DCameraFocus.positionOffset } : {},
-        ...this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {}
+        ...this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {},
+        ...recenterOpts
       });
     } else {
       const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
-      const cardXScaleFactor = this.get3DCardXScaleFactor();
-      const proxyLayout = { ...layout, width: layout.width * cardXScaleFactor };
-      focusOnSectionFit(this.camera3D, proxyLayout, aspect, this.lastApplied3DCameraFocus.fill, {}, {
+      const cfg = this.worldsConfig;
+      const defaultRecenter = !!cfg.screenSpaceRecenter;
+      const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
+      const recenterOpts = this.lastApplied3DCameraFocus.keepRotation && defaultRecenter ? { screenSpaceRecenter: true, screenSpaceRecenterIters: defaultRecenterIters } : {};
+      focusOnSectionFit(this.camera3D, layout, aspect, this.lastApplied3DCameraFocus.fill, {}, {
         ...this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {},
         ...this.lastApplied3DCameraFocus.positionOffset ? { positionOffset: this.lastApplied3DCameraFocus.positionOffset } : {},
-        ...this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {}
+        ...this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {},
+        ...recenterOpts
       });
     }
   }
@@ -25333,14 +26680,16 @@ ${content}`.trim();
     this.request3DCameraFocus(req);
   }
   setCurrent3DSection(sectionIndex) {
+    var _a;
     if (this.current3DSectionIndex === sectionIndex) return;
     this.current3DSectionIndex = sectionIndex;
     this.sceneState.sectionIndex = sectionIndex;
     this.sceneState.revealStep = 0;
     const h = this.hostSync;
     if (h && h.getSessionInfo().role === "host") {
-      h.sendGotoSectionFit(sectionIndex, 0.9);
-      h.sendSceneFit(sectionIndex, this.sceneState.revealStep, 0.9);
+      const fill = ((_a = this.lastApplied3DCameraFocus) == null ? void 0 : _a.kind) === "fit" ? this.lastApplied3DCameraFocus.fill : 0.9;
+      h.sendGotoSectionFit(sectionIndex, fill);
+      h.sendSceneFit(sectionIndex, this.sceneState.revealStep, fill);
     }
     this.runSectionEnterHandlers(sectionIndex);
   }
@@ -25455,6 +26804,7 @@ ${content}`.trim();
         if (!out) continue;
         if (out.position) {
           layout.transform.position = { ...out.position };
+          layout.autoPositioned = false;
         }
         if (out.rotation) {
           layout.transform.rotation = {
@@ -25475,6 +26825,7 @@ ${content}`.trim();
       }
     }
     this.clear3DSectionTextures();
+    this.reflowWorldsAutoLayout();
   }
   is3DCardPossiblyVisible(viewProj, layout) {
     const model = this.get3DCardModelMatrix(layout);
