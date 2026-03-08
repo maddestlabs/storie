@@ -43,6 +43,14 @@ export function vec3Dot(a: Vec3, b: Vec3): number {
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
+export function vec3Cross(a: Vec3, b: Vec3): Vec3 {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x,
+  };
+}
+
 export function vec3Length(v: Vec3): number {
   return Math.sqrt(vec3Dot(v, v));
 }
@@ -492,6 +500,37 @@ function computeRightUpFromForward(forward: Vec3): { right: Vec3; up: Vec3 } {
   return { right, up };
 }
 
+function applyRollToBasis(basis: { right: Vec3; up: Vec3 }, roll: number): { right: Vec3; up: Vec3 } {
+  const c = Math.cos(roll);
+  const s = Math.sin(roll);
+  const right = vec3Add(vec3Scale(basis.right, c), vec3Scale(basis.up, s));
+  const up = vec3Add(vec3Scale(basis.up, c), vec3Scale(basis.right, -s));
+  return { right, up };
+}
+
+function computeRightUpFromRotation(rotation: Vec3): { right: Vec3; up: Vec3 } {
+  const forward = computeForwardFromRotation(rotation);
+  const basis = computeRightUpFromForward(forward);
+  const roll = Number.isFinite(rotation.z) ? rotation.z : 0;
+  if (!roll) return basis;
+  return applyRollToBasis(basis, roll);
+}
+
+function computeRollDeltaToAlignUp(forward: Vec3, baseUp: Vec3, desiredUp: Vec3): number {
+  const f = vec3Normalize(forward);
+  const desiredProj = vec3Normalize(vec3Sub(desiredUp, vec3Scale(f, vec3Dot(desiredUp, f))));
+  if (vec3Length(desiredProj) <= 1e-8) return 0;
+  const baseUpProj = vec3Normalize(vec3Sub(baseUp, vec3Scale(f, vec3Dot(baseUp, f))));
+  if (vec3Length(baseUpProj) <= 1e-8) return 0;
+
+  const sin = vec3Dot(f, vec3Cross(baseUpProj, desiredProj));
+  const cos = clamp(vec3Dot(baseUpProj, desiredProj), -1, 1);
+  const angle = Math.atan2(sin, cos);
+
+  // Our basis roll application rotates `up` towards `-right` for +roll.
+  return -angle;
+}
+
 /**
  * Update camera (apply easing towards target)
  */
@@ -597,7 +636,7 @@ export function updateCamera3D(camera: Camera3D, _deltaTime: number): void {
 
     // Apply translation in camera-local axes (right/up/forward).
     const forward = computeForwardFromRotation(effectiveRotation);
-    const basis = computeRightUpFromForward(forward);
+    const basis = computeRightUpFromRotation(effectiveRotation);
     effectivePosition = vec3Add(
       camera.position,
       vec3Add(
@@ -657,6 +696,7 @@ export function focusOnSectionFit(
   distanceLimits: { min?: number; max?: number } = {},
   options?: {
     keepRotation?: boolean;
+    straighten?: boolean;
     positionOffset?: Vec3;
     rotationOffset?: Vec3;
     screenSpaceRecenter?: boolean;
@@ -714,7 +754,25 @@ export function focusOnSectionFit(
   const keepRotation = options?.keepRotation ?? false;
 
   if (keepRotation) {
-    camera.targetRotation = null;
+    const doStraighten = options?.straighten ?? false;
+    const rotationOffset = options?.rotationOffset;
+
+    let rollTarget = Number.isFinite(camera.rotation.z) ? camera.rotation.z : 0;
+    if (doStraighten) {
+      const camForward = computeForwardFromRotation(camera.rotation);
+      const camBasis = computeRightUpFromRotation(camera.rotation);
+      const upWorld = vec3Normalize(mat4TransformDirection(rotOnly, { x: 0, y: 1, z: 0 }));
+      rollTarget = rollTarget + computeRollDeltaToAlignUp(camForward, camBasis.up, upWorld);
+    }
+    rollTarget = rollTarget + (rotationOffset?.z ?? 0);
+
+    // Only set a target rotation when we need to roll.
+    // This preserves pitch/yaw while allowing roll-only straightening.
+    if (doStraighten || (rotationOffset?.z ?? 0) !== 0) {
+      camera.targetRotation = { x: camera.rotation.x, y: camera.rotation.y, z: rollTarget };
+    } else {
+      camera.targetRotation = null;
+    }
 
     // Optional: recenter the focused section in screen space when rotation is
     // locked (keeps the “tilted camera” look without drifting off-center).
@@ -727,17 +785,26 @@ export function focusOnSectionFit(
       target = vec3Sub(center, vec3Scale(forward, distAlongForward));
 
       const iters = options?.screenSpaceRecenterIters ?? 5;
-      target = recenterCameraToPoint(camera, target, camera.rotation, center, safeAspect, iters);
+      const recenterRot = camera.targetRotation ?? camera.rotation;
+      target = recenterCameraToPoint(camera, target, recenterRot, center, safeAspect, iters);
     }
 
-    setCameraTarget(camera, target);
+    setCameraTarget(camera, target, camera.targetRotation ?? undefined);
     return;
+  }
+
+  const doStraighten = options?.straighten ?? false;
+  let roll = 0;
+  if (doStraighten) {
+    const upWorld = vec3Normalize(mat4TransformDirection(rotOnly, { x: 0, y: 1, z: 0 }));
+    const baseBasis = computeRightUpFromForward(forward);
+    roll = computeRollDeltaToAlignUp(forward, baseBasis.up, upWorld);
   }
 
   const rotation = {
     x: baseRotation.x + (rotationOffset?.x ?? 0),
     y: baseRotation.y + (rotationOffset?.y ?? 0),
-    z: baseRotation.z + (rotationOffset?.z ?? 0),
+    z: roll + (rotationOffset?.z ?? 0),
   };
 
   setCameraTarget(camera, target, rotation);
@@ -749,20 +816,7 @@ export function focusOnSectionFit(
 export function getCameraViewMatrix(camera: Camera3D): Float32Array {
   const pos = camera.effectivePosition ?? camera.position;
   const rot = camera.effectiveRotation ?? camera.rotation;
-  // Calculate look-at target based on camera position and rotation
-  const forward = {
-    x: Math.sin(rot.y) * Math.cos(rot.x),
-    y: -Math.sin(rot.x),
-    z: -Math.cos(rot.y) * Math.cos(rot.x)
-  };
-
-  const target = {
-    x: pos.x + forward.x,
-    y: pos.y + forward.y,
-    z: pos.z + forward.z
-  };
-
-  return mat4LookAt(pos, target);
+  return getViewMatrixForPose(pos, rot);
 }
 
 /**
@@ -785,19 +839,36 @@ export function parseTransform3D(
   sectionIndex: number,
   config: WorldsConfig
 ): Section3DLayout {
-  // Parse metadata from section title (format: # Title {"x": "10", "y": "20"})
-  const metadata = parseSectionMetadata(section.title);
+  // Parse metadata from section directive first (preferred), with a fallback
+  // to legacy JSON-in-title parsing for older/hand-authored Section objects.
+  const rawMetadata: Record<string, any> =
+    (section.directive && typeof section.directive === 'object' && !Array.isArray(section.directive))
+      ? section.directive
+      : parseSectionMetadata(section.title);
 
-  const hasExplicitPosition =
-    Object.prototype.hasOwnProperty.call(metadata, 'x') ||
-    Object.prototype.hasOwnProperty.call(metadata, 'y') ||
-    Object.prototype.hasOwnProperty.call(metadata, 'z') ||
-    Object.prototype.hasOwnProperty.call(metadata, 'depth');
+  const metaStr = (key: string, fallback: string): string => {
+    const v = (rawMetadata as any)[key];
+    if (v === undefined || v === null) return fallback;
+    const s = String(v);
+    return s.length ? s : fallback;
+  };
+
+  const metaHas = (key: string): boolean => Object.prototype.hasOwnProperty.call(rawMetadata, key);
+
+  const metaTruthy = (key: string): boolean => {
+    const v = (rawMetadata as any)[key];
+    if (v === true) return true;
+    if (v === false || v === null || v === undefined) return false;
+    const s = String(v).trim().toLowerCase();
+    return s === 'true' || s === '1' || s === 'yes' || s === 'on';
+  };
+
+  const hasExplicitPosition = metaHas('x') || metaHas('y') || metaHas('z') || metaHas('depth');
 
   // Position
-  let x = parseFloat(metadata.x || '0');
-  let y = parseFloat(metadata.y || '0');
-  const z = parseFloat(metadata.z || metadata.depth || String(config.defaultDepth));
+  let x = parseFloat(metaStr('x', '0'));
+  let y = parseFloat(metaStr('y', '0'));
+  const z = parseFloat(metaStr('z', metaStr('depth', String(config.defaultDepth))));
 
   // Auto-layout: 3-column grid for sections without explicit position metadata.
   const autoEnabled = config.autoLayoutEnabled !== false;
@@ -813,23 +884,26 @@ export function parseTransform3D(
   }
 
   // Rotation (in degrees, convert to radians)
-  const rotX = (parseFloat(metadata['rotate-x'] || '0') * Math.PI) / 180;
-  const rotY = (parseFloat(metadata['rotate-y'] || '0') * Math.PI) / 180;
-  const rotZ = (parseFloat(metadata['rotate-z'] || '0') * Math.PI) / 180;
+  const rotX = (parseFloat(metaStr('rotate-x', '0')) * Math.PI) / 180;
+  const rotY = (parseFloat(metaStr('rotate-y', '0')) * Math.PI) / 180;
+  const rotZ = (parseFloat(metaStr('rotate-z', '0')) * Math.PI) / 180;
 
   // Scale
-  const scale = parseFloat(metadata.scale || '1');
+  const scale = parseFloat(metaStr('scale', '1'));
 
   // Dimensions
-  const width = parseFloat(metadata.width || String(config.defaultSectionWidth));
-  const height = parseFloat(metadata.height || String(config.defaultSectionHeight));
+  const width = parseFloat(metaStr('width', String(config.defaultSectionWidth)));
+  const height = parseFloat(metaStr('height', String(config.defaultSectionHeight)));
 
   // Visibility
-  const visible = metadata.hidden !== 'true';
-  const navigable = metadata.navigable !== 'false';
+  const visible = !metaTruthy('hidden');
+  const navigable = metaStr('navigable', 'true').trim().toLowerCase() !== 'false';
 
-  // For display/rendering: strip JSON metadata suffix from heading text.
-  const displayTitle = section.title.replace(/\s*\{[^}]+\}\s*$/, '').trim();
+  // For display/rendering: markdown parser already strips directive JSON from
+  // the title when it stores it in `section.directive`. Keep a legacy fallback.
+  const displayTitle = section.directive
+    ? section.title
+    : section.title.replace(/\s*\{[^}]+\}\s*$/, '').trim();
 
   return {
     sectionIndex,
@@ -915,6 +989,7 @@ export function getDefaultWorldsConfig(): WorldsConfig {
     positionEaseSpeed: 0.1,
     rotationEaseSpeed: 0.15,
     keepRotation: false,
+    straightenOnFocus: false,
     screenSpaceRecenter: false,
     screenSpaceRecenterIters: 5,
     autoLayoutEnabled: true,
@@ -929,17 +1004,47 @@ export function getDefaultWorldsConfig(): WorldsConfig {
 }
 
 function getViewMatrixForPose(position: Vec3, rotation: Vec3): Float32Array {
-  const forward = {
-    x: Math.sin(rotation.y) * Math.cos(rotation.x),
-    y: -Math.sin(rotation.x),
-    z: -Math.cos(rotation.y) * Math.cos(rotation.x)
+  const forward = computeForwardFromRotation(rotation);
+  const zAxis = vec3Normalize(vec3Scale(forward, -1));
+
+  let xAxis = vec3Normalize({ x: zAxis.z, y: 0, z: -zAxis.x });
+  if (vec3Length(xAxis) <= 1e-8) xAxis = { x: 1, y: 0, z: 0 };
+  let yAxis = {
+    x: zAxis.y * xAxis.z - zAxis.z * xAxis.y,
+    y: zAxis.z * xAxis.x - zAxis.x * xAxis.z,
+    z: zAxis.x * xAxis.y - zAxis.y * xAxis.x,
   };
-  const target = {
-    x: position.x + forward.x,
-    y: position.y + forward.y,
-    z: position.z + forward.z
-  };
-  return mat4LookAt(position, target);
+
+  const roll = Number.isFinite(rotation.z) ? rotation.z : 0;
+  if (roll) {
+    const rolled = applyRollToBasis({ right: xAxis, up: yAxis }, roll);
+    xAxis = rolled.right;
+    yAxis = rolled.up;
+  }
+
+  const m = new Float32Array(16);
+
+  m[0] = xAxis.x;
+  m[1] = yAxis.x;
+  m[2] = zAxis.x;
+  m[3] = 0;
+
+  m[4] = xAxis.y;
+  m[5] = yAxis.y;
+  m[6] = zAxis.y;
+  m[7] = 0;
+
+  m[8] = xAxis.z;
+  m[9] = yAxis.z;
+  m[10] = zAxis.z;
+  m[11] = 0;
+
+  m[12] = -(xAxis.x * position.x + xAxis.y * position.y + xAxis.z * position.z);
+  m[13] = -(yAxis.x * position.x + yAxis.y * position.y + yAxis.z * position.z);
+  m[14] = -(zAxis.x * position.x + zAxis.y * position.y + zAxis.z * position.z);
+  m[15] = 1;
+
+  return m;
 }
 
 function projectToNdc(
@@ -967,8 +1072,7 @@ function recenterCameraToPoint(
 ): Vec3 {
   // Solve for a camera translation (with fixed rotation) such that `point`
   // projects to NDC (0,0). Uses a tiny finite-difference Jacobian.
-  const forward = computeForwardFromRotation(baseRotation);
-  const basis = computeRightUpFromForward(forward);
+  const basis = computeRightUpFromRotation(baseRotation);
 
   let pos = { ...basePosition };
   const maxIters = Math.max(1, Math.min(12, Math.floor(iters || 1)));
@@ -1017,6 +1121,7 @@ export function focusOnSection(
   distance: number = 50,
   options?: {
     keepRotation?: boolean;
+    straighten?: boolean;
     positionOffset?: Vec3;
     rotationOffset?: Vec3;
     screenSpaceRecenter?: boolean;
@@ -1041,7 +1146,28 @@ export function focusOnSection(
   const keepRotation = options?.keepRotation ?? false;
 
   if (keepRotation) {
-    camera.targetRotation = null;
+    const doStraighten = options?.straighten ?? false;
+    const rotationOffset = options?.rotationOffset;
+
+    let rollTarget = Number.isFinite(camera.rotation.z) ? camera.rotation.z : 0;
+    if (doStraighten) {
+      const camForward = computeForwardFromRotation(camera.rotation);
+      const camBasis = computeRightUpFromRotation(camera.rotation);
+      const rotOnly = mat4FromTransform({
+        position: { x: 0, y: 0, z: 0 },
+        rotation: layout.transform.rotation,
+        scale: { x: 1, y: 1, z: 1 },
+      });
+      const upWorld = vec3Normalize(mat4TransformDirection(rotOnly, { x: 0, y: 1, z: 0 }));
+      rollTarget = rollTarget + computeRollDeltaToAlignUp(camForward, camBasis.up, upWorld);
+    }
+    rollTarget = rollTarget + (rotationOffset?.z ?? 0);
+
+    if (doStraighten || (rotationOffset?.z ?? 0) !== 0) {
+      camera.targetRotation = { x: camera.rotation.x, y: camera.rotation.y, z: rollTarget };
+    } else {
+      camera.targetRotation = null;
+    }
 
     // Optional: recenter in screen space when camera has a tilt/yaw.
     const doRecenter = options?.screenSpaceRecenter ?? false;
@@ -1050,14 +1176,33 @@ export function focusOnSection(
       target = vec3Sub(center, vec3Scale(forward, distance));
     }
 
-    setCameraTarget(camera, target);
+    setCameraTarget(camera, target, camera.targetRotation ?? undefined);
     return;
+  }
+
+  const doStraighten = options?.straighten ?? false;
+  let roll = 0;
+  if (doStraighten) {
+    const approxForward = computeForwardFromRotation({
+      x: layout.transform.rotation.x + (rotationOffset?.x ?? 0),
+      y: layout.transform.rotation.y + (rotationOffset?.y ?? 0),
+      z: 0,
+    });
+    const baseBasis = computeRightUpFromForward(approxForward);
+
+    const rotOnly = mat4FromTransform({
+      position: { x: 0, y: 0, z: 0 },
+      rotation: layout.transform.rotation,
+      scale: { x: 1, y: 1, z: 1 },
+    });
+    const upWorld = vec3Normalize(mat4TransformDirection(rotOnly, { x: 0, y: 1, z: 0 }));
+    roll = computeRollDeltaToAlignUp(approxForward, baseBasis.up, upWorld);
   }
 
   const rotation = {
     x: layout.transform.rotation.x + (rotationOffset?.x ?? 0),
     y: layout.transform.rotation.y + (rotationOffset?.y ?? 0),
-    z: (rotationOffset?.z ?? 0)
+    z: roll + (rotationOffset?.z ?? 0)
   };
 
   setCameraTarget(camera, target, rotation);

@@ -29,6 +29,27 @@
 ❌ File system  
 ❌ Other documents' scopes  
 
+## Important: Untrusted Content (Public Gists)
+
+SES isolates JavaScript *authority* (no `window`, no `fetch`, no `eval`, etc.), but the **host engine** still contains privileged features that can execute code in the host realm (not inside SES).
+
+In particular:
+
+- Dynamic module loading (`modules.load(...)`) uses host-side dynamic `import()`.
+- Shader effect loading (`compositor.loadEffect(name, url)`) uses host-side dynamic `import()`.
+
+If untrusted scripts can influence those URLs, they can effectively escape the sandbox.
+
+### Mitigation: `security.untrusted`
+
+When running content you do not control (e.g. `?content=gist:...`, `decode:...`, or `browser:...`), start the engine with `security.untrusted: true`.
+
+In untrusted mode, Storie disables high-risk capabilities including:
+
+- `modules.load` / `modules.loadAll`
+- `compositor.loadEffect` for arbitrary URLs (restricted to local `shaders/` only)
+- direct access to `webgpu.device` (to prevent bypassing WebGPU guardrails)
+
 ## How Does Scoping Work?
 
 ### Persistent Shared Scope

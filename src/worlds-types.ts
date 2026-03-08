@@ -124,6 +124,15 @@ export interface WorldsConfig {
   keepRotation?: boolean;
 
   /**
+    * When focusing a section, apply camera roll so the focused section appears
+    * upright on screen.
+    *
+    * Note: if `keepRotation` is enabled, this keeps camera pitch/yaw locked and
+    * only adjusts roll.
+   */
+  straightenOnFocus?: boolean;
+
+  /**
    * When keeping rotation, optionally adjust target position so the focused
    * section is centered in screen space (helps with tilted cameras).
    */

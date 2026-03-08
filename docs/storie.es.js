@@ -11434,6 +11434,9 @@ class ModuleLoader extends EventEmitter {
     try {
       const resolver = options.resolver || this.resolver;
       const url = await resolver(name);
+      if (options.resolver) {
+        this.assertSafeDynamicImportUrl(String(url));
+      }
       const timeout2 = options.timeout || 3e4;
       const loadPromise = this.importModule(url);
       const timeoutPromise = new Promise(
@@ -11468,6 +11471,30 @@ class ModuleLoader extends EventEmitter {
       this.emit("module:error", { name, error: err2 });
       console.error(`✗ Failed to load module: ${name}`, err2);
       throw new Error(`Module load failed: ${name} - ${err2.message}`);
+    }
+  }
+  /**
+   * Validate a URL before host-privileged dynamic import.
+   * Allows only same-origin http(s) or relative URLs.
+   */
+  assertSafeDynamicImportUrl(rawUrl) {
+    var _a, _b;
+    const s = String(rawUrl ?? "").trim();
+    if (!s) throw new Error("Empty module URL");
+    const lower = s.toLowerCase();
+    if (lower.startsWith("data:") || lower.startsWith("blob:") || lower.startsWith("javascript:")) {
+      throw new Error(`Unsupported import URL scheme: ${s.split(":", 1)[0]}`);
+    }
+    if (s.startsWith("./") || s.startsWith("../") || s.startsWith("/")) return;
+    try {
+      const base = (_a = globalThis.location) == null ? void 0 : _a.href;
+      const origin = (_b = globalThis.location) == null ? void 0 : _b.origin;
+      const u = new URL(s, base || "http://localhost");
+      if (origin && u.origin !== origin) {
+        throw new Error(`Cross-origin import blocked: ${u.origin}`);
+      }
+    } catch (e) {
+      throw new Error(`Invalid module URL: ${String((e == null ? void 0 : e.message) ?? e)}`);
     }
   }
   /**
@@ -16660,7 +16687,9 @@ ${frag}`;
     });
     const renderPass = commandEncoder.beginRenderPass({
       colorAttachments: [{
-        view: outputTexture.createView(),
+        // If the output texture has mipmaps, the default view can include
+        // multiple levels, which is not valid as a render attachment.
+        view: outputTexture.createView({ baseMipLevel: 0, mipLevelCount: 1 }),
         clearValue: { r: 0, g: 0, b: 0, a: 1 },
         loadOp: "clear",
         storeOp: "store"
@@ -17162,6 +17191,13 @@ function vec3Scale(v2, s) {
 function vec3Dot(a, b) {
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
+function vec3Cross(a, b) {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x
+  };
+}
 function vec3Length(v2) {
   return Math.sqrt(vec3Dot(v2, v2));
 }
@@ -17336,33 +17372,6 @@ function mat4Multiply(a, b) {
   }
   return out;
 }
-function mat4LookAt(eye, target) {
-  const zAxis = vec3Normalize(vec3Sub(eye, target));
-  const xAxis = vec3Normalize({ x: zAxis.z, y: 0, z: -zAxis.x });
-  const yAxis = {
-    x: zAxis.y * xAxis.z - zAxis.z * xAxis.y,
-    y: zAxis.z * xAxis.x - zAxis.x * xAxis.z,
-    z: zAxis.x * xAxis.y - zAxis.y * xAxis.x
-  };
-  const m = new Float32Array(16);
-  m[0] = xAxis.x;
-  m[1] = yAxis.x;
-  m[2] = zAxis.x;
-  m[3] = 0;
-  m[4] = xAxis.y;
-  m[5] = yAxis.y;
-  m[6] = zAxis.y;
-  m[7] = 0;
-  m[8] = xAxis.z;
-  m[9] = yAxis.z;
-  m[10] = zAxis.z;
-  m[11] = 0;
-  m[12] = -(xAxis.x * eye.x + xAxis.y * eye.y + xAxis.z * eye.z);
-  m[13] = -(yAxis.x * eye.x + yAxis.y * eye.y + yAxis.z * eye.z);
-  m[14] = -(zAxis.x * eye.x + zAxis.y * eye.y + zAxis.z * eye.z);
-  m[15] = 1;
-  return m;
-}
 function mat4FromTransform(transform) {
   const translation = mat4Translate(transform.position.x, transform.position.y, transform.position.z);
   const rotationX = mat4RotateX(transform.rotation.x);
@@ -17489,6 +17498,31 @@ function computeRightUpFromForward(forward) {
   };
   return { right, up };
 }
+function applyRollToBasis(basis, roll) {
+  const c2 = Math.cos(roll);
+  const s = Math.sin(roll);
+  const right = vec3Add(vec3Scale(basis.right, c2), vec3Scale(basis.up, s));
+  const up = vec3Add(vec3Scale(basis.up, c2), vec3Scale(basis.right, -s));
+  return { right, up };
+}
+function computeRightUpFromRotation(rotation) {
+  const forward = computeForwardFromRotation(rotation);
+  const basis = computeRightUpFromForward(forward);
+  const roll = Number.isFinite(rotation.z) ? rotation.z : 0;
+  if (!roll) return basis;
+  return applyRollToBasis(basis, roll);
+}
+function computeRollDeltaToAlignUp(forward, baseUp, desiredUp) {
+  const f = vec3Normalize(forward);
+  const desiredProj = vec3Normalize(vec3Sub(desiredUp, vec3Scale(f, vec3Dot(desiredUp, f))));
+  if (vec3Length(desiredProj) <= 1e-8) return 0;
+  const baseUpProj = vec3Normalize(vec3Sub(baseUp, vec3Scale(f, vec3Dot(baseUp, f))));
+  if (vec3Length(baseUpProj) <= 1e-8) return 0;
+  const sin = vec3Dot(f, vec3Cross(baseUpProj, desiredProj));
+  const cos = clamp$3(vec3Dot(baseUpProj, desiredProj), -1, 1);
+  const angle = Math.atan2(sin, cos);
+  return -angle;
+}
 function updateCamera3D(camera, _deltaTime) {
   const hasTargetPos = !!camera.target;
   const hasTargetRot = !!camera.targetRotation;
@@ -17567,7 +17601,7 @@ function updateCamera3D(camera, _deltaTime) {
       z: camera.rotation.z + state.rot.z
     };
     const forward = computeForwardFromRotation(effectiveRotation);
-    const basis = computeRightUpFromForward(forward);
+    const basis = computeRightUpFromRotation(effectiveRotation);
     effectivePosition = vec3Add(
       camera.position,
       vec3Add(
@@ -17643,7 +17677,21 @@ function focusOnSectionFit(camera, layout, viewportAspect, fill = 0.9, distanceL
   };
   const keepRotation = (options == null ? void 0 : options.keepRotation) ?? false;
   if (keepRotation) {
-    camera.targetRotation = null;
+    const doStraighten2 = (options == null ? void 0 : options.straighten) ?? false;
+    const rotationOffset2 = options == null ? void 0 : options.rotationOffset;
+    let rollTarget = Number.isFinite(camera.rotation.z) ? camera.rotation.z : 0;
+    if (doStraighten2) {
+      const camForward = computeForwardFromRotation(camera.rotation);
+      const camBasis = computeRightUpFromRotation(camera.rotation);
+      const upWorld = vec3Normalize(mat4TransformDirection(rotOnly, { x: 0, y: 1, z: 0 }));
+      rollTarget = rollTarget + computeRollDeltaToAlignUp(camForward, camBasis.up, upWorld);
+    }
+    rollTarget = rollTarget + ((rotationOffset2 == null ? void 0 : rotationOffset2.z) ?? 0);
+    if (doStraighten2 || ((rotationOffset2 == null ? void 0 : rotationOffset2.z) ?? 0) !== 0) {
+      camera.targetRotation = { x: camera.rotation.x, y: camera.rotation.y, z: rollTarget };
+    } else {
+      camera.targetRotation = null;
+    }
     const doRecenter = (options == null ? void 0 : options.screenSpaceRecenter) ?? false;
     if (doRecenter) {
       const forward2 = computeForwardFromRotation(camera.rotation);
@@ -17651,42 +17699,54 @@ function focusOnSectionFit(camera, layout, viewportAspect, fill = 0.9, distanceL
       const distAlongForward = distance2 / denom;
       target = vec3Sub(center, vec3Scale(forward2, distAlongForward));
       const iters = (options == null ? void 0 : options.screenSpaceRecenterIters) ?? 5;
-      target = recenterCameraToPoint(camera, target, camera.rotation, center, safeAspect, iters);
+      const recenterRot = camera.targetRotation ?? camera.rotation;
+      target = recenterCameraToPoint(camera, target, recenterRot, center, safeAspect, iters);
     }
-    setCameraTarget(camera, target);
+    setCameraTarget(camera, target, camera.targetRotation ?? void 0);
     return;
+  }
+  const doStraighten = (options == null ? void 0 : options.straighten) ?? false;
+  let roll = 0;
+  if (doStraighten) {
+    const upWorld = vec3Normalize(mat4TransformDirection(rotOnly, { x: 0, y: 1, z: 0 }));
+    const baseBasis = computeRightUpFromForward(forward);
+    roll = computeRollDeltaToAlignUp(forward, baseBasis.up, upWorld);
   }
   const rotation = {
     x: baseRotation.x + ((rotationOffset == null ? void 0 : rotationOffset.x) ?? 0),
     y: baseRotation.y + ((rotationOffset == null ? void 0 : rotationOffset.y) ?? 0),
-    z: baseRotation.z + ((rotationOffset == null ? void 0 : rotationOffset.z) ?? 0)
+    z: roll + ((rotationOffset == null ? void 0 : rotationOffset.z) ?? 0)
   };
   setCameraTarget(camera, target, rotation);
 }
 function getCameraViewMatrix(camera) {
   const pos = camera.effectivePosition ?? camera.position;
   const rot = camera.effectiveRotation ?? camera.rotation;
-  const forward = {
-    x: Math.sin(rot.y) * Math.cos(rot.x),
-    y: -Math.sin(rot.x),
-    z: -Math.cos(rot.y) * Math.cos(rot.x)
-  };
-  const target = {
-    x: pos.x + forward.x,
-    y: pos.y + forward.y,
-    z: pos.z + forward.z
-  };
-  return mat4LookAt(pos, target);
+  return getViewMatrixForPose(pos, rot);
 }
 function getCameraProjectionMatrix(camera, aspect) {
   return mat4Perspective(camera.fov, aspect, camera.near, camera.far);
 }
 function parseTransform3D(section, sectionIndex, config) {
-  const metadata = parseSectionMetadata(section.title);
-  const hasExplicitPosition = Object.prototype.hasOwnProperty.call(metadata, "x") || Object.prototype.hasOwnProperty.call(metadata, "y") || Object.prototype.hasOwnProperty.call(metadata, "z") || Object.prototype.hasOwnProperty.call(metadata, "depth");
-  let x = parseFloat(metadata.x || "0");
-  let y = parseFloat(metadata.y || "0");
-  const z = parseFloat(metadata.z || metadata.depth || String(config.defaultDepth));
+  const rawMetadata = section.directive && typeof section.directive === "object" && !Array.isArray(section.directive) ? section.directive : parseSectionMetadata(section.title);
+  const metaStr = (key, fallback) => {
+    const v2 = rawMetadata[key];
+    if (v2 === void 0 || v2 === null) return fallback;
+    const s = String(v2);
+    return s.length ? s : fallback;
+  };
+  const metaHas = (key) => Object.prototype.hasOwnProperty.call(rawMetadata, key);
+  const metaTruthy = (key) => {
+    const v2 = rawMetadata[key];
+    if (v2 === true) return true;
+    if (v2 === false || v2 === null || v2 === void 0) return false;
+    const s = String(v2).trim().toLowerCase();
+    return s === "true" || s === "1" || s === "yes" || s === "on";
+  };
+  const hasExplicitPosition = metaHas("x") || metaHas("y") || metaHas("z") || metaHas("depth");
+  let x = parseFloat(metaStr("x", "0"));
+  let y = parseFloat(metaStr("y", "0"));
+  const z = parseFloat(metaStr("z", metaStr("depth", String(config.defaultDepth))));
   const autoEnabled = config.autoLayoutEnabled !== false;
   const autoPositioned = autoEnabled && !hasExplicitPosition;
   if (autoEnabled && !hasExplicitPosition) {
@@ -17698,15 +17758,15 @@ function parseTransform3D(section, sectionIndex, config) {
     x = (col - xCenter) * spacing;
     y = -row * spacing;
   }
-  const rotX = parseFloat(metadata["rotate-x"] || "0") * Math.PI / 180;
-  const rotY = parseFloat(metadata["rotate-y"] || "0") * Math.PI / 180;
-  const rotZ = parseFloat(metadata["rotate-z"] || "0") * Math.PI / 180;
-  const scale = parseFloat(metadata.scale || "1");
-  const width = parseFloat(metadata.width || String(config.defaultSectionWidth));
-  const height = parseFloat(metadata.height || String(config.defaultSectionHeight));
-  const visible = metadata.hidden !== "true";
-  const navigable = metadata.navigable !== "false";
-  const displayTitle = section.title.replace(/\s*\{[^}]+\}\s*$/, "").trim();
+  const rotX = parseFloat(metaStr("rotate-x", "0")) * Math.PI / 180;
+  const rotY = parseFloat(metaStr("rotate-y", "0")) * Math.PI / 180;
+  const rotZ = parseFloat(metaStr("rotate-z", "0")) * Math.PI / 180;
+  const scale = parseFloat(metaStr("scale", "1"));
+  const width = parseFloat(metaStr("width", String(config.defaultSectionWidth)));
+  const height = parseFloat(metaStr("height", String(config.defaultSectionHeight)));
+  const visible = !metaTruthy("hidden");
+  const navigable = metaStr("navigable", "true").trim().toLowerCase() !== "false";
+  const displayTitle = section.directive ? section.title : section.title.replace(/\s*\{[^}]+\}\s*$/, "").trim();
   return {
     sectionIndex,
     sectionTitle: section.title,
@@ -17771,6 +17831,7 @@ function getDefaultWorldsConfig() {
     positionEaseSpeed: 0.1,
     rotationEaseSpeed: 0.15,
     keepRotation: false,
+    straightenOnFocus: false,
     screenSpaceRecenter: false,
     screenSpaceRecenterIters: 5,
     autoLayoutEnabled: true,
@@ -17784,17 +17845,39 @@ function getDefaultWorldsConfig() {
   };
 }
 function getViewMatrixForPose(position, rotation) {
-  const forward = {
-    x: Math.sin(rotation.y) * Math.cos(rotation.x),
-    y: -Math.sin(rotation.x),
-    z: -Math.cos(rotation.y) * Math.cos(rotation.x)
+  const forward = computeForwardFromRotation(rotation);
+  const zAxis = vec3Normalize(vec3Scale(forward, -1));
+  let xAxis = vec3Normalize({ x: zAxis.z, y: 0, z: -zAxis.x });
+  if (vec3Length(xAxis) <= 1e-8) xAxis = { x: 1, y: 0, z: 0 };
+  let yAxis = {
+    x: zAxis.y * xAxis.z - zAxis.z * xAxis.y,
+    y: zAxis.z * xAxis.x - zAxis.x * xAxis.z,
+    z: zAxis.x * xAxis.y - zAxis.y * xAxis.x
   };
-  const target = {
-    x: position.x + forward.x,
-    y: position.y + forward.y,
-    z: position.z + forward.z
-  };
-  return mat4LookAt(position, target);
+  const roll = Number.isFinite(rotation.z) ? rotation.z : 0;
+  if (roll) {
+    const rolled = applyRollToBasis({ right: xAxis, up: yAxis }, roll);
+    xAxis = rolled.right;
+    yAxis = rolled.up;
+  }
+  const m = new Float32Array(16);
+  m[0] = xAxis.x;
+  m[1] = yAxis.x;
+  m[2] = zAxis.x;
+  m[3] = 0;
+  m[4] = xAxis.y;
+  m[5] = yAxis.y;
+  m[6] = zAxis.y;
+  m[7] = 0;
+  m[8] = xAxis.z;
+  m[9] = yAxis.z;
+  m[10] = zAxis.z;
+  m[11] = 0;
+  m[12] = -(xAxis.x * position.x + xAxis.y * position.y + xAxis.z * position.z);
+  m[13] = -(yAxis.x * position.x + yAxis.y * position.y + yAxis.z * position.z);
+  m[14] = -(zAxis.x * position.x + zAxis.y * position.y + zAxis.z * position.z);
+  m[15] = 1;
+  return m;
 }
 function projectToNdc(camera, position, rotation, point, aspect) {
   const view = getViewMatrixForPose(position, rotation);
@@ -17805,8 +17888,7 @@ function projectToNdc(camera, position, rotation, point, aspect) {
   return { x: r2.x * invW, y: r2.y * invW, z: r2.z * invW };
 }
 function recenterCameraToPoint(camera, basePosition, baseRotation, point, aspect, iters) {
-  const forward = computeForwardFromRotation(baseRotation);
-  const basis = computeRightUpFromForward(forward);
+  const basis = computeRightUpFromRotation(baseRotation);
   let pos = { ...basePosition };
   const maxIters = Math.max(1, Math.min(12, Math.floor(iters || 1)));
   for (let i = 0; i < maxIters; i++) {
@@ -17850,19 +17932,54 @@ function focusOnSection(camera, layout, distance2 = 50, options) {
   };
   const keepRotation = (options == null ? void 0 : options.keepRotation) ?? false;
   if (keepRotation) {
-    camera.targetRotation = null;
+    const doStraighten2 = (options == null ? void 0 : options.straighten) ?? false;
+    const rotationOffset2 = options == null ? void 0 : options.rotationOffset;
+    let rollTarget = Number.isFinite(camera.rotation.z) ? camera.rotation.z : 0;
+    if (doStraighten2) {
+      const camForward = computeForwardFromRotation(camera.rotation);
+      const camBasis = computeRightUpFromRotation(camera.rotation);
+      const rotOnly = mat4FromTransform({
+        position: { x: 0, y: 0, z: 0 },
+        rotation: layout.transform.rotation,
+        scale: { x: 1, y: 1, z: 1 }
+      });
+      const upWorld = vec3Normalize(mat4TransformDirection(rotOnly, { x: 0, y: 1, z: 0 }));
+      rollTarget = rollTarget + computeRollDeltaToAlignUp(camForward, camBasis.up, upWorld);
+    }
+    rollTarget = rollTarget + ((rotationOffset2 == null ? void 0 : rotationOffset2.z) ?? 0);
+    if (doStraighten2 || ((rotationOffset2 == null ? void 0 : rotationOffset2.z) ?? 0) !== 0) {
+      camera.targetRotation = { x: camera.rotation.x, y: camera.rotation.y, z: rollTarget };
+    } else {
+      camera.targetRotation = null;
+    }
     const doRecenter = (options == null ? void 0 : options.screenSpaceRecenter) ?? false;
     if (doRecenter) {
       const forward = computeForwardFromRotation(camera.rotation);
       target = vec3Sub(center, vec3Scale(forward, distance2));
     }
-    setCameraTarget(camera, target);
+    setCameraTarget(camera, target, camera.targetRotation ?? void 0);
     return;
+  }
+  const doStraighten = (options == null ? void 0 : options.straighten) ?? false;
+  let roll = 0;
+  if (doStraighten) {
+    const approxForward = computeForwardFromRotation({
+      x: layout.transform.rotation.x + ((rotationOffset == null ? void 0 : rotationOffset.x) ?? 0),
+      y: layout.transform.rotation.y + ((rotationOffset == null ? void 0 : rotationOffset.y) ?? 0)
+    });
+    const baseBasis = computeRightUpFromForward(approxForward);
+    const rotOnly = mat4FromTransform({
+      position: { x: 0, y: 0, z: 0 },
+      rotation: layout.transform.rotation,
+      scale: { x: 1, y: 1, z: 1 }
+    });
+    const upWorld = vec3Normalize(mat4TransformDirection(rotOnly, { x: 0, y: 1, z: 0 }));
+    roll = computeRollDeltaToAlignUp(approxForward, baseBasis.up, upWorld);
   }
   const rotation = {
     x: layout.transform.rotation.x + ((rotationOffset == null ? void 0 : rotationOffset.x) ?? 0),
     y: layout.transform.rotation.y + ((rotationOffset == null ? void 0 : rotationOffset.y) ?? 0),
-    z: (rotationOffset == null ? void 0 : rotationOffset.z) ?? 0
+    z: roll + ((rotationOffset == null ? void 0 : rotationOffset.z) ?? 0)
   };
   setCameraTarget(camera, target, rotation);
 }
@@ -17880,6 +17997,9 @@ class WorldsRenderer {
     __publicField(this, "uniformCapacity", 0);
     __publicField(this, "backgroundTexture", null);
     __publicField(this, "backgroundShaderTexture", null);
+    __publicField(this, "backgroundShaderMipLevelCount", 1);
+    // Mipmap generation for backgroundShaderTexture (reduces shimmer under camera motion)
+    __publicField(this, "mipmapPipeline", null);
     // Avoid repeatedly fetching/evaluating the same built-in shader.
     __publicField(this, "loadingBuiltinShaders", /* @__PURE__ */ new Set());
     // Render to offscreen texture (for compositor)
@@ -17906,6 +18026,7 @@ class WorldsRenderer {
     this.sampler = this.device.createSampler({
       magFilter: "linear",
       minFilter: "linear",
+      mipmapFilter: "linear",
       addressModeU: "clamp-to-edge",
       addressModeV: "clamp-to-edge"
     });
@@ -17920,8 +18041,10 @@ class WorldsRenderer {
       { bytesPerRow: 4 },
       { width: 1, height: 1 }
     );
+    this.backgroundShaderMipLevelCount = this.calcMipLevelCount(this.width, this.height, 9);
     this.backgroundShaderTexture = this.device.createTexture({
       size: { width: this.width, height: this.height },
+      mipLevelCount: this.backgroundShaderMipLevelCount,
       format: this.format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
     });
@@ -17949,6 +18072,109 @@ class WorldsRenderer {
       format: this.format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
     });
+  }
+  calcMipLevelCount(width, height, maxLevels = 9) {
+    const w = Math.max(1, width | 0);
+    const h = Math.max(1, height | 0);
+    const levels = 1 + Math.floor(Math.log2(Math.max(w, h)));
+    return Math.max(1, Math.min(maxLevels, levels));
+  }
+  ensureMipmapPipeline() {
+    if (this.mipmapPipeline) return;
+    this.mipmapPipeline = this.device.createRenderPipeline({
+      label: "WorldsRenderer Mipmap Pipeline",
+      layout: "auto",
+      vertex: {
+        module: this.device.createShaderModule({
+          label: "WorldsRenderer Mipmap Shader",
+          code: `
+            struct VSOut {
+              @builtin(position) pos: vec4f,
+              @location(0) uv: vec2f,
+            };
+
+            @vertex
+            fn vertexMain(@builtin(vertex_index) i: u32) -> VSOut {
+              var positions = array<vec2f, 3>(
+                vec2f(-1.0, -1.0),
+                vec2f( 3.0, -1.0),
+                vec2f(-1.0,  3.0)
+              );
+              let p = positions[i];
+              var out: VSOut;
+              out.pos = vec4f(p, 0.0, 1.0);
+              out.uv = p * 0.5 + vec2f(0.5, 0.5);
+              return out;
+            }
+
+            @group(0) @binding(0) var srcTex: texture_2d<f32>;
+            @group(0) @binding(1) var srcSampler: sampler;
+
+            @fragment
+            fn fragmentMain(input: VSOut) -> @location(0) vec4f {
+              return textureSampleLevel(srcTex, srcSampler, input.uv, 0.0);
+            }
+          `
+        }),
+        entryPoint: "vertexMain"
+      },
+      fragment: {
+        module: this.device.createShaderModule({
+          label: "WorldsRenderer Mipmap Shader (Frag)",
+          code: `
+            struct VSOut {
+              @builtin(position) pos: vec4f,
+              @location(0) uv: vec2f,
+            };
+
+            @group(0) @binding(0) var srcTex: texture_2d<f32>;
+            @group(0) @binding(1) var srcSampler: sampler;
+
+            @fragment
+            fn fragmentMain(input: VSOut) -> @location(0) vec4f {
+              return textureSampleLevel(srcTex, srcSampler, input.uv, 0.0);
+            }
+          `
+        }),
+        entryPoint: "fragmentMain",
+        targets: [{ format: this.format }]
+      },
+      primitive: { topology: "triangle-list" }
+    });
+  }
+  generateMipmaps(encoder, texture, mipLevelCount) {
+    if (!this.sampler) return;
+    if (mipLevelCount <= 1) return;
+    this.ensureMipmapPipeline();
+    if (!this.mipmapPipeline) return;
+    let mipWidth = this.width;
+    let mipHeight = this.height;
+    for (let level = 1; level < mipLevelCount; level++) {
+      mipWidth = Math.max(1, mipWidth >> 1);
+      mipHeight = Math.max(1, mipHeight >> 1);
+      const srcView = texture.createView({ baseMipLevel: level - 1, mipLevelCount: 1 });
+      const dstView = texture.createView({ baseMipLevel: level, mipLevelCount: 1 });
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: dstView,
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          loadOp: "clear",
+          storeOp: "store"
+        }]
+      });
+      pass.setPipeline(this.mipmapPipeline);
+      pass.setViewport(0, 0, mipWidth, mipHeight, 0, 1);
+      const bindGroup = this.device.createBindGroup({
+        layout: this.mipmapPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: srcView },
+          { binding: 1, resource: this.sampler }
+        ]
+      });
+      pass.setBindGroup(0, bindGroup);
+      pass.draw(3);
+      pass.end();
+    }
   }
   /**
    * Create the render pipeline with shaders
@@ -18132,13 +18358,20 @@ class WorldsRenderer {
           // transparent background so paper shows through from behind.
           if (isBackground && uniforms.paperParams.w > 0.5) {
             if (uniforms.bgFlags.w > 0.5) {
-              // Use custom shader background texture (world-locked mapping)
-              // Map the ray/plane intersection coord into a repeatable UV domain.
-              let coord = paperCoordFromScreenUv(input.uv);
-              var uv2 = fract(coord * uniforms.paperParams.x);
-              // Avoid sampling exactly at the clamp edge.
-              uv2 = uv2 * 0.999 + vec2<f32>(0.0005, 0.0005);
-              outColor = textureSample(backgroundShaderTexture, textureSampler, uv2);
+              // Use custom shader background texture.
+              // params0.y is a mode flag for the background pass:
+              //   1 = screen-locked (static in screen space)
+              //   0 = world-locked (mapped to a world XY plane)
+              if (uniforms.params0.y > 0.5) {
+                outColor = textureSample(backgroundShaderTexture, textureSampler, input.uv);
+              } else {
+                // World-locked mapping: map the ray/plane intersection coord into a repeatable UV domain.
+                let coord = paperCoordFromScreenUv(input.uv);
+                var uv2 = fract(coord * uniforms.paperParams.x);
+                // Avoid sampling exactly at the clamp edge.
+                uv2 = uv2 * 0.999 + vec2<f32>(0.0005, 0.0005);
+                outColor = textureSample(backgroundShaderTexture, textureSampler, uv2);
+              }
             } else {
               // Use procedural background
               let coord = paperCoordFromScreenUv(input.uv);
@@ -18310,6 +18543,7 @@ class WorldsRenderer {
    * Render all 3D sections
    */
   render(camera, layouts, hoveredSectionIndex = null, background) {
+    var _a;
     if (!this.renderPipeline || !this.vertexBuffer || !this.indexBuffer || !this.renderTexture) {
       console.warn("WorldsRenderer not fully initialized");
       return;
@@ -18407,6 +18641,7 @@ class WorldsRenderer {
           this.device.queue.submit([clearEncoder.finish()]);
           const shaderEncoder = this.device.createCommandEncoder();
           this.shaderManager.applyShader(tempTexture, this.backgroundShaderTexture, shaderEncoder);
+          this.generateMipmaps(shaderEncoder, this.backgroundShaderTexture, this.backgroundShaderMipLevelCount);
           this.device.queue.submit([shaderEncoder.finish()]);
           tempTexture.destroy();
         }
@@ -18429,7 +18664,9 @@ class WorldsRenderer {
           0,
           1
         ]);
-        const params0 = new Float32Array([-1, -1, 0, 0]);
+        const screenLockRaw = (_a = background.shaderUniforms) == null ? void 0 : _a.screenLock;
+        const screenLock = Number.isFinite(screenLockRaw) ? screenLockRaw > 0.5 : false;
+        const params0 = new Float32Array([-1, screenLock ? 1 : 0, 0, 0]);
         const zVals = layouts.filter((l) => l.visible).map((l) => l.transform.position.z).sort((a, b) => a - b);
         const planeZ = zVals.length ? zVals[zVals.length / 2 | 0] : 0;
         const params1 = new Float32Array([aspect, Math.tan(camera.fov * 0.5), planeZ, 0]);
@@ -18561,8 +18798,10 @@ class WorldsRenderer {
     if (this.backgroundShaderTexture) {
       this.backgroundShaderTexture.destroy();
     }
+    this.backgroundShaderMipLevelCount = this.calcMipLevelCount(this.width, this.height, 9);
     this.backgroundShaderTexture = this.device.createTexture({
       size: { width: this.width, height: this.height },
+      mipLevelCount: this.backgroundShaderMipLevelCount,
       format: this.format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
     });
@@ -20930,6 +21169,10 @@ class StorieEngine {
     __publicField(this, "layers");
     __publicField(this, "moduleLoader");
     __publicField(this, "input");
+    // Security policy
+    __publicField(this, "untrustedContent");
+    __publicField(this, "allowCrossOriginDynamicImport");
+    __publicField(this, "allowModuleResolverFromSandbox");
     __publicField(this, "renderer");
     __publicField(this, "compositor", null);
     __publicField(this, "sandbox");
@@ -21042,7 +21285,7 @@ class StorieEngine {
     __publicField(this, "_savedAudioContext", null);
     /** Last error thrown by a user-supplied update/render handler, or null. */
     __publicField(this, "_lastUserHandlerError", null);
-    var _a;
+    var _a, _b, _c, _d;
     this.canvas = canvas;
     this.width = config.width || 80;
     this.height = config.height || 24;
@@ -21078,6 +21321,9 @@ class StorieEngine {
     this.renderer.resize(this.width, this.height);
     this.syncCanvasElementSizeToBuffer();
     this.moduleLoader = new ModuleLoader(this, config.modules);
+    this.untrustedContent = !!((_b = config.security) == null ? void 0 : _b.untrusted);
+    this.allowCrossOriginDynamicImport = !!((_c = config.security) == null ? void 0 : _c.allowCrossOriginDynamicImport);
+    this.allowModuleResolverFromSandbox = !!((_d = config.security) == null ? void 0 : _d.allowModuleResolverFromSandbox);
     const api = this.createUserAPI();
     this.api = api;
     this.sandbox = new ScriptSandbox(api);
@@ -22031,10 +22277,32 @@ class StorieEngine {
       // Module API
       modules: {
         load: async (name, options) => {
-          return await this.moduleLoader.load(name, options);
+          if (engine.untrustedContent) {
+            throw new Error("[modules.load] Disabled in untrusted mode");
+          }
+          if (options && typeof options === "object") {
+            if ("resolver" in options) {
+              if (!engine.allowModuleResolverFromSandbox) {
+                const { resolver: _resolver, ...rest } = options;
+                options = rest;
+              }
+            }
+          }
+          return await engine.moduleLoader.load(String(name), options);
         },
         loadAll: async (names, options) => {
-          return await this.moduleLoader.loadAll(names, options);
+          if (engine.untrustedContent) {
+            throw new Error("[modules.loadAll] Disabled in untrusted mode");
+          }
+          if (options && typeof options === "object") {
+            if ("resolver" in options) {
+              if (!engine.allowModuleResolverFromSandbox) {
+                const { resolver: _resolver, ...rest } = options;
+                options = rest;
+              }
+            }
+          }
+          return await engine.moduleLoader.loadAll(Array.isArray(names) ? names.map(String) : [], options);
         },
         isLoaded: (name) => {
           return this.moduleLoader.isLoaded(name);
@@ -23508,7 +23776,7 @@ class StorieEngine {
       webgpu: {
         // === CONTROLLED DEVICE ACCESS ===
         get device() {
-          return engine.webgpuDevice;
+          return engine.untrustedContent ? null : engine.webgpuDevice;
         },
         get available() {
           return engine.webgpuDevice !== null;
@@ -23728,10 +23996,51 @@ class StorieEngine {
         },
         // Phase 5: Shader Pipeline
         loadEffect: async (name, url) => {
+          var _a, _b;
           if (!engine.compositor) {
             throw new Error("Compositor not available (WebGPU not initialized)");
           }
-          await engine.compositor.loadEffect(name, url);
+          const rawUrl = String(url ?? "").trim();
+          if (engine.untrustedContent) {
+            const allowedPrefix = /^(?:\.\/)?shaders\//;
+            if (!allowedPrefix.test(rawUrl) || rawUrl.includes("..") || rawUrl.startsWith("/") || rawUrl.startsWith("\\")) {
+              throw new Error('[compositor.loadEffect] Untrusted mode allows only relative URLs under "shaders/"');
+            }
+            if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(rawUrl)) {
+              throw new Error("[compositor.loadEffect] Untrusted mode blocks URL schemes");
+            }
+          }
+          try {
+            const u = new URL(rawUrl, ((_a = globalThis.location) == null ? void 0 : _a.href) ?? "http://localhost");
+            const origin = (_b = globalThis.location) == null ? void 0 : _b.origin;
+            if (!engine.allowCrossOriginDynamicImport && origin && u.origin !== origin) {
+              throw new Error(`Cross-origin dynamic import blocked: ${u.origin}`);
+            }
+            const proto = u.protocol.toLowerCase();
+            if (proto === "data:" || proto === "blob:" || proto === "javascript:") {
+              throw new Error(`Unsupported import URL scheme: ${proto}`);
+            }
+          } catch (e) {
+            throw new Error(`[compositor.loadEffect] Refused URL: ${String((e == null ? void 0 : e.message) ?? e)}`);
+          }
+          await engine.compositor.loadEffect(String(name), rawUrl);
+        },
+        /**
+         * Convenience helper: load a shader effect module from the local `docs/shaders/` folder.
+         *
+         * Examples:
+         * - `await compositor.loadBuiltInEffect('bloom')` -> imports `shaders/bloom.wgsl.js`
+         * - `await compositor.loadBuiltInEffect('vignette', 'lightvignette')` -> imports `shaders/lightvignette.wgsl.js`
+         */
+        loadBuiltInEffect: async (effectName, shaderName) => {
+          const effect = String(effectName ?? "").trim();
+          if (!effect) throw new Error("[compositor.loadBuiltInEffect] Missing effectName");
+          const shader = String(shaderName ?? effect).trim();
+          if (!/^[a-zA-Z0-9_-]+$/.test(shader)) {
+            throw new Error("[compositor.loadBuiltInEffect] Invalid shaderName (expected [a-zA-Z0-9_-]+)");
+          }
+          const moduleUrl = `shaders/${shader}.wgsl.js`;
+          await engine.api.compositor.loadEffect(effect, moduleUrl);
         },
         buildPipeline: async (effects) => {
           if (!engine.compositor) {
@@ -24195,6 +24504,9 @@ class StorieEngine {
             if (config.keepRotation !== void 0) {
               engine.worldsConfig.keepRotation = !!config.keepRotation;
             }
+            if (config.straightenOnFocus !== void 0) {
+              engine.worldsConfig.straightenOnFocus = !!config.straightenOnFocus;
+            }
             if (config.screenSpaceRecenter !== void 0) {
               engine.worldsConfig.screenSpaceRecenter = !!config.screenSpaceRecenter;
             }
@@ -24470,13 +24782,17 @@ class StorieEngine {
         }
       }
       if (parsed.metadata.modules) {
-        const modules = Array.isArray(parsed.metadata.modules) ? parsed.metadata.modules : [parsed.metadata.modules];
-        console.log(`  Loading ${modules.length} module(s):`, modules);
-        try {
-          await this.moduleLoader.loadAll(modules);
-          console.log(`  ✓ All modules loaded successfully`);
-        } catch (error) {
-          console.error(`  ✗ Failed to load modules:`, error);
+        if (this.untrustedContent) {
+          console.warn("[Engine] Skipping frontmatter module loading in untrusted mode");
+        } else {
+          const modules = Array.isArray(parsed.metadata.modules) ? parsed.metadata.modules : [parsed.metadata.modules];
+          console.log(`  Loading ${modules.length} module(s):`, modules);
+          try {
+            await this.moduleLoader.loadAll(modules);
+            console.log(`  ✓ All modules loaded successfully`);
+          } catch (error) {
+            console.error(`  ✗ Failed to load modules:`, error);
+          }
         }
       }
       if (this.worldsRenderer) {
@@ -26604,7 +26920,9 @@ ${content}`.trim();
     const defaultKeepRotation = !!cfg.keepRotation;
     const defaultRecenter = !!cfg.screenSpaceRecenter;
     const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
+    const defaultStraighten = !!cfg.straightenOnFocus;
     const keepRotation = req.keepRotation !== void 0 ? !!req.keepRotation : defaultKeepRotation;
+    const straighten = req.straighten !== void 0 ? !!req.straighten : defaultStraighten;
     const recenterOpts = keepRotation && defaultRecenter ? { screenSpaceRecenter: true, screenSpaceRecenterIters: defaultRecenterIters } : {};
     if (req.kind === "focus") {
       this.lastApplied3DCameraFocus = {
@@ -26612,6 +26930,7 @@ ${content}`.trim();
         sectionIndex: layout.sectionIndex,
         distance: req.distance,
         ...keepRotation ? { keepRotation: true } : {},
+        ...straighten ? { straighten: true } : {},
         ...req.positionOffset ? { positionOffset: req.positionOffset } : {},
         ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}
       };
@@ -26621,6 +26940,7 @@ ${content}`.trim();
         sectionIndex: layout.sectionIndex,
         fill: req.fill,
         ...keepRotation ? { keepRotation: true } : {},
+        ...straighten ? { straighten: true } : {},
         ...req.positionOffset ? { positionOffset: req.positionOffset } : {},
         ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}
       };
@@ -26629,6 +26949,7 @@ ${content}`.trim();
     if (req.kind === "focus") {
       focusOnSection(this.camera3D, layout, req.distance, {
         ...keepRotation ? { keepRotation: true } : {},
+        ...straighten ? { straighten: true } : {},
         ...req.positionOffset ? { positionOffset: req.positionOffset } : {},
         ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {},
         ...recenterOpts
@@ -26637,6 +26958,7 @@ ${content}`.trim();
       const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
       focusOnSectionFit(this.camera3D, layout, aspect, req.fill, {}, {
         ...keepRotation ? { keepRotation: true } : {},
+        ...straighten ? { straighten: true } : {},
         ...req.positionOffset ? { positionOffset: req.positionOffset } : {},
         ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {},
         ...recenterOpts
@@ -26655,6 +26977,7 @@ ${content}`.trim();
       const recenterOpts = this.lastApplied3DCameraFocus.keepRotation && defaultRecenter ? { screenSpaceRecenter: true, screenSpaceRecenterIters: defaultRecenterIters } : {};
       focusOnSection(this.camera3D, layout, this.lastApplied3DCameraFocus.distance, {
         ...this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {},
+        ...this.lastApplied3DCameraFocus.straighten ? { straighten: true } : {},
         ...this.lastApplied3DCameraFocus.positionOffset ? { positionOffset: this.lastApplied3DCameraFocus.positionOffset } : {},
         ...this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {},
         ...recenterOpts
@@ -26667,6 +26990,7 @@ ${content}`.trim();
       const recenterOpts = this.lastApplied3DCameraFocus.keepRotation && defaultRecenter ? { screenSpaceRecenter: true, screenSpaceRecenterIters: defaultRecenterIters } : {};
       focusOnSectionFit(this.camera3D, layout, aspect, this.lastApplied3DCameraFocus.fill, {}, {
         ...this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {},
+        ...this.lastApplied3DCameraFocus.straighten ? { straighten: true } : {},
         ...this.lastApplied3DCameraFocus.positionOffset ? { positionOffset: this.lastApplied3DCameraFocus.positionOffset } : {},
         ...this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {},
         ...recenterOpts

@@ -10,22 +10,18 @@ font: "Rye"
 // Camera styling helpers
 const deg = d => d * Math.PI / 180;
 const CAMERA_BASE_ROT = { x: deg(-4), y: deg(4), z: 0 };
-
 worlds.enable();
-console.log('✓ 3D Canvas enabled!');
-
 worlds.config.setDefaults({
   keepRotation: true,
+  straightenOnFocus: true,
   screenSpaceRecenter: true,
   screenSpaceRecenterIters: 5,
   sectionSizeUnits: 'px',
   defaultSectionWidth: 900,
   defaultSectionHeight: 520,
-  autoLayoutSpacing: 50,
+  autoLayoutSpacing: 10,
   sectionBorderEnabled: false,
-  // Wanted-poster parchment background.
-  // `coordScale` controls world tiling; other values tune the paper look.
-  sectionBackground: 'shader:saintbilly;coordScale=0.04;grainStrength=0.35;stainStrength=0.35',
+  sectionBackground: 'shader:saintbilly',
 });
 
 // “Looking down” at an infinite canvas feel:
@@ -91,7 +87,7 @@ hasTorch = true
 torchQuality = "bright"
 ```
 
-# Hall of Statues {"rotate-x": "17"}
+# Hall of Statues {"rotate-z": "17"}
 ⠀
 You step into a vast hall supported by crumbling pillars. **Three stone statues** stand guard, each depicting a different warrior from a forgotten age. Their hollow eyes seem to follow you as you move.
 ⠀

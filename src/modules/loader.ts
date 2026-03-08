@@ -223,6 +223,13 @@ export class ModuleLoader extends EventEmitter {
       // Resolve module URL
       const resolver = options.resolver || this.resolver;
       const url = await resolver(name);
+
+      // Defense-in-depth: custom per-load resolvers are powerful and can be used
+      // as a sandbox escape (executing host-privileged code via dynamic import).
+      // Reject cross-origin and dangerous schemes when a custom resolver is used.
+      if (options.resolver) {
+        this.assertSafeDynamicImportUrl(String(url));
+      }
       
       // Apply timeout
       const timeout = options.timeout || 30000;
@@ -273,6 +280,36 @@ export class ModuleLoader extends EventEmitter {
       this.emit('module:error', { name, error: err });
       console.error(`✗ Failed to load module: ${name}`, err);
       throw new Error(`Module load failed: ${name} - ${err.message}`);
+    }
+  }
+
+  /**
+   * Validate a URL before host-privileged dynamic import.
+   * Allows only same-origin http(s) or relative URLs.
+   */
+  private assertSafeDynamicImportUrl(rawUrl: string): void {
+    const s = String(rawUrl ?? '').trim();
+    if (!s) throw new Error('Empty module URL');
+
+    // Fast deny-list for obvious dangerous schemes.
+    const lower = s.toLowerCase();
+    if (lower.startsWith('data:') || lower.startsWith('blob:') || lower.startsWith('javascript:')) {
+      throw new Error(`Unsupported import URL scheme: ${s.split(':', 1)[0]}`);
+    }
+
+    // If it's a relative URL, it's fine.
+    if (s.startsWith('./') || s.startsWith('../') || s.startsWith('/')) return;
+
+    // Otherwise, require same-origin.
+    try {
+      const base = (globalThis as any).location?.href;
+      const origin = (globalThis as any).location?.origin;
+      const u = new URL(s, base || 'http://localhost');
+      if (origin && u.origin !== origin) {
+        throw new Error(`Cross-origin import blocked: ${u.origin}`);
+      }
+    } catch (e: any) {
+      throw new Error(`Invalid module URL: ${String(e?.message ?? e)}`);
     }
   }
   

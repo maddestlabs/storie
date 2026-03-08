@@ -126,6 +126,31 @@ export interface EngineConfig {
   modules?: ModuleResolverConfig; // Module loader configuration
 
   /**
+   * Security policy for user-authored scripts (SES) and content loaded via URL params.
+   *
+   * IMPORTANT: SES isolates *authority*, but the host engine still has APIs that can
+   * execute host-privileged code (e.g. dynamic `import()` for modules/effects).
+   * Use `untrusted: true` when running content you do not control (e.g. public gists).
+   */
+  security?: {
+    /**
+     * When true, disables high-risk capabilities that could be used to escape SES
+     * or execute host-privileged code.
+     */
+    untrusted?: boolean;
+    /**
+     * Allow dynamic imports to cross origin (e.g. external CDNs). Default false.
+     * This is only relevant for host-privileged dynamic imports (modules/effects).
+     */
+    allowCrossOriginDynamicImport?: boolean;
+    /**
+     * Allow passing a custom `resolver` to `modules.load()` from sandboxed code.
+     * Default false (recommended).
+     */
+    allowModuleResolverFromSandbox?: boolean;
+  };
+
+  /**
    * Optional host sync (multi-window host/client).
    * Can also be enabled via URL params (see docs).
    */
@@ -178,6 +203,11 @@ export class StorieEngine {
   private layers: LayerStack;
   private moduleLoader: ModuleLoader;
   private input: InputManager;
+
+  // Security policy
+  private readonly untrustedContent: boolean;
+  private readonly allowCrossOriginDynamicImport: boolean;
+  private readonly allowModuleResolverFromSandbox: boolean;
   private renderer: Renderer;
   private compositor: Compositor | null = null;
   private sandbox: ScriptSandbox;
@@ -228,6 +258,7 @@ export class StorieEngine {
         sectionIndex: number | string;
         distance: number;
         keepRotation?: boolean;
+        straighten?: boolean;
         positionOffset?: { x: number; y: number; z: number };
         rotationOffset?: { x: number; y: number; z: number };
       }
@@ -236,6 +267,7 @@ export class StorieEngine {
         sectionIndex: number | string;
         fill: number;
         keepRotation?: boolean;
+        straighten?: boolean;
         positionOffset?: { x: number; y: number; z: number };
         rotationOffset?: { x: number; y: number; z: number };
       }
@@ -248,6 +280,7 @@ export class StorieEngine {
         sectionIndex: number;
         distance: number;
         keepRotation?: boolean;
+        straighten?: boolean;
         positionOffset?: { x: number; y: number; z: number };
         rotationOffset?: { x: number; y: number; z: number };
       }
@@ -256,6 +289,7 @@ export class StorieEngine {
         sectionIndex: number;
         fill: number;
         keepRotation?: boolean;
+        straighten?: boolean;
         positionOffset?: { x: number; y: number; z: number };
         rotationOffset?: { x: number; y: number; z: number };
       }
@@ -642,6 +676,11 @@ export class StorieEngine {
     
     // Initialize module loader
     this.moduleLoader = new ModuleLoader(this, config.modules);
+
+    // Security policy (defaults)
+    this.untrustedContent = !!config.security?.untrusted;
+    this.allowCrossOriginDynamicImport = !!config.security?.allowCrossOriginDynamicImport;
+    this.allowModuleResolverFromSandbox = !!config.security?.allowModuleResolverFromSandbox;
     
     // Create sandbox with API
     const api = this.createUserAPI();
@@ -1588,10 +1627,38 @@ export class StorieEngine {
       // Module API
       modules: {
         load: async (name: string, options?: any) => {
-          return await this.moduleLoader.load(name, options);
+          if (engine.untrustedContent) {
+            throw new Error('[modules.load] Disabled in untrusted mode');
+          }
+
+          // Sandbox hardening: do not allow sandboxed scripts to provide a custom
+          // URL resolver unless explicitly enabled by the host.
+          if (options && typeof options === 'object') {
+            if ('resolver' in options) {
+              if (!engine.allowModuleResolverFromSandbox) {
+                const { resolver: _resolver, ...rest } = options as any;
+                options = rest;
+              }
+            }
+          }
+
+          return await engine.moduleLoader.load(String(name), options);
         },
         loadAll: async (names: string[], options?: any) => {
-          return await this.moduleLoader.loadAll(names, options);
+          if (engine.untrustedContent) {
+            throw new Error('[modules.loadAll] Disabled in untrusted mode');
+          }
+
+          if (options && typeof options === 'object') {
+            if ('resolver' in options) {
+              if (!engine.allowModuleResolverFromSandbox) {
+                const { resolver: _resolver, ...rest } = options as any;
+                options = rest;
+              }
+            }
+          }
+
+          return await engine.moduleLoader.loadAll(Array.isArray(names) ? names.map(String) : [], options);
         },
         isLoaded: (name: string) => {
           return this.moduleLoader.isLoaded(name);
@@ -3218,7 +3285,9 @@ export class StorieEngine {
       webgpu: {
         // === CONTROLLED DEVICE ACCESS ===
         get device(): GPUDevice | null {
-          return engine.webgpuDevice;
+          // In untrusted mode, do not expose the raw device: it bypasses guardrails
+          // (scripts could allocate arbitrarily via device.createBuffer/Texture).
+          return engine.untrustedContent ? null : engine.webgpuDevice;
         },
         
         get available(): boolean {
@@ -3481,7 +3550,58 @@ export class StorieEngine {
           if (!engine.compositor) {
             throw new Error('Compositor not available (WebGPU not initialized)');
           }
-          await engine.compositor.loadEffect(name, url);
+          // In untrusted mode, allow loading only built-in, same-origin shader modules
+          // from the shipped `docs/shaders/` folder.
+          const rawUrl = String(url ?? '').trim();
+          if (engine.untrustedContent) {
+            const allowedPrefix = /^(?:\.\/)?shaders\//;
+            if (!allowedPrefix.test(rawUrl) || rawUrl.includes('..') || rawUrl.startsWith('/') || rawUrl.startsWith('\\')) {
+              throw new Error('[compositor.loadEffect] Untrusted mode allows only relative URLs under "shaders/"');
+            }
+            // Also disallow any explicit scheme in untrusted mode, even if same-origin.
+            if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(rawUrl)) {
+              throw new Error('[compositor.loadEffect] Untrusted mode blocks URL schemes');
+            }
+          }
+
+          // Prevent sandboxed scripts from importing arbitrary remote JS.
+          // Even same-origin dynamic import executes in the host realm.
+          // For trusted content, allow by default; for cross-origin, require opt-in.
+          try {
+            const u = new URL(rawUrl, globalThis.location?.href ?? 'http://localhost');
+            const origin = globalThis.location?.origin;
+            if (!engine.allowCrossOriginDynamicImport && origin && u.origin !== origin) {
+              throw new Error(`Cross-origin dynamic import blocked: ${u.origin}`);
+            }
+            const proto = u.protocol.toLowerCase();
+            if (proto === 'data:' || proto === 'blob:' || proto === 'javascript:') {
+              throw new Error(`Unsupported import URL scheme: ${proto}`);
+            }
+          } catch (e: any) {
+            throw new Error(`[compositor.loadEffect] Refused URL: ${String(e?.message ?? e)}`);
+          }
+
+          await engine.compositor.loadEffect(String(name), rawUrl);
+        },
+
+        /**
+         * Convenience helper: load a shader effect module from the local `docs/shaders/` folder.
+         *
+         * Examples:
+         * - `await compositor.loadBuiltInEffect('bloom')` -> imports `shaders/bloom.wgsl.js`
+         * - `await compositor.loadBuiltInEffect('vignette', 'lightvignette')` -> imports `shaders/lightvignette.wgsl.js`
+         */
+        loadBuiltInEffect: async (effectName: string, shaderName?: string): Promise<void> => {
+          const effect = String(effectName ?? '').trim();
+          if (!effect) throw new Error('[compositor.loadBuiltInEffect] Missing effectName');
+
+          const shader = String(shaderName ?? effect).trim();
+          if (!/^[a-zA-Z0-9_-]+$/.test(shader)) {
+            throw new Error('[compositor.loadBuiltInEffect] Invalid shaderName (expected [a-zA-Z0-9_-]+)');
+          }
+
+          const moduleUrl = `shaders/${shader}.wgsl.js`;
+          await engine.api.compositor.loadEffect(effect, moduleUrl);
         },
         
         buildPipeline: async (effects: string[]): Promise<void> => {
@@ -4048,6 +4168,10 @@ export class StorieEngine {
             if ((config as any).keepRotation !== undefined) {
               (engine.worldsConfig as any).keepRotation = !!(config as any).keepRotation;
             }
+
+            if ((config as any).straightenOnFocus !== undefined) {
+              (engine.worldsConfig as any).straightenOnFocus = !!(config as any).straightenOnFocus;
+            }
             if ((config as any).screenSpaceRecenter !== undefined) {
               (engine.worldsConfig as any).screenSpaceRecenter = !!(config as any).screenSpaceRecenter;
             }
@@ -4398,6 +4522,9 @@ export class StorieEngine {
       
       // Load modules from frontmatter if specified
       if (parsed.metadata.modules) {
+        if (this.untrustedContent) {
+          console.warn('[Engine] Skipping frontmatter module loading in untrusted mode');
+        } else {
         const modules = Array.isArray(parsed.metadata.modules) 
           ? parsed.metadata.modules 
           : [parsed.metadata.modules];
@@ -4410,6 +4537,7 @@ export class StorieEngine {
         } catch (error) {
           console.error(`  ✗ Failed to load modules:`, error);
           // Continue anyway - modules are optional
+        }
         }
       }
       
@@ -7242,7 +7370,9 @@ ${exportVars}
     const defaultKeepRotation = !!cfg.keepRotation;
     const defaultRecenter = !!cfg.screenSpaceRecenter;
     const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
+    const defaultStraighten = !!cfg.straightenOnFocus;
     const keepRotation = (req as any).keepRotation !== undefined ? !!(req as any).keepRotation : defaultKeepRotation;
+    const straighten = (req as any).straighten !== undefined ? !!(req as any).straighten : defaultStraighten;
     const recenterOpts = keepRotation && defaultRecenter
       ? { screenSpaceRecenter: true, screenSpaceRecenterIters: defaultRecenterIters }
       : {};
@@ -7254,6 +7384,7 @@ ${exportVars}
         sectionIndex: layout.sectionIndex,
         distance: req.distance,
         ...(keepRotation ? { keepRotation: true } : {}),
+        ...(straighten ? { straighten: true } : {}),
         ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
         ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
       };
@@ -7263,6 +7394,7 @@ ${exportVars}
         sectionIndex: layout.sectionIndex,
         fill: req.fill,
         ...(keepRotation ? { keepRotation: true } : {}),
+        ...(straighten ? { straighten: true } : {}),
         ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
         ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
       };
@@ -7275,6 +7407,7 @@ ${exportVars}
     if (req.kind === 'focus') {
       focusOnSection(this.camera3D, layout, req.distance, {
         ...(keepRotation ? { keepRotation: true } : {}),
+        ...(straighten ? { straighten: true } : {}),
         ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
         ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
         ...recenterOpts,
@@ -7285,6 +7418,7 @@ ${exportVars}
         : 1;
       focusOnSectionFit(this.camera3D, layout, aspect, req.fill, {}, {
         ...(keepRotation ? { keepRotation: true } : {}),
+        ...(straighten ? { straighten: true } : {}),
         ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
         ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
         ...recenterOpts,
@@ -7308,6 +7442,7 @@ ${exportVars}
         : {};
       focusOnSection(this.camera3D, layout, this.lastApplied3DCameraFocus.distance, {
         ...(this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {}),
+        ...(this.lastApplied3DCameraFocus.straighten ? { straighten: true } : {}),
         ...(this.lastApplied3DCameraFocus.positionOffset ? { positionOffset: this.lastApplied3DCameraFocus.positionOffset } : {}),
         ...(this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {}),
         ...recenterOpts,
@@ -7324,6 +7459,7 @@ ${exportVars}
         : {};
       focusOnSectionFit(this.camera3D, layout, aspect, this.lastApplied3DCameraFocus.fill, {}, {
         ...(this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {}),
+        ...(this.lastApplied3DCameraFocus.straighten ? { straighten: true } : {}),
         ...(this.lastApplied3DCameraFocus.positionOffset ? { positionOffset: this.lastApplied3DCameraFocus.positionOffset } : {}),
         ...(this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {}),
         ...recenterOpts,

@@ -50,6 +50,10 @@ export class WorldsRenderer {
 
   private backgroundTexture: GPUTexture | null = null;
   private backgroundShaderTexture: GPUTexture | null = null;
+  private backgroundShaderMipLevelCount: number = 1;
+
+  // Mipmap generation for backgroundShaderTexture (reduces shimmer under camera motion)
+  private mipmapPipeline: GPURenderPipeline | null = null;
 
   // Avoid repeatedly fetching/evaluating the same built-in shader.
   private loadingBuiltinShaders: Set<string> = new Set();
@@ -98,6 +102,7 @@ export class WorldsRenderer {
     this.sampler = this.device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
+      mipmapFilter: 'linear',
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge'
     });
@@ -116,8 +121,11 @@ export class WorldsRenderer {
     );
 
     // Full-size shader background texture (render target + sampled in the 3D pipeline).
+    // Use mipmaps so world-locked sampling can minify cleanly during camera motion.
+    this.backgroundShaderMipLevelCount = this.calcMipLevelCount(this.width, this.height, 9);
     this.backgroundShaderTexture = this.device.createTexture({
       size: { width: this.width, height: this.height },
+      mipLevelCount: this.backgroundShaderMipLevelCount,
       format: this.format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
     });
@@ -153,6 +161,116 @@ export class WorldsRenderer {
       format: this.format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
     });
+  }
+
+  private calcMipLevelCount(width: number, height: number, maxLevels: number = 9): number {
+    const w = Math.max(1, width | 0);
+    const h = Math.max(1, height | 0);
+    const levels = 1 + Math.floor(Math.log2(Math.max(w, h)));
+    return Math.max(1, Math.min(maxLevels, levels));
+  }
+
+  private ensureMipmapPipeline(): void {
+    if (this.mipmapPipeline) return;
+    this.mipmapPipeline = this.device.createRenderPipeline({
+      label: 'WorldsRenderer Mipmap Pipeline',
+      layout: 'auto',
+      vertex: {
+        module: this.device.createShaderModule({
+          label: 'WorldsRenderer Mipmap Shader',
+          code: `
+            struct VSOut {
+              @builtin(position) pos: vec4f,
+              @location(0) uv: vec2f,
+            };
+
+            @vertex
+            fn vertexMain(@builtin(vertex_index) i: u32) -> VSOut {
+              var positions = array<vec2f, 3>(
+                vec2f(-1.0, -1.0),
+                vec2f( 3.0, -1.0),
+                vec2f(-1.0,  3.0)
+              );
+              let p = positions[i];
+              var out: VSOut;
+              out.pos = vec4f(p, 0.0, 1.0);
+              out.uv = p * 0.5 + vec2f(0.5, 0.5);
+              return out;
+            }
+
+            @group(0) @binding(0) var srcTex: texture_2d<f32>;
+            @group(0) @binding(1) var srcSampler: sampler;
+
+            @fragment
+            fn fragmentMain(input: VSOut) -> @location(0) vec4f {
+              return textureSampleLevel(srcTex, srcSampler, input.uv, 0.0);
+            }
+          `
+        }),
+        entryPoint: 'vertexMain'
+      },
+      fragment: {
+        module: this.device.createShaderModule({
+          label: 'WorldsRenderer Mipmap Shader (Frag)',
+          code: `
+            struct VSOut {
+              @builtin(position) pos: vec4f,
+              @location(0) uv: vec2f,
+            };
+
+            @group(0) @binding(0) var srcTex: texture_2d<f32>;
+            @group(0) @binding(1) var srcSampler: sampler;
+
+            @fragment
+            fn fragmentMain(input: VSOut) -> @location(0) vec4f {
+              return textureSampleLevel(srcTex, srcSampler, input.uv, 0.0);
+            }
+          `
+        }),
+        entryPoint: 'fragmentMain',
+        targets: [{ format: this.format }]
+      },
+      primitive: { topology: 'triangle-list' }
+    });
+  }
+
+  private generateMipmaps(encoder: GPUCommandEncoder, texture: GPUTexture, mipLevelCount: number): void {
+    if (!this.sampler) return;
+    if (mipLevelCount <= 1) return;
+    this.ensureMipmapPipeline();
+    if (!this.mipmapPipeline) return;
+
+    let mipWidth = this.width;
+    let mipHeight = this.height;
+
+    for (let level = 1; level < mipLevelCount; level++) {
+      mipWidth = Math.max(1, mipWidth >> 1);
+      mipHeight = Math.max(1, mipHeight >> 1);
+
+      const srcView = texture.createView({ baseMipLevel: level - 1, mipLevelCount: 1 });
+      const dstView = texture.createView({ baseMipLevel: level, mipLevelCount: 1 });
+
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: dstView,
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          loadOp: 'clear',
+          storeOp: 'store'
+        }]
+      });
+      pass.setPipeline(this.mipmapPipeline);
+      pass.setViewport(0, 0, mipWidth, mipHeight, 0, 1);
+      const bindGroup = this.device.createBindGroup({
+        layout: this.mipmapPipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: srcView },
+          { binding: 1, resource: this.sampler }
+        ]
+      });
+      pass.setBindGroup(0, bindGroup);
+      pass.draw(3);
+      pass.end();
+    }
   }
 
   /**
@@ -337,13 +455,20 @@ export class WorldsRenderer {
           // transparent background so paper shows through from behind.
           if (isBackground && uniforms.paperParams.w > 0.5) {
             if (uniforms.bgFlags.w > 0.5) {
-              // Use custom shader background texture (world-locked mapping)
-              // Map the ray/plane intersection coord into a repeatable UV domain.
-              let coord = paperCoordFromScreenUv(input.uv);
-              var uv2 = fract(coord * uniforms.paperParams.x);
-              // Avoid sampling exactly at the clamp edge.
-              uv2 = uv2 * 0.999 + vec2<f32>(0.0005, 0.0005);
-              outColor = textureSample(backgroundShaderTexture, textureSampler, uv2);
+              // Use custom shader background texture.
+              // params0.y is a mode flag for the background pass:
+              //   1 = screen-locked (static in screen space)
+              //   0 = world-locked (mapped to a world XY plane)
+              if (uniforms.params0.y > 0.5) {
+                outColor = textureSample(backgroundShaderTexture, textureSampler, input.uv);
+              } else {
+                // World-locked mapping: map the ray/plane intersection coord into a repeatable UV domain.
+                let coord = paperCoordFromScreenUv(input.uv);
+                var uv2 = fract(coord * uniforms.paperParams.x);
+                // Avoid sampling exactly at the clamp edge.
+                uv2 = uv2 * 0.999 + vec2<f32>(0.0005, 0.0005);
+                outColor = textureSample(backgroundShaderTexture, textureSampler, uv2);
+              }
             } else {
               // Use procedural background
               let coord = paperCoordFromScreenUv(input.uv);
@@ -637,9 +762,10 @@ export class WorldsRenderer {
           clearPass.end();
           this.device.queue.submit([clearEncoder.finish()]);
           
-          // Apply shader to render background
+          // Apply shader to render background, then generate mipmaps for stable sampling.
           const shaderEncoder = this.device.createCommandEncoder();
           this.shaderManager.applyShader(tempTexture, this.backgroundShaderTexture, shaderEncoder);
+          this.generateMipmaps(shaderEncoder, this.backgroundShaderTexture, this.backgroundShaderMipLevelCount);
           this.device.queue.submit([shaderEncoder.finish()]);
           
           // Clean up temp texture
@@ -656,7 +782,12 @@ export class WorldsRenderer {
         ]);
 
         // Background mode is signaled via params0.x < 0.
-        const params0 = new Float32Array([-1, -1, 0, 0]);
+        // params0.y is reserved as a background-only flag.
+        const screenLockRaw = (background!.shaderUniforms as any)?.screenLock;
+        const screenLock = Number.isFinite(screenLockRaw as any)
+          ? (screenLockRaw as number) > 0.5
+          : false;
+        const params0 = new Float32Array([-1, screenLock ? 1 : 0, 0, 0]);
 
         // Paper plane selection: use the median Z of visible cards as the
         // background sampling plane. This keeps the paper “under” the sections
@@ -838,8 +969,10 @@ export class WorldsRenderer {
     if (this.backgroundShaderTexture) {
       this.backgroundShaderTexture.destroy();
     }
+    this.backgroundShaderMipLevelCount = this.calcMipLevelCount(this.width, this.height, 9);
     this.backgroundShaderTexture = this.device.createTexture({
       size: { width: this.width, height: this.height },
+      mipLevelCount: this.backgroundShaderMipLevelCount,
       format: this.format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
     });

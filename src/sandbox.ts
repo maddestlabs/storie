@@ -533,6 +533,7 @@ export interface SandboxAPI {
     removeLayer: (name: string) => boolean;
     // Phase 5: Shader Pipeline
     loadEffect: (name: string, url: string) => Promise<void>;
+    loadBuiltInEffect: (effectName: string, shaderName?: string) => Promise<void>;
     buildPipeline: (effects: string[]) => Promise<void>;
     setPipelineEnabled: (enabled: boolean) => void;
     setEffectUniform: (effectName: string, uniformName: string, value: number | number[]) => void;

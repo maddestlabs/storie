@@ -539,7 +539,9 @@ export class ShaderManager {
     // Render pass
     const renderPass = commandEncoder.beginRenderPass({
       colorAttachments: [{
-        view: outputTexture.createView(),
+        // If the output texture has mipmaps, the default view can include
+        // multiple levels, which is not valid as a render attachment.
+        view: outputTexture.createView({ baseMipLevel: 0, mipLevelCount: 1 }),
         clearValue: { r: 0, g: 0, b: 0, a: 1 },
         loadOp: 'clear',
         storeOp: 'store'

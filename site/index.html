@@ -732,12 +732,19 @@ This demo showcases:
         canvas.width = gridWidth * charWidthPhysical;
         canvas.height = gridHeight * charHeightPhysical;
         
+        const untrusted = (source === 'gist' || source === 'decode' || source === 'localStorage');
+
         // Create engine with measured grid size
         const engine = new StorieEngine(canvas, {
           width: gridWidth,
           height: gridHeight,
           fontFamily: fontStack,
-          fontSize: fontSize
+          fontSize: fontSize,
+          security: {
+            untrusted,
+            allowCrossOriginDynamicImport: false,
+            allowModuleResolverFromSandbox: false,
+          }
         });
 
         // Enable drag-and-drop behavior:
