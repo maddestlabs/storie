@@ -17,6 +17,7 @@ worlds.config.setDefaults({
   screenSpaceRecenter: true,
   screenSpaceRecenterIters: 5,
   sectionSizeUnits: 'px',
+  sectionOverflow: 'expand-y',
   defaultSectionWidth: 900,
   defaultSectionHeight: 520,
   autoLayoutSpacing: 10,

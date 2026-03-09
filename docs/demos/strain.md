@@ -4,6 +4,7 @@ theme: "neotopia"
 width: 1080
 height: 2400
 shaders: "zerorain+lightvignette+bloom+crt"
+font: "Asimovian"
 ---
 
 Binary strains of rain fall. Type `0` or `1` to match the **bottom digit** of each falling strain.  

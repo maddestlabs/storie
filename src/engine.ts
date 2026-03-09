@@ -5392,25 +5392,81 @@ ${exportVars}
           // Check for shader background
           const shaderInfo = this.parseWorldsSectionBackgroundShader();
 
+          // If using a shader background, merge in a few engine-provided uniforms
+          // (only applied if the shader declares these uniforms).
+          let mergedShaderUniforms: Record<string, number | number[]> | undefined = shaderInfo?.uniforms
+            ? { ...shaderInfo.uniforms }
+            : (shaderInfo ? {} : undefined);
+          if (shaderInfo && mergedShaderUniforms) {
+            // Flag for shaders that support dual modes (e.g. `ruledlines`).
+            mergedShaderUniforms.worldsBackground = 1;
+
+            // Provide theme-derived paper color for shaders that generate their
+            // own paper base.
+            const paper = ColorUtils.rgbaNorm(this.resolveWorldsSectionBackground());
+            mergedShaderUniforms.paperColor = [paper[0], paper[1], paper[2]];
+            // Compatibility: some shaders avoid vec3 uniforms and use scalar RGB.
+            (mergedShaderUniforms as any).paperColorR = paper[0];
+            (mergedShaderUniforms as any).paperColorG = paper[1];
+            (mergedShaderUniforms as any).paperColorB = paper[2];
+
+            // Default tile size for row-aligned background shaders.
+            if (!('rowsPerTile' in mergedShaderUniforms)) {
+              mergedShaderUniforms.rowsPerTile = 32;
+            }
+          }
+
           // For shader-based backgrounds, we need a stable mapping from world
           // coords -> background UVs. Treat `coordScale` as an engine-level
           // parameter (world tiling frequency). Do NOT fall back to a shader's
           // `scale` uniform here because many background shaders use `scale`
           // internally (e.g. as a noise frequency), and coupling the two makes
           // the background appear massively zoomed.
-          const shaderCoordScaleRaw = shaderInfo?.uniforms
-            ? (shaderInfo.uniforms as any).coordScale
+          const shaderCoordScaleRaw = mergedShaderUniforms
+            ? (mergedShaderUniforms as any).coordScale
             : undefined;
-          const shaderCoordScale = Number.isFinite(shaderCoordScaleRaw as any)
+          let shaderCoordScale = Number.isFinite(shaderCoordScaleRaw as any)
             ? (shaderCoordScaleRaw as number)
             : 1;
+
+          // Special-case: `shader:ruledlines` is intended to align to the text
+          // grid in Worlds. If the user didn’t provide `coordScale`, derive a
+          // reasonable default from `rowsPerTile` so dark lines land on integer
+          // world units (1 unit == 1 text row in `sectionSizeUnits: 'text'`).
+          if (shaderInfo && !(Number.isFinite(shaderCoordScaleRaw as any))) {
+            const shaderNameKey = String(shaderInfo.name ?? '').trim().toLowerCase();
+            if (shaderNameKey === 'ruledlines') {
+              const rowsRaw = mergedShaderUniforms ? (mergedShaderUniforms as any).rowsPerTile : undefined;
+              const rows = Number.isFinite(rowsRaw as any) && (rowsRaw as number) > 0
+                ? (rowsRaw as number)
+                : 32;
+              shaderCoordScale = 1 / rows;
+            }
+          }
+
+          // Keep ruledlines' `coordScale` and `rowsPerTile` in sync when the
+          // user provides only one of them.
+          if (shaderInfo && mergedShaderUniforms) {
+            const shaderNameKey = String(shaderInfo.name ?? '').trim().toLowerCase();
+            if (shaderNameKey === 'ruledlines') {
+              const hasRows = Number.isFinite((mergedShaderUniforms as any).rowsPerTile as any);
+              const hasScale = Number.isFinite((mergedShaderUniforms as any).coordScale as any);
+              if (hasScale && !hasRows) {
+                const s = (mergedShaderUniforms as any).coordScale as number;
+                if (s > 0) (mergedShaderUniforms as any).rowsPerTile = 1 / s;
+              } else if (hasRows && !hasScale) {
+                const rows = (mergedShaderUniforms as any).rowsPerTile as number;
+                if (rows > 0) (mergedShaderUniforms as any).coordScale = 1 / rows;
+              }
+            }
+          }
           
           const backgroundConfig = proceduralBackground || shaderInfo
             ? {
                 enabled: true,
                 chain: backgroundChain,
                 shaderName: shaderInfo?.name,
-                shaderUniforms: shaderInfo?.uniforms,
+                shaderUniforms: mergedShaderUniforms,
                 paperColor: this.resolveWorldsSectionBackground(),
                 lineColor: this.withAlpha(this.getStyle('dim').fg, 0x40),
                 scale: shaderInfo ? shaderCoordScale : 1,

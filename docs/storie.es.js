@@ -16270,6 +16270,20 @@ class WebGPUUIRenderer {
     });
   }
 }
+function resolveBuiltinShaderBaseUrl$1(baseUrl) {
+  const raw = String(baseUrl ?? "").trim();
+  const u = raw ? new URL(
+    /* @vite-ignore */
+    raw,
+    import.meta.url
+  ) : new URL(
+    /* @vite-ignore */
+    "./shaders/",
+    import.meta.url
+  );
+  const s = u.toString();
+  return s.endsWith("/") ? s : `${s}/`;
+}
 const DEFAULT_VERTEX_WGSL = `
 struct DefaultVertexIn {
   @location(0) pos: vec2f,
@@ -16356,7 +16370,7 @@ class ShaderManager {
    * Load a built-in shader from `./shaders/{name}.wgsl.js` (same format as ShaderChainManager).
    * This is best-effort and primarily intended for Worlds background shaders.
    */
-  async ensureBuiltinShader(name, baseUrl = "./shaders/") {
+  async ensureBuiltinShader(name, baseUrl = resolveBuiltinShaderBaseUrl$1()) {
     const shaderName = String(name ?? "").trim();
     if (!shaderName) return false;
     if (this.hasShader(shaderName)) return true;
@@ -16365,14 +16379,18 @@ class ShaderManager {
     const loadPromise = (async () => {
       try {
         if (!this.initialized) await this.init();
-        const base = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-        const shaderPath = `${base}${shaderName}.wgsl.js`;
+        const base = resolveBuiltinShaderBaseUrl$1(baseUrl);
+        const shaderPath = new URL(`${shaderName}.wgsl.js`, base).toString();
         console.log(`[ShaderManager] Loading built-in shader: ${shaderPath}`);
         const response = await fetch(shaderPath);
         if (!response.ok) {
           throw new Error(`Failed to fetch shader: ${response.status} ${response.statusText}`);
         }
         const shaderCode = await response.text();
+        if (!/\bgetShaderConfig\b/.test(shaderCode)) {
+          const preview = shaderCode.slice(0, 200).replace(/\s+/g, " ");
+          throw new Error(`Fetched content does not look like a shader module (missing getShaderConfig). Preview: ${preview}`);
+        }
         const evalFunc = new Function(shaderCode + "\nreturn getShaderConfig();");
         const config = evalFunc();
         if (!config || !config.vertexShader || !config.fragmentShader) {
@@ -16431,13 +16449,25 @@ class ShaderManager {
       }
       const pendingVertex = this.pendingVertexShaders.get(shader.name);
       const mergedCodeRaw = this.buildRenderModuleCode(shader.code, pendingVertex == null ? void 0 : pendingVertex.code);
-      const mergedCode = await this.resolveWgslIncludes(mergedCodeRaw, "./shaders/");
+      const mergedCode = await this.resolveWgslIncludes(mergedCodeRaw, resolveBuiltinShaderBaseUrl$1());
       const mergedShader = parseWGSLShader(shader.name, mergedCode);
       mergedShader.kind = "fragment";
       const module = this.device.createShaderModule({
         code: mergedShader.code,
         label: shader.name
       });
+      try {
+        const info = await module.getCompilationInfo();
+        const errors = info.messages.filter((m) => m.type === "error");
+        if (errors.length > 0) {
+          console.error(`[ShaderManager] WGSL compile errors in ${shader.name}:`);
+          for (const m of errors) {
+            console.error(`  - ${m.lineNum}:${m.linePos} ${m.message}`);
+          }
+          throw new Error(`WGSL compile failed for ${shader.name}`);
+        }
+      } catch (e) {
+      }
       const uniformLayout = this.calculateUniformLayout(mergedShader);
       const uniformBufferSize = this.calculateUniformBufferSize(uniformLayout);
       const uniformBuffer = this.device.createBuffer({
@@ -16539,7 +16569,8 @@ class ShaderManager {
         if (includePath.startsWith("/") || includePath.includes("://")) {
           throw new Error(`[ShaderManager] Unsupported #include path: ${includePath}`);
         }
-        const url = baseUrl + includePath;
+        const base = resolveBuiltinShaderBaseUrl$1(baseUrl);
+        const url = new URL(includePath, base).toString();
         if (seen.has(url)) {
           throw new Error(`[ShaderManager] #include cycle detected: ${url}`);
         }
@@ -16877,6 +16908,20 @@ ${frag}`;
     return this.activeShader;
   }
 }
+function resolveBuiltinShaderBaseUrl(baseUrl) {
+  const raw = String(baseUrl ?? "").trim();
+  const u = raw ? new URL(
+    /* @vite-ignore */
+    raw,
+    import.meta.url
+  ) : new URL(
+    /* @vite-ignore */
+    "./shaders/",
+    import.meta.url
+  );
+  const s = u.toString();
+  return s.endsWith("/") ? s : `${s}/`;
+}
 class ShaderChainManager {
   constructor(shaderManager, device, format) {
     __publicField(this, "shaderManager");
@@ -16988,20 +17033,25 @@ class ShaderChainManager {
    */
   async loadBuiltinShader(name) {
     try {
-      const shaderPath = `./shaders/${name}.wgsl.js`;
+      const baseUrl = resolveBuiltinShaderBaseUrl();
+      const shaderPath = new URL(`${name}.wgsl.js`, baseUrl).toString();
       console.log(`[ShaderChain] Loading: ${shaderPath}`);
       const response = await fetch(shaderPath);
       if (!response.ok) {
         throw new Error(`Failed to fetch shader: ${response.status} ${response.statusText}`);
       }
       const shaderCode = await response.text();
+      if (!/\bgetShaderConfig\b/.test(shaderCode)) {
+        const preview = shaderCode.slice(0, 200).replace(/\s+/g, " ");
+        throw new Error(`Fetched content does not look like a shader module (missing getShaderConfig). Preview: ${preview}`);
+      }
       const evalFunc = new Function(shaderCode + "\nreturn getShaderConfig();");
       const config = evalFunc();
       if (!config || !config.vertexShader || !config.fragmentShader) {
         throw new Error("Shader config must include vertexShader and fragmentShader");
       }
       const combinedCodeRaw = config.vertexShader + "\n" + config.fragmentShader;
-      const combinedCode = await this.resolveWgslIncludes(combinedCodeRaw, "./shaders/");
+      const combinedCode = await this.resolveWgslIncludes(combinedCodeRaw, baseUrl);
       const uniformNames = config.uniforms ? Object.keys(config.uniforms) : [];
       const wglsShader = {
         name,
@@ -17037,7 +17087,11 @@ class ShaderChainManager {
         const index = m.index ?? 0;
         out += src.slice(lastIndex, index);
         lastIndex = index + fullMatch.length;
-        const url = includePath.startsWith("./") || includePath.startsWith("../") ? baseUrl + includePath : baseUrl + includePath;
+        if (includePath.startsWith("/") || includePath.includes("://")) {
+          throw new Error(`[ShaderChain] Unsupported #include path: ${includePath}`);
+        }
+        const base = resolveBuiltinShaderBaseUrl(baseUrl);
+        const url = new URL(includePath, base).toString();
         if (seen.has(url)) {
           throw new Error(`[ShaderChain] #include cycle detected: ${url}`);
         }
@@ -18632,7 +18686,7 @@ class WorldsRenderer {
           const clearPass = clearEncoder.beginRenderPass({
             colorAttachments: [{
               view: tempTexture.createView(),
-              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+              clearValue: { r: paperColor[0] ?? 0, g: paperColor[1] ?? 0, b: paperColor[2] ?? 0, a: 1 },
               loadOp: "clear",
               storeOp: "store"
             }]
@@ -25430,13 +25484,47 @@ ${exportVars}
           const configuredPaperNoiseStrength = this.worldsConfig.sectionBackgroundPaperNoiseStrength;
           const paperNoiseStrength = Number.isFinite(configuredPaperNoiseStrength) ? Math.max(0, Math.min(1, configuredPaperNoiseStrength)) : defaultPaperNoiseStrength;
           const shaderInfo = this.parseWorldsSectionBackgroundShader();
-          const shaderCoordScaleRaw = (shaderInfo == null ? void 0 : shaderInfo.uniforms) ? shaderInfo.uniforms.coordScale : void 0;
-          const shaderCoordScale = Number.isFinite(shaderCoordScaleRaw) ? shaderCoordScaleRaw : 1;
+          let mergedShaderUniforms = (shaderInfo == null ? void 0 : shaderInfo.uniforms) ? { ...shaderInfo.uniforms } : shaderInfo ? {} : void 0;
+          if (shaderInfo && mergedShaderUniforms) {
+            mergedShaderUniforms.worldsBackground = 1;
+            const paper = ColorUtils.rgbaNorm(this.resolveWorldsSectionBackground());
+            mergedShaderUniforms.paperColor = [paper[0], paper[1], paper[2]];
+            mergedShaderUniforms.paperColorR = paper[0];
+            mergedShaderUniforms.paperColorG = paper[1];
+            mergedShaderUniforms.paperColorB = paper[2];
+            if (!("rowsPerTile" in mergedShaderUniforms)) {
+              mergedShaderUniforms.rowsPerTile = 32;
+            }
+          }
+          const shaderCoordScaleRaw = mergedShaderUniforms ? mergedShaderUniforms.coordScale : void 0;
+          let shaderCoordScale = Number.isFinite(shaderCoordScaleRaw) ? shaderCoordScaleRaw : 1;
+          if (shaderInfo && !Number.isFinite(shaderCoordScaleRaw)) {
+            const shaderNameKey = String(shaderInfo.name ?? "").trim().toLowerCase();
+            if (shaderNameKey === "ruledlines") {
+              const rowsRaw = mergedShaderUniforms ? mergedShaderUniforms.rowsPerTile : void 0;
+              const rows = Number.isFinite(rowsRaw) && rowsRaw > 0 ? rowsRaw : 32;
+              shaderCoordScale = 1 / rows;
+            }
+          }
+          if (shaderInfo && mergedShaderUniforms) {
+            const shaderNameKey = String(shaderInfo.name ?? "").trim().toLowerCase();
+            if (shaderNameKey === "ruledlines") {
+              const hasRows = Number.isFinite(mergedShaderUniforms.rowsPerTile);
+              const hasScale = Number.isFinite(mergedShaderUniforms.coordScale);
+              if (hasScale && !hasRows) {
+                const s = mergedShaderUniforms.coordScale;
+                if (s > 0) mergedShaderUniforms.rowsPerTile = 1 / s;
+              } else if (hasRows && !hasScale) {
+                const rows = mergedShaderUniforms.rowsPerTile;
+                if (rows > 0) mergedShaderUniforms.coordScale = 1 / rows;
+              }
+            }
+          }
           const backgroundConfig = proceduralBackground || shaderInfo ? {
             enabled: true,
             chain: backgroundChain,
             shaderName: shaderInfo == null ? void 0 : shaderInfo.name,
-            shaderUniforms: shaderInfo == null ? void 0 : shaderInfo.uniforms,
+            shaderUniforms: mergedShaderUniforms,
             paperColor: this.resolveWorldsSectionBackground(),
             lineColor: this.withAlpha(this.getStyle("dim").fg, 64),
             scale: shaderInfo ? shaderCoordScale : 1,

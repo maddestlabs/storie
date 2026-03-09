@@ -8,6 +8,15 @@
 import type { WGSLShader } from './types.js';
 import { parseWGSLShader } from './wgsl-parser.js';
 
+function resolveBuiltinShaderBaseUrl(baseUrl?: string): string {
+  const raw = String(baseUrl ?? '').trim();
+  const u = raw
+    ? new URL(/* @vite-ignore */ raw, import.meta.url)
+    : new URL(/* @vite-ignore */ './shaders/', import.meta.url);
+  const s = u.toString();
+  return s.endsWith('/') ? s : `${s}/`;
+}
+
 interface CompiledShader {
   metadata: WGSLShader;
   module: GPUShaderModule;
@@ -117,7 +126,7 @@ export class ShaderManager {
    * Load a built-in shader from `./shaders/{name}.wgsl.js` (same format as ShaderChainManager).
    * This is best-effort and primarily intended for Worlds background shaders.
    */
-  async ensureBuiltinShader(name: string, baseUrl: string = './shaders/'): Promise<boolean> {
+  async ensureBuiltinShader(name: string, baseUrl: string = resolveBuiltinShaderBaseUrl()): Promise<boolean> {
     const shaderName = String(name ?? '').trim();
     if (!shaderName) return false;
     if (this.hasShader(shaderName)) return true;
@@ -129,8 +138,8 @@ export class ShaderManager {
       try {
         if (!this.initialized) await this.init();
 
-        const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-        const shaderPath = `${base}${shaderName}.wgsl.js`;
+        const base = resolveBuiltinShaderBaseUrl(baseUrl);
+        const shaderPath = new URL(`${shaderName}.wgsl.js`, base).toString();
         console.log(`[ShaderManager] Loading built-in shader: ${shaderPath}`);
 
         const response = await fetch(shaderPath);
@@ -139,6 +148,11 @@ export class ShaderManager {
         }
 
         const shaderCode = await response.text();
+
+        if (!/\bgetShaderConfig\b/.test(shaderCode)) {
+          const preview = shaderCode.slice(0, 200).replace(/\s+/g, ' ');
+          throw new Error(`Fetched content does not look like a shader module (missing getShaderConfig). Preview: ${preview}`);
+        }
 
         // Shader file defines: function getShaderConfig() { ... }
         const evalFunc = new Function(shaderCode + '\nreturn getShaderConfig();');
@@ -217,7 +231,7 @@ export class ShaderManager {
       const mergedCodeRaw = this.buildRenderModuleCode(shader.code, pendingVertex?.code);
       // Allow user-authored WGSL blocks to reuse built-in WGSL snippets.
       // Includes resolve relative to the built-in shader root: ./shaders/
-      const mergedCode = await this.resolveWgslIncludes(mergedCodeRaw, './shaders/');
+      const mergedCode = await this.resolveWgslIncludes(mergedCodeRaw, resolveBuiltinShaderBaseUrl());
       const mergedShader = parseWGSLShader(shader.name, mergedCode);
       mergedShader.kind = 'fragment';
       
@@ -226,6 +240,25 @@ export class ShaderManager {
         code: mergedShader.code,
         label: shader.name
       });
+
+      // Surface shader compilation diagnostics early.
+      // Without this, a WGSL error can manifest as “no effect” with only a
+      // console warning from WebGPU validation.
+      try {
+        const info = await module.getCompilationInfo();
+        const errors = info.messages.filter(m => m.type === 'error');
+        if (errors.length > 0) {
+          console.error(`[ShaderManager] WGSL compile errors in ${shader.name}:`);
+          for (const m of errors) {
+            console.error(`  - ${m.lineNum}:${m.linePos} ${m.message}`);
+          }
+          throw new Error(`WGSL compile failed for ${shader.name}`);
+        }
+      } catch (e) {
+        // Some environments may not support compilation info; fall back.
+        // If this throws due to actual WGSL errors, we'll also fail pipeline
+        // creation below.
+      }
       
       // Calculate uniform buffer layout
       const uniformLayout = this.calculateUniformLayout(mergedShader);
@@ -355,7 +388,8 @@ export class ShaderManager {
           throw new Error(`[ShaderManager] Unsupported #include path: ${includePath}`);
         }
 
-        const url = baseUrl + includePath;
+        const base = resolveBuiltinShaderBaseUrl(baseUrl);
+        const url = new URL(includePath, base).toString();
         if (seen.has(url)) {
           throw new Error(`[ShaderManager] #include cycle detected: ${url}`);
         }
@@ -661,7 +695,10 @@ export class ShaderManager {
     if (vecf) {
       const n = parseInt(vecf[1], 10);
       if (n === 2) return { align: 8, size: 8 };
-      if (n === 3) return { align: 16, size: 16 }; // treat as 16-byte slot
+      // Uniform buffers are effectively std140-like for practical purposes.
+      // Treat vec3 as occupying a full 16-byte slot so offsets/size match what
+      // WebGPU validation expects when determining minBindingSize.
+      if (n === 3) return { align: 16, size: 16 };
       return { align: 16, size: 16 };
     }
 

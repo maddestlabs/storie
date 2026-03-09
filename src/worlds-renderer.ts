@@ -749,12 +749,16 @@ export class WorldsRenderer {
             usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
           });
           
-          // Clear temp texture to transparent
+          // Clear temp texture to a theme-derived paper base.
+          // Many shader backgrounds are written as “overlays” (multiply/vignette)
+          // that expect an existing image; feeding transparent black yields a
+          // black output. Clearing to the paper color provides a stable, theme-
+          // consistent base even if the shader doesn't generate its own.
           const clearEncoder = this.device.createCommandEncoder();
           const clearPass = clearEncoder.beginRenderPass({
             colorAttachments: [{
               view: tempTexture.createView(),
-              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+              clearValue: { r: paperColor[0] ?? 0, g: paperColor[1] ?? 0, b: paperColor[2] ?? 0, a: 1 },
               loadOp: 'clear',
               storeOp: 'store'
             }]

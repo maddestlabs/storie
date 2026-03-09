@@ -717,14 +717,45 @@ This demo showcases:
         const charWidth = charWidthPhysical / dpr;
         const charHeight = charHeightPhysical / dpr;
 
+        const getSafeAreaInsetPx = (edge) => {
+          try {
+            const v = getComputedStyle(document.documentElement)
+              .getPropertyValue(`--safe-area-inset-${edge}`)
+              .trim();
+            const n = parseFloat(v);
+            return Number.isFinite(n) ? n : 0;
+          } catch {
+            return 0;
+          }
+        };
+
+        const getViewportSize = () => {
+          // Prefer the visual viewport on mobile (iOS Safari address bar / toolbar
+          // changes often don't map cleanly to window.innerHeight).
+          const vv = window.visualViewport;
+          const rawW = (vv && typeof vv.width === 'number') ? vv.width : window.innerWidth;
+          const rawH = (vv && typeof vv.height === 'number') ? vv.height : window.innerHeight;
+
+          // Avoid rendering into the iOS home-indicator / notch safe areas.
+          const safeTop = getSafeAreaInsetPx('top');
+          const safeBottom = getSafeAreaInsetPx('bottom');
+          const safeLeft = getSafeAreaInsetPx('left');
+          const safeRight = getSafeAreaInsetPx('right');
+
+          const width = Math.max(0, rawW - safeLeft - safeRight);
+          const height = Math.max(0, rawH - safeTop - safeBottom);
+          return { width, height };
+        };
+
         console.log(`✓ Measured font: ${charWidthPhysical}x${charHeightPhysical}px physical (${charWidth}x${charHeight} logical) per character`);
         
         // Calculate grid size based on actual measured font dimensions.
-        // Use ceil so the canvas fully covers the container without leaving a
-        // remainder strip on the right/bottom when the viewport isn't an exact
-        // multiple of the cell size.
-        const gridWidth = Math.ceil(window.innerWidth / charWidth);
-        const gridHeight = Math.ceil(window.innerHeight / charHeight);
+        // Use floor so the canvas never exceeds the visible viewport (mobile
+        // browsers can have dynamic UI chrome / safe areas that otherwise clip
+        // the bottom row).
+        const { width: viewportW, height: viewportH } = getViewportSize();
+        const gridWidth = Math.max(1, Math.floor(viewportW / charWidth));
+        const gridHeight = Math.max(1, Math.floor(viewportH / charHeight));
 
         // Set canvas backing buffer to exactly gridCells × physicalCharSize.
         // This guarantees zero gap: the terminal shader spaces cells by
@@ -767,13 +798,14 @@ This demo showcases:
         const applyDocumentViewport = () => {
           const vc = engine.getViewportConstraint();
           const newDpr = window.devicePixelRatio || 1;
+          const { width: vw, height: vh } = getViewportSize();
           if (vc) {
             // Constrained: fit the requested aspect ratio inside the window.
-            const scale  = Math.min(window.innerWidth / vc.width, window.innerHeight / vc.height);
+            const scale  = Math.min(vw / vc.width, vh / vc.height);
             const cssW   = Math.floor(vc.width  * scale);
             const cssH   = Math.floor(vc.height * scale);
-            const leftPx = Math.round((window.innerWidth  - cssW) / 2);
-            const topPx  = Math.round((window.innerHeight - cssH) / 2);
+            const leftPx = Math.round((vw - cssW) / 2);
+            const topPx  = Math.round((vh - cssH) / 2);
             const newGridW = Math.max(1, Math.ceil(cssW / charWidth));
             const newGridH = Math.max(1, Math.ceil(cssH / charHeight));
             // Resize engine first — this sets the canvas backing buffer size
@@ -793,10 +825,10 @@ This demo showcases:
             canvas.style.left      = '0';
             canvas.style.top       = '0';
             canvas.style.transform = '';
-            const newGridW = Math.ceil(window.innerWidth  / charWidth);
-            const newGridH = Math.ceil(window.innerHeight / charHeight);
-            canvas.width  = Math.round(window.innerWidth  * newDpr);
-            canvas.height = Math.round(window.innerHeight * newDpr);
+            const newGridW = Math.max(1, Math.floor(vw / charWidth));
+            const newGridH = Math.max(1, Math.floor(vh / charHeight));
+            canvas.width  = Math.round(vw * newDpr);
+            canvas.height = Math.round(vh * newDpr);
             engine.resize(newGridW, newGridH);
             console.log(`✓ Resized to ${newGridW}x${newGridH}`);
           }
@@ -810,6 +842,12 @@ This demo showcases:
         };
         
         window.addEventListener('resize', handleResize);
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', handleResize);
+          // iOS Safari can change visual viewport height during scroll without
+          // dispatching a window resize.
+          window.visualViewport.addEventListener('scroll', handleResize);
+        }
         
         // Load markdown
         const loaded = await engine.loadMarkdown('demo', markdown);

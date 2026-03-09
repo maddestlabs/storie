@@ -12,6 +12,15 @@
 import type { ShaderManager } from './shader-manager.js';
 import type { WGSLShader } from './types.js';
 
+function resolveBuiltinShaderBaseUrl(baseUrl?: string): string {
+  const raw = String(baseUrl ?? '').trim();
+  const u = raw
+    ? new URL(/* @vite-ignore */ raw, import.meta.url)
+    : new URL(/* @vite-ignore */ './shaders/', import.meta.url);
+  const s = u.toString();
+  return s.endsWith('/') ? s : `${s}/`;
+}
+
 export interface ShaderChainConfig {
   /** Names of shaders in the chain (applied left to right) */
   shaderNames: string[];
@@ -166,7 +175,8 @@ export class ShaderChainManager {
   private async loadBuiltinShader(name: string): Promise<void> {
     try {
       // Load the shader module via fetch (these files use plain functions, not ES6 modules)
-      const shaderPath = `./shaders/${name}.wgsl.js`;
+      const baseUrl = resolveBuiltinShaderBaseUrl();
+      const shaderPath = new URL(`${name}.wgsl.js`, baseUrl).toString();
       console.log(`[ShaderChain] Loading: ${shaderPath}`);
       
       const response = await fetch(shaderPath);
@@ -175,6 +185,11 @@ export class ShaderChainManager {
       }
       
       const shaderCode = await response.text();
+
+      if (!/\bgetShaderConfig\b/.test(shaderCode)) {
+        const preview = shaderCode.slice(0, 200).replace(/\s+/g, ' ');
+        throw new Error(`Fetched content does not look like a shader module (missing getShaderConfig). Preview: ${preview}`);
+      }
       
       // Evaluate the shader code to get the getShaderConfig function
       // The shader files define: function getShaderConfig() { ... }
@@ -188,7 +203,7 @@ export class ShaderChainManager {
       // Convert shader config to WGSLShader format
       // The combined code includes both vertex and fragment shaders
       const combinedCodeRaw = config.vertexShader + '\n' + config.fragmentShader;
-      const combinedCode = await this.resolveWgslIncludes(combinedCodeRaw, './shaders/');
+      const combinedCode = await this.resolveWgslIncludes(combinedCodeRaw, baseUrl);
       
       // Parse uniforms from the shader config or extract from code
       const uniformNames: string[] = config.uniforms ? Object.keys(config.uniforms) : [];
@@ -241,10 +256,13 @@ export class ShaderChainManager {
         out += src.slice(lastIndex, index);
         lastIndex = index + fullMatch.length;
 
-        // Basic path join: baseUrl is expected to end with '/'
-        const url = includePath.startsWith('./') || includePath.startsWith('../')
-          ? baseUrl + includePath
-          : baseUrl + includePath;
+        // Security/sanity: only allow relative includes.
+        if (includePath.startsWith('/') || includePath.includes('://')) {
+          throw new Error(`[ShaderChain] Unsupported #include path: ${includePath}`);
+        }
+
+        const base = resolveBuiltinShaderBaseUrl(baseUrl);
+        const url = new URL(includePath, base).toString();
 
         if (seen.has(url)) {
           throw new Error(`[ShaderChain] #include cycle detected: ${url}`);
