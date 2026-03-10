@@ -28,15 +28,21 @@ let state = {
   camX: 0,
   camY: 0,
 
+  // Panels
+  rightW: 420,
+
   // Interaction
   mouseDownLeft: false,
-  drag: null, // { mode: 'node'|'pan', id?, ox, oy, startCamX, startCamY }
+  drag: null, // { mode: 'node'|'pan'|'split', id?, ox, oy, startCamX, startCamY, startRightW }
   hoveredId: null,
   selectedId: null,
 
   // UI widgets
   widgets: null,
-  lastInspector: ''
+  lastInspector: '',
+  lastSelectedId: null,
+  nodeJsonDirty: false,
+  statusText: ''
 };
 
 function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
@@ -335,10 +341,74 @@ function buildInspectorText(graph, layout, selectedId) {
   return lines.join('\n');
 }
 
+function buildSelectedNodeJson(graph, selectedId) {
+  if (!graph || !selectedId) return '';
+  const node = graph.nodeById.get(selectedId);
+  if (!node) return '';
+  return JSON.stringify(node, null, 2);
+}
+
+function applySelectedNodeJson(jsonText) {
+  if (!state.preset || !state.graph || !state.selectedId) {
+    state.statusText = 'No preset/node selected.';
+    return false;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(String(jsonText ?? ''));
+  } catch (e) {
+    state.statusText = 'Invalid JSON.';
+    return false;
+  }
+
+  if (!isObject(parsed)) {
+    state.statusText = 'JSON must be an object.';
+    return false;
+  }
+
+  const selectedId = String(state.selectedId);
+  const prev = state.graph.nodeById.get(selectedId);
+  if (!prev) {
+    state.statusText = 'Selected node not found.';
+    return false;
+  }
+
+  // Keep identity stable for layout + edge references.
+  parsed.id = selectedId;
+  if (parsed.kind == null) parsed.kind = prev.kind;
+
+  const nodes = Array.isArray(state.preset.nodes) ? state.preset.nodes : [];
+  let replaced = false;
+  for (let i = 0; i < nodes.length; i++) {
+    if (String(nodes[i]?.id ?? '') === selectedId) {
+      nodes[i] = parsed;
+      replaced = true;
+      break;
+    }
+  }
+  if (!replaced) {
+    nodes.push(parsed);
+    state.preset.nodes = nodes;
+  }
+
+  state.graph = computeGraph(state.preset);
+  state.nodeJsonDirty = false;
+  state.statusText = `Updated node ${selectedId} and replayed.`;
+
+  // Audition immediately so changes affect sound.
+  stfxr.playPreset(state.preset, state.seed, { volume: state.volume });
+  return true;
+}
+
 function ensureGraphLoaded() {
-  // Single-preset demo: always use the built-in preset.
-  state.preset = BUILTIN_PRESET;
-  state.graph = computeGraph(BUILTIN_PRESET);
+  // Single-preset demo: start from built-in preset once, then keep edits.
+  if (!state.preset) {
+    state.preset = JSON.parse(JSON.stringify(BUILTIN_PRESET));
+  }
+  if (!state.graph) {
+    state.graph = computeGraph(state.preset);
+  }
   if (state.graph && (!state.selectedId || !state.graph.nodeById.has(state.selectedId))) {
     const first = state.graph.nodes[0];
     state.selectedId = first ? String(first.id) : null;
@@ -349,12 +419,16 @@ function graphBounds() {
   const W = ui.metrics.canvasWidth || 1280;
   const H = ui.metrics.canvasHeight || 720;
 
-  const rightW = 420;
+  const splitterW = 20;
+  const minRightW = 260;
+  const maxRightW = Math.max(minRightW, W - 220); // keep graph >= ~200px
+  const rightW = clamp(state.rightW || 420, minRightW, maxRightW);
+  state.rightW = rightW;
   const topPad = 20;
   const bottomPad = 20;
   const toolbarH = 78;
 
-  const rightX = W - rightW + 20;
+  const rightX = W - rightW + splitterW;
   const graphX = 20;
   const graphW = Math.max(200, (rightX - 20) - graphX);
   const graphH = Math.max(200, H - topPad - bottomPad - toolbarH);
@@ -362,6 +436,7 @@ function graphBounds() {
   return {
     graph: { x: graphX, y: topPad, w: graphW, h: graphH },
     right: { x: rightX, y: topPad, w: rightW - 40, h: graphH },
+    splitter: { x: graphX + graphW, y: topPad, w: splitterW, h: graphH },
     toolbar: { x: 20, y: topPad + graphH + 12, w: W - 40, h: toolbarH }
   };
 }
@@ -466,6 +541,29 @@ const inspector = gui.createTextEditor({
   placeholder: 'Select a node'
 });
 
+const nodeJsonLabel = gui.createLabel({
+  bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 48, width: 380, height: 18 },
+  text: 'Node JSON',
+  align: 'left'
+});
+
+const nodeJson = gui.createTextEditor({
+  bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 72, width: 380, height: 160 },
+  value: '',
+  placeholder: '{\n  "kind": "...",\n  ...\n}'
+});
+
+const btnUpdate = gui.createButton({
+  bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 240, width: 120, height: 42 },
+  label: 'Update'
+});
+
+const status = gui.createLabel({
+  bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 288, width: 380, height: 18 },
+  text: '',
+  align: 'left'
+});
+
 state.widgets = {
   seedField,
   btnRand,
@@ -474,7 +572,11 @@ state.widgets = {
   btnAuto,
   btnReset,
   inspectorTitle,
-  inspector
+  inspector,
+  nodeJsonLabel,
+  nodeJson,
+  btnUpdate,
+  status
 };
 
 layoutToolbar();
@@ -490,6 +592,12 @@ if (state.graph) {
 
 // Warm audio unlock
 audio.context.resume().catch(() => {});
+
+// Seed editor with selected node JSON
+if (state.graph && state.selectedId && state.widgets?.nodeJson) {
+  state.widgets.nodeJson.setValue(buildSelectedNodeJson(state.graph, state.selectedId));
+  state.lastSelectedId = state.selectedId;
+}
 ```
 
 ```js on:input
@@ -513,10 +621,18 @@ if (event.type === 'mouse') {
     state.mouseDownLeft = event.action === 'press' || event.action === 'repeat';
 
     const b = graphBounds();
+    const inSplitter = event.x >= b.splitter.x && event.x < (b.splitter.x + b.splitter.w) &&
+                       event.y >= b.splitter.y && event.y < (b.splitter.y + b.splitter.h);
     const inGraph = event.x >= b.graph.x && event.x < (b.graph.x + b.graph.w) &&
                     event.y >= b.graph.y && event.y < (b.graph.y + b.graph.h);
 
-    if (state.mouseDownLeft && inGraph && state.graph) {
+    if (state.mouseDownLeft && inSplitter) {
+      state.drag = {
+        mode: 'split',
+        ox: event.x,
+        startRightW: state.rightW
+      };
+    } else if (state.mouseDownLeft && inGraph && state.graph) {
       const w = viewToWorld(event.x, event.y);
       const hit = hitTest(state.layoutById, w.x, w.y);
       state.hoveredId = hit;
@@ -567,6 +683,14 @@ if (event.type === 'mouse_move') {
   }
 
   if (state.mouseDownLeft && state.drag) {
+    if (state.drag.mode === 'split') {
+      const W = ui.metrics.canvasWidth || 1280;
+      const minRightW = 260;
+      const maxRightW = Math.max(minRightW, W - 220);
+      const dx = event.x - state.drag.ox;
+      state.rightW = clamp(state.drag.startRightW - dx, minRightW, maxRightW);
+      return;
+    }
     if (state.drag.mode === 'node') {
       const id = state.drag.id;
       const r = state.layoutById.get(id);
@@ -596,14 +720,52 @@ layoutToolbar();
 // Keep inspector bounds in sync with resize.
 {
   const b = graphBounds();
-  state.widgets.inspectorTitle.bounds.x = b.right.x;
-  state.widgets.inspectorTitle.bounds.y = b.right.y;
-  state.widgets.inspectorTitle.bounds.width = b.right.w;
+  const x = b.right.x;
+  const y = b.right.y;
+  const w = b.right.w;
+  const h = b.right.h;
 
-  state.widgets.inspector.bounds.x = b.right.x;
-  state.widgets.inspector.bounds.y = b.right.y + 28;
-  state.widgets.inspector.bounds.width = b.right.w;
-  state.widgets.inspector.bounds.height = Math.max(140, b.right.h - 28);
+  const gap = 8;
+  const titleH = 22;
+  const labelH = 18;
+  const btnH = 42;
+  const statusH = 18;
+
+  // Split pane: top summary inspector + bottom editable node JSON.
+  const inspectorH = Math.max(140, Math.floor(h * 0.50));
+  const nodeEditorH = Math.max(120, h - titleH - gap - inspectorH - gap - labelH - gap - btnH - gap - statusH);
+
+  state.widgets.inspectorTitle.bounds.x = x;
+  state.widgets.inspectorTitle.bounds.y = y;
+  state.widgets.inspectorTitle.bounds.width = w;
+  state.widgets.inspectorTitle.bounds.height = titleH;
+
+  state.widgets.inspector.bounds.x = x;
+  state.widgets.inspector.bounds.y = y + titleH + gap;
+  state.widgets.inspector.bounds.width = w;
+  state.widgets.inspector.bounds.height = inspectorH;
+
+  const nodeLabelY = y + titleH + gap + inspectorH + gap;
+  state.widgets.nodeJsonLabel.bounds.x = x;
+  state.widgets.nodeJsonLabel.bounds.y = nodeLabelY;
+  state.widgets.nodeJsonLabel.bounds.width = w;
+  state.widgets.nodeJsonLabel.bounds.height = labelH;
+
+  state.widgets.nodeJson.bounds.x = x;
+  state.widgets.nodeJson.bounds.y = nodeLabelY + labelH + gap;
+  state.widgets.nodeJson.bounds.width = w;
+  state.widgets.nodeJson.bounds.height = nodeEditorH;
+
+  const btnY = nodeLabelY + labelH + gap + nodeEditorH + gap;
+  state.widgets.btnUpdate.bounds.x = x;
+  state.widgets.btnUpdate.bounds.y = btnY;
+  state.widgets.btnUpdate.bounds.width = 120;
+  state.widgets.btnUpdate.bounds.height = btnH;
+
+  state.widgets.status.bounds.x = x;
+  state.widgets.status.bounds.y = btnY + btnH + gap;
+  state.widgets.status.bounds.width = w;
+  state.widgets.status.bounds.height = statusH;
 }
 
 // Seed handling
@@ -638,8 +800,34 @@ if (state.widgets.btnReset.wasClicked()) {
 }
 
 if (state.widgets.btnPlay.wasClicked()) {
-  stfxr.playPreset(BUILTIN_PRESET, state.seed, { volume: state.volume });
+  if (state.preset) stfxr.playPreset(state.preset, state.seed, { volume: state.volume });
 }
+
+// Node JSON editor dirty tracking
+if (state.widgets.nodeJson.wasChanged()) {
+  state.nodeJsonDirty = true;
+}
+
+// If selection changed, refresh node JSON editor (unless user is mid-edit)
+if (state.selectedId !== state.lastSelectedId) {
+  const canOverwrite = !state.nodeJsonDirty;
+  if (canOverwrite && state.graph) {
+    state.widgets.nodeJson.setValue(buildSelectedNodeJson(state.graph, state.selectedId));
+    state.nodeJsonDirty = false;
+  }
+  state.lastSelectedId = state.selectedId;
+}
+
+// Apply node JSON to preset + replay
+if (state.widgets.btnUpdate.wasClicked()) {
+  const ok = applySelectedNodeJson(state.widgets.nodeJson.getValue());
+  if (ok && state.graph) {
+    // Keep editor reflecting canonical applied JSON.
+    state.widgets.nodeJson.setValue(buildSelectedNodeJson(state.graph, state.selectedId));
+  }
+}
+
+state.widgets.status.setText(state.statusText);
 
 // Inspector refresh (only when needed)
 {
@@ -767,6 +955,15 @@ if (!state.graph) {
 }
 
 ui.popClipRect();
+
+// Splitter handle
+{
+  const s = b.splitter;
+  const bg = rgba01(255, 255, 255, 0.03);
+  const edge = rgba01(255, 255, 255, 0.10);
+  ui.rect(s.x, s.y, s.w, s.h, bg);
+  ui.rect(s.x + Math.floor(s.w / 2), s.y + 10, 1, Math.max(0, s.h - 20), edge);
+}
 
 // Graph frame
 {
