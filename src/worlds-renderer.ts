@@ -23,6 +23,14 @@ type WorldsBackgroundConfig = {
   shaderName?: string;
   /** Runtime uniforms for custom shader */
   shaderUniforms?: Record<string, number | number[]>;
+  /**
+   * Optional Z plane (world units) used for world-locked background sampling.
+   * When omitted, WorldsRenderer uses the median Z of visible cards.
+   *
+   * Setting this to the currently focused card's Z reduces parallax-induced
+   * scale drift between the background paper lines and card text.
+   */
+  paperPlaneZ?: number;
   paperColor: Color;
   lineColor: Color;
   /** Coordinate scale applied to projected coords before sampling. */
@@ -793,14 +801,23 @@ export class WorldsRenderer {
           : false;
         const params0 = new Float32Array([-1, screenLock ? 1 : 0, 0, 0]);
 
-        // Paper plane selection: use the median Z of visible cards as the
-        // background sampling plane. This keeps the paper “under” the sections
-        // without baking per-card paper.
-        const zVals = layouts
-          .filter(l => l.visible)
-          .map(l => l.transform.position.z)
-          .sort((a, b) => a - b);
-        const planeZ = zVals.length ? zVals[(zVals.length / 2) | 0]! : 0;
+        // Paper plane selection:
+        // - If caller provides a planeZ override, use it (useful for aligning
+        //   world-locked shader backgrounds to the focused card).
+        // - Otherwise use the median Z of visible cards so paper appears
+        //   roughly “under” the scene without baking per-card paper.
+        const planeZOverride = background && Number.isFinite(background.paperPlaneZ as any)
+          ? (background.paperPlaneZ as number)
+          : null;
+        const planeZ = planeZOverride !== null
+          ? planeZOverride
+          : (() => {
+              const zVals = layouts
+                .filter(l => l.visible)
+                .map(l => l.transform.position.z)
+                .sort((a, b) => a - b);
+              return zVals.length ? zVals[(zVals.length / 2) | 0]! : 0;
+            })();
 
         // params1: x=aspect, y=tanHalfFov, z=planeZ, w=reserved
         const params1 = new Float32Array([aspect, Math.tan(camera.fov * 0.5), planeZ, 0]);

@@ -134,6 +134,69 @@ export class InputManager {
   }
 
   /**
+   * Apply a synthetic input event to the internal key/mouse state.
+   * This bypasses the DOM event listeners and can be used for automation.
+   *
+   * Note: This updates state used by key.down()/pressed()/released() and
+   * mouse.down()/clicked() helpers. It does not dispatch to user handlers;
+   * the engine is responsible for that.
+   */
+  applySyntheticEvent(event: {
+    type: 'keydown' | 'keyup' | 'mouse' | 'mouse_move' | 'text';
+    action?: 'press' | 'release' | 'repeat';
+    key?: string;
+    x?: number;
+    y?: number;
+    button?: 'left' | 'middle' | 'right';
+  }): void {
+    const t = event?.type;
+    if (t === 'keydown') {
+      const k = String(event.key ?? '');
+      if (!k) return;
+      if (!this.state.keys.get(k)) this.state.keysPressed.add(k);
+      this.state.keys.set(k, true);
+      return;
+    }
+    if (t === 'keyup') {
+      const k = String(event.key ?? '');
+      if (!k) return;
+      this.state.keys.set(k, false);
+      this.state.keysReleased.add(k);
+      return;
+    }
+    if (t === 'mouse_move') {
+      const x = Number(event.x);
+      const y = Number(event.y);
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        this.state.mouseX = x;
+        this.state.mouseY = y;
+      }
+      return;
+    }
+    if (t === 'mouse') {
+      const x = Number(event.x);
+      const y = Number(event.y);
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        this.state.mouseX = x;
+        this.state.mouseY = y;
+      }
+
+      const buttonNum = event.button === 'middle' ? 1 : event.button === 'right' ? 2 : 0;
+      const isPress = event.action === 'press';
+      const isRelease = event.action === 'release';
+
+      if (isPress) {
+        this.state.mouseButtons.set(buttonNum, true);
+        this.state.mouseButtonsClicked.add(buttonNum);
+      } else if (isRelease) {
+        this.state.mouseButtons.set(buttonNum, false);
+      }
+      return;
+    }
+    // 'text' does not affect key-down state (it's a character input event)
+  }
+
+  /**
    * Update mouse position (used by event handlers)
    */
   updateMousePosition(x: number, y: number): void {

@@ -12,6 +12,10 @@ export type SfxExpr =
 export interface SfxGraphEdge {
   from: string;
   to: string;
+  /** Optional AudioNode output index (for ChannelSplitter, etc). */
+  fromChannel?: number;
+  /** Optional AudioNode input index (for ChannelMerger, etc). */
+  toChannel?: number;
 }
 
 export type SfxGraphNode =
@@ -35,6 +39,39 @@ export type SfxGraphNode =
       stopAfter?: SfxExpr; // seconds
     }
   | {
+      kind: 'delay';
+      id: string;
+      delayTime: SfxExpr; // seconds
+      // Sets the maxDelayTime passed to createDelay().
+      // If omitted, a conservative default is used.
+      maxDelayTime?: SfxExpr; // seconds
+    }
+  | {
+      kind: 'stereoPanner';
+      id: string;
+      pan: SfxExpr; // -1..+1
+    }
+  | {
+      kind: 'compressor';
+      id: string;
+      threshold?: SfxExpr; // dB
+      knee?: SfxExpr; // dB
+      ratio?: SfxExpr;
+      attack?: SfxExpr; // seconds
+      release?: SfxExpr; // seconds
+    }
+  | {
+      kind: 'convolver';
+      id: string;
+      // Procedural impulse response parameters.
+      // If omitted, a short noise IR is generated.
+      impulseType?: SfxExpr; // 'white' | 'pink' | 'brown'
+      seconds?: SfxExpr; // IR length
+      decay?: SfxExpr; // envelope exponent
+      reverse?: SfxExpr; // truthy => reverse envelope
+      normalize?: SfxExpr; // truthy => convolver.normalize = true
+    }
+  | {
       kind: 'filter';
       id: string;
       filterType: SfxExpr; // BiquadFilterType
@@ -48,6 +85,46 @@ export type SfxGraphNode =
       curve: SfxExpr; // 'softClip' | 'hardClip' | 'tanh' | 'atan' | 'fold'
       amount?: SfxExpr; // intensity (default 1)
       oversample?: SfxExpr; // 'none' | '2x' | '4x'
+    }
+  | {
+      kind: 'panner';
+      id: string;
+      panningModel?: SfxExpr; // 'equalpower' | 'HRTF'
+      distanceModel?: SfxExpr; // 'linear' | 'inverse' | 'exponential'
+      positionX?: SfxExpr;
+      positionY?: SfxExpr;
+      positionZ?: SfxExpr;
+      orientationX?: SfxExpr;
+      orientationY?: SfxExpr;
+      orientationZ?: SfxExpr;
+      refDistance?: SfxExpr;
+      maxDistance?: SfxExpr;
+      rolloffFactor?: SfxExpr;
+      coneInnerAngle?: SfxExpr;
+      coneOuterAngle?: SfxExpr;
+      coneOuterGain?: SfxExpr;
+    }
+  | {
+      kind: 'channelSplitter';
+      id: string;
+      outputs?: SfxExpr; // integer >= 1
+    }
+  | {
+      kind: 'channelMerger';
+      id: string;
+      inputs?: SfxExpr; // integer >= 1
+    }
+  | {
+      kind: 'iirFilter';
+      id: string;
+      feedforward: number[];
+      feedback: number[];
+    }
+  | {
+      kind: 'constantSource';
+      id: string;
+      offset: SfxExpr;
+      stopAfter?: SfxExpr; // seconds
     }
   | {
       kind: 'lfo';
@@ -191,7 +268,21 @@ function parseEdge(v: unknown, path: string): SfxGraphEdge {
   const to = (v as any).to;
   if (typeof from !== 'string' || !from) err(`${path}.from`, 'must be a non-empty string');
   if (typeof to !== 'string' || !to) err(`${path}.to`, 'must be a non-empty string');
-  return { from, to };
+  const fromChannelRaw = (v as any).fromChannel;
+  const toChannelRaw = (v as any).toChannel;
+
+  const parseChannel = (raw: any, p: string): number | undefined => {
+    if (raw === undefined || raw === null) return undefined;
+    const n = Math.floor(Number(raw));
+    if (!Number.isFinite(n)) err(p, 'must be a finite number');
+    if (n < 0 || n > 64) err(p, 'must be an integer in range 0..64');
+    return n;
+  };
+
+  const fromChannel = parseChannel(fromChannelRaw, `${path}.fromChannel`);
+  const toChannel = parseChannel(toChannelRaw, `${path}.toChannel`);
+
+  return { from, to, fromChannel, toChannel };
 }
 
 function parseNode(v: unknown, path: string): SfxGraphNode {
@@ -220,6 +311,94 @@ function parseNode(v: unknown, path: string): SfxGraphNode {
         gain: parseExpr((v as any).gain, `${path}.gain`),
         crushBits: (v as any).crushBits === undefined ? undefined : parseExpr((v as any).crushBits, `${path}.crushBits`),
         holdHz: (v as any).holdHz === undefined ? undefined : parseExpr((v as any).holdHz, `${path}.holdHz`),
+        stopAfter: (v as any).stopAfter === undefined ? undefined : parseExpr((v as any).stopAfter, `${path}.stopAfter`)
+      };
+    case 'delay':
+      return {
+        kind,
+        id,
+        delayTime: parseExpr((v as any).delayTime, `${path}.delayTime`),
+        maxDelayTime: (v as any).maxDelayTime === undefined ? undefined : parseExpr((v as any).maxDelayTime, `${path}.maxDelayTime`)
+      };
+    case 'stereoPanner':
+      return {
+        kind,
+        id,
+        pan: parseExpr((v as any).pan, `${path}.pan`)
+      };
+    case 'compressor':
+      return {
+        kind,
+        id,
+        threshold: (v as any).threshold === undefined ? undefined : parseExpr((v as any).threshold, `${path}.threshold`),
+        knee: (v as any).knee === undefined ? undefined : parseExpr((v as any).knee, `${path}.knee`),
+        ratio: (v as any).ratio === undefined ? undefined : parseExpr((v as any).ratio, `${path}.ratio`),
+        attack: (v as any).attack === undefined ? undefined : parseExpr((v as any).attack, `${path}.attack`),
+        release: (v as any).release === undefined ? undefined : parseExpr((v as any).release, `${path}.release`)
+      };
+    case 'convolver':
+      return {
+        kind,
+        id,
+        impulseType: (v as any).impulseType === undefined ? undefined : parseExpr((v as any).impulseType, `${path}.impulseType`),
+        seconds: (v as any).seconds === undefined ? undefined : parseExpr((v as any).seconds, `${path}.seconds`),
+        decay: (v as any).decay === undefined ? undefined : parseExpr((v as any).decay, `${path}.decay`),
+        reverse: (v as any).reverse === undefined ? undefined : parseExpr((v as any).reverse, `${path}.reverse`),
+        normalize: (v as any).normalize === undefined ? undefined : parseExpr((v as any).normalize, `${path}.normalize`)
+      };
+    case 'panner':
+      return {
+        kind,
+        id,
+        panningModel: (v as any).panningModel === undefined ? undefined : parseExpr((v as any).panningModel, `${path}.panningModel`),
+        distanceModel: (v as any).distanceModel === undefined ? undefined : parseExpr((v as any).distanceModel, `${path}.distanceModel`),
+        positionX: (v as any).positionX === undefined ? undefined : parseExpr((v as any).positionX, `${path}.positionX`),
+        positionY: (v as any).positionY === undefined ? undefined : parseExpr((v as any).positionY, `${path}.positionY`),
+        positionZ: (v as any).positionZ === undefined ? undefined : parseExpr((v as any).positionZ, `${path}.positionZ`),
+        orientationX: (v as any).orientationX === undefined ? undefined : parseExpr((v as any).orientationX, `${path}.orientationX`),
+        orientationY: (v as any).orientationY === undefined ? undefined : parseExpr((v as any).orientationY, `${path}.orientationY`),
+        orientationZ: (v as any).orientationZ === undefined ? undefined : parseExpr((v as any).orientationZ, `${path}.orientationZ`),
+        refDistance: (v as any).refDistance === undefined ? undefined : parseExpr((v as any).refDistance, `${path}.refDistance`),
+        maxDistance: (v as any).maxDistance === undefined ? undefined : parseExpr((v as any).maxDistance, `${path}.maxDistance`),
+        rolloffFactor: (v as any).rolloffFactor === undefined ? undefined : parseExpr((v as any).rolloffFactor, `${path}.rolloffFactor`),
+        coneInnerAngle: (v as any).coneInnerAngle === undefined ? undefined : parseExpr((v as any).coneInnerAngle, `${path}.coneInnerAngle`),
+        coneOuterAngle: (v as any).coneOuterAngle === undefined ? undefined : parseExpr((v as any).coneOuterAngle, `${path}.coneOuterAngle`),
+        coneOuterGain: (v as any).coneOuterGain === undefined ? undefined : parseExpr((v as any).coneOuterGain, `${path}.coneOuterGain`)
+      };
+    case 'channelSplitter':
+      return {
+        kind,
+        id,
+        outputs: (v as any).outputs === undefined ? undefined : parseExpr((v as any).outputs, `${path}.outputs`)
+      };
+    case 'channelMerger':
+      return {
+        kind,
+        id,
+        inputs: (v as any).inputs === undefined ? undefined : parseExpr((v as any).inputs, `${path}.inputs`)
+      };
+    case 'iirFilter': {
+      const ff = (v as any).feedforward;
+      const fb = (v as any).feedback;
+      if (!Array.isArray(ff) || ff.length === 0) err(`${path}.feedforward`, 'must be a non-empty number array');
+      if (!Array.isArray(fb) || fb.length === 0) err(`${path}.feedback`, 'must be a non-empty number array');
+      const feedforward: number[] = ff.map((n: any, i: number) => {
+        const x = Number(n);
+        if (!Number.isFinite(x)) err(`${path}.feedforward[${i}]`, 'must be a finite number');
+        return x;
+      });
+      const feedback: number[] = fb.map((n: any, i: number) => {
+        const x = Number(n);
+        if (!Number.isFinite(x)) err(`${path}.feedback[${i}]`, 'must be a finite number');
+        return x;
+      });
+      return { kind, id, feedforward, feedback };
+    }
+    case 'constantSource':
+      return {
+        kind,
+        id,
+        offset: parseExpr((v as any).offset, `${path}.offset`),
         stopAfter: (v as any).stopAfter === undefined ? undefined : parseExpr((v as any).stopAfter, `${path}.stopAfter`)
       };
     case 'filter':
@@ -634,6 +813,29 @@ function safeConnect(node: AudioNode, dest: AudioNode) {
   }
 }
 
+function safeConnectIndexed(node: AudioNode, dest: AudioNode, outputIndex?: number, inputIndex?: number) {
+  try {
+    const out = outputIndex === undefined ? undefined : (outputIndex | 0);
+    const inp = inputIndex === undefined ? undefined : (inputIndex | 0);
+    if (out === undefined && inp === undefined) {
+      node.connect(dest);
+      return;
+    }
+    if (out !== undefined && inp !== undefined) {
+      node.connect(dest, out, inp);
+      return;
+    }
+    if (out !== undefined) {
+      node.connect(dest, out);
+      return;
+    }
+    // If only input index is provided, assume output 0.
+    node.connect(dest, 0, inp!);
+  } catch {
+    // no-op
+  }
+}
+
 function createNoiseSource(
   ctx: BaseAudioContext,
   duration: number,
@@ -776,6 +978,68 @@ function applyBitcrush(data: Float32Array, sampleRate: number, crushBits: number
   }
 }
 
+type ImpulseCacheEntry = { buffer: AudioBuffer; bytes: number };
+
+const IMPULSE_CACHE_MAX_BYTES = 2 * 1024 * 1024; // ~2MB per context
+const impulseCacheByContext: WeakMap<BaseAudioContext, LruCache<string, ImpulseCacheEntry>> = new WeakMap();
+
+function getImpulseCache(ctx: BaseAudioContext): LruCache<string, ImpulseCacheEntry> {
+  const existing = impulseCacheByContext.get(ctx);
+  if (existing) return existing;
+  const cache = new LruCache<string, ImpulseCacheEntry>(IMPULSE_CACHE_MAX_BYTES, (e) => e.bytes);
+  impulseCacheByContext.set(ctx, cache);
+  return cache;
+}
+
+function applyImpulseEnvelope(data: Float32Array, decay: number, reverse: boolean) {
+  const n = data.length;
+  const d = Number.isFinite(decay) ? Math.max(0.01, decay) : 3;
+  if (n <= 1) return;
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    const x = reverse ? t : (1 - t);
+    const env = Math.pow(Math.max(0, x), d);
+    data[i] = data[i]! * env;
+  }
+}
+
+function getOrCreateImpulseBuffer(
+  ctx: BaseAudioContext,
+  frames: number,
+  seed: number,
+  opts?: { impulseType?: string; decay?: number; reverse?: boolean }
+): AudioBuffer {
+  const impulseType = String(opts?.impulseType ?? 'white');
+  const decay = Number.isFinite(opts?.decay as any) ? Number(opts?.decay) : 3;
+  const reverse = !!opts?.reverse;
+  const key = `${ctx.sampleRate}|${frames}|${seed >>> 0}|${impulseType}|d${decay.toFixed(3)}|r${reverse ? 1 : 0}`;
+  const cache = getImpulseCache(ctx);
+  const hit = cache.get(key);
+  if (hit) return hit.buffer;
+
+  // Stereo IR for a slightly wider sound by default.
+  const channels = 2;
+  const buffer = ctx.createBuffer(channels, frames, ctx.sampleRate);
+
+  for (let ch = 0; ch < channels; ch++) {
+    const data = buffer.getChannelData(ch);
+    const chSeed = (seed ^ (ch * 0x9e3779b9)) >>> 0;
+
+    if (impulseType === 'pink') {
+      generatePinkNoise(data, chSeed);
+    } else if (impulseType === 'brown') {
+      generateBrownNoise(data, chSeed);
+    } else {
+      generateWhiteNoise(data, chSeed);
+    }
+
+    applyImpulseEnvelope(data, decay, reverse);
+  }
+
+  cache.set(key, { buffer, bytes: estimateAudioBufferBytes(buffer) });
+  return buffer;
+}
+
 function getOrCreateNoiseBuffer(
   ctx: BaseAudioContext,
   frames: number,
@@ -818,6 +1082,7 @@ type RuntimeNode = {
   output: AudioNode;
   osc?: OscillatorNode;
   src?: AudioBufferSourceNode;
+  csrc?: ConstantSourceNode;
   params?: Record<string, AudioParam>;
   stop?: (t: number) => void;
 };
@@ -997,6 +1262,227 @@ export function playSfxGraph(
       continue;
     }
 
+    if (node.kind === 'delay') {
+      const maxDelay = node.maxDelayTime !== undefined ? Number(evalr.eval(node.maxDelayTime)) : 2;
+      const maxDelayTime = clamp(Number.isFinite(maxDelay) ? maxDelay : 2, 0.01, 10);
+      const d = ctx.createDelay(maxDelayTime);
+      const dt = clamp(Number(evalr.eval(node.delayTime)), 0, maxDelayTime);
+      d.delayTime.value = Number.isFinite(dt) ? dt : 0;
+      nodes.set(node.id, {
+        id: node.id,
+        kind: node.kind,
+        input: d,
+        output: d,
+        params: {
+          delayTime: d.delayTime
+        }
+      });
+      continue;
+    }
+
+    if (node.kind === 'stereoPanner') {
+      const p = ctx.createStereoPanner();
+      const pan = clamp(Number(evalr.eval(node.pan)), -1, 1);
+      p.pan.value = Number.isFinite(pan) ? pan : 0;
+      nodes.set(node.id, {
+        id: node.id,
+        kind: node.kind,
+        input: p,
+        output: p,
+        params: {
+          pan: p.pan
+        }
+      });
+      continue;
+    }
+
+    if (node.kind === 'compressor') {
+      const c = ctx.createDynamicsCompressor();
+      if (node.threshold !== undefined) {
+        const v = Number(evalr.eval(node.threshold));
+        if (Number.isFinite(v)) c.threshold.value = v;
+      }
+      if (node.knee !== undefined) {
+        const v = Number(evalr.eval(node.knee));
+        if (Number.isFinite(v)) c.knee.value = v;
+      }
+      if (node.ratio !== undefined) {
+        const v = Number(evalr.eval(node.ratio));
+        if (Number.isFinite(v)) c.ratio.value = v;
+      }
+      if (node.attack !== undefined) {
+        const v = Number(evalr.eval(node.attack));
+        if (Number.isFinite(v)) c.attack.value = Math.max(0, v);
+      }
+      if (node.release !== undefined) {
+        const v = Number(evalr.eval(node.release));
+        if (Number.isFinite(v)) c.release.value = Math.max(0, v);
+      }
+      nodes.set(node.id, {
+        id: node.id,
+        kind: node.kind,
+        input: c,
+        output: c,
+        params: {
+          threshold: c.threshold,
+          knee: c.knee,
+          ratio: c.ratio,
+          attack: c.attack,
+          release: c.release
+        }
+      });
+      continue;
+    }
+
+    if (node.kind === 'convolver') {
+      const conv = ctx.createConvolver();
+
+      const secondsRaw = node.seconds !== undefined ? Number(evalr.eval(node.seconds)) : 0.25;
+      const seconds = clamp(Number.isFinite(secondsRaw) ? secondsRaw : 0.25, 0.01, 4);
+      const frames = Math.max(1, Math.floor(seconds * ctx.sampleRate));
+
+      const decayRaw = node.decay !== undefined ? Number(evalr.eval(node.decay)) : 3;
+      const decay = clamp(Number.isFinite(decayRaw) ? decayRaw : 3, 0.01, 12);
+
+      const impulseType = node.impulseType !== undefined ? String(evalr.eval(node.impulseType)) : 'white';
+
+      const reverseRaw = node.reverse !== undefined ? evalr.eval(node.reverse) : 0;
+      const reverse = typeof reverseRaw === 'string' ? (reverseRaw === 'true' || reverseRaw === '1') : Number(reverseRaw) >= 0.5;
+
+      const normalizeRaw = node.normalize !== undefined ? evalr.eval(node.normalize) : 1;
+      const normalize = typeof normalizeRaw === 'string' ? (normalizeRaw !== 'false' && normalizeRaw !== '0') : Number(normalizeRaw) >= 0.5;
+      conv.normalize = normalize;
+
+      const nodeSeed = (seed ^ hashStr32(node.id) ^ 0x85ebca6b) >>> 0;
+      conv.buffer = getOrCreateImpulseBuffer(ctx, frames, nodeSeed, { impulseType, decay, reverse });
+
+      nodes.set(node.id, {
+        id: node.id,
+        kind: node.kind,
+        input: conv,
+        output: conv
+      });
+      continue;
+    }
+
+    if (node.kind === 'panner') {
+      const p = ctx.createPanner();
+
+      if (node.panningModel !== undefined) {
+        const v = String(evalr.eval(node.panningModel));
+        if (v === 'equalpower' || v === 'HRTF') p.panningModel = v;
+      }
+      if (node.distanceModel !== undefined) {
+        const v = String(evalr.eval(node.distanceModel));
+        if (v === 'linear' || v === 'inverse' || v === 'exponential') p.distanceModel = v;
+      }
+
+      const setParam = (param: AudioParam | undefined, expr: any) => {
+        if (!param || expr === undefined) return;
+        const n = Number(evalr.eval(expr));
+        if (Number.isFinite(n)) param.value = n;
+      };
+
+      // Modern positional params (AudioParams)
+      setParam((p as any).positionX, node.positionX);
+      setParam((p as any).positionY, node.positionY);
+      setParam((p as any).positionZ, node.positionZ);
+      setParam((p as any).orientationX, node.orientationX);
+      setParam((p as any).orientationY, node.orientationY);
+      setParam((p as any).orientationZ, node.orientationZ);
+
+      const setNumProp = (key: keyof PannerNode, expr: any, clampFn?: (x: number) => number) => {
+        if (expr === undefined) return;
+        const n = Number(evalr.eval(expr));
+        if (!Number.isFinite(n)) return;
+        (p as any)[key] = clampFn ? clampFn(n) : n;
+      };
+
+      setNumProp('refDistance', node.refDistance, (x) => Math.max(0, x));
+      setNumProp('maxDistance', node.maxDistance, (x) => Math.max(0, x));
+      setNumProp('rolloffFactor', node.rolloffFactor, (x) => Math.max(0, x));
+      setNumProp('coneInnerAngle', node.coneInnerAngle, (x) => clamp(x, 0, 360));
+      setNumProp('coneOuterAngle', node.coneOuterAngle, (x) => clamp(x, 0, 360));
+      setNumProp('coneOuterGain', node.coneOuterGain, (x) => clamp(x, 0, 1));
+
+      nodes.set(node.id, {
+        id: node.id,
+        kind: node.kind,
+        input: p,
+        output: p,
+        params: {
+          positionX: (p as any).positionX,
+          positionY: (p as any).positionY,
+          positionZ: (p as any).positionZ,
+          orientationX: (p as any).orientationX,
+          orientationY: (p as any).orientationY,
+          orientationZ: (p as any).orientationZ
+        }
+      });
+      continue;
+    }
+
+    if (node.kind === 'channelSplitter') {
+      const outputsRaw = node.outputs !== undefined ? Number(evalr.eval(node.outputs)) : 2;
+      const outputs = clampInt(Number.isFinite(outputsRaw) ? outputsRaw : 2, 1, 64);
+      const s = ctx.createChannelSplitter(outputs);
+      nodes.set(node.id, { id: node.id, kind: node.kind, input: s, output: s });
+      continue;
+    }
+
+    if (node.kind === 'channelMerger') {
+      const inputsRaw = node.inputs !== undefined ? Number(evalr.eval(node.inputs)) : 2;
+      const inputs = clampInt(Number.isFinite(inputsRaw) ? inputsRaw : 2, 1, 64);
+      const m = ctx.createChannelMerger(inputs);
+      nodes.set(node.id, { id: node.id, kind: node.kind, input: m, output: m });
+      continue;
+    }
+
+    if (node.kind === 'iirFilter') {
+      const ff = node.feedforward;
+      const fb = node.feedback;
+      const f = ctx.createIIRFilter(ff, fb);
+      nodes.set(node.id, { id: node.id, kind: node.kind, input: f, output: f });
+      continue;
+    }
+
+    if (node.kind === 'constantSource') {
+      const cs = ctx.createConstantSource();
+      const off = Number(evalr.eval(node.offset));
+      cs.offset.value = Number.isFinite(off) ? off : 0;
+      cs.start(t0);
+
+      const stopAfter = node.stopAfter !== undefined ? Number(evalr.eval(node.stopAfter)) : undefined;
+      if (stopAfter !== undefined && Number.isFinite(stopAfter) && stopAfter > 0) {
+        try {
+          cs.stop(t0 + stopAfter);
+        } catch {
+          // ignore
+        }
+      }
+
+      const rt: RuntimeNode = {
+        id: node.id,
+        kind: node.kind,
+        output: cs,
+        input: cs,
+        csrc: cs,
+        params: {
+          offset: cs.offset
+        },
+        stop: (t) => {
+          try {
+            cs.stop(t);
+          } catch {
+            // ignore
+          }
+        }
+      };
+      nodes.set(node.id, rt);
+      stoppables.push({ stop: rt.stop! });
+      continue;
+    }
+
     if (node.kind === 'filter') {
       const f = ctx.createBiquadFilter();
       f.type = String(evalr.eval(node.filterType)) as BiquadFilterType;
@@ -1067,7 +1553,7 @@ export function playSfxGraph(
     const to = nodes.get(e.to);
     if (!to) continue;
     const dest = to.input ?? to.output;
-    safeConnect(from.output, dest);
+    safeConnectIndexed(from.output, dest, e.fromChannel, e.toChannel);
   }
 
   for (const ev of preset.events ?? []) {

@@ -457,6 +457,58 @@ class InputManager {
     return this.state.mouseY;
   }
   /**
+   * Apply a synthetic input event to the internal key/mouse state.
+   * This bypasses the DOM event listeners and can be used for automation.
+   *
+   * Note: This updates state used by key.down()/pressed()/released() and
+   * mouse.down()/clicked() helpers. It does not dispatch to user handlers;
+   * the engine is responsible for that.
+   */
+  applySyntheticEvent(event) {
+    const t = event == null ? void 0 : event.type;
+    if (t === "keydown") {
+      const k = String(event.key ?? "");
+      if (!k) return;
+      if (!this.state.keys.get(k)) this.state.keysPressed.add(k);
+      this.state.keys.set(k, true);
+      return;
+    }
+    if (t === "keyup") {
+      const k = String(event.key ?? "");
+      if (!k) return;
+      this.state.keys.set(k, false);
+      this.state.keysReleased.add(k);
+      return;
+    }
+    if (t === "mouse_move") {
+      const x = Number(event.x);
+      const y = Number(event.y);
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        this.state.mouseX = x;
+        this.state.mouseY = y;
+      }
+      return;
+    }
+    if (t === "mouse") {
+      const x = Number(event.x);
+      const y = Number(event.y);
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        this.state.mouseX = x;
+        this.state.mouseY = y;
+      }
+      const buttonNum = event.button === "middle" ? 1 : event.button === "right" ? 2 : 0;
+      const isPress = event.action === "press";
+      const isRelease = event.action === "release";
+      if (isPress) {
+        this.state.mouseButtons.set(buttonNum, true);
+        this.state.mouseButtonsClicked.add(buttonNum);
+      } else if (isRelease) {
+        this.state.mouseButtons.set(buttonNum, false);
+      }
+      return;
+    }
+  }
+  /**
    * Update mouse position (used by event handlers)
    */
   updateMousePosition(x, y) {
@@ -9963,6 +10015,9 @@ class ScriptSandbox {
       if (typeof scope.init === "function") {
         validHandlers.init = scope.init;
       }
+      if (typeof scope.export === "function") {
+        validHandlers.export = scope.export;
+      }
       if (typeof scope.update === "function") {
         validHandlers.update = scope.update;
       }
@@ -10968,6 +11023,224 @@ function flattenSections(sections) {
     }
   }
   return result;
+}
+function clamp01(x) {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+function isRecord(v2) {
+  return !!v2 && typeof v2 === "object" && !Array.isArray(v2);
+}
+function parseEaseSpec(raw) {
+  if (!raw) return "linear";
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    const name = s;
+    return name;
+  }
+  if (isRecord(raw) && raw.type === "cubicBezier") {
+    const x1 = Number(raw.x1);
+    const y1 = Number(raw.y1);
+    const x2 = Number(raw.x2);
+    const y2 = Number(raw.y2);
+    if ([x1, y1, x2, y2].every(Number.isFinite)) {
+      return { type: "cubicBezier", x1, y1, x2, y2 };
+    }
+  }
+  return "linear";
+}
+function ease(u, spec = "linear") {
+  const t = clamp01(Number.isFinite(u) ? u : 0);
+  const named = (name) => {
+    switch (name) {
+      case "linear":
+        return t;
+      case "step":
+        return t >= 1 ? 1 : 0;
+      case "inQuad":
+        return t * t;
+      case "outQuad":
+        return 1 - (1 - t) * (1 - t);
+      case "inOutQuad":
+        return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      case "inCubic":
+        return t * t * t;
+      case "outCubic":
+        return 1 - Math.pow(1 - t, 3);
+      case "inOutCubic":
+        return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      case "inQuart":
+        return t * t * t * t;
+      case "outQuart":
+        return 1 - Math.pow(1 - t, 4);
+      case "inOutQuart":
+        return t < 0.5 ? 8 * Math.pow(t, 4) : 1 - Math.pow(-2 * t + 2, 4) / 2;
+      case "inQuint":
+        return Math.pow(t, 5);
+      case "outQuint":
+        return 1 - Math.pow(1 - t, 5);
+      case "inOutQuint":
+        return t < 0.5 ? 16 * Math.pow(t, 5) : 1 - Math.pow(-2 * t + 2, 5) / 2;
+      case "inSine":
+        return 1 - Math.cos(t * Math.PI / 2);
+      case "outSine":
+        return Math.sin(t * Math.PI / 2);
+      case "inOutSine":
+        return -(Math.cos(Math.PI * t) - 1) / 2;
+      case "inExpo":
+        return t === 0 ? 0 : Math.pow(2, 10 * t - 10);
+      case "outExpo":
+        return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
+      case "inOutExpo":
+        if (t === 0) return 0;
+        if (t === 1) return 1;
+        return t < 0.5 ? Math.pow(2, 20 * t - 10) / 2 : (2 - Math.pow(2, -20 * t + 10)) / 2;
+      case "inCirc":
+        return 1 - Math.sqrt(1 - t * t);
+      case "outCirc":
+        return Math.sqrt(1 - Math.pow(t - 1, 2));
+      case "inOutCirc":
+        return t < 0.5 ? (1 - Math.sqrt(1 - Math.pow(2 * t, 2))) / 2 : (Math.sqrt(1 - Math.pow(-2 * t + 2, 2)) + 1) / 2;
+      default:
+        return t;
+    }
+  };
+  if (typeof spec === "string") return named(spec);
+  if (isRecord(spec) && spec.type === "cubicBezier") {
+    const x1 = spec.x1, y1 = spec.y1, x2 = spec.x2, y2 = spec.y2;
+    const cx = 3 * x1;
+    const bx = 3 * (x2 - x1) - cx;
+    const ax = 1 - cx - bx;
+    const cy = 3 * y1;
+    const by = 3 * (y2 - y1) - cy;
+    const ay = 1 - cy - by;
+    const sampleX = (tt2) => ((ax * tt2 + bx) * tt2 + cx) * tt2;
+    const sampleDX = (tt2) => (3 * ax * tt2 + 2 * bx) * tt2 + cx;
+    const sampleY = (tt2) => ((ay * tt2 + by) * tt2 + cy) * tt2;
+    let tt = t;
+    for (let i = 0; i < 5; i++) {
+      const x = sampleX(tt) - t;
+      const d = sampleDX(tt);
+      if (Math.abs(x) < 1e-5) break;
+      if (Math.abs(d) < 1e-6) break;
+      tt = clamp01(tt - x / d);
+    }
+    return sampleY(tt);
+  }
+  return t;
+}
+function lerp$1(a, b, t) {
+  return a + (b - a) * t;
+}
+function valueAtSegments(segments, tMs, defaultValue) {
+  let cur = defaultValue;
+  for (const seg of segments) {
+    if (tMs < seg.startMs) return cur;
+    if (tMs <= seg.endMs) {
+      const dur = Math.max(1e-6, seg.endMs - seg.startMs);
+      const u = (tMs - seg.startMs) / dur;
+      const e = ease(u, seg.ease);
+      return lerp$1(seg.from, seg.to, e);
+    }
+    cur = seg.to;
+  }
+  return cur;
+}
+function pushSegment(segments, seg) {
+  if (!(Number.isFinite(seg.startMs) && Number.isFinite(seg.endMs))) return;
+  if (!(Number.isFinite(seg.from) && Number.isFinite(seg.to))) return;
+  if (seg.endMs <= seg.startMs) return;
+  segments.push(seg);
+}
+function compileAutomation(entries2) {
+  const vars = {};
+  const impulses = [];
+  const sorted = Array.from(entries2).filter((e) => e && Number.isFinite(e.ms) && typeof e.text === "string").sort((a, b) => a.ms - b.ms);
+  const currentTimeByVar = {};
+  const currentValueByVar = {};
+  for (const e of sorted) {
+    const ms = Math.max(0, Math.round(e.ms));
+    const raw = String(e.text ?? "").trim();
+    if (!raw) continue;
+    let obj;
+    try {
+      obj = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    if (!isRecord(obj)) continue;
+    if (typeof obj.call === "string" && obj.call.trim()) {
+      impulses.push({ type: "call", ms, call: String(obj.call), args: Array.isArray(obj.args) ? obj.args : void 0 });
+      continue;
+    }
+    if (isRecord(obj.input) && typeof obj.input.type === "string") {
+      const input = { ...obj.input, type: String(obj.input.type) };
+      impulses.push({ type: "input", ms, input });
+      continue;
+    }
+    if (typeof obj.var !== "string" || !obj.var.trim()) continue;
+    const varName = obj.var.trim();
+    const easeSpec = parseEaseSpec(obj.ease);
+    if (!vars[varName]) vars[varName] = [];
+    const segments = vars[varName];
+    const t0 = currentTimeByVar[varName] ?? -Infinity;
+    const v0 = currentValueByVar[varName];
+    if (obj.hasOwnProperty("value")) {
+      const value = Number(obj.value);
+      if (!Number.isFinite(value)) continue;
+      if (!Number.isFinite(v0)) {
+        currentTimeByVar[varName] = ms;
+        currentValueByVar[varName] = value;
+        continue;
+      }
+      if (!(ms > t0)) {
+        currentTimeByVar[varName] = ms;
+        currentValueByVar[varName] = value;
+        continue;
+      }
+      pushSegment(segments, {
+        startMs: t0,
+        endMs: ms,
+        from: v0,
+        to: value,
+        ease: easeSpec
+      });
+      currentTimeByVar[varName] = ms;
+      currentValueByVar[varName] = value;
+      continue;
+    }
+    if (obj.hasOwnProperty("to") && obj.hasOwnProperty("durMs")) {
+      const to = Number(obj.to);
+      const durMs = Math.max(0, Math.round(Number(obj.durMs)));
+      if (!Number.isFinite(to) || !Number.isFinite(durMs) || durMs <= 0) continue;
+      const from = Number.isFinite(v0) ? v0 : 0;
+      const startMs = Math.max(ms, Number.isFinite(t0) ? t0 : ms);
+      const endMs = startMs + durMs;
+      pushSegment(segments, { startMs, endMs, from, to, ease: easeSpec });
+      currentTimeByVar[varName] = endMs;
+      currentValueByVar[varName] = to;
+      continue;
+    }
+  }
+  impulses.sort((a, b) => a.ms - b.ms);
+  return { vars, impulses };
+}
+function valueAt(compiled, varName, timeSec, defaultValue = 0) {
+  const tMs = Math.max(0, Math.round(Number(timeSec) * 1e3));
+  const segs = compiled.vars[String(varName)] ?? [];
+  return valueAtSegments(segs, tMs, defaultValue);
+}
+function impulsesBetween(compiled, prevTimeSec, nowTimeSec) {
+  const a = Math.max(0, Math.round(Number(prevTimeSec) * 1e3));
+  const b = Math.max(0, Math.round(Number(nowTimeSec) * 1e3));
+  if (!(Number.isFinite(a) && Number.isFinite(b))) return [];
+  if (b <= a) return [];
+  const out = [];
+  for (const ev of compiled.impulses) {
+    if (ev.ms <= a) continue;
+    if (ev.ms > b) break;
+    out.push(ev);
+  }
+  return out;
 }
 const THEMES = {
   saintbilly: {
@@ -18721,8 +18994,11 @@ class WorldsRenderer {
         const screenLockRaw = (_a = background.shaderUniforms) == null ? void 0 : _a.screenLock;
         const screenLock = Number.isFinite(screenLockRaw) ? screenLockRaw > 0.5 : false;
         const params0 = new Float32Array([-1, screenLock ? 1 : 0, 0, 0]);
-        const zVals = layouts.filter((l) => l.visible).map((l) => l.transform.position.z).sort((a, b) => a - b);
-        const planeZ = zVals.length ? zVals[zVals.length / 2 | 0] : 0;
+        const planeZOverride = background && Number.isFinite(background.paperPlaneZ) ? background.paperPlaneZ : null;
+        const planeZ = planeZOverride !== null ? planeZOverride : (() => {
+          const zVals = layouts.filter((l) => l.visible).map((l) => l.transform.position.z).sort((a, b) => a - b);
+          return zVals.length ? zVals[zVals.length / 2 | 0] : 0;
+        })();
         const params1 = new Float32Array([aspect, Math.tan(camera.fov * 0.5), planeZ, 0]);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 0, mvp);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
@@ -20111,7 +20387,18 @@ function parseEdge(v2, path) {
   const to = v2.to;
   if (typeof from !== "string" || !from) err(`${path}.from`, "must be a non-empty string");
   if (typeof to !== "string" || !to) err(`${path}.to`, "must be a non-empty string");
-  return { from, to };
+  const fromChannelRaw = v2.fromChannel;
+  const toChannelRaw = v2.toChannel;
+  const parseChannel = (raw, p) => {
+    if (raw === void 0 || raw === null) return void 0;
+    const n = Math.floor(Number(raw));
+    if (!Number.isFinite(n)) err(p, "must be a finite number");
+    if (n < 0 || n > 64) err(p, "must be an integer in range 0..64");
+    return n;
+  };
+  const fromChannel = parseChannel(fromChannelRaw, `${path}.fromChannel`);
+  const toChannel = parseChannel(toChannelRaw, `${path}.toChannel`);
+  return { from, to, fromChannel, toChannel };
 }
 function parseNode(v2, path) {
   if (!isPlainObject(v2)) err(path, "node must be an object");
@@ -20138,6 +20425,94 @@ function parseNode(v2, path) {
         gain: parseExpr(v2.gain, `${path}.gain`),
         crushBits: v2.crushBits === void 0 ? void 0 : parseExpr(v2.crushBits, `${path}.crushBits`),
         holdHz: v2.holdHz === void 0 ? void 0 : parseExpr(v2.holdHz, `${path}.holdHz`),
+        stopAfter: v2.stopAfter === void 0 ? void 0 : parseExpr(v2.stopAfter, `${path}.stopAfter`)
+      };
+    case "delay":
+      return {
+        kind,
+        id,
+        delayTime: parseExpr(v2.delayTime, `${path}.delayTime`),
+        maxDelayTime: v2.maxDelayTime === void 0 ? void 0 : parseExpr(v2.maxDelayTime, `${path}.maxDelayTime`)
+      };
+    case "stereoPanner":
+      return {
+        kind,
+        id,
+        pan: parseExpr(v2.pan, `${path}.pan`)
+      };
+    case "compressor":
+      return {
+        kind,
+        id,
+        threshold: v2.threshold === void 0 ? void 0 : parseExpr(v2.threshold, `${path}.threshold`),
+        knee: v2.knee === void 0 ? void 0 : parseExpr(v2.knee, `${path}.knee`),
+        ratio: v2.ratio === void 0 ? void 0 : parseExpr(v2.ratio, `${path}.ratio`),
+        attack: v2.attack === void 0 ? void 0 : parseExpr(v2.attack, `${path}.attack`),
+        release: v2.release === void 0 ? void 0 : parseExpr(v2.release, `${path}.release`)
+      };
+    case "convolver":
+      return {
+        kind,
+        id,
+        impulseType: v2.impulseType === void 0 ? void 0 : parseExpr(v2.impulseType, `${path}.impulseType`),
+        seconds: v2.seconds === void 0 ? void 0 : parseExpr(v2.seconds, `${path}.seconds`),
+        decay: v2.decay === void 0 ? void 0 : parseExpr(v2.decay, `${path}.decay`),
+        reverse: v2.reverse === void 0 ? void 0 : parseExpr(v2.reverse, `${path}.reverse`),
+        normalize: v2.normalize === void 0 ? void 0 : parseExpr(v2.normalize, `${path}.normalize`)
+      };
+    case "panner":
+      return {
+        kind,
+        id,
+        panningModel: v2.panningModel === void 0 ? void 0 : parseExpr(v2.panningModel, `${path}.panningModel`),
+        distanceModel: v2.distanceModel === void 0 ? void 0 : parseExpr(v2.distanceModel, `${path}.distanceModel`),
+        positionX: v2.positionX === void 0 ? void 0 : parseExpr(v2.positionX, `${path}.positionX`),
+        positionY: v2.positionY === void 0 ? void 0 : parseExpr(v2.positionY, `${path}.positionY`),
+        positionZ: v2.positionZ === void 0 ? void 0 : parseExpr(v2.positionZ, `${path}.positionZ`),
+        orientationX: v2.orientationX === void 0 ? void 0 : parseExpr(v2.orientationX, `${path}.orientationX`),
+        orientationY: v2.orientationY === void 0 ? void 0 : parseExpr(v2.orientationY, `${path}.orientationY`),
+        orientationZ: v2.orientationZ === void 0 ? void 0 : parseExpr(v2.orientationZ, `${path}.orientationZ`),
+        refDistance: v2.refDistance === void 0 ? void 0 : parseExpr(v2.refDistance, `${path}.refDistance`),
+        maxDistance: v2.maxDistance === void 0 ? void 0 : parseExpr(v2.maxDistance, `${path}.maxDistance`),
+        rolloffFactor: v2.rolloffFactor === void 0 ? void 0 : parseExpr(v2.rolloffFactor, `${path}.rolloffFactor`),
+        coneInnerAngle: v2.coneInnerAngle === void 0 ? void 0 : parseExpr(v2.coneInnerAngle, `${path}.coneInnerAngle`),
+        coneOuterAngle: v2.coneOuterAngle === void 0 ? void 0 : parseExpr(v2.coneOuterAngle, `${path}.coneOuterAngle`),
+        coneOuterGain: v2.coneOuterGain === void 0 ? void 0 : parseExpr(v2.coneOuterGain, `${path}.coneOuterGain`)
+      };
+    case "channelSplitter":
+      return {
+        kind,
+        id,
+        outputs: v2.outputs === void 0 ? void 0 : parseExpr(v2.outputs, `${path}.outputs`)
+      };
+    case "channelMerger":
+      return {
+        kind,
+        id,
+        inputs: v2.inputs === void 0 ? void 0 : parseExpr(v2.inputs, `${path}.inputs`)
+      };
+    case "iirFilter": {
+      const ff = v2.feedforward;
+      const fb = v2.feedback;
+      if (!Array.isArray(ff) || ff.length === 0) err(`${path}.feedforward`, "must be a non-empty number array");
+      if (!Array.isArray(fb) || fb.length === 0) err(`${path}.feedback`, "must be a non-empty number array");
+      const feedforward = ff.map((n, i) => {
+        const x = Number(n);
+        if (!Number.isFinite(x)) err(`${path}.feedforward[${i}]`, "must be a finite number");
+        return x;
+      });
+      const feedback = fb.map((n, i) => {
+        const x = Number(n);
+        if (!Number.isFinite(x)) err(`${path}.feedback[${i}]`, "must be a finite number");
+        return x;
+      });
+      return { kind, id, feedforward, feedback };
+    }
+    case "constantSource":
+      return {
+        kind,
+        id,
+        offset: parseExpr(v2.offset, `${path}.offset`),
         stopAfter: v2.stopAfter === void 0 ? void 0 : parseExpr(v2.stopAfter, `${path}.stopAfter`)
       };
     case "filter":
@@ -20459,6 +20834,26 @@ function safeConnect(node, dest) {
   } catch {
   }
 }
+function safeConnectIndexed(node, dest, outputIndex, inputIndex) {
+  try {
+    const out = outputIndex === void 0 ? void 0 : outputIndex | 0;
+    const inp = inputIndex === void 0 ? void 0 : inputIndex | 0;
+    if (out === void 0 && inp === void 0) {
+      node.connect(dest);
+      return;
+    }
+    if (out !== void 0 && inp !== void 0) {
+      node.connect(dest, out, inp);
+      return;
+    }
+    if (out !== void 0) {
+      node.connect(dest, out);
+      return;
+    }
+    node.connect(dest, 0, inp);
+  } catch {
+  }
+}
 function createNoiseSource(ctx, duration, seed, opts) {
   const frames = Math.max(1, Math.floor(duration * ctx.sampleRate));
   const buffer = getOrCreateNoiseBuffer(ctx, frames, seed, opts);
@@ -20573,6 +20968,51 @@ function applyBitcrush(data, sampleRate, crushBits, holdHz) {
     for (let j = i; j < end; j++) data[j] = qq;
     i = end;
   }
+}
+const IMPULSE_CACHE_MAX_BYTES = 2 * 1024 * 1024;
+const impulseCacheByContext = /* @__PURE__ */ new WeakMap();
+function getImpulseCache(ctx) {
+  const existing = impulseCacheByContext.get(ctx);
+  if (existing) return existing;
+  const cache = new LruCache(IMPULSE_CACHE_MAX_BYTES, (e) => e.bytes);
+  impulseCacheByContext.set(ctx, cache);
+  return cache;
+}
+function applyImpulseEnvelope(data, decay, reverse) {
+  const n = data.length;
+  const d = Number.isFinite(decay) ? Math.max(0.01, decay) : 3;
+  if (n <= 1) return;
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    const x = reverse ? t : 1 - t;
+    const env = Math.pow(Math.max(0, x), d);
+    data[i] = data[i] * env;
+  }
+}
+function getOrCreateImpulseBuffer(ctx, frames, seed, opts) {
+  const impulseType = String((opts == null ? void 0 : opts.impulseType) ?? "white");
+  const decay = Number.isFinite(opts == null ? void 0 : opts.decay) ? Number(opts == null ? void 0 : opts.decay) : 3;
+  const reverse = !!(opts == null ? void 0 : opts.reverse);
+  const key = `${ctx.sampleRate}|${frames}|${seed >>> 0}|${impulseType}|d${decay.toFixed(3)}|r${reverse ? 1 : 0}`;
+  const cache = getImpulseCache(ctx);
+  const hit = cache.get(key);
+  if (hit) return hit.buffer;
+  const channels = 2;
+  const buffer = ctx.createBuffer(channels, frames, ctx.sampleRate);
+  for (let ch = 0; ch < channels; ch++) {
+    const data = buffer.getChannelData(ch);
+    const chSeed = (seed ^ ch * 2654435769) >>> 0;
+    if (impulseType === "pink") {
+      generatePinkNoise(data, chSeed);
+    } else if (impulseType === "brown") {
+      generateBrownNoise(data, chSeed);
+    } else {
+      generateWhiteNoise(data, chSeed);
+    }
+    applyImpulseEnvelope(data, decay, reverse);
+  }
+  cache.set(key, { buffer, bytes: estimateAudioBufferBytes(buffer) });
+  return buffer;
 }
 function getOrCreateNoiseBuffer(ctx, frames, seed, opts) {
   const noiseType = String((opts == null ? void 0 : opts.noiseType) ?? "white");
@@ -20738,6 +21178,200 @@ function playSfxGraph(ctx, preset, seed, options = {}) {
       stoppables.push({ stop: rt.stop });
       continue;
     }
+    if (node.kind === "delay") {
+      const maxDelay = node.maxDelayTime !== void 0 ? Number(evalr.eval(node.maxDelayTime)) : 2;
+      const maxDelayTime = clamp(Number.isFinite(maxDelay) ? maxDelay : 2, 0.01, 10);
+      const d = ctx.createDelay(maxDelayTime);
+      const dt = clamp(Number(evalr.eval(node.delayTime)), 0, maxDelayTime);
+      d.delayTime.value = Number.isFinite(dt) ? dt : 0;
+      nodes.set(node.id, {
+        id: node.id,
+        kind: node.kind,
+        input: d,
+        output: d,
+        params: {
+          delayTime: d.delayTime
+        }
+      });
+      continue;
+    }
+    if (node.kind === "stereoPanner") {
+      const p = ctx.createStereoPanner();
+      const pan = clamp(Number(evalr.eval(node.pan)), -1, 1);
+      p.pan.value = Number.isFinite(pan) ? pan : 0;
+      nodes.set(node.id, {
+        id: node.id,
+        kind: node.kind,
+        input: p,
+        output: p,
+        params: {
+          pan: p.pan
+        }
+      });
+      continue;
+    }
+    if (node.kind === "compressor") {
+      const c2 = ctx.createDynamicsCompressor();
+      if (node.threshold !== void 0) {
+        const v2 = Number(evalr.eval(node.threshold));
+        if (Number.isFinite(v2)) c2.threshold.value = v2;
+      }
+      if (node.knee !== void 0) {
+        const v2 = Number(evalr.eval(node.knee));
+        if (Number.isFinite(v2)) c2.knee.value = v2;
+      }
+      if (node.ratio !== void 0) {
+        const v2 = Number(evalr.eval(node.ratio));
+        if (Number.isFinite(v2)) c2.ratio.value = v2;
+      }
+      if (node.attack !== void 0) {
+        const v2 = Number(evalr.eval(node.attack));
+        if (Number.isFinite(v2)) c2.attack.value = Math.max(0, v2);
+      }
+      if (node.release !== void 0) {
+        const v2 = Number(evalr.eval(node.release));
+        if (Number.isFinite(v2)) c2.release.value = Math.max(0, v2);
+      }
+      nodes.set(node.id, {
+        id: node.id,
+        kind: node.kind,
+        input: c2,
+        output: c2,
+        params: {
+          threshold: c2.threshold,
+          knee: c2.knee,
+          ratio: c2.ratio,
+          attack: c2.attack,
+          release: c2.release
+        }
+      });
+      continue;
+    }
+    if (node.kind === "convolver") {
+      const conv = ctx.createConvolver();
+      const secondsRaw = node.seconds !== void 0 ? Number(evalr.eval(node.seconds)) : 0.25;
+      const seconds = clamp(Number.isFinite(secondsRaw) ? secondsRaw : 0.25, 0.01, 4);
+      const frames = Math.max(1, Math.floor(seconds * ctx.sampleRate));
+      const decayRaw = node.decay !== void 0 ? Number(evalr.eval(node.decay)) : 3;
+      const decay = clamp(Number.isFinite(decayRaw) ? decayRaw : 3, 0.01, 12);
+      const impulseType = node.impulseType !== void 0 ? String(evalr.eval(node.impulseType)) : "white";
+      const reverseRaw = node.reverse !== void 0 ? evalr.eval(node.reverse) : 0;
+      const reverse = typeof reverseRaw === "string" ? reverseRaw === "true" || reverseRaw === "1" : Number(reverseRaw) >= 0.5;
+      const normalizeRaw = node.normalize !== void 0 ? evalr.eval(node.normalize) : 1;
+      const normalize = typeof normalizeRaw === "string" ? normalizeRaw !== "false" && normalizeRaw !== "0" : Number(normalizeRaw) >= 0.5;
+      conv.normalize = normalize;
+      const nodeSeed = (seed ^ hashStr32(node.id) ^ 2246822507) >>> 0;
+      conv.buffer = getOrCreateImpulseBuffer(ctx, frames, nodeSeed, { impulseType, decay, reverse });
+      nodes.set(node.id, {
+        id: node.id,
+        kind: node.kind,
+        input: conv,
+        output: conv
+      });
+      continue;
+    }
+    if (node.kind === "panner") {
+      const p = ctx.createPanner();
+      if (node.panningModel !== void 0) {
+        const v2 = String(evalr.eval(node.panningModel));
+        if (v2 === "equalpower" || v2 === "HRTF") p.panningModel = v2;
+      }
+      if (node.distanceModel !== void 0) {
+        const v2 = String(evalr.eval(node.distanceModel));
+        if (v2 === "linear" || v2 === "inverse" || v2 === "exponential") p.distanceModel = v2;
+      }
+      const setParam = (param, expr) => {
+        if (!param || expr === void 0) return;
+        const n = Number(evalr.eval(expr));
+        if (Number.isFinite(n)) param.value = n;
+      };
+      setParam(p.positionX, node.positionX);
+      setParam(p.positionY, node.positionY);
+      setParam(p.positionZ, node.positionZ);
+      setParam(p.orientationX, node.orientationX);
+      setParam(p.orientationY, node.orientationY);
+      setParam(p.orientationZ, node.orientationZ);
+      const setNumProp = (key, expr, clampFn) => {
+        if (expr === void 0) return;
+        const n = Number(evalr.eval(expr));
+        if (!Number.isFinite(n)) return;
+        p[key] = clampFn ? clampFn(n) : n;
+      };
+      setNumProp("refDistance", node.refDistance, (x) => Math.max(0, x));
+      setNumProp("maxDistance", node.maxDistance, (x) => Math.max(0, x));
+      setNumProp("rolloffFactor", node.rolloffFactor, (x) => Math.max(0, x));
+      setNumProp("coneInnerAngle", node.coneInnerAngle, (x) => clamp(x, 0, 360));
+      setNumProp("coneOuterAngle", node.coneOuterAngle, (x) => clamp(x, 0, 360));
+      setNumProp("coneOuterGain", node.coneOuterGain, (x) => clamp(x, 0, 1));
+      nodes.set(node.id, {
+        id: node.id,
+        kind: node.kind,
+        input: p,
+        output: p,
+        params: {
+          positionX: p.positionX,
+          positionY: p.positionY,
+          positionZ: p.positionZ,
+          orientationX: p.orientationX,
+          orientationY: p.orientationY,
+          orientationZ: p.orientationZ
+        }
+      });
+      continue;
+    }
+    if (node.kind === "channelSplitter") {
+      const outputsRaw = node.outputs !== void 0 ? Number(evalr.eval(node.outputs)) : 2;
+      const outputs = clampInt(Number.isFinite(outputsRaw) ? outputsRaw : 2, 1, 64);
+      const s = ctx.createChannelSplitter(outputs);
+      nodes.set(node.id, { id: node.id, kind: node.kind, input: s, output: s });
+      continue;
+    }
+    if (node.kind === "channelMerger") {
+      const inputsRaw = node.inputs !== void 0 ? Number(evalr.eval(node.inputs)) : 2;
+      const inputs = clampInt(Number.isFinite(inputsRaw) ? inputsRaw : 2, 1, 64);
+      const m = ctx.createChannelMerger(inputs);
+      nodes.set(node.id, { id: node.id, kind: node.kind, input: m, output: m });
+      continue;
+    }
+    if (node.kind === "iirFilter") {
+      const ff = node.feedforward;
+      const fb = node.feedback;
+      const f = ctx.createIIRFilter(ff, fb);
+      nodes.set(node.id, { id: node.id, kind: node.kind, input: f, output: f });
+      continue;
+    }
+    if (node.kind === "constantSource") {
+      const cs = ctx.createConstantSource();
+      const off = Number(evalr.eval(node.offset));
+      cs.offset.value = Number.isFinite(off) ? off : 0;
+      cs.start(t0);
+      const stopAfter = node.stopAfter !== void 0 ? Number(evalr.eval(node.stopAfter)) : void 0;
+      if (stopAfter !== void 0 && Number.isFinite(stopAfter) && stopAfter > 0) {
+        try {
+          cs.stop(t0 + stopAfter);
+        } catch {
+        }
+      }
+      const rt = {
+        id: node.id,
+        kind: node.kind,
+        output: cs,
+        input: cs,
+        csrc: cs,
+        params: {
+          offset: cs.offset
+        },
+        stop: (t) => {
+          try {
+            cs.stop(t);
+          } catch {
+          }
+        }
+      };
+      nodes.set(node.id, rt);
+      stoppables.push({ stop: rt.stop });
+      continue;
+    }
     if (node.kind === "filter") {
       const f = ctx.createBiquadFilter();
       f.type = String(evalr.eval(node.filterType));
@@ -20796,7 +21430,7 @@ function playSfxGraph(ctx, preset, seed, options = {}) {
     const to = nodes.get(e.to);
     if (!to) continue;
     const dest = to.input ?? to.output;
-    safeConnect(from.output, dest);
+    safeConnectIndexed(from.output, dest, e.fromChannel, e.toChannel);
   }
   for (const ev of preset.events ?? []) {
     const at = ev.at !== void 0 ? Number(evalr.eval(ev.at)) : 0;
@@ -21301,6 +21935,8 @@ class StorieEngine {
     __publicField(this, "frameCount", 0);
     __publicField(this, "elapsedTime", 0);
     __publicField(this, "deltaTime", 0);
+    __publicField(this, "_preExportState", null);
+    __publicField(this, "_exportTimedBlockSelection", null);
     __publicField(this, "lastFrameTime", 0);
     __publicField(this, "running", false);
     // (Reserved for future one-time debug/perf toggles)
@@ -21838,6 +22474,41 @@ class StorieEngine {
       if (!doc) return null;
       if (!doc._stfxrBakedStore) doc._stfxrBakedStore = /* @__PURE__ */ new Map();
       return doc._stfxrBakedStore;
+    };
+    const sanitizePlayOptions = (options) => {
+      const out = {};
+      const v2 = Number(options == null ? void 0 : options.volume);
+      if (Number.isFinite(v2)) out.volume = Math.max(0, Math.min(2, v2));
+      const w = Number(options == null ? void 0 : options.when);
+      if (Number.isFinite(w) && w >= 0) out.when = Math.min(60, w);
+      return out;
+    };
+    const playPresetInternal = (presetIn, seed, options) => {
+      let preset;
+      try {
+        preset = parseSfxGraphPreset(presetIn);
+      } catch (e) {
+        console.warn("[stfxr.playPreset] Invalid preset:", e);
+        return { stop: () => {
+        } };
+      }
+      const MAX_NODES = 256;
+      const MAX_EDGES = 1024;
+      const MAX_EVENTS = 1024;
+      const nodeCount = Array.isArray(preset.nodes) ? preset.nodes.length : 0;
+      const edgeCount = Array.isArray(preset.edges) ? preset.edges.length : 0;
+      const eventCount = Array.isArray(preset.events) ? preset.events.length : 0;
+      if (nodeCount > MAX_NODES || edgeCount > MAX_EDGES || eventCount > MAX_EVENTS) {
+        console.warn(
+          `[stfxr.playPreset] Refusing to play overly large preset (nodes=${nodeCount}, edges=${edgeCount}, events=${eventCount}).`
+        );
+        return { stop: () => {
+        } };
+      }
+      engine.audioContext.resume().catch(() => {
+      });
+      const resolvedSeed = toSfxSeed(seed);
+      return playSfxGraph(engine.audioContext, preset, resolvedSeed, sanitizePlayOptions(options));
     };
     const evictStfxrBakedIfNeeded = (store) => {
       let total = 0;
@@ -22623,6 +23294,9 @@ class StorieEngine {
               const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
               return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, options);
             },
+            playPreset: (preset, seed, options) => {
+              return playPresetInternal(preset, seed, options);
+            },
             bake: async (name, seed, options) => {
               const store = getStfxrStore(docId);
               const entry = store == null ? void 0 : store.get(String(name));
@@ -22719,6 +23393,9 @@ class StorieEngine {
           });
           const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
           return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, options);
+        },
+        playPreset: (preset, seed, options) => {
+          return playPresetInternal(preset, seed, options);
         },
         bake: async (name, seed, options) => {
           const store = getStfxrStore();
@@ -23248,6 +23925,80 @@ class StorieEngine {
           } catch (e) {
             console.warn("[sys.parseTimed] failed:", e);
             return [];
+          }
+        },
+        /**
+         * Synthetic input injection.
+         * Updates the engine's InputManager state AND dispatches an on:input event
+         * to the current document handler (if any).
+         *
+         * This is designed for deterministic automation and works during video export
+         * (real input is frozen during export).
+         */
+        input: {
+          emit: (event) => {
+            var _a;
+            try {
+              if (!event || typeof event !== "object") return;
+              if (engine.hostAudienceView) return;
+              engine.input.applySyntheticEvent(event);
+              const doc = engine.getActiveDocument();
+              if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) return;
+              engine.inputDispatchDepth++;
+              try {
+                const shouldContinue = doc.handlers.input(event);
+                if (shouldContinue === false) engine.stop();
+              } finally {
+                engine.inputDispatchDepth = Math.max(0, engine.inputDispatchDepth - 1);
+              }
+            } catch (e) {
+              console.warn("[sys.input.emit] failed:", e);
+            }
+          }
+        },
+        /**
+         * Time-based automation helpers built around ```timed blocks.
+         * These are pure/deterministic utilities: they compute values and
+         * enumerate impulses; they do not execute user callbacks.
+         */
+        automation: {
+          compile: (entries2) => {
+            try {
+              return compileAutomation(entries2);
+            } catch (e) {
+              console.warn("[sys.automation.compile] failed:", e);
+              return { vars: {}, impulses: [] };
+            }
+          },
+          valueAt: (compiled, varName, timeSec, defaultValue = 0) => {
+            try {
+              return valueAt(compiled, String(varName ?? ""), Number(timeSec) || 0, Number(defaultValue) || 0);
+            } catch (e) {
+              console.warn("[sys.automation.valueAt] failed:", e);
+              return Number(defaultValue) || 0;
+            }
+          },
+          impulsesBetween: (compiled, prevTimeSec, nowTimeSec) => {
+            try {
+              return impulsesBetween(compiled, Number(prevTimeSec) || 0, Number(nowTimeSec) || 0);
+            } catch (e) {
+              console.warn("[sys.automation.impulsesBetween] failed:", e);
+              return [];
+            }
+          },
+          parseEase: (raw) => {
+            try {
+              return parseEaseSpec(raw);
+            } catch {
+              return "linear";
+            }
+          },
+          ease: (u, spec) => {
+            try {
+              return ease(Number(u) || 0, spec ?? "linear");
+            } catch {
+              return 0;
+            }
           }
         }
       },
@@ -25031,7 +25782,7 @@ class StorieEngine {
         }
         return JSON.parse(JSON.stringify(preset));
       };
-      const sameEdge = (a, b) => a.from === b.from && a.to === b.to;
+      const sameEdge = (a, b) => a.from === b.from && a.to === b.to && (a.fromChannel ?? null) === (b.fromChannel ?? null) && (a.toChannel ?? null) === (b.toChannel ?? null);
       const resolveBasePreset = (base) => {
         const asBuiltIn = base;
         if (SFX_PRESETS[asBuiltIn]) return SFX_PRESETS[asBuiltIn];
@@ -25105,6 +25856,7 @@ class StorieEngine {
       }
       this.sandbox.createCompartment(documentId, parsed.metadata);
       const initBlocks = [];
+      const exportBlocks = [];
       const updateBlocks = [];
       const renderBlocks = [];
       const inputBlocks = [];
@@ -25115,6 +25867,8 @@ class StorieEngine {
         const hook = (_h = block.metadata) == null ? void 0 : _h.on;
         if (hook === "init") {
           initBlocks.push(block.code);
+        } else if (hook === "export") {
+          exportBlocks.push(block.code);
         } else if (hook === "update") {
           updateBlocks.push(block.code);
         } else if (hook === "render") {
@@ -25160,6 +25914,7 @@ ${exports$1}
       console.log(`  Scope variables:`, scopeVarNames);
       console.log(`  Scope values:`, scopeVarNames.map((k) => `${k}=${JSON.stringify(currentScope[k])}`).join(", "));
       const hasInit = typeof currentScope.init === "function";
+      const hasExport = typeof currentScope.export === "function";
       const hasUpdate = typeof currentScope.update === "function";
       const hasRender = typeof currentScope.render === "function";
       const hasInput = typeof currentScope.input === "function";
@@ -25176,6 +25931,16 @@ ${initBlocks.join("\n\n")}
 ${exportVars}
 };`;
         this.sandbox.executeCodeBlock(documentId, initCode, true);
+      }
+      if (!hasExport && exportBlocks.length > 0) {
+        console.log(`  Creating export handler from ${exportBlocks.length} blocks with ${scopeVarNames.length} imports`);
+        const exportCode = `scope.export = function(options) {
+${importVars}
+${captureVars}
+${exportBlocks.join("\n\n")}
+${exportVars}
+};`;
+        this.sandbox.executeCodeBlock(documentId, exportCode, true);
       }
       if (!hasUpdate && updateBlocks.length > 0) {
         console.log(`  Creating update handler from ${updateBlocks.length} blocks with ${scopeVarNames.length} imports`);
@@ -25261,6 +26026,7 @@ ${exportVars}
       this.activeDocumentId = documentId;
       console.log("🔍 Extracted handlers:", {
         init: typeof (handlers == null ? void 0 : handlers.init),
+        export: typeof (handlers == null ? void 0 : handlers.export),
         update: typeof (handlers == null ? void 0 : handlers.update),
         render: typeof (handlers == null ? void 0 : handlers.render),
         input: typeof (handlers == null ? void 0 : handlers.input),
@@ -25520,11 +26286,27 @@ ${exportVars}
               }
             }
           }
+          const paperPlaneZ = (() => {
+            var _a2, _b2, _c;
+            if (!shaderInfo) return void 0;
+            if (Number.isFinite(shaderInfo.paperPlaneZ)) {
+              return shaderInfo.paperPlaneZ;
+            }
+            if (shaderInfo.paperPlaneZMode === "focus") {
+              const focusedIdx = (_a2 = this.lastApplied3DCameraFocus) == null ? void 0 : _a2.sectionIndex;
+              if (!(typeof focusedIdx === "number" && Number.isFinite(focusedIdx))) return void 0;
+              const focused = this.section3DLayouts.find((l) => l.sectionIndex === focusedIdx);
+              const z = (_c = (_b2 = focused == null ? void 0 : focused.transform) == null ? void 0 : _b2.position) == null ? void 0 : _c.z;
+              return Number.isFinite(z) ? z : void 0;
+            }
+            return void 0;
+          })();
           const backgroundConfig = proceduralBackground || shaderInfo ? {
             enabled: true,
             chain: backgroundChain,
             shaderName: shaderInfo == null ? void 0 : shaderInfo.name,
             shaderUniforms: mergedShaderUniforms,
+            paperPlaneZ,
             paperColor: this.resolveWorldsSectionBackground(),
             lineColor: this.withAlpha(this.getStyle("dim").fg, 64),
             scale: shaderInfo ? shaderCoordScale : 1,
@@ -25563,11 +26345,37 @@ ${exportVars}
    * Call resumeFromExport() when done.
    */
   pauseForExport() {
+    var _a;
     this.running = false;
     this._isExporting = true;
     this.input.setEnabled(false);
     this._exportAudioBuffer = null;
     this._exportAudioOffset = 0;
+    this._preExportState = {
+      elapsedTime: this.elapsedTime,
+      deltaTime: this.deltaTime,
+      frameCount: this.frameCount
+    };
+    this.elapsedTime = 0;
+    this.deltaTime = 0;
+    this.frameCount = 0;
+    const doc = this.getActiveDocument();
+    const handler = (_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.export;
+    if (handler) {
+      try {
+        handler({ timedBlock: this._exportTimedBlockSelection });
+      } catch (e) {
+        console.warn("[Engine] Error in export handler:", e);
+      }
+    }
+  }
+  /**
+   * Configure export-only options used by pauseForExport().
+   * Called by the export UI before starting the tickExportFrame loop.
+   */
+  setExportTimedBlockSelection(name) {
+    const trimmed = String(name ?? "").trim();
+    this._exportTimedBlockSelection = trimmed.length > 0 ? trimmed : null;
   }
   /**
    * Resume normal operation after a video export ends or is cancelled.
@@ -25575,9 +26383,27 @@ ${exportVars}
   resumeFromExport() {
     this._isExporting = false;
     this.input.setEnabled(true);
+    if (this._preExportState) {
+      this.elapsedTime = this._preExportState.elapsedTime;
+      this.deltaTime = this._preExportState.deltaTime;
+      this.frameCount = this._preExportState.frameCount;
+      this._preExportState = null;
+    }
     this.running = true;
     this.lastFrameTime = performance.now();
     this.mainLoop(this.lastFrameTime);
+  }
+  /**
+   * List timed block names available in the active document.
+   * Useful for host/UI features (e.g. export panel dropdowns).
+   */
+  getTimedBlockNames() {
+    const docId = this.activeDocumentId;
+    if (!docId) return [];
+    const doc = this.documents.get(docId);
+    const store = doc == null ? void 0 : doc._timedStore;
+    if (!store) return [];
+    return Array.from(store.keys());
   }
   /**
    * Return the sample rate of the engine's live AudioContext.
@@ -26090,11 +26916,25 @@ ${content}`.trim();
       const shaderSpec = v2.substring(7).trim();
       const [name, ...uniformSpecs] = shaderSpec.split(";");
       const uniforms = {};
+      let paperPlaneZ;
+      let paperPlaneZMode;
       for (const spec of uniformSpecs) {
         const [key, value] = spec.split("=");
         if (key && value) {
           const trimmedKey = key.trim();
           const trimmedValue = value.trim();
+          if (trimmedKey === "paperPlaneZ") {
+            const lower = trimmedValue.toLowerCase();
+            if (lower === "focus" || lower === "focused") {
+              paperPlaneZMode = "focus";
+              continue;
+            }
+            const num = parseFloat(trimmedValue);
+            if (!isNaN(num) && Number.isFinite(num)) {
+              paperPlaneZ = num;
+              continue;
+            }
+          }
           if (trimmedValue.includes(",")) {
             uniforms[trimmedKey] = trimmedValue.split(",").map((s) => parseFloat(s.trim())).filter((n) => !isNaN(n));
           } else {
@@ -26105,7 +26945,7 @@ ${content}`.trim();
           }
         }
       }
-      return { name: name.trim(), uniforms };
+      return { name: name.trim(), uniforms, paperPlaneZ, paperPlaneZMode };
     }
     return null;
   }

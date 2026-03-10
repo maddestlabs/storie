@@ -23,7 +23,7 @@ worlds.config.setDefaults({
   defaultSectionHeight: 24,       // Default height
   autoLayoutSpacing: 50,         // Spacing between auto-laid-out sections (world units)
   sectionBorderEnabled: false,     // Draw a border around each section card
-  sectionBackground: 'shader:ruledlines',
+  sectionBackground: 'shader:ruledlines;paperPlaneZ=focus',
 });
 
 // “Looking down” at an infinite canvas feel:

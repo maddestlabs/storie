@@ -303,6 +303,8 @@ export interface UserHandlers {
   init?: () => void;
   update?: (delta: number) => void;
   render?: () => void;
+  /** Called once when a video export begins (after the engine enters export mode). */
+  export?: (options?: { timedBlock?: string | null }) => void;
   input?: (event: InputEvent) => boolean;  // Returns true to continue, false to quit
   drop?: (file: DroppedFile) => void;
 }

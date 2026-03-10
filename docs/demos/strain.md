@@ -3,8 +3,9 @@ name: "St|rain"
 theme: "neotopia"
 width: 1080
 height: 2400
-shaders: "zerorain+lightvignette+bloom+crt"
+shaders: "zerorain+lightvignette+bloom+scanlines"
 font: "Asimovian"
+fontsize: 18
 ---
 
 Binary strains of rain fall. Type `0` or `1` to match the **bottom digit** of each falling strain.  

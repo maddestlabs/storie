@@ -1,5 +1,5 @@
 ---
-title: "t|Storie ꭲꭼꭱꮇꮖꮑꭺꮮ ꭼꮑᏽꮖꮑꭼ"
+title: "S|torie ꭲꭼꭱꮇꮖꮑꭺꮮ ꭼꮑᏽꮖꮑꭼ"
 author: "Maddest Labs"
 theme: "neonopia"
 ---
@@ -48,7 +48,7 @@ For example:
 - `**bold**` creates **bold** text
 - `[link](#url)` creates a clickable link
 ⠀
-t|Storie extends Markdown with code blocks that can respond to events, render graphics, and create interactive experiences.
+S|torie extends Markdown with code blocks that can respond to events, render graphics, and create interactive experiences.
 ⠀
 - [Continue the tour](#tour-start)  
 - [Return to start](#welcome-to)
@@ -57,12 +57,12 @@ t|Storie extends Markdown with code blocks that can respond to events, render gr
 ⠀
 **The Journey Begins**
 ⠀
-t|Storie parses Markdown documents into **Sections** (separated by headings) and renders them in a large interactive canvas.
+S|torie parses Markdown documents into **Sections** (separated by headings) and renders them in a large interactive canvas.
 ⠀
 Each Section can contain:
 - **Rich text content** - Markdown-formatted text
 - **Links** - Navigate between Sections
-- **Code blocks** - Executable Nim code that runs in response to events
+- **Code blocks** - Executable JavaScript code that runs in response to events
 - **Front matter** - Configuration variables in YAML format
 ⠀
 Let's explore each feature:
@@ -75,13 +75,12 @@ Let's explore each feature:
 
 # Frontmatter
 ⠀
-At the top of any t|Storie document, you can define variables in YAML format:
+At the top of any S|torie document, you can define variables in YAML format:
 
 ```ascii
 ---
 title: "My Story"
 author: "Your Name"
-targetFPS: 60
 theme: "nord"
 ---
 ```
@@ -93,7 +92,7 @@ Front matter is perfect for configuration, game state, or any data you want to a
 - [Continue to Markdown sections](#markdown-sections)  
 - [Back to tour start](#tour-start)
 
-```nim on:enter
+```js on:enter
 visitedFrontmatter = true
 explorerLevel++
 ```
@@ -109,59 +108,17 @@ Sections can be:
 ⠀
 Right now, you're in a hidden Section that's navigable via links but doesn't appear in the main contents listing. This is perfect for creating branching narratives!
 ⠀
-- [Learn about canvas rendering](#canvas-rendering)  
 - [Jump to interactive code](#interactive-code)  
 - [Back to tour start](#tour-start)
 
-```nim on:enter
+```js on:enter
 visitedMarkdown = true
 explorerLevel++
 ```
 
-# Canvas Rendering
-⠀
-t|Storie provides a powerful terminal-based canvas with multiple layers:
-⠀
-**Unified Drawing API:**
-- `draw(layer, x, y, text)` - Draw text on any layer
-- `clear(layer)` - Clear a layer
-- `fillRect(layer, x, y, w, h, char)` - Fill a rectangle
-⠀
-Use `on:render` code blocks to draw each frame!
-⠀
-- [Explore interactive code](#interactive-code)  
-- [See a rendering example](#render-example)  
-- [Back to tour](#tour-start)
-
-```nim on:enter
-visitedRendering = true
-explorerLevel++
-```
-
-# Render Example
-⠀
-Here's a simple rendering code block:
-
-```nim
-# Example: on:render
-clear()
-var msg = "Hello from t|Storie!"
-draw(0, 2, 2, msg)
-```
-⠀
-This code would run **every frame** and:
-1. Clear the background
-2. Calculate center position
-3. Draw centered text
-⠀
-You can combine multiple layers to create complex UIs and graphics!
-⠀
-- [Continue to interactive code](#interactive-code)  
-- [Back to canvas info](#canvas-rendering)
-
 # Interactive Code
 ⠀
-t|Storie supports several event types:
+S|torie supports several event types:
 ⠀
 **`on:init`** - Runs once when document loads  
 **`on:render`** - Runs every frame for drawing  
@@ -177,14 +134,14 @@ The canvas navigation system you're using right now is built with these code blo
 - [Complete the tour](#journey-complete)  
 - [Back to tour start](#tour-start)
 
-```nim on:enter
+```js on:enter
 visitedInteractive = true
 explorerLevel++
 ```
 
 # Advanced Hub
 ⠀
-Ready to dive deeper? t|Storie includes powerful features for creating sophisticated interactive experiences:
+Ready to dive deeper? S|torie includes powerful features for creating sophisticated interactive experiences:
 ⠀
 - [Animation & Effects](#animation-features)  
 - [Audio System](#audio-features)  
@@ -195,7 +152,7 @@ Ready to dive deeper? t|Storie includes powerful features for creating sophistic
 
 # Animation Features
 ⠀
-t|Storie includes built-in animation helpers:
+S|torie includes built-in animation helpers:
 - **Transitions** - Smooth property changes
 - **Easing functions** - Make animations feel natural
 - **Timing controls** - Frame-based or time-based
@@ -210,13 +167,12 @@ Check out `lib/animation.nim` and `lib/transition_helpers.nim` for the full API.
 ⠀
 - [Back to advanced hub](#advanced-hub)
 
-# audio_features
+# Audio Features
 ⠀
-Generate and play audio directly from your code:
+Full support for all of WebAudio, a robust and incredibly powerful audio API.
 ⠀
 - **Audio nodes** - Modular sound generation
 - **Audio generation** - Create sounds procedurally
-- **miniaudio bindings** - Full audio playback support
 ⠀
 Perfect for:
 - Background music
@@ -275,7 +231,7 @@ Check `lib/layout.nim` and `lib/storie_themes.nim`.
 Load and share documents easily:
 - Create a Markdown file in a GitHub Gist
 - Get the Gist ID
-- Load it directly in t|Storie with `?content=gistid`
+- Load it directly in S|torie with `?content=gistid`
 ⠀
 GitHub Gist is totally free, facilitates sharing and collaboration and includes built-in version control. Made a mistake in your code? No problem, just revert back to previous version.
 ⠀
@@ -283,7 +239,7 @@ GitHub Gist is totally free, facilitates sharing and collaboration and includes 
 
 # Journey Complete
 ⠀
-Congratulations! You've explored t|Storie and learned about:
+Congratulations! You've explored S|torie and learned about:
 ⠀
 ✓ Markdown sections and navigation
 ✓ Front matter variables
@@ -295,12 +251,12 @@ Congratulations! You've explored t|Storie and learned about:
 - [What's Next](#whats-next)
 - [Return to start](#welcome-to)
 
-```nim on:enter
+```js on:enter
 # Activate fire particles in this section
 inFinalStats = true
 ```
 
-```nim on:exit
+```js on:exit
 # Deactivate fire when leaving Final Stats section
 inFinalStats = false
 particleClear("fire")
@@ -326,7 +282,7 @@ Or dive into the source code in `lib/` to see how it all works!
 ⠀
 **Achievements Unlocked:**
 ⠀
-```nim on:enter
+```js on:enter
 contentClear()
 if visitedFrontmatter:
   contentWrite("✓ Front Matter Master")
@@ -338,12 +294,12 @@ if visitedInteractive:
   contentWrite("✓ Code Wizard")
 ```
 ⠀
-You've completed the t|Storie walkthrough!
+You've completed the S|torie walkthrough!
 ⠀
 - [Start over](#welcome-to)  
 - [Return to journey complete](#journey-complete)
 
-```nim on:render
+```js on:render
 # Display explorer level at the bottom
 if explorerLevel > 0:
   var stats = "Explorer Level: " & str(explorerLevel)

@@ -72,6 +72,11 @@
             Include audio (WebAudio capture)
           </span>
         </label>
+        <label class="export-label">Timed block (automation)
+          <select id="export-automation-timed" class="export-select">
+            <option value="" selected>(none)</option>
+          </select>
+        </label>
         <p class="export-note">Non-source resolutions render natively at full quality. Audio capture works for sounds scheduled by document code during the tick loop — e.g. music that auto-starts in <code>on:init</code>. Live audio started before export (user-pressed Play) cannot be captured offline and will be silent.</p>
         <button id="export-start-btn" class="export-btn export-btn-start">Choose file &amp; start export</button>
         <button id="export-close-btn" class="export-btn export-btn-close">Close</button>
@@ -921,6 +926,7 @@ This demo showcases:
       const widthEl       = document.getElementById('export-width');
       const heightEl      = document.getElementById('export-height');
       const audioEl       = document.getElementById('export-audio');
+      const timedBlockEl  = document.getElementById('export-automation-timed');
 
       let exporter = null;
 
@@ -944,6 +950,16 @@ This demo showcases:
         bar.style.background = '#2a7a2a';
         cancelBtn.disabled = false;
         panel.classList.remove('hidden');
+
+        // Populate timed blocks (if supported by the current engine build).
+        if (timedBlockEl && typeof engine.getTimedBlockNames === 'function') {
+          const prev = timedBlockEl.value;
+          const names = engine.getTimedBlockNames() || [];
+          timedBlockEl.replaceChildren();
+          timedBlockEl.append(new Option('(none)', ''));
+          for (const name of names) timedBlockEl.append(new Option(name, name));
+          if (prev && names.includes(prev)) timedBlockEl.value = prev;
+        }
       }
 
       function closePanel() {
@@ -1016,6 +1032,13 @@ This demo showcases:
 
         // 3. Pause the live engine loop and freeze user input.
         engine.clearLastUserHandlerError();
+
+        // Pass the selected timed block into export start so docs can choose
+        // which automation block to reset/start.
+        if (typeof engine.setExportTimedBlockSelection === 'function') {
+          engine.setExportTimedBlockSelection(timedBlockEl && timedBlockEl.value ? timedBlockEl.value : null);
+        }
+
         engine.pauseForExport();
 
         const writableStream = await fileHandle.createWritable();

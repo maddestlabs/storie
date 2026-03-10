@@ -60,6 +60,7 @@ import 'ses';
 
 import type { UserHandlers, InputEvent } from './types.js';
 import type { ThemeColors, NamedStyle } from './types.js';
+import type { CompiledAutomation, EaseSpec, AutomationImpulseEvent } from './automation.js';
 
 // SES adds these to globalThis
 declare const lockdown: any;
@@ -293,6 +294,31 @@ export interface SandboxAPI {
      *   doc.setTimedBlock('lyrics', entries);
      */
     parseTimed: (text: string, format?: string) => Array<{ ms: number; text: string }>;
+
+    /**
+     * Synthetic input injection.
+     * Updates key/mouse state (so key.down etc reflect it) and dispatches an
+     * on:input event to the current document handler.
+     */
+    input: {
+      emit: (event: InputEvent) => void;
+    };
+
+    /**
+     * Time-based automation helpers built on ```timed blocks.
+     *
+     * Typical usage:
+     *   const track = sys.automation.compile(doc.timedBlock('events'));
+     *   const v = sys.automation.valueAt(track, 'ui.zoom', sys.getTime(), 1);
+     *   const impulses = sys.automation.impulsesBetween(track, prevT, nowT);
+     */
+    automation: {
+      compile: (entries: Array<{ ms: number; text: string }>) => CompiledAutomation;
+      valueAt: (compiled: CompiledAutomation, varName: string, timeSec: number, defaultValue?: number) => number;
+      impulsesBetween: (compiled: CompiledAutomation, prevTimeSec: number, nowTimeSec: number) => AutomationImpulseEvent[];
+      parseEase: (raw: any) => EaseSpec;
+      ease: (u: number, spec?: EaseSpec) => number;
+    };
   };
 
   // Native Browser APIs
@@ -648,6 +674,7 @@ export interface SandboxAPI {
       has: (name: string) => boolean;
       get: (name: string) => any | null;
       play: (name: string, seed?: number | string, options?: { volume?: number; when?: number }) => { stop: (when?: number) => void };
+      playPreset: (preset: any, seed?: number | string, options?: { volume?: number; when?: number }) => { stop: (when?: number) => void };
       bake: (
         name: string,
         seed?: number | string,
@@ -664,6 +691,7 @@ export interface SandboxAPI {
     has: (name: string) => boolean;
     get: (name: string) => any | null;
     play: (name: string, seed?: number | string, options?: { volume?: number; when?: number }) => { stop: (when?: number) => void };
+    playPreset: (preset: any, seed?: number | string, options?: { volume?: number; when?: number }) => { stop: (when?: number) => void };
     bake: (
       name: string,
       seed?: number | string,
@@ -1353,6 +1381,9 @@ export class ScriptSandbox {
       
       if (typeof scope.init === 'function') {
         validHandlers.init = scope.init;
+      }
+      if (typeof (scope as any).export === 'function') {
+        (validHandlers as any).export = (scope as any).export;
       }
       if (typeof scope.update === 'function') {
         validHandlers.update = scope.update;

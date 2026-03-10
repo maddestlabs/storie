@@ -11,6 +11,16 @@ import { Compositor } from './compositor.js';
 import { ScriptSandbox } from './sandbox.js';
 import { parseMarkdown, flattenSections } from './markdown.js';
 import { parseTimedFormat, type TimedFormat } from './timed-parsers.js';
+import {
+  compileAutomation,
+  valueAt as automationValueAt,
+  impulsesBetween as automationImpulsesBetween,
+  ease as automationEase,
+  parseEaseSpec as automationParseEaseSpec,
+  type CompiledAutomation,
+  type EaseSpec,
+  type AutomationImpulseEvent,
+} from './automation.js';
 import { getTheme, applyTheme, THEMES } from './themes.js';
 import { ModuleLoader } from './modules/loader.js';
 import { createTUIAPI } from './tui-api.js';
@@ -57,7 +67,7 @@ import { KEY } from './types.js';
 import { ColorUtils } from './types.js';
 import type { SandboxAPI } from './sandbox.js';
 import { getSfxPresetNames, playSfx, sfxSnippet, toSfxSeed } from './audio/sfx.js';
-import { bakeSfxGraphBuffer, mulberry32, parseStfxrDefinitionJson, playSfxGraph, type SfxGraphPreset } from './audio/sfx-graph.js';
+import { bakeSfxGraphBuffer, mulberry32, parseSfxGraphPreset, parseStfxrDefinitionJson, playSfxGraph, type SfxGraphPreset } from './audio/sfx-graph.js';
 import { SFX_PRESETS, type SfxPresetName } from './audio/sfx-presets.js';
 import {
   HostSync,
@@ -353,6 +363,8 @@ export class StorieEngine {
   private frameCount: number = 0;
   private elapsedTime: number = 0;
   private deltaTime: number = 0;
+  private _preExportState: { elapsedTime: number; deltaTime: number; frameCount: number } | null = null;
+  private _exportTimedBlockSelection: string | null = null;
   private lastFrameTime: number = 0;
   private running: boolean = false;
 
@@ -1073,6 +1085,42 @@ export class StorieEngine {
       if (!doc) return null;
       if (!doc._stfxrBakedStore) doc._stfxrBakedStore = new Map();
       return doc._stfxrBakedStore as Map<string, StfxrBakedEntry>;
+    };
+
+    const sanitizePlayOptions = (options?: { volume?: number; when?: number }): { volume?: number; when?: number } => {
+      const out: { volume?: number; when?: number } = {};
+      const v = Number(options?.volume);
+      if (Number.isFinite(v)) out.volume = Math.max(0, Math.min(2, v));
+      const w = Number(options?.when);
+      if (Number.isFinite(w) && w >= 0) out.when = Math.min(60, w);
+      return out;
+    };
+
+    const playPresetInternal = (presetIn: unknown, seed?: number | string, options?: { volume?: number; when?: number }) => {
+      let preset: SfxGraphPreset;
+      try {
+        preset = parseSfxGraphPreset(presetIn);
+      } catch (e) {
+        console.warn('[stfxr.playPreset] Invalid preset:', e);
+        return { stop: () => {} };
+      }
+
+      const MAX_NODES = 256;
+      const MAX_EDGES = 1024;
+      const MAX_EVENTS = 1024;
+      const nodeCount = Array.isArray(preset.nodes) ? preset.nodes.length : 0;
+      const edgeCount = Array.isArray(preset.edges) ? preset.edges.length : 0;
+      const eventCount = Array.isArray(preset.events) ? preset.events.length : 0;
+      if (nodeCount > MAX_NODES || edgeCount > MAX_EDGES || eventCount > MAX_EVENTS) {
+        console.warn(
+          `[stfxr.playPreset] Refusing to play overly large preset (nodes=${nodeCount}, edges=${edgeCount}, events=${eventCount}).`
+        );
+        return { stop: () => {} };
+      }
+
+      engine.audioContext.resume().catch(() => {});
+      const resolvedSeed = toSfxSeed(seed);
+      return playSfxGraph(engine.audioContext, preset, resolvedSeed, sanitizePlayOptions(options));
     };
 
     const evictStfxrBakedIfNeeded = (store: Map<string, StfxrBakedEntry>) => {
@@ -1930,6 +1978,9 @@ export class StorieEngine {
               const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
               return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, options);
             },
+            playPreset: (preset: any, seed?: number | string, options?: { volume?: number; when?: number }) => {
+              return playPresetInternal(preset, seed, options);
+            },
             bake: async (
               name: string,
               seed?: number | string,
@@ -2036,6 +2087,9 @@ export class StorieEngine {
           engine.audioContext.resume().catch(() => {});
           const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
           return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, options);
+        },
+        playPreset: (preset: any, seed?: number | string, options?: { volume?: number; when?: number }) => {
+          return playPresetInternal(preset, seed, options);
         },
         bake: async (name: string, seed?: number | string, options?: { id?: string; seconds?: number; maxSeconds?: number }) => {
           const store = getStfxrStore();
@@ -2605,6 +2659,87 @@ export class StorieEngine {
             console.warn('[sys.parseTimed] failed:', e);
             return [];
           }
+        },
+
+        /**
+         * Synthetic input injection.
+         * Updates the engine's InputManager state AND dispatches an on:input event
+         * to the current document handler (if any).
+         *
+         * This is designed for deterministic automation and works during video export
+         * (real input is frozen during export).
+         */
+        input: {
+          emit: (event: InputEvent): void => {
+            try {
+              if (!event || typeof event !== 'object') return;
+              if (engine.hostAudienceView) return;
+
+              // Keep key/mouse state queries (key.down, mouse.down, etc.) consistent.
+              // applySyntheticEvent is tolerant to extra fields.
+              // @ts-ignore
+              engine.input.applySyntheticEvent(event as any);
+
+              const doc = engine.getActiveDocument();
+              if (!doc?.handlers?.input) return;
+
+              engine.inputDispatchDepth++;
+              try {
+                const shouldContinue = doc.handlers.input(event);
+                if (shouldContinue === false) engine.stop();
+              } finally {
+                engine.inputDispatchDepth = Math.max(0, engine.inputDispatchDepth - 1);
+              }
+            } catch (e) {
+              console.warn('[sys.input.emit] failed:', e);
+            }
+          },
+        },
+
+        /**
+         * Time-based automation helpers built around ```timed blocks.
+         * These are pure/deterministic utilities: they compute values and
+         * enumerate impulses; they do not execute user callbacks.
+         */
+        automation: {
+          compile: (entries: Array<{ ms: number; text: string }>): CompiledAutomation => {
+            try {
+              return compileAutomation(entries);
+            } catch (e) {
+              console.warn('[sys.automation.compile] failed:', e);
+              return { vars: {}, impulses: [] };
+            }
+          },
+          valueAt: (compiled: CompiledAutomation, varName: string, timeSec: number, defaultValue: number = 0): number => {
+            try {
+              return automationValueAt(compiled, String(varName ?? ''), Number(timeSec) || 0, Number(defaultValue) || 0);
+            } catch (e) {
+              console.warn('[sys.automation.valueAt] failed:', e);
+              return Number(defaultValue) || 0;
+            }
+          },
+          impulsesBetween: (compiled: CompiledAutomation, prevTimeSec: number, nowTimeSec: number): AutomationImpulseEvent[] => {
+            try {
+              return automationImpulsesBetween(compiled, Number(prevTimeSec) || 0, Number(nowTimeSec) || 0);
+            } catch (e) {
+              console.warn('[sys.automation.impulsesBetween] failed:', e);
+              return [];
+            }
+          },
+          parseEase: (raw: any): EaseSpec => {
+            try {
+              return automationParseEaseSpec(raw);
+            } catch {
+              return 'linear' as EaseSpec;
+            }
+          },
+          ease: (u: number, spec?: EaseSpec): number => {
+            try {
+              return automationEase(Number(u) || 0, spec ?? 'linear');
+            } catch {
+              return 0;
+            }
+          },
         },
       },
 
@@ -4776,7 +4911,14 @@ export class StorieEngine {
         return JSON.parse(JSON.stringify(preset)) as SfxGraphPreset;
       };
 
-      const sameEdge = (a: { from: string; to: string }, b: { from: string; to: string }) => a.from === b.from && a.to === b.to;
+      const sameEdge = (
+        a: { from: string; to: string; fromChannel?: number; toChannel?: number },
+        b: { from: string; to: string; fromChannel?: number; toChannel?: number }
+      ) =>
+        a.from === b.from &&
+        a.to === b.to &&
+        (a.fromChannel ?? null) === (b.fromChannel ?? null) &&
+        (a.toChannel ?? null) === (b.toChannel ?? null);
 
       const resolveBasePreset = (base: string): SfxGraphPreset | null => {
         const asBuiltIn = base as SfxPresetName;
@@ -4871,6 +5013,7 @@ export class StorieEngine {
       
       // Group blocks by lifecycle hook
       const initBlocks: string[] = [];
+      const exportBlocks: string[] = [];
       const updateBlocks: string[] = [];
       const renderBlocks: string[] = [];
       const inputBlocks: string[] = [];
@@ -4885,6 +5028,8 @@ export class StorieEngine {
         
         if (hook === 'init') {
           initBlocks.push(block.code);
+        } else if (hook === 'export') {
+          exportBlocks.push(block.code);
         } else if (hook === 'update') {
           updateBlocks.push(block.code);
         } else if (hook === 'render') {
@@ -4963,6 +5108,7 @@ ${exports}
       
       // Check if handlers were directly defined as functions
       const hasInit = typeof currentScope.init === 'function';
+      const hasExport = typeof (currentScope as any).export === 'function';
       const hasUpdate = typeof currentScope.update === 'function';
       const hasRender = typeof currentScope.render === 'function';
       const hasInput = typeof currentScope.input === 'function';
@@ -4994,6 +5140,17 @@ ${initBlocks.join('\n\n')}
 ${exportVars}
 };`;
         this.sandbox.executeCodeBlock(documentId, initCode, true);
+      }
+
+      if (!hasExport && exportBlocks.length > 0) {
+        console.log(`  Creating export handler from ${exportBlocks.length} blocks with ${scopeVarNames.length} imports`);
+        const exportCode = `scope.export = function(options) {
+${importVars}
+${captureVars}
+${exportBlocks.join('\n\n')}
+${exportVars}
+};`;
+        this.sandbox.executeCodeBlock(documentId, exportCode, true);
       }
       
       if (!hasUpdate && updateBlocks.length > 0) {
@@ -5093,6 +5250,7 @@ ${exportVars}
       this.activeDocumentId = documentId;
       console.log('🔍 Extracted handlers:', {
         init: typeof handlers?.init,
+        export: typeof (handlers as any)?.export,
         update: typeof handlers?.update,
         render: typeof handlers?.render,
         input: typeof handlers?.input,
@@ -5461,12 +5619,31 @@ ${exportVars}
             }
           }
           
+          const paperPlaneZ = (() => {
+            if (!shaderInfo) return undefined;
+
+            if (Number.isFinite(shaderInfo.paperPlaneZ as any)) {
+              return shaderInfo.paperPlaneZ as number;
+            }
+
+            if (shaderInfo.paperPlaneZMode === 'focus') {
+              const focusedIdx = this.lastApplied3DCameraFocus?.sectionIndex;
+              if (!(typeof focusedIdx === 'number' && Number.isFinite(focusedIdx))) return undefined;
+              const focused = this.section3DLayouts.find(l => l.sectionIndex === focusedIdx);
+              const z = focused?.transform?.position?.z;
+              return Number.isFinite(z as any) ? (z as number) : undefined;
+            }
+
+            return undefined;
+          })();
+
           const backgroundConfig = proceduralBackground || shaderInfo
             ? {
                 enabled: true,
                 chain: backgroundChain,
                 shaderName: shaderInfo?.name,
                 shaderUniforms: mergedShaderUniforms,
+                paperPlaneZ,
                 paperColor: this.resolveWorldsSectionBackground(),
                 lineColor: this.withAlpha(this.getStyle('dim').fg, 0x40),
                 scale: shaderInfo ? shaderCoordScale : 1,
@@ -5527,6 +5704,38 @@ ${exportVars}
     this.input.setEnabled(false);
     this._exportAudioBuffer = null;
     this._exportAudioOffset = 0;
+
+    // Snapshot live-time so we can restore it after export.
+    this._preExportState = {
+      elapsedTime: this.elapsedTime,
+      deltaTime: this.deltaTime,
+      frameCount: this.frameCount,
+    };
+
+    // Export runs with a synthetic clock starting at t=0.
+    this.elapsedTime = 0;
+    this.deltaTime = 0;
+    this.frameCount = 0;
+
+    // Give document code a deterministic moment to reset automation state.
+    const doc = this.getActiveDocument();
+    const handler = (doc?.handlers as any)?.export as undefined | ((options?: { timedBlock?: string | null }) => void);
+    if (handler) {
+      try {
+        handler({ timedBlock: this._exportTimedBlockSelection });
+      } catch (e) {
+        console.warn('[Engine] Error in export handler:', e);
+      }
+    }
+  }
+
+  /**
+   * Configure export-only options used by pauseForExport().
+   * Called by the export UI before starting the tickExportFrame loop.
+   */
+  setExportTimedBlockSelection(name: string | null): void {
+    const trimmed = String(name ?? '').trim();
+    this._exportTimedBlockSelection = trimmed.length > 0 ? trimmed : null;
   }
 
   /**
@@ -5535,9 +5744,31 @@ ${exportVars}
   resumeFromExport(): void {
     this._isExporting = false;
     this.input.setEnabled(true);
+
+    // Restore live-time so returning to interactive mode doesn't jump.
+    if (this._preExportState) {
+      this.elapsedTime = this._preExportState.elapsedTime;
+      this.deltaTime = this._preExportState.deltaTime;
+      this.frameCount = this._preExportState.frameCount;
+      this._preExportState = null;
+    }
+
     this.running = true;
     this.lastFrameTime = performance.now();
     this.mainLoop(this.lastFrameTime);
+  }
+
+  /**
+   * List timed block names available in the active document.
+   * Useful for host/UI features (e.g. export panel dropdowns).
+   */
+  getTimedBlockNames(): string[] {
+    const docId = this.activeDocumentId;
+    if (!docId) return [];
+    const doc = this.documents.get(docId) as any;
+    const store = doc?._timedStore as Map<string, any> | undefined;
+    if (!store) return [];
+    return Array.from(store.keys());
   }
 
   /**
@@ -6199,7 +6430,12 @@ ${exportVars}
     return [trimmed.toLowerCase()];
   }
 
-  private parseWorldsSectionBackgroundShader(): { name: string; uniforms: Record<string, number | number[]> } | null {
+  private parseWorldsSectionBackgroundShader(): {
+    name: string;
+    uniforms: Record<string, number | number[]>;
+    paperPlaneZ?: number;
+    paperPlaneZMode?: 'focus';
+  } | null {
     const v: any = (this.worldsConfig as any).sectionBackground;
     if (typeof v !== 'string') return null;
     
@@ -6209,11 +6445,27 @@ ${exportVars}
       const [name, ...uniformSpecs] = shaderSpec.split(';');
       
       const uniforms: Record<string, number | number[]> = {};
+      let paperPlaneZ: number | undefined;
+      let paperPlaneZMode: 'focus' | undefined;
       for (const spec of uniformSpecs) {
         const [key, value] = spec.split('=');
         if (key && value) {
           const trimmedKey = key.trim();
           const trimmedValue = value.trim();
+
+          if (trimmedKey === 'paperPlaneZ') {
+            const lower = trimmedValue.toLowerCase();
+            if (lower === 'focus' || lower === 'focused') {
+              paperPlaneZMode = 'focus';
+              continue;
+            }
+
+            const num = parseFloat(trimmedValue);
+            if (!isNaN(num) && Number.isFinite(num)) {
+              paperPlaneZ = num;
+              continue;
+            }
+          }
           
           // Try to parse as number or array
           if (trimmedValue.includes(',')) {
@@ -6227,7 +6479,7 @@ ${exportVars}
         }
       }
       
-      return { name: name.trim(), uniforms };
+      return { name: name.trim(), uniforms, paperPlaneZ, paperPlaneZMode };
     }
     
     return null;
