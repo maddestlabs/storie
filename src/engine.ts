@@ -7138,11 +7138,6 @@ ${exportVars}
     }
 
     const doc = this.getActiveDocument();
-    if (!doc?.handlers?.input) {
-      e.preventDefault();
-      return;
-    }
-
     const t = (e.touches && e.touches.length) ? e.touches[0] : (e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : null);
     if (!t) {
       e.preventDefault();
@@ -7155,31 +7150,37 @@ ${exportVars}
     this.input.updateMousePosition(pixelX, pixelY);
     this.input.applySyntheticEvent({ type: 'mouse_move', x: pixelX, y: pixelY });
 
-    const charWidth = this.canvas.width / this.width;
-    const charHeight = this.canvas.height / this.height;
-    const cellX = Math.floor(pixelX / charWidth);
-    const cellY = Math.floor(pixelY / charHeight);
+    let dispatchedToDoc = false;
+    if (doc?.handlers?.input) {
+      const charWidth = this.canvas.width / this.width;
+      const charHeight = this.canvas.height / this.height;
+      const cellX = Math.floor(pixelX / charWidth);
+      const cellY = Math.floor(pixelY / charHeight);
 
-    const event: InputEvent = {
-      type: 'mouse_move',
-      x: pixelX,
-      y: pixelY,
-      cellX,
-      cellY,
-      mods: []
-    };
+      const event: InputEvent = {
+        type: 'mouse_move',
+        x: pixelX,
+        y: pixelY,
+        cellX,
+        cellY,
+        mods: []
+      };
 
-    this.inputDispatchDepth++;
-    try {
-      const shouldContinue = doc.handlers.input(event);
-      if (shouldContinue === false) this.stop();
-    } catch (error) {
-      console.error('Error in input handler:', error);
-    } finally {
-      this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+      this.inputDispatchDepth++;
+      try {
+        const shouldContinue = doc.handlers.input(event);
+        if (shouldContinue === false) this.stop();
+      } catch (error) {
+        console.error('Error in input handler:', error);
+      } finally {
+        this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+      }
+
+      dispatchedToDoc = true;
     }
 
-    e.preventDefault();
+    // Prevent default scrolling/zooming when the engine or doc is actively handling input.
+    if (this.worldsEnabled || dispatchedToDoc) e.preventDefault();
   }
 
   private handleTouchEvent(e: TouchEvent, action: 'press' | 'release'): void {
@@ -7192,10 +7193,6 @@ ${exportVars}
     if (action === 'press') this.audioContext.resume().catch(() => {});
 
     const doc = this.getActiveDocument();
-    if (!doc?.handlers?.input) {
-      e.preventDefault();
-      return;
-    }
 
     const t = (e.changedTouches && e.changedTouches.length)
       ? e.changedTouches[0]
@@ -7212,9 +7209,11 @@ ${exportVars}
     this.input.applySyntheticEvent({ type: 'mouse', action, button: 'left', x: pixelX, y: pixelY });
 
     // Built-in 3D picking/navigation (touch behaves like left click).
+    let handledBy3D = false;
     if (action === 'press') {
       const picked = this.pick3DAt(pixelX, pixelY);
       if (picked && this.camera3D) {
+        handledBy3D = true;
         const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
         if (linkHit) {
           this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
@@ -7234,33 +7233,39 @@ ${exportVars}
       }
     }
 
-    const charWidth = this.canvas.width / this.width;
-    const charHeight = this.canvas.height / this.height;
-    const cellX = Math.floor(pixelX / charWidth);
-    const cellY = Math.floor(pixelY / charHeight);
+    let dispatchedToDoc = false;
+    if (doc?.handlers?.input) {
+      const charWidth = this.canvas.width / this.width;
+      const charHeight = this.canvas.height / this.height;
+      const cellX = Math.floor(pixelX / charWidth);
+      const cellY = Math.floor(pixelY / charHeight);
 
-    const event: InputEvent = {
-      type: 'mouse',
-      action,
-      button: 'left',
-      x: pixelX,
-      y: pixelY,
-      cellX,
-      cellY,
-      mods: []
-    };
+      const event: InputEvent = {
+        type: 'mouse',
+        action,
+        button: 'left',
+        x: pixelX,
+        y: pixelY,
+        cellX,
+        cellY,
+        mods: []
+      };
 
-    this.inputDispatchDepth++;
-    try {
-      const shouldContinue = doc.handlers.input(event);
-      if (shouldContinue === false) this.stop();
-    } catch (error) {
-      console.error('Error in input handler:', error);
-    } finally {
-      this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+      this.inputDispatchDepth++;
+      try {
+        const shouldContinue = doc.handlers.input(event);
+        if (shouldContinue === false) this.stop();
+      } catch (error) {
+        console.error('Error in input handler:', error);
+      } finally {
+        this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+      }
+
+      dispatchedToDoc = true;
     }
 
-    e.preventDefault();
+    // Match mouse handler: only prevent defaults when the engine/doc handled it.
+    if (handledBy3D || dispatchedToDoc || this.worldsEnabled) e.preventDefault();
   }
 
   private isTruthyDropTarget(value: any): boolean {

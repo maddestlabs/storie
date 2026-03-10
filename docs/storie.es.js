@@ -27457,10 +27457,6 @@ ${content}`.trim();
       return;
     }
     const doc = this.getActiveDocument();
-    if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) {
-      e.preventDefault();
-      return;
-    }
     const t = e.touches && e.touches.length ? e.touches[0] : e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : null;
     if (!t) {
       e.preventDefault();
@@ -27470,28 +27466,32 @@ ${content}`.trim();
     const { pixelX, pixelY } = this.touchToPixelXY(t);
     this.input.updateMousePosition(pixelX, pixelY);
     this.input.applySyntheticEvent({ type: "mouse_move", x: pixelX, y: pixelY });
-    const charWidth = this.canvas.width / this.width;
-    const charHeight = this.canvas.height / this.height;
-    const cellX = Math.floor(pixelX / charWidth);
-    const cellY = Math.floor(pixelY / charHeight);
-    const event = {
-      type: "mouse_move",
-      x: pixelX,
-      y: pixelY,
-      cellX,
-      cellY,
-      mods: []
-    };
-    this.inputDispatchDepth++;
-    try {
-      const shouldContinue = doc.handlers.input(event);
-      if (shouldContinue === false) this.stop();
-    } catch (error) {
-      console.error("Error in input handler:", error);
-    } finally {
-      this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+    let dispatchedToDoc = false;
+    if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input) {
+      const charWidth = this.canvas.width / this.width;
+      const charHeight = this.canvas.height / this.height;
+      const cellX = Math.floor(pixelX / charWidth);
+      const cellY = Math.floor(pixelY / charHeight);
+      const event = {
+        type: "mouse_move",
+        x: pixelX,
+        y: pixelY,
+        cellX,
+        cellY,
+        mods: []
+      };
+      this.inputDispatchDepth++;
+      try {
+        const shouldContinue = doc.handlers.input(event);
+        if (shouldContinue === false) this.stop();
+      } catch (error) {
+        console.error("Error in input handler:", error);
+      } finally {
+        this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+      }
+      dispatchedToDoc = true;
     }
-    e.preventDefault();
+    if (this.worldsEnabled || dispatchedToDoc) e.preventDefault();
   }
   handleTouchEvent(e, action) {
     var _a;
@@ -27502,10 +27502,6 @@ ${content}`.trim();
     if (action === "press") this.audioContext.resume().catch(() => {
     });
     const doc = this.getActiveDocument();
-    if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) {
-      e.preventDefault();
-      return;
-    }
     const t = e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : e.touches && e.touches.length ? e.touches[0] : null;
     if (!t) {
       e.preventDefault();
@@ -27515,9 +27511,11 @@ ${content}`.trim();
     const { pixelX, pixelY } = this.touchToPixelXY(t);
     this.input.updateMousePosition(pixelX, pixelY);
     this.input.applySyntheticEvent({ type: "mouse", action, button: "left", x: pixelX, y: pixelY });
+    let handledBy3D = false;
     if (action === "press") {
       const picked = this.pick3DAt(pixelX, pixelY);
       if (picked && this.camera3D) {
+        handledBy3D = true;
         const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
         if (linkHit) {
           this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
@@ -27536,30 +27534,34 @@ ${content}`.trim();
         }
       }
     }
-    const charWidth = this.canvas.width / this.width;
-    const charHeight = this.canvas.height / this.height;
-    const cellX = Math.floor(pixelX / charWidth);
-    const cellY = Math.floor(pixelY / charHeight);
-    const event = {
-      type: "mouse",
-      action,
-      button: "left",
-      x: pixelX,
-      y: pixelY,
-      cellX,
-      cellY,
-      mods: []
-    };
-    this.inputDispatchDepth++;
-    try {
-      const shouldContinue = doc.handlers.input(event);
-      if (shouldContinue === false) this.stop();
-    } catch (error) {
-      console.error("Error in input handler:", error);
-    } finally {
-      this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+    let dispatchedToDoc = false;
+    if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input) {
+      const charWidth = this.canvas.width / this.width;
+      const charHeight = this.canvas.height / this.height;
+      const cellX = Math.floor(pixelX / charWidth);
+      const cellY = Math.floor(pixelY / charHeight);
+      const event = {
+        type: "mouse",
+        action,
+        button: "left",
+        x: pixelX,
+        y: pixelY,
+        cellX,
+        cellY,
+        mods: []
+      };
+      this.inputDispatchDepth++;
+      try {
+        const shouldContinue = doc.handlers.input(event);
+        if (shouldContinue === false) this.stop();
+      } catch (error) {
+        console.error("Error in input handler:", error);
+      } finally {
+        this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+      }
+      dispatchedToDoc = true;
     }
-    e.preventDefault();
+    if (handledBy3D || dispatchedToDoc || this.worldsEnabled) e.preventDefault();
   }
   isTruthyDropTarget(value) {
     if (value === true) return true;
