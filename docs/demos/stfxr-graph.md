@@ -3,10 +3,9 @@ name: "STFXR: Graph Viewer"
 theme: "neotopia"
 ---
 
-A basic **graph viewer** for `stfxr` presets embedded in this document.
+A basic **graph viewer** for a single `stfxr` preset.
 
-- **Prev/Next** cycles presets from `stfxr.list()`
-- **Play** auditions the currently selected preset
+- **Play** auditions the preset
 - **Click** a node to select it
 - **Drag** a node to reposition it
 - **Drag empty space** to pan the view
@@ -17,8 +16,6 @@ A basic **graph viewer** for `stfxr` presets embedded in this document.
 
 ```js
 let state = {
-  presetNames: [],
-  presetIndex: 0,
   seed: 1337,
   volume: 0.7,
 
@@ -338,25 +335,10 @@ function buildInspectorText(graph, layout, selectedId) {
   return lines.join('\n');
 }
 
-function ensurePresetLoaded() {
-  if (!state.presetNames || state.presetNames.length === 0) {
-    const listed = stfxr.list();
-    state.presetNames = [BUILTIN_PRESET_NAME, ...listed.filter(n => String(n) !== BUILTIN_PRESET_NAME)];
-    state.presetIndex = 0;
-  } else if (state.presetNames[0] !== BUILTIN_PRESET_NAME) {
-    const dedup = state.presetNames.filter(n => String(n) !== BUILTIN_PRESET_NAME);
-    state.presetNames = [BUILTIN_PRESET_NAME, ...dedup];
-  }
-
-  const presetName = state.presetNames[state.presetIndex] || null;
-  const preset = (presetName === BUILTIN_PRESET_NAME)
-    ? BUILTIN_PRESET
-    : (presetName ? stfxr.get(presetName) : null);
-
-  state.preset = preset;
-  state.graph = preset ? computeGraph(preset) : null;
-
-  // Default selection
+function ensureGraphLoaded() {
+  // Single-preset demo: always use the built-in preset.
+  state.preset = BUILTIN_PRESET;
+  state.graph = computeGraph(BUILTIN_PRESET);
   if (state.graph && (!state.selectedId || !state.graph.nodeById.has(state.selectedId))) {
     const first = state.graph.nodes[0];
     state.selectedId = first ? String(first.id) : null;
@@ -367,15 +349,58 @@ function graphBounds() {
   const W = ui.metrics.canvasWidth || 1280;
   const H = ui.metrics.canvasHeight || 720;
 
-  const leftW = 320;
   const rightW = 420;
   const topPad = 20;
+  const bottomPad = 20;
+  const toolbarH = 78;
+
+  const rightX = W - rightW + 20;
+  const graphX = 20;
+  const graphW = Math.max(200, (rightX - 20) - graphX);
+  const graphH = Math.max(200, H - topPad - bottomPad - toolbarH);
 
   return {
-    left: { x: 20, y: topPad, w: leftW - 40, h: H - topPad - 40 },
-    graph: { x: leftW, y: topPad, w: Math.max(200, W - leftW - rightW), h: H - topPad - 40 },
-    right: { x: W - rightW + 20, y: topPad, w: rightW - 40, h: H - topPad - 40 }
+    graph: { x: graphX, y: topPad, w: graphW, h: graphH },
+    right: { x: rightX, y: topPad, w: rightW - 40, h: graphH },
+    toolbar: { x: 20, y: topPad + graphH + 12, w: W - 40, h: toolbarH }
   };
+}
+
+function layoutToolbar() {
+  if (!state.widgets) return;
+  const W = ui.metrics.canvasWidth || 1280;
+  const b = graphBounds();
+  const y = b.toolbar.y;
+  const h = b.toolbar.h;
+
+  // Right-align volume slider.
+  const volW = Math.max(220, Math.min(360, Math.floor(W * 0.28)));
+  state.widgets.vol.bounds.x = b.toolbar.x + b.toolbar.w - volW;
+  state.widgets.vol.bounds.y = y + 8;
+  state.widgets.vol.bounds.width = volW;
+  state.widgets.vol.bounds.height = h - 16;
+
+  // Left-to-right controls.
+  let x = b.toolbar.x;
+  const gap = 10;
+  const btnW = 92;
+  const btnH = 42;
+  const fieldW = 240;
+
+  state.widgets.seedField.bounds.x = x;
+  state.widgets.seedField.bounds.y = y + Math.floor((h - btnH) / 2);
+  state.widgets.seedField.bounds.width = fieldW;
+  state.widgets.seedField.bounds.height = btnH;
+  x += fieldW + gap;
+
+  const buttons = [state.widgets.btnRand, state.widgets.btnPlay, state.widgets.btnAuto, state.widgets.btnReset];
+  for (const btn of buttons) {
+    btn.bounds.x = x;
+    btn.bounds.y = y + Math.floor((h - btnH) / 2);
+    btn.bounds.width = btnW;
+    btn.bounds.height = btnH;
+    x += btnW + gap;
+  }
 }
 
 function viewToWorld(x, y) {
@@ -393,67 +418,39 @@ term.clear();
 
 gui.init();
 
-// Widgets (left panel)
-const title = gui.createLabel({
-  bounds: { x: 20, y: 20, width: 280, height: 26 },
-  text: 'STFXR Graph Viewer',
-  align: 'left'
-});
-
-const presetLbl = gui.createLabel({
-  bounds: { x: 20, y: 54, width: 280, height: 22 },
-  text: 'Preset: (none)',
-  align: 'left'
-});
-
-const btnPrev = gui.createButton({
-  bounds: { x: 20, y: 84, width: 130, height: 44 },
-  label: 'Prev'
-});
-
-const btnNext = gui.createButton({
-  bounds: { x: 170, y: 84, width: 130, height: 44 },
-  label: 'Next'
-});
-
+// Bottom toolbar widgets
 const seedField = gui.createTextField({
-  bounds: { x: 20, y: 140, width: 280, height: 44 },
+  bounds: { x: 20, y: 20, width: 240, height: 42 },
   value: String(state.seed),
-  placeholder: 'Seed (number or string)'
+  placeholder: 'Seed'
 });
 
 const btnRand = gui.createButton({
-  bounds: { x: 20, y: 194, width: 280, height: 44 },
-  label: 'Randomize Seed'
+  bounds: { x: 270, y: 20, width: 92, height: 42 },
+  label: 'Random'
+});
+
+const btnPlay = gui.createButton({
+  bounds: { x: 372, y: 20, width: 92, height: 42 },
+  label: 'Play'
+});
+
+const btnAuto = gui.createButton({
+  bounds: { x: 474, y: 20, width: 92, height: 42 },
+  label: 'Auto'
+});
+
+const btnReset = gui.createButton({
+  bounds: { x: 576, y: 20, width: 92, height: 42 },
+  label: 'Reset'
 });
 
 const vol = gui.createSlider({
-  bounds: { x: 20, y: 250, width: 280, height: 52 },
+  bounds: { x: 690, y: 20, width: 320, height: 62 },
   label: 'Volume',
   min: 0,
   max: 100,
   value: Math.round(state.volume * 100)
-});
-
-const btnPlay = gui.createButton({
-  bounds: { x: 20, y: 312, width: 280, height: 44 },
-  label: 'Play'
-});
-
-const btnLayout = gui.createButton({
-  bounds: { x: 20, y: 366, width: 280, height: 44 },
-  label: 'Auto Layout'
-});
-
-const btnResetView = gui.createButton({
-  bounds: { x: 20, y: 420, width: 280, height: 44 },
-  label: 'Reset View'
-});
-
-const hint = gui.createLabel({
-  bounds: { x: 20, y: 474, width: 280, height: 44 },
-  text: 'Click node: inspect\nDrag node: move\nDrag empty: pan',
-  align: 'left'
 });
 
 // Right panel inspector
@@ -470,23 +467,20 @@ const inspector = gui.createTextEditor({
 });
 
 state.widgets = {
-  title,
-  presetLbl,
-  btnPrev,
-  btnNext,
   seedField,
   btnRand,
   vol,
   btnPlay,
-  btnLayout,
-  btnResetView,
-  hint,
+  btnAuto,
+  btnReset,
   inspectorTitle,
   inspector
 };
 
+layoutToolbar();
+
 // Load initial preset
-ensurePresetLoaded();
+ensureGraphLoaded();
 
 // Populate default layout
 if (state.graph) {
@@ -597,27 +591,20 @@ if (!state.widgets) return;
 
 gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);
 
+layoutToolbar();
+
 // Keep inspector bounds in sync with resize.
 {
-  const W = ui.metrics.canvasWidth || 1280;
-  const H = ui.metrics.canvasHeight || 720;
-  state.widgets.inspectorTitle.bounds.x = W - 420 + 20;
-  state.widgets.inspector.bounds.x = W - 420 + 20;
-  state.widgets.inspector.bounds.height = Math.max(220, H - 88);
-}
+  const b = graphBounds();
+  state.widgets.inspectorTitle.bounds.x = b.right.x;
+  state.widgets.inspectorTitle.bounds.y = b.right.y;
+  state.widgets.inspectorTitle.bounds.width = b.right.w;
 
-// Refresh preset list if needed.
-if (!state.presetNames || state.presetNames.length === 0) {
-  const listed = stfxr.list();
-  state.presetNames = [BUILTIN_PRESET_NAME, ...listed.filter(n => String(n) !== BUILTIN_PRESET_NAME)];
-  state.presetIndex = 0;
-} else if (state.presetNames[0] !== BUILTIN_PRESET_NAME) {
-  const dedup = state.presetNames.filter(n => String(n) !== BUILTIN_PRESET_NAME);
-  state.presetNames = [BUILTIN_PRESET_NAME, ...dedup];
+  state.widgets.inspector.bounds.x = b.right.x;
+  state.widgets.inspector.bounds.y = b.right.y + 28;
+  state.widgets.inspector.bounds.width = b.right.w;
+  state.widgets.inspector.bounds.height = Math.max(140, b.right.h - 28);
 }
-
-const presetName = state.presetNames[state.presetIndex] || null;
-state.widgets.presetLbl.setText(`Preset: ${presetName ?? '(none)'}   nodes: ${state.graph?.nodes?.length ?? 0}`);
 
 // Seed handling
 if (state.widgets.seedField.wasChanged()) {
@@ -638,45 +625,20 @@ if (state.widgets.btnRand.wasClicked()) {
 
 state.volume = clamp((state.widgets.vol.getValue() || 0) / 100, 0, 1);
 
-// Preset navigation
-let changedPreset = false;
-if (state.widgets.btnPrev.wasClicked()) {
-  state.presetIndex = (state.presetIndex - 1 + state.presetNames.length) % Math.max(1, state.presetNames.length);
-  changedPreset = true;
-}
-if (state.widgets.btnNext.wasClicked()) {
-  state.presetIndex = (state.presetIndex + 1) % Math.max(1, state.presetNames.length);
-  changedPreset = true;
-}
-
-if (changedPreset) {
-  ensurePresetLoaded();
-  if (state.graph) {
-    const b = graphBounds();
-    state.layoutById = autoLayout(state.graph, b.graph);
-  }
-  state.camX = 0;
-  state.camY = 0;
-}
-
-if (state.widgets.btnLayout.wasClicked()) {
+if (state.widgets.btnAuto.wasClicked()) {
   if (state.graph) {
     const b = graphBounds();
     state.layoutById = autoLayout(state.graph, b.graph);
   }
 }
 
-if (state.widgets.btnResetView.wasClicked()) {
+if (state.widgets.btnReset.wasClicked()) {
   state.camX = 0;
   state.camY = 0;
 }
 
 if (state.widgets.btnPlay.wasClicked()) {
-  if (presetName === BUILTIN_PRESET_NAME) {
-    stfxr.playPreset(BUILTIN_PRESET, state.seed, { volume: state.volume });
-  } else if (presetName) {
-    stfxr.play(presetName, state.seed, { volume: state.volume });
-  }
+  stfxr.playPreset(BUILTIN_PRESET, state.seed, { volume: state.volume });
 }
 
 // Inspector refresh (only when needed)
@@ -695,7 +657,7 @@ ui.clear(base.bg);
 term.layerID = 'default';
 term.clear();
 
-ensurePresetLoaded();
+ensureGraphLoaded();
 
 const b = graphBounds();
 
