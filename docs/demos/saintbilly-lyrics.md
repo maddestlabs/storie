@@ -9,7 +9,7 @@ font: "Rye"
 ```javascript on:init
 // Camera styling helpers
 const deg = d => d * Math.PI / 180;
-const CAMERA_BASE_ROT = { x: deg(-4), y: deg(4), z: 0 };
+const CAMERA_BASE_ROT = { x: deg(0), y: deg(0), z: 0 };
 worlds.enable();
 worlds.config.setDefaults({
   keepRotation: true,
@@ -18,14 +18,18 @@ worlds.config.setDefaults({
   screenSpaceRecenterIters: 5,
   sectionSizeUnits: 'px',
   sectionOverflow: 'fit-y',
+  sectionContentAlign: 'center',
   defaultSectionWidth: 900,
   defaultSectionHeight: 520,
-  autoLayoutSpacing: 10,
+  autoLayoutSpacing: 2,
   sectionBorderEnabled: false,
   sectionBackground: 'shader:saintbilly',
 });
+
+// “Looking down” at an infinite canvas feel:
 worlds.camera.setPosition(0, 55, 320);
 worlds.camera.setRotation(CAMERA_BASE_ROT.x, CAMERA_BASE_ROT.y, CAMERA_BASE_ROT.z);
+// Optional: narrower FOV reads as a touch more “zoomed” / cinematic.
 worlds.camera.setFOV(deg(42));
 worlds.camera.setEaseSpeed(0.18, 0.12);
 
@@ -46,21 +50,17 @@ worlds.camera.shake.setEnabled(true);
 worlds.camera.focusOnSectionFit(0, 0.9, { keepRotation: true });
 ```
 
-# Entrance
+# Somehweres in the New West
 ⠀
-You stand before the ancient ruins of **Khel-Daran**, a fortress swallowed by time and shadow. The stone archway before you exhales cold, stale air. Moss clings to the weathered pillars, and somewhere deep within, you hear the faint echo of water dripping.
-⠀
-Your torch flickers in the darkness. The adventure begins here.
-⠀
-**What do you do?**
-⠀
-- [Enter the ruins](#hall-of-statues)  
-- [Examine the entrance more carefully](#entrance-examine)  
-- [Light a better torch](#prepare-torch)
+In a small town...
 
 # Entrance Examine
 ⠀
-You take a moment to inspect the entrance more carefully. Ancient runes are carved into the archway, worn smooth by centuries of wind and rain. 
+You take a moment to inspect the entrance more carefully. Ancient runes are carved into the archway, worn smooth by centuries of wind and rain. You can barely make out what appears to be a warning:
+⠀
+*"Beware the guardian of the depths. Only the wise may pass."*
+⠀
+Beside the entrance, you notice an old iron sconce. It's empty, but appears functional.
 ⠀
 - [Enter the ruins](#hall-of-statues)  
 - [Take the sconce](#take-sconce)  

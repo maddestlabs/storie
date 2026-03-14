@@ -92,6 +92,44 @@ How section entry is determined:
   - You click a card (non-link area)
   - You call `worlds.camera.focusOnSection(...)` or `focusOnSectionFit(...)`
 
+## Section-Scoped Lifecycle Blocks (`section:` metadata)
+
+Lifecycle hooks like `on:update`, `on:render`, and `on:input` are global by default (they run every frame / input event).
+If you want a lifecycle block to only run while a particular section is focused, add `section:` metadata:
+
+```md
+# Card Three
+
+```js on:render section:3
+// Only runs while Card Three is the current Worlds section
+term.write(0, 0, 'Card Three');
+```
+```
+
+To target “this section” without hard-coding an index, use `section:current`:
+
+```md
+# Card Three
+
+```js on:update section:current
+// Only runs while this section is current
+rainLevel = (rainLevel ?? 0) + 0.02;
+```
+
+You can also target a section by its title (matched via a slugified form of the heading text):
+
+```md
+# Awake
+
+```js on:render section:Awake
+term.write(0, 0, 'Awake');
+```
+```
+
+Notes:
+- Fence metadata is whitespace-delimited, so for multi-word headings prefer the slug form (e.g. `section:city-entrance`).
+```
+
 ## Backgrounds
 
 Worlds supports both procedural and custom shader backgrounds that move with the 3D camera.

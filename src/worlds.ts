@@ -774,9 +774,13 @@ export function focusOnSectionFit(
       camera.targetRotation = null;
     }
 
-    // Optional: recenter the focused section in screen space when rotation is
-    // locked (keeps the “tilted camera” look without drifting off-center).
-    const doRecenter = options?.screenSpaceRecenter ?? false;
+    // Recenter the focused section in screen space when rotation is locked.
+    // Without this, placing the camera along the section normal does *not*
+    // guarantee the section center lands on the screen center when the camera
+    // yaw/pitch is fixed.
+    //
+    // Default: enabled (unless explicitly disabled).
+    const doRecenter = options?.screenSpaceRecenter ?? true;
     if (doRecenter) {
       const forward = computeForwardFromRotation(camera.rotation);
       // Preserve approx distance-to-plane along the section normal.
@@ -1169,8 +1173,9 @@ export function focusOnSection(
       camera.targetRotation = null;
     }
 
-    // Optional: recenter in screen space when camera has a tilt/yaw.
-    const doRecenter = options?.screenSpaceRecenter ?? false;
+    // Recenter in screen space when camera has a tilt/yaw.
+    // Default: enabled (unless explicitly disabled).
+    const doRecenter = options?.screenSpaceRecenter ?? true;
     if (doRecenter) {
       const forward = computeForwardFromRotation(camera.rotation);
       target = vec3Sub(center, vec3Scale(forward, distance));

@@ -48,29 +48,29 @@ var styleFlag = undefined;
 var styleNumber = undefined;
 
 // Helper functions
-var getCellIdx = (x, y) => {
+function getCellIdx(x, y) {
   if (x < 0 || y < 0 || x >= gridWidth || y >= gridHeight) {
     return -1;
   }
   return y * gridWidth + x;
-};
+}
 
-var getCell = (x, y) => {
+function getCell(x, y) {
   const idx = getCellIdx(x, y);
   if (idx >= 0 && idx < grid.length) {
     return grid[idx];
   }
   return [0, 0, 0, 0];
-};
+}
 
-var setCell = (x, y, revealed, isMine, flagged, adjacent) => {
+function setCell(x, y, revealed, isMine, flagged, adjacent) {
   const idx = getCellIdx(x, y);
   if (idx >= 0 && idx < grid.length) {
     grid[idx] = [revealed, isMine, flagged, adjacent];
   }
-};
+}
 
-var placeMines = (avoidX, avoidY) => {
+function placeMines(avoidX, avoidY) {
   let minesPlaced = 0;
   let attempts = 0;
   const maxAttempts = mineCount * 100;
@@ -119,9 +119,9 @@ var placeMines = (avoidX, avoidY) => {
       }
     }
   }
-};
+}
 
-var revealCell = (x, y) => {
+function revealCell(x, y) {
   if (x < 0 || y < 0 || x >= gridWidth || y >= gridHeight) {
     return false;
   }
@@ -159,9 +159,9 @@ var revealCell = (x, y) => {
   }
   
   return true;
-};
+}
 
-var toggleFlag = (x, y) => {
+function toggleFlag(x, y) {
   if (x < 0 || y < 0 || x >= gridWidth || y >= gridHeight) {
     return false;
   }
@@ -180,9 +180,9 @@ var toggleFlag = (x, y) => {
   }
   
   return true;
-};
+}
 
-var checkWin = () => {
+function checkWin() {
   if (gameOver) {
     return false;
   }
@@ -193,9 +193,9 @@ var checkWin = () => {
     return true;
   }
   return false;
-};
+}
 
-var setDifficulty = (diff) => {
+function setDifficulty(diff) {
   currentDifficulty = diff;
   if (diff === "easy") {
     gridWidth = 8;
@@ -211,9 +211,9 @@ var setDifficulty = (diff) => {
     mineCount = 40;
   }
   initGrid();
-};
+}
 
-var initGrid = () => {
+function initGrid() {
   grid = [];
   for (let y = 0; y < gridHeight; y++) {
     for (let x = 0; x < gridWidth; x++) {
@@ -225,7 +225,7 @@ var initGrid = () => {
   gameWon = false;
   cellsRevealed = 0;
   flagsPlaced = 0;
-};
+}
 ```
 
 ```javascript on:init

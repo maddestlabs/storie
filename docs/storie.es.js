@@ -526,6 +526,9 @@ class InputManager {
   }
 }
 const DEFAULT_FONT_FALLBACK_STACK = "'3270-regular', 'Consolas', 'Monaco', monospace";
+const LOCAL_FONT_EXTENSIONS = ["otf", "ttf", "woff2", "woff"];
+const LOCAL_FONT_STYLESHEET_ID_PREFIX = "storie-local-font-";
+const MONOSPACE_MEASURE_SAMPLES = ["M", "W", "@", "#", "0", "1", "8", "|", "_"];
 function normalizeFontFamilyValue(value) {
   return String(value ?? "").replace(/\+/g, " ").trim();
 }
@@ -537,6 +540,83 @@ function safeCssEscape(value) {
   } catch {
   }
   return v2.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+function toKebabCase(value) {
+  return String(value ?? "").trim().replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+function toFilenameStemVariants(family) {
+  const normalized = normalizeFontFamilyValue(String(family ?? ""));
+  if (!normalized) return [];
+  const compact = normalized.replace(/\s+/g, "");
+  const kebab = toKebabCase(normalized);
+  const variants = [normalized, compact, kebab].map((v2) => v2.trim()).filter(Boolean);
+  return Array.from(new Set(variants));
+}
+function buildLocalFontCandidates(family) {
+  if (typeof document === "undefined") return [];
+  const baseUrl = new URL("./assets/", document.baseURI);
+  const stems = toFilenameStemVariants(family);
+  const names = /* @__PURE__ */ new Set();
+  for (const stem of stems) {
+    names.add(stem);
+    names.add(`${stem}-Regular`);
+    names.add(`${stem}-regular`);
+    names.add(`${stem}-VariableFont_wght`);
+  }
+  const candidates = [];
+  for (const name of names) {
+    for (const ext of LOCAL_FONT_EXTENSIONS) {
+      candidates.push({
+        href: new URL(`${name}.${ext}`, baseUrl).href,
+        format: ext === "otf" ? "opentype" : ext === "ttf" ? "truetype" : ext
+      });
+    }
+  }
+  return candidates;
+}
+async function ensureLocalFontAsset(family, opts) {
+  var _a;
+  if (typeof document === "undefined" || !document.fonts) return false;
+  const fam = normalizeFontFamilyValue(String(family ?? ""));
+  if (!fam || looksLikeGenericFamily(fam)) return false;
+  const selectorId = `${LOCAL_FONT_STYLESHEET_ID_PREFIX}${fam}`;
+  const existing = document.querySelector(`style[data-storie-local-font="${safeCssEscape(selectorId)}"]`);
+  if (existing) return true;
+  const descriptors = {};
+  const firstWeight = Array.isArray(opts == null ? void 0 : opts.weights) ? opts == null ? void 0 : opts.weights.find((w) => Number.isFinite(w) && w > 0) : null;
+  if (Number.isFinite(firstWeight)) descriptors.weight = String(firstWeight);
+  for (const candidate of buildLocalFontCandidates(fam)) {
+    try {
+      const face = new FontFace(fam, `url("${candidate.href}") format("${candidate.format}")`, descriptors);
+      const loadedFace = await timeout(face.load().then(() => face, () => null), (opts == null ? void 0 : opts.timeoutMs) ?? 750, null);
+      if (!loadedFace) continue;
+      document.fonts.add(loadedFace);
+      const marker = document.createElement("style");
+      marker.setAttribute("data-storie-local-font", selectorId);
+      marker.textContent = `:root { --${toKebabCase(selectorId) || "storie-local-font"}: 1; }`;
+      (_a = document.head) == null ? void 0 : _a.appendChild(marker);
+      return true;
+    } catch {
+    }
+  }
+  return false;
+}
+function measureMonospaceCellWidth(ctx, opts) {
+  const samples = Array.isArray(opts == null ? void 0 : opts.samples) && opts.samples.length > 0 ? opts.samples : MONOSPACE_MEASURE_SAMPLES;
+  const extraGutterPx = Number.isFinite(opts == null ? void 0 : opts.extraGutterPx) ? Math.max(0, Math.round(opts.extraGutterPx)) : 1;
+  let maxAdvance = 0;
+  let maxInk = 0;
+  for (const sample of samples) {
+    const metrics = ctx.measureText(sample);
+    if (Number.isFinite(metrics.width)) {
+      maxAdvance = Math.max(maxAdvance, metrics.width);
+    }
+    const left = Number.isFinite(metrics.actualBoundingBoxLeft) ? Math.abs(metrics.actualBoundingBoxLeft) : 0;
+    const right = Number.isFinite(metrics.actualBoundingBoxRight) ? Math.abs(metrics.actualBoundingBoxRight) : 0;
+    maxInk = Math.max(maxInk, left + right);
+  }
+  const width = Math.max(maxAdvance, maxInk);
+  return Math.max(1, Math.ceil(width) + extraGutterPx);
 }
 function isProbablyMonospaceFontStack(fontFamilyOrStack, opts) {
   if (typeof document === "undefined") return true;
@@ -639,6 +719,18 @@ async function tryLoadGoogleFontFamily(family, opts) {
   if (typeof document === "undefined" || !document.fonts) return false;
   const fam = normalizeFontFamilyValue(String(family ?? ""));
   if (!fam || looksLikeGenericFamily(fam)) return false;
+  const localOk = await ensureLocalFontAsset(fam, {
+    timeoutMs: opts == null ? void 0 : opts.timeoutMs,
+    weights: opts == null ? void 0 : opts.weights
+  });
+  if (localOk) {
+    const size2 = Number.isFinite(opts == null ? void 0 : opts.fontCssPixelSize) && opts.fontCssPixelSize > 0 ? opts.fontCssPixelSize : 16;
+    const localLoad = document.fonts.load(`${size2}px "${fam}"`).then(
+      () => true,
+      () => false
+    );
+    return await timeout(localLoad, (opts == null ? void 0 : opts.timeoutMs) ?? 1500, true);
+  }
   const cssOk = await ensureGoogleFontsStylesheet(fam, {
     display: opts == null ? void 0 : opts.display,
     weights: opts == null ? void 0 : opts.weights,
@@ -676,13 +768,8 @@ class Canvas2DRenderer {
     this.fontFamily = config.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
     this.fontSize = config.fontSize || 16;
     this.ctx.font = `${this.fontSize}px ${this.fontFamily}`;
-    const metrics = this.ctx.measureText("M");
-    if (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent) {
-      this.cellHeight = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent);
-    } else {
-      this.cellHeight = config.cellHeight || Math.ceil(this.fontSize * 1.25);
-    }
-    this.cellWidth = config.cellWidth || Math.ceil(metrics.width);
+    this.cellWidth = config.cellWidth || measureMonospaceCellWidth(this.ctx);
+    this.cellHeight = config.cellHeight || Math.max(1, Math.round(this.fontSize));
     this.setupCanvas();
     this.waitForFont();
   }
@@ -701,6 +788,7 @@ class Canvas2DRenderer {
       }
       await document.fonts.load(`${this.fontSize}px ${this.fontFamily}`);
       this.ctx.font = `${this.fontSize}px ${this.fontFamily}`;
+      this.cellWidth = measureMonospaceCellWidth(this.ctx);
       this.fontLoaded = true;
     } catch (e) {
       console.warn("Font loading failed, using fallback:", e);
@@ -754,7 +842,7 @@ class Canvas2DRenderer {
     this.ctx.fillRect(px, py - 2, this.cellWidth, this.cellHeight + 4);
     if (cell.char && cell.char !== " ") {
       this.ctx.fillStyle = ColorUtils.toCss(cell.fg);
-      this.ctx.fillText(cell.char, px + 1, py + 2);
+      this.ctx.fillText(cell.char, px + 1, py);
     }
   }
   /**
@@ -935,16 +1023,12 @@ class GlyphAtlas {
   }
   initFont() {
     const fontString = this.fontFamily.includes(",") ? this.fontFamily : `'${this.fontFamily}'`;
-    this.atlasCtx.font = `${this.fontSize}px ${fontString}`;
+    const fontSizePx = Math.max(1, Math.round(this.fontSize));
+    this.atlasCtx.font = `${fontSizePx}px ${fontString}`;
     this.atlasCtx.textBaseline = "top";
     this.atlasCtx.textAlign = "left";
-    const metrics = this.atlasCtx.measureText("M");
-    this.charWidth = Math.ceil(metrics.width);
-    if (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent) {
-      this.charHeight = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent);
-    } else {
-      this.charHeight = Math.ceil(this.fontSize * 1.25);
-    }
+    this.charWidth = measureMonospaceCellWidth(this.atlasCtx);
+    this.charHeight = fontSizePx;
     console.log(`[GlyphAtlas] Font initialized: ${this.atlasCtx.font}`);
     console.log(`[GlyphAtlas] Base char size: ${this.charWidth}x${this.charHeight}px`);
   }
@@ -997,7 +1081,8 @@ class GlyphAtlas {
       return this.glyphCache.get(char);
     }
     const fontString = this.fontFamily.includes(",") ? this.fontFamily : `'${this.fontFamily}'`;
-    this.atlasCtx.font = `${this.fontSize}px ${fontString}`;
+    const fontSizePx = Math.max(1, Math.round(this.fontSize));
+    this.atlasCtx.font = `${fontSizePx}px ${fontString}`;
     this.atlasCtx.textBaseline = "top";
     if (!this.fontLoggedOnce) {
       console.log(`[GlyphAtlas] Caching glyphs with font: ${this.atlasCtx.font}`);
@@ -1026,7 +1111,9 @@ class GlyphAtlas {
     }
     this.atlasCtx.clearRect(this.atlasX, this.atlasY, width, height);
     this.atlasCtx.fillStyle = "#ffffff";
-    this.atlasCtx.fillText(char, Math.floor(this.atlasX + padding), Math.floor(this.atlasY + padding));
+    const x = Math.floor(this.atlasX + padding);
+    const y = Math.floor(this.atlasY + padding);
+    this.atlasCtx.fillText(char, x, y);
     const info = {
       u: (this.atlasX + padding) / this.atlasWidth,
       v: (this.atlasY + padding) / this.atlasHeight,
@@ -1520,9 +1607,10 @@ class WebGPURenderer {
       powerPreference: "high-performance"
     });
     const dpr = typeof window !== "undefined" && window.devicePixelRatio || 1;
+    const fontSizePx = Math.max(1, Math.round((config.fontSize || 16) * dpr));
     this.atlas = new GlyphAtlas({
       fontFamily: config.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace",
-      fontSize: (config.fontSize || 16) * dpr
+      fontSize: fontSizePx
     });
     this.terminalRenderer = new TerminalRenderer(
       this.context,
@@ -11419,6 +11507,22 @@ const THEMES = {
     // Warm sand
     accent3: 1517981439
     // Blue-gray
+  },
+  zerorain: {
+    bg: 269752319,
+    // Gray
+    bgAlt: 405153535,
+    // Slightly lighter teal-gray
+    fg: 3435973887,
+    // Light white (~#ccc)
+    fgAlt: 1616929023,
+    // Medium gray
+    accent1: 4291559679,
+    // Yellow
+    accent2: 15073279,
+    // Cyan
+    accent3: 4294967295
+    // Bright white (#fff)
   }
 };
 function applyTheme(theme) {
@@ -18019,7 +18123,7 @@ function focusOnSectionFit(camera, layout, viewportAspect, fill = 0.9, distanceL
     } else {
       camera.targetRotation = null;
     }
-    const doRecenter = (options == null ? void 0 : options.screenSpaceRecenter) ?? false;
+    const doRecenter = (options == null ? void 0 : options.screenSpaceRecenter) ?? true;
     if (doRecenter) {
       const forward2 = computeForwardFromRotation(camera.rotation);
       const denom = Math.max(0.2, -vec3Dot(normalWorld, forward2));
@@ -18279,7 +18383,7 @@ function focusOnSection(camera, layout, distance2 = 50, options) {
     } else {
       camera.targetRotation = null;
     }
-    const doRecenter = (options == null ? void 0 : options.screenSpaceRecenter) ?? false;
+    const doRecenter = (options == null ? void 0 : options.screenSpaceRecenter) ?? true;
     if (doRecenter) {
       const forward = computeForwardFromRotation(camera.rotation);
       target = vec3Sub(center, vec3Scale(forward, distance2));
@@ -20322,6 +20426,20 @@ const SFX_PRESETS = {
     ]
   }
 };
+function parseOptionalFiniteNumber(v2, path) {
+  if (v2 === void 0 || v2 === null) return void 0;
+  const n = Number(v2);
+  if (!Number.isFinite(n)) err(path, "must be a finite number");
+  return n;
+}
+function parseNodeLayout(v2, path) {
+  const x = parseOptionalFiniteNumber(v2.x, `${path}.x`);
+  const y = parseOptionalFiniteNumber(v2.y, `${path}.y`);
+  return {
+    ...x === void 0 ? {} : { x },
+    ...y === void 0 ? {} : { y }
+  };
+}
 function isPlainObject(v2) {
   if (typeof v2 !== "object" || v2 === null) return false;
   const proto = Object.getPrototypeOf(v2);
@@ -20406,11 +20524,13 @@ function parseNode(v2, path) {
   const id = v2.id;
   if (typeof kind !== "string") err(`${path}.kind`, "must be a string");
   if (typeof id !== "string" || !id) err(`${path}.id`, "must be a non-empty string");
+  const layout = parseNodeLayout(v2, path);
   switch (kind) {
     case "oscVoice":
       return {
         kind,
         id,
+        ...layout,
         oscType: parseExpr(v2.oscType, `${path}.oscType`),
         freqHz: parseExpr(v2.freqHz, `${path}.freqHz`),
         gain: parseExpr(v2.gain, `${path}.gain`),
@@ -20420,6 +20540,7 @@ function parseNode(v2, path) {
       return {
         kind,
         id,
+        ...layout,
         noiseType: v2.noiseType === void 0 ? void 0 : parseExpr(v2.noiseType, `${path}.noiseType`),
         duration: parseExpr(v2.duration, `${path}.duration`),
         gain: parseExpr(v2.gain, `${path}.gain`),
@@ -20431,6 +20552,7 @@ function parseNode(v2, path) {
       return {
         kind,
         id,
+        ...layout,
         delayTime: parseExpr(v2.delayTime, `${path}.delayTime`),
         maxDelayTime: v2.maxDelayTime === void 0 ? void 0 : parseExpr(v2.maxDelayTime, `${path}.maxDelayTime`)
       };
@@ -20438,12 +20560,14 @@ function parseNode(v2, path) {
       return {
         kind,
         id,
+        ...layout,
         pan: parseExpr(v2.pan, `${path}.pan`)
       };
     case "compressor":
       return {
         kind,
         id,
+        ...layout,
         threshold: v2.threshold === void 0 ? void 0 : parseExpr(v2.threshold, `${path}.threshold`),
         knee: v2.knee === void 0 ? void 0 : parseExpr(v2.knee, `${path}.knee`),
         ratio: v2.ratio === void 0 ? void 0 : parseExpr(v2.ratio, `${path}.ratio`),
@@ -20454,6 +20578,7 @@ function parseNode(v2, path) {
       return {
         kind,
         id,
+        ...layout,
         impulseType: v2.impulseType === void 0 ? void 0 : parseExpr(v2.impulseType, `${path}.impulseType`),
         seconds: v2.seconds === void 0 ? void 0 : parseExpr(v2.seconds, `${path}.seconds`),
         decay: v2.decay === void 0 ? void 0 : parseExpr(v2.decay, `${path}.decay`),
@@ -20464,6 +20589,7 @@ function parseNode(v2, path) {
       return {
         kind,
         id,
+        ...layout,
         panningModel: v2.panningModel === void 0 ? void 0 : parseExpr(v2.panningModel, `${path}.panningModel`),
         distanceModel: v2.distanceModel === void 0 ? void 0 : parseExpr(v2.distanceModel, `${path}.distanceModel`),
         positionX: v2.positionX === void 0 ? void 0 : parseExpr(v2.positionX, `${path}.positionX`),
@@ -20483,12 +20609,14 @@ function parseNode(v2, path) {
       return {
         kind,
         id,
+        ...layout,
         outputs: v2.outputs === void 0 ? void 0 : parseExpr(v2.outputs, `${path}.outputs`)
       };
     case "channelMerger":
       return {
         kind,
         id,
+        ...layout,
         inputs: v2.inputs === void 0 ? void 0 : parseExpr(v2.inputs, `${path}.inputs`)
       };
     case "iirFilter": {
@@ -20506,12 +20634,13 @@ function parseNode(v2, path) {
         if (!Number.isFinite(x)) err(`${path}.feedback[${i}]`, "must be a finite number");
         return x;
       });
-      return { kind, id, feedforward, feedback };
+      return { kind, id, ...layout, feedforward, feedback };
     }
     case "constantSource":
       return {
         kind,
         id,
+        ...layout,
         offset: parseExpr(v2.offset, `${path}.offset`),
         stopAfter: v2.stopAfter === void 0 ? void 0 : parseExpr(v2.stopAfter, `${path}.stopAfter`)
       };
@@ -20519,6 +20648,7 @@ function parseNode(v2, path) {
       return {
         kind,
         id,
+        ...layout,
         filterType: parseExpr(v2.filterType, `${path}.filterType`),
         freqHz: parseExpr(v2.freqHz, `${path}.freqHz`),
         q: parseExpr(v2.q, `${path}.q`),
@@ -20528,6 +20658,7 @@ function parseNode(v2, path) {
       return {
         kind,
         id,
+        ...layout,
         curve: parseExpr(v2.curve, `${path}.curve`),
         amount: v2.amount === void 0 ? void 0 : parseExpr(v2.amount, `${path}.amount`),
         oversample: v2.oversample === void 0 ? void 0 : parseExpr(v2.oversample, `${path}.oversample`)
@@ -20536,6 +20667,7 @@ function parseNode(v2, path) {
       return {
         kind,
         id,
+        ...layout,
         oscType: parseExpr(v2.oscType, `${path}.oscType`),
         freqHz: parseExpr(v2.freqHz, `${path}.freqHz`),
         gain: parseExpr(v2.gain, `${path}.gain`),
@@ -20545,6 +20677,7 @@ function parseNode(v2, path) {
       return {
         kind,
         id,
+        ...layout,
         gain: parseExpr(v2.gain, `${path}.gain`)
       };
     default:
@@ -25285,7 +25418,7 @@ class StorieEngine {
             }
             if (config.sectionOverflow !== void 0) {
               const next = config.sectionOverflow;
-              if (next === "clip" || next === "expand" || next === "expand-y") {
+              if (next === "clip" || next === "expand" || next === "expand-y" || next === "fit" || next === "fit-y") {
                 const prev = engine.worldsConfig.sectionOverflow;
                 engine.worldsConfig.sectionOverflow = next;
                 if (prev !== next) {
@@ -25864,6 +25997,54 @@ class StorieEngine {
       const inputBlocks = [];
       const dropBlocks = [];
       const globalBlocks = [];
+      const slugifySectionTitle = (s) => s.toLowerCase().trim().replace(/[`*_~]/g, "").replace(/\{[^}]*\}\s*$/g, "").replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-");
+      const sectionIndexBySlug = /* @__PURE__ */ new Map();
+      {
+        let idx = 0;
+        const walk = (sections) => {
+          for (const s of sections) {
+            const title = String((s == null ? void 0 : s.title) ?? "").trim();
+            const slug = slugifySectionTitle(title);
+            if (slug && !sectionIndexBySlug.has(slug)) {
+              sectionIndexBySlug.set(slug, idx);
+            }
+            idx++;
+            const children = Array.isArray(s == null ? void 0 : s.children) ? s.children : [];
+            if (children.length > 0) walk(children);
+          }
+        };
+        walk(Array.isArray(parsed.sections) ? parsed.sections : []);
+      }
+      const wrapWithSectionGuard = (hook, block) => {
+        var _a2;
+        const sectionMeta = (_a2 = block == null ? void 0 : block.metadata) == null ? void 0 : _a2.section;
+        if (sectionMeta === void 0 || sectionMeta === null) return block.code;
+        const raw = String(sectionMeta).trim();
+        if (!raw) return block.code;
+        let sectionIdx = null;
+        if (raw === "current") {
+          sectionIdx = this.findSectionIndexForLine(parsed.sections, block.startLine);
+        } else {
+          const n = Number(raw);
+          if (Number.isFinite(n) && Number.isInteger(n)) sectionIdx = n;
+        }
+        if (sectionIdx === null) {
+          const want = slugifySectionTitle(raw);
+          if (want) {
+            const resolved = sectionIndexBySlug.get(want);
+            if (resolved !== void 0) sectionIdx = resolved;
+          }
+        }
+        if (sectionIdx === null) {
+          console.warn(
+            `  [section] Could not resolve section "${raw}" for on:${hook} at lines ${block.startLine + 1}-${block.endLine + 1}; running unscoped.`
+          );
+          return block.code;
+        }
+        return `if (worlds.currentSection === ${sectionIdx}) {
+${block.code}
+}`;
+      };
       const enterBlocksBySection = /* @__PURE__ */ new Map();
       for (const block of jsBlocks) {
         const hook = (_h = block.metadata) == null ? void 0 : _h.on;
@@ -25872,13 +26053,13 @@ class StorieEngine {
         } else if (hook === "export") {
           exportBlocks.push(block.code);
         } else if (hook === "update") {
-          updateBlocks.push(block.code);
+          updateBlocks.push(wrapWithSectionGuard("update", block));
         } else if (hook === "render") {
-          renderBlocks.push(block.code);
+          renderBlocks.push(wrapWithSectionGuard("render", block));
         } else if (hook === "input") {
-          inputBlocks.push(block.code);
+          inputBlocks.push(wrapWithSectionGuard("input", block));
         } else if (hook === "drop") {
-          dropBlocks.push(block.code);
+          dropBlocks.push(wrapWithSectionGuard("drop", block));
         } else if (hook === "enter") {
           const sectionIdx = this.findSectionIndexForLine(parsed.sections, block.startLine);
           if (sectionIdx !== null) {
@@ -26152,6 +26333,7 @@ ${exportVars}
             this.compositor.setShaderManager(this.shaderManager);
             this.compositor.setShaderChainManager(this.shaderChainManager);
           }
+          await this.registerPendingShaders();
           if (this.pendingShaderChain) {
             console.log(`✓ Applying deferred shader chain (${this.pendingShaderChain.source}): ${this.pendingShaderChain.chainStr}`);
             await this.shaderChainManager.activateChainFromString(
@@ -26162,7 +26344,6 @@ ${exportVars}
           }
         }
         this.ensureWebGPUUI();
-        await this.registerPendingShaders();
       }
     }
     this.running = true;
@@ -26563,7 +26744,7 @@ ${exportVars}
     const baseLineHeight = Math.max(1, measured.baseLineHeight);
     let worldSizeChanged = false;
     const overflowCfg = this.worldsConfig.sectionOverflow;
-    const overflowMode = overflowCfg === "expand" || overflowCfg === "expand-y" ? overflowCfg : "clip";
+    const overflowMode = overflowCfg === "expand" || overflowCfg === "expand-y" || overflowCfg === "fit" || overflowCfg === "fit-y" ? overflowCfg : "clip";
     const layoutOverflow = overflowMode === "clip" ? "clip" : "expand";
     const measureCtx = (() => {
       if (!this.worldsCardFontStack) return null;
@@ -26612,7 +26793,7 @@ ${exportVars}
 
 ${content}`.trim();
       const nodes = parseMarkdownLite(markdown);
-      if (overflowMode === "expand" || overflowMode === "expand-y") {
+      if (overflowMode === "expand" || overflowMode === "expand-y" || overflowMode === "fit" || overflowMode === "fit-y") {
         const base2 = this.getStyle("default");
         const dim2 = this.getStyle("dim");
         const heading2 = this.getStyle("heading");
@@ -26633,9 +26814,10 @@ ${content}`.trim();
           bg: mdBg2
         };
         const measureTextWidth = this.worldsCardFontStack && measureCtx ? (text) => measureCtx.measureText(text).width : void 0;
+        const probeWidthPx = overflowMode === "fit" ? maxW : widthPx;
         const probe = layoutMarkdownDocument(
           nodes,
-          { x: 0, y: 0, width: widthPx, height: heightPx },
+          { x: 0, y: 0, width: probeWidthPx, height: heightPx },
           { charW: measuredCharW, charH: measuredCharH, measureTextWidth },
           mdStyle2,
           0,
@@ -26644,10 +26826,19 @@ ${content}`.trim();
         );
         const reqW = Math.ceil(probe.contentWidth + texturePadding * 2);
         const reqH = Math.ceil(probe.contentHeight + texturePadding * 2);
+        const clampedW = Math.max(minW, Math.min(maxW, reqW));
+        const clampedH = Math.max(minH, Math.min(maxH, reqH));
         if (overflowMode === "expand") {
-          widthPx = Math.max(widthPx, Math.max(minW, Math.min(maxW, reqW)));
+          widthPx = Math.max(widthPx, clampedW);
+          heightPx = Math.max(heightPx, clampedH);
+        } else if (overflowMode === "expand-y") {
+          heightPx = Math.max(heightPx, clampedH);
+        } else if (overflowMode === "fit") {
+          widthPx = clampedW;
+          heightPx = clampedH;
+        } else if (overflowMode === "fit-y") {
+          heightPx = clampedH;
         }
-        heightPx = Math.max(heightPx, Math.max(minH, Math.min(maxH, reqH)));
       }
       {
         const prevW = layout.worldWidth;
@@ -26716,6 +26907,27 @@ ${content}`.trim();
         texturePadding,
         { overflow: layoutOverflow }
       );
+      if ((this.worldsConfig.sectionContentAlign ?? "start") === "center") {
+        const innerW = Math.max(1, widthPx - texturePadding * 2);
+        const innerH = Math.max(1, heightPx - texturePadding * 2);
+        const dx = Math.max(0, Math.round((innerW - result.contentWidth) / 2));
+        const dy = Math.max(0, Math.round((innerH - result.contentHeight) / 2));
+        if (dx !== 0 || dy !== 0) {
+          let isFirstRect = true;
+          for (const op of result.ops) {
+            if (op.kind === "rect" && isFirstRect) {
+              isFirstRect = false;
+              continue;
+            }
+            op.x = op.x + dx;
+            op.y = op.y + dy;
+          }
+          for (const r2 of result.linkRegions) {
+            r2.x += dx;
+            r2.y += dy;
+          }
+        }
+      }
       ctx.clearRect(0, 0, widthPx, heightPx);
       if (bakedRuledPaper) {
         const ruledLine = this.withAlpha(dim.fg, 64);
@@ -26872,14 +27084,33 @@ ${content}`.trim();
       const y = -row * stepY;
       l.transform.position = { x, y, z: l.transform.position.z };
     }
+    this.refocus3DForCurrentViewport();
   }
   get3DCardWorldSize(layout) {
     var _a, _b;
-    const baseW = layout.worldWidth ?? layout.width * this.get3DCardXScaleFactor(layout);
-    const baseH = layout.worldHeight ?? layout.height;
+    let baseW = layout.worldWidth;
+    let baseH = layout.worldHeight;
+    if (!(baseW && baseH)) {
+      const units = this.worldsConfig.sectionSizeUnits === "px" ? "px" : "text";
+      if (units === "px") {
+        const texturePadding = 12;
+        const atlas = this.renderer instanceof WebGPURenderer ? this.renderer.getAtlas() : null;
+        const fontSizePx = atlas ? atlas.getFontSize() : 16;
+        const fontStack = this.worldsCardFontStack || this.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
+        const measured = this.measureFontMetrics(fontStack, fontSizePx);
+        const ppu = Math.max(1, measured.baseLineHeight);
+        baseW = (layout.width + texturePadding * 2) / ppu;
+        baseH = (layout.height + texturePadding * 2) / ppu;
+      } else {
+        baseW = layout.width * this.get3DCardXScaleFactor(layout);
+        baseH = layout.height;
+      }
+    }
+    const safeW = Number.isFinite(baseW) && baseW > 0 ? baseW : 1;
+    const safeH = Number.isFinite(baseH) && baseH > 0 ? baseH : 1;
     return {
-      width: baseW * (((_a = layout.transform.scale) == null ? void 0 : _a.x) ?? 1),
-      height: baseH * (((_b = layout.transform.scale) == null ? void 0 : _b.y) ?? 1)
+      width: safeW * (((_a = layout.transform.scale) == null ? void 0 : _a.x) ?? 1),
+      height: safeH * (((_b = layout.transform.scale) == null ? void 0 : _b.y) ?? 1)
     };
   }
   parseHexColorToPackedColor(hex) {
@@ -27048,7 +27279,7 @@ ${content}`.trim();
     const baseLineHeight = Math.max(1, Math.round(charH * 1.25));
     let worldSizeChanged = false;
     const overflowCfg = this.worldsConfig.sectionOverflow;
-    const overflowMode = overflowCfg === "expand" || overflowCfg === "expand-y" ? overflowCfg : "clip";
+    const overflowMode = overflowCfg === "expand" || overflowCfg === "expand-y" || overflowCfg === "fit" || overflowCfg === "fit-y" ? overflowCfg : "clip";
     const layoutOverflow = overflowMode === "clip" ? "clip" : "expand";
     if (!this.sectionWebGPUUIRenderer) {
       this.sectionWebGPUUIRenderer = new WebGPUUIRenderer(device, atlas, 1, 1);
@@ -27098,10 +27329,11 @@ ${content}`.trim();
 
 ${content}`.trim();
       const nodes = parseMarkdownLite(markdown);
-      if (overflowMode === "expand" || overflowMode === "expand-y") {
+      if (overflowMode === "expand" || overflowMode === "expand-y" || overflowMode === "fit" || overflowMode === "fit-y") {
+        const probeWidthPx = overflowMode === "fit" ? maxW : widthPx;
         const probe = layoutMarkdownDocument(
           nodes,
-          { x: 0, y: 0, width: widthPx, height: heightPx },
+          { x: 0, y: 0, width: probeWidthPx, height: heightPx },
           { charW, charH },
           style,
           0,
@@ -27110,10 +27342,19 @@ ${content}`.trim();
         );
         const reqW = Math.ceil(probe.contentWidth + texturePadding * 2);
         const reqH = Math.ceil(probe.contentHeight + texturePadding * 2);
+        const clampedW = Math.max(minW, Math.min(maxW, reqW));
+        const clampedH = Math.max(minH, Math.min(maxH, reqH));
         if (overflowMode === "expand") {
-          widthPx = Math.max(widthPx, Math.max(minW, Math.min(maxW, reqW)));
+          widthPx = Math.max(widthPx, clampedW);
+          heightPx = Math.max(heightPx, clampedH);
+        } else if (overflowMode === "expand-y") {
+          heightPx = Math.max(heightPx, clampedH);
+        } else if (overflowMode === "fit") {
+          widthPx = clampedW;
+          heightPx = clampedH;
+        } else if (overflowMode === "fit-y") {
+          heightPx = clampedH;
         }
-        heightPx = Math.max(heightPx, Math.max(minH, Math.min(maxH, reqH)));
       }
       {
         const prevW = layout.worldWidth;
@@ -27158,6 +27399,27 @@ ${content}`.trim();
         texturePadding,
         { overflow: layoutOverflow }
       );
+      if ((this.worldsConfig.sectionContentAlign ?? "start") === "center") {
+        const innerW = Math.max(1, widthPx - texturePadding * 2);
+        const innerH = Math.max(1, heightPx - texturePadding * 2);
+        const dx = Math.max(0, Math.round((innerW - result.contentWidth) / 2));
+        const dy = Math.max(0, Math.round((innerH - result.contentHeight) / 2));
+        if (dx !== 0 || dy !== 0) {
+          let isFirstRect = true;
+          for (const op of result.ops) {
+            if (op.kind === "rect" && isFirstRect) {
+              isFirstRect = false;
+              continue;
+            }
+            op.x = op.x + dx;
+            op.y = op.y + dy;
+          }
+          for (const r2 of result.linkRegions) {
+            r2.x += dx;
+            r2.y += dy;
+          }
+        }
+      }
       this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
       ui.clearCommands();
       if (bakedRuledPaper) {
@@ -27979,14 +28241,22 @@ ${content}`.trim();
       console.warn(`Section ${String(req.sectionIndex)} not found`);
       return;
     }
+    if (req.kind === "fit") {
+      this.premeasure3DCardWorldSize(layout);
+      this.reflowWorldsAutoLayout();
+    }
     const cfg = this.worldsConfig;
     const defaultKeepRotation = !!cfg.keepRotation;
+    const hasDefaultRecenter = cfg.screenSpaceRecenter !== void 0;
     const defaultRecenter = !!cfg.screenSpaceRecenter;
     const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
     const defaultStraighten = !!cfg.straightenOnFocus;
     const keepRotation = req.keepRotation !== void 0 ? !!req.keepRotation : defaultKeepRotation;
     const straighten = req.straighten !== void 0 ? !!req.straighten : defaultStraighten;
-    const recenterOpts = keepRotation && defaultRecenter ? { screenSpaceRecenter: true, screenSpaceRecenterIters: defaultRecenterIters } : {};
+    const recenterOpts = keepRotation && hasDefaultRecenter ? {
+      screenSpaceRecenter: defaultRecenter,
+      ...defaultRecenter ? { screenSpaceRecenterIters: defaultRecenterIters } : {}
+    } : {};
     if (req.kind === "focus") {
       this.lastApplied3DCameraFocus = {
         kind: "focus",
@@ -28028,6 +28298,109 @@ ${content}`.trim();
       });
     }
   }
+  premeasure3DCardWorldSize(layout) {
+    if (layout.worldWidth && layout.worldHeight) return;
+    const texturePadding = 12;
+    const units = this.worldsConfig.sectionSizeUnits === "px" ? "px" : "text";
+    const overflowCfg = this.worldsConfig.sectionOverflow;
+    const overflowMode = overflowCfg === "expand" || overflowCfg === "expand-y" || overflowCfg === "fit" || overflowCfg === "fit-y" ? overflowCfg : "clip";
+    const title = (layout.displayTitle || layout.sectionTitle || "").trim();
+    const content = (layout.content || "").trim();
+    const markdown = `# ${title}
+
+${content}`.trim();
+    const nodes = parseMarkdownLite(markdown);
+    const textureMode = this.worldsConfig.sectionTextureMode;
+    const minW = 256;
+    const minH = 128;
+    const maxW = textureMode === "webgpu-ui" ? 1024 : 2048;
+    const maxH = textureMode === "webgpu-ui" ? 1024 : 2048;
+    const base = this.getStyle("default");
+    const dim = this.getStyle("dim");
+    const heading = this.getStyle("heading");
+    const link2 = this.getStyle("link");
+    const code = this.getStyle("code");
+    const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
+    const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
+    const shaderBg = !!this.parseWorldsSectionBackgroundShader();
+    const surfaceBg = this.resolveWorldsSectionBackground();
+    const mdBg = proceduralRuledPaper || bakedRuledPaper || shaderBg ? this.withAlpha(surfaceBg, 0) : surfaceBg;
+    const mdStyle = {
+      fg: base.fg,
+      mutedFg: dim.fg,
+      headingFg: heading.fg,
+      linkFg: link2.fg,
+      codeFg: code.fg,
+      codeBg: code.bg,
+      bg: mdBg
+    };
+    const atlas = this.renderer instanceof WebGPURenderer ? this.renderer.getAtlas() : null;
+    const fontSizePx = atlas ? atlas.getFontSize() : 16;
+    const fontStack = this.worldsCardFontStack || this.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
+    const measured = this.measureFontMetrics(fontStack, fontSizePx);
+    const measuredCharW = Math.max(1, measured.charW);
+    const measuredCharH = Math.max(1, measured.charH);
+    const baseLineHeight = Math.max(1, measured.baseLineHeight);
+    let widthPx = Math.max(
+      minW,
+      Math.min(
+        maxW,
+        units === "px" ? Math.round(layout.width + texturePadding * 2) : Math.round(layout.width * measuredCharW + texturePadding * 2)
+      )
+    );
+    let heightPx = Math.max(
+      minH,
+      Math.min(
+        maxH,
+        units === "px" ? Math.round(layout.height + texturePadding * 2) : Math.round(layout.height * baseLineHeight + texturePadding * 2)
+      )
+    );
+    if (overflowMode !== "clip") {
+      const probeWidthPx = overflowMode === "fit" ? maxW : widthPx;
+      const measureCtx = (() => {
+        if (!this.worldsCardFontStack) return null;
+        try {
+          const c2 = document.createElement("canvas");
+          c2.width = 16;
+          c2.height = 16;
+          const ctx = c2.getContext("2d", { alpha: true });
+          if (!ctx) return null;
+          ctx.textBaseline = "top";
+          ctx.textAlign = "left";
+          ctx.font = `${fontSizePx}px ${fontStack}`;
+          return ctx;
+        } catch {
+          return null;
+        }
+      })();
+      const measureTextWidth = this.worldsCardFontStack && measureCtx ? (text) => measureCtx.measureText(text).width : void 0;
+      const probe = layoutMarkdownDocument(
+        nodes,
+        { x: 0, y: 0, width: probeWidthPx, height: heightPx },
+        { charW: measuredCharW, charH: measuredCharH, measureTextWidth },
+        mdStyle,
+        0,
+        texturePadding,
+        { overflow: "expand" }
+      );
+      const reqW = Math.ceil(probe.contentWidth + texturePadding * 2);
+      const reqH = Math.ceil(probe.contentHeight + texturePadding * 2);
+      const clampedW = Math.max(minW, Math.min(maxW, reqW));
+      const clampedH = Math.max(minH, Math.min(maxH, reqH));
+      if (overflowMode === "expand") {
+        widthPx = Math.max(widthPx, clampedW);
+        heightPx = Math.max(heightPx, clampedH);
+      } else if (overflowMode === "expand-y") {
+        heightPx = Math.max(heightPx, clampedH);
+      } else if (overflowMode === "fit") {
+        widthPx = clampedW;
+        heightPx = clampedH;
+      } else if (overflowMode === "fit-y") {
+        heightPx = clampedH;
+      }
+    }
+    this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
+  }
   refocus3DForCurrentViewport() {
     if (!this.worldsEnabled || !this.camera3D) return;
     if (!this.lastApplied3DCameraFocus) return;
@@ -28035,9 +28408,13 @@ ${content}`.trim();
     if (!layout) return;
     if (this.lastApplied3DCameraFocus.kind === "focus") {
       const cfg = this.worldsConfig;
+      const hasDefaultRecenter = cfg.screenSpaceRecenter !== void 0;
       const defaultRecenter = !!cfg.screenSpaceRecenter;
       const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
-      const recenterOpts = this.lastApplied3DCameraFocus.keepRotation && defaultRecenter ? { screenSpaceRecenter: true, screenSpaceRecenterIters: defaultRecenterIters } : {};
+      const recenterOpts = this.lastApplied3DCameraFocus.keepRotation && hasDefaultRecenter ? {
+        screenSpaceRecenter: defaultRecenter,
+        ...defaultRecenter ? { screenSpaceRecenterIters: defaultRecenterIters } : {}
+      } : {};
       focusOnSection(this.camera3D, layout, this.lastApplied3DCameraFocus.distance, {
         ...this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {},
         ...this.lastApplied3DCameraFocus.straighten ? { straighten: true } : {},
@@ -28048,9 +28425,13 @@ ${content}`.trim();
     } else {
       const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
       const cfg = this.worldsConfig;
+      const hasDefaultRecenter = cfg.screenSpaceRecenter !== void 0;
       const defaultRecenter = !!cfg.screenSpaceRecenter;
       const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
-      const recenterOpts = this.lastApplied3DCameraFocus.keepRotation && defaultRecenter ? { screenSpaceRecenter: true, screenSpaceRecenterIters: defaultRecenterIters } : {};
+      const recenterOpts = this.lastApplied3DCameraFocus.keepRotation && hasDefaultRecenter ? {
+        screenSpaceRecenter: defaultRecenter,
+        ...defaultRecenter ? { screenSpaceRecenterIters: defaultRecenterIters } : {}
+      } : {};
       focusOnSectionFit(this.camera3D, layout, aspect, this.lastApplied3DCameraFocus.fill, {}, {
         ...this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {},
         ...this.lastApplied3DCameraFocus.straighten ? { straighten: true } : {},

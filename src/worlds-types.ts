@@ -107,10 +107,19 @@ export interface WorldsConfig {
   /**
    * Overflow behavior when rendering section content into card textures.
    * - 'clip' (default): render into fixed-size card; content beyond bounds is clipped
-   * - 'expand': grow the card texture (within GPU limits) to fit all content
-   * - 'expand-y': grow card height only (keep width fixed)
+    * - 'expand': grow the card texture (within GPU limits) to fit all content
+    * - 'expand-y': grow card height only (keep width fixed)
+    * - 'fit': resize the card to tightly fit content (shrink or grow, within GPU limits)
+    * - 'fit-y': resize card height to fit content (shrink or grow; keep width fixed)
    */
-  sectionOverflow?: 'clip' | 'expand' | 'expand-y';
+    sectionOverflow?: 'clip' | 'expand' | 'expand-y' | 'fit' | 'fit-y';
+
+  /**
+   * Alignment of rendered markdown content inside the card texture.
+   * - 'start' (default): content begins at the top-left padding
+   * - 'center': centers the content block within the card
+   */
+  sectionContentAlign?: 'start' | 'center';
   cameraFov: number;
   cameraNear: number;
   cameraFar: number;

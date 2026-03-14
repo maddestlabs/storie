@@ -432,6 +432,7 @@ See `/docs/shaders/wgsl/` for available effects:
 - **border.wgsl.js**: Decorative border overlay
 - **clouds.wgsl.js**: Procedural cloud noise
 - **crt.wgsl.js**: CRT curvature + frame
+- **zerocrt.wgsl.js**: 0rain-style CRT lighting, rumble, sync wave, and curvature
 - **invert.wgsl.js**: Color inversion
 - **paper.wgsl.js**: Paper texture
 - **ruledlines.wgsl.js**: Notebook ruled lines

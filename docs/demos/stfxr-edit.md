@@ -314,9 +314,48 @@ function refreshGraphAndLayout(forceLayout) {
     state.selectedId = first ? String(first.id) : null;
   }
 
+  const b = graphBounds();
+  const nodes = Array.isArray(state.draftPreset?.nodes) ? state.draftPreset.nodes : [];
+
+  const getDraftNode = (id) => {
+    for (const n of nodes) if (String(n?.id ?? '') === String(id)) return n;
+    return null;
+  };
+
+  const writeLayoutToDraft = (layout) => {
+    for (const [id, r] of layout.entries()) {
+      const n = getDraftNode(id);
+      if (!n || !r) continue;
+      n.x = r.x;
+      n.y = r.y;
+    }
+  };
+
+  const applyNodeLayoutDefaults = (layout) => {
+    // Prefer explicit node x/y, otherwise keep existing/auto values.
+    for (const n of state.graph.nodes) {
+      const id = String(n?.id ?? '');
+      if (!id) continue;
+      const r = layout.get(id);
+      if (!r) continue;
+      const x = Number(n?.x);
+      const y = Number(n?.y);
+      if (Number.isFinite(x)) r.x = x;
+      if (Number.isFinite(y)) r.y = y;
+    }
+  };
+
   if (forceLayout || !state.layoutById || state.layoutById.size === 0) {
-    const b = graphBounds();
     state.layoutById = autoLayout(state.graph, b.graph);
+    applyNodeLayoutDefaults(state.layoutById);
+    writeLayoutToDraft(state.layoutById);
+  } else {
+    // Ensure any new nodes have layout entries, preferring node-specified x/y.
+    const auto = autoLayout(state.graph, b.graph);
+    for (const [id, r] of auto.entries()) {
+      if (!state.layoutById.has(id)) state.layoutById.set(id, r);
+    }
+    applyNodeLayoutDefaults(state.layoutById);
   }
 }
 
@@ -336,6 +375,16 @@ function loadBasePresetByIndex() {
   // Clone by JSON roundtrip (safe in sandbox)
   state.draftPreset = state.basePreset ? JSON.parse(JSON.stringify(state.basePreset)) : null;
 
+  // Legacy cleanup: older layouts may have stored w/h. Keep only x/y.
+  if (state.draftPreset && Array.isArray(state.draftPreset.nodes)) {
+    for (const n of state.draftPreset.nodes) {
+      if (n && typeof n === 'object') {
+        if (Object.prototype.hasOwnProperty.call(n, 'w')) delete n.w;
+        if (Object.prototype.hasOwnProperty.call(n, 'h')) delete n.h;
+      }
+    }
+  }
+
   refreshGraphAndLayout(true);
 
   syncEditorFromDraft(true);
@@ -354,6 +403,17 @@ function tryApplyEditor() {
     // Allow wrapper form { preset: { ... } }
     const normalized = (parsed && typeof parsed === 'object' && parsed.preset) ? parsed.preset : parsed;
     state.draftPreset = normalized;
+
+    // Legacy cleanup: older layouts may have stored w/h. Keep only x/y.
+    if (state.draftPreset && Array.isArray(state.draftPreset.nodes)) {
+      for (const n of state.draftPreset.nodes) {
+        if (n && typeof n === 'object') {
+          if (Object.prototype.hasOwnProperty.call(n, 'w')) delete n.w;
+          if (Object.prototype.hasOwnProperty.call(n, 'h')) delete n.h;
+        }
+      }
+    }
+
     // Normalize editor text to the draft we just accepted.
     state.lastEditorText = state.draftPreset ? JSON.stringify(state.draftPreset, null, 2) : '';
     state.widgets.editor.setValue(state.lastEditorText);
@@ -679,6 +739,17 @@ if (event.type === 'mouse_move') {
         const w = viewToWorld(event.x, event.y);
         r.x = w.x - state.drag.ox;
         r.y = w.y - state.drag.oy;
+
+        // Persist into draft preset node layout (optional metadata)
+        if (state.draftPreset && Array.isArray(state.draftPreset.nodes)) {
+          for (const n of state.draftPreset.nodes) {
+            if (String(n?.id ?? '') === String(state.drag.id)) {
+              n.x = r.x;
+              n.y = r.y;
+              break;
+            }
+          }
+        }
       }
     } else if (state.drag.mode === 'pan') {
       const dx = event.x - state.drag.ox;

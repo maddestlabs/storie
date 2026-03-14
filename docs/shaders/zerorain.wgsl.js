@@ -31,6 +31,9 @@ struct Uniforms {
   _pad0: f32,
   resolution: vec2f,
 
+  ghostOpacity: f32,      // overlay blend amount
+  ghostScale: f32,        // zoom factor for the captured overlay
+
   // Custom uniforms
   whiteOpacity: f32,      // 0..1 (target: 0.3)
   blackOpacity: f32,      // 0..1 (target: 0.2)
@@ -64,6 +67,10 @@ fn hash11(p: f32) -> f32 {
 
 fn hash21(p: vec2f) -> f32 {
   return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453123);
+}
+
+fn ghostUv(uv: vec2f, scale: f32) -> vec2f {
+  return clamp(uv / max(scale, 1.0), vec2f(0.0), vec2f(1.0));
 }
 
 fn rainLayer(
@@ -148,8 +155,12 @@ fn fragmentMain(
 
   let distortUv = (dir * (uniforms.distortPx / res)) * d;
   let sampleUv = clamp(vUv + distortUv, vec2f(0.0), vec2f(1.0));
+  let zoomUv = ghostUv(vUv, uniforms.ghostScale);
 
-  var color = textureSample(contentTexture, contentTextureSampler, sampleUv).rgb;
+  let baseColor = textureSample(contentTexture, contentTextureSampler, sampleUv).rgb;
+  let overlayColor = textureSample(contentTexture, contentTextureSampler, zoomUv).rgb;
+  let ghostAmt = clamp(uniforms.ghostOpacity, 0.0, 1.0);
+  var color = mix(baseColor, overlayColor, ghostAmt);
 
   // Apply white pixels at target opacity (alpha blend toward white)
   let aW = clamp(uniforms.whiteOpacity, 0.0, 1.0) * clamp(whiteI, 0.0, 1.0);
@@ -164,9 +175,12 @@ fn fragmentMain(
 `,
 
     uniforms: {
+      ghostOpacity: 0.05,
+      ghostScale: 4.0,
+
       // Requested opacities
-      whiteOpacity: 0.01,
-      blackOpacity: 0.2,
+      whiteOpacity: 0.02,
+      blackOpacity: 0.07,
 
       // Column spacing (pixels). Smaller => denser rain.
       whiteColumnPx: 5.0,

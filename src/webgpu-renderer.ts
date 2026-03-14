@@ -54,9 +54,10 @@ export class WebGPURenderer {
     // Scale font size to physical pixels so glyph atlas is rasterized at
     // native device resolution (crisp on HiDPI / Retina displays).
     const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+    const fontSizePx = Math.max(1, Math.round((config.fontSize || 16) * dpr));
     this.atlas = new GlyphAtlas({
       fontFamily: config.fontFamily || '\'3270-regular\', \'Consolas\', \'Monaco\', monospace',
-      fontSize: (config.fontSize || 16) * dpr
+      fontSize: fontSizePx
     });
     
     this.terminalRenderer = new TerminalRenderer(

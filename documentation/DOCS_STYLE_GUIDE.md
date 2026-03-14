@@ -157,6 +157,30 @@ function update(delta) {
 
 **Result:** Persistent vars are accessible, local vars stay local, no boilerplate!
 
+#### Optional Fence Metadata: `section:` (Worlds)
+
+When using the Worlds module, you can scope a lifecycle block to a specific section:
+
+```js on:render section:3
+// Only runs while Worlds is focused on section index 3
+term.write(0, 0, 'Section 3 active');
+```
+
+You can also use `section:current` to target the section that the code block is located under:
+
+```js on:update section:current
+// Runs only when the current Worlds section is this section
+crewMorale = (crewMorale ?? 0) - 0.01;
+```
+
+You can also target by section title (matched by a slugified form of the heading text):
+
+```js on:render section:Awake
+term.write(0, 0, 'Awake');
+```
+
+For multi-word headings, use the slug form (e.g. `section:city-entrance`).
+
 ## Block Types
 
 ### Raw `js` Blocks (Initialization)

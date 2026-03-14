@@ -519,6 +519,26 @@ This demo showcases:
         // Get canvas
         const canvas = document.getElementById('canvas');
 
+        const parseBoolish = (value) => {
+          const v = String(value ?? '').trim().toLowerCase();
+          if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
+          if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+          return false;
+        };
+
+        // Optional: stretch the canvas' *CSS size* to fit the viewport even when
+        // the backing buffer is cell-aligned. This trades some crispness for
+        // zero wasted screen space at the edges.
+        //
+        // Default: ON
+        // Sources (priority):
+        // 1) URL param `?stretch=...` (e.g. `0` to disable)
+        // 2) Frontmatter `stretch: true|false` (handled after markdown load)
+        const urlParams = new URLSearchParams(window.location.search);
+        const stretchParamRaw = urlParams.get('stretch');
+        const stretchFromUrl = (stretchParamRaw === null) ? null : parseBoolish(stretchParamRaw);
+        let stretchToFit = stretchFromUrl ?? true;
+
         // ── Load markdown first (so we can honor frontmatter font settings) ──
         let markdown = null;
         let source = 'embedded';
@@ -604,7 +624,13 @@ This demo showcases:
         // Frontmatter keys used by demos:
         // - font: "Rye"
         // - fontsize: 22
+        // - stretch: true
         const normalizeFontName = (s) => String(s || '').replace(/\+/g, ' ').trim();
+
+        // Frontmatter-driven stretch, unless the URL param is explicitly set.
+        if (stretchFromUrl === null && Object.prototype.hasOwnProperty.call(fm, 'stretch')) {
+          stretchToFit = parseBoolish(fm.stretch);
+        }
 
         const primaryFont = (fm.font && String(fm.font).trim()) ? normalizeFontName(fm.font) : '3270-regular';
         const parsedFontSize = Number(fm.fontsize || fm.fontSize);
@@ -631,6 +657,90 @@ This demo showcases:
           } catch {
             return true;
           }
+        }
+
+        const LOCAL_FONT_EXTENSIONS = ['otf', 'ttf', 'woff2', 'woff'];
+        const LOCAL_FONT_MARKER_PREFIX = 'storie-local-font-';
+
+        function toKebabCase(value) {
+          return String(value || '')
+            .trim()
+            .replace(/[^A-Za-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '');
+        }
+
+        function getLocalFontCandidates(family) {
+          const normalized = String(family || '').trim();
+          if (!normalized) return [];
+
+          const compact = normalized.replace(/\s+/g, '');
+          const kebab = toKebabCase(normalized);
+          const stems = Array.from(new Set([normalized, compact, kebab].filter(Boolean)));
+          const names = new Set();
+          for (const stem of stems) {
+            names.add(stem);
+            names.add(`${stem}-Regular`);
+            names.add(`${stem}-regular`);
+            names.add(`${stem}-VariableFont_wght`);
+          }
+
+          const base = new URL('./assets/', document.baseURI);
+          const candidates = [];
+          for (const name of names) {
+            for (const ext of LOCAL_FONT_EXTENSIONS) {
+              candidates.push({
+                href: new URL(`${name}.${ext}`, base).href,
+                format: ext === 'otf' ? 'opentype' : ext === 'ttf' ? 'truetype' : ext
+              });
+            }
+          }
+          return candidates;
+        }
+
+        async function tryLoadLocalFont(family, physicalSizePx) {
+          try {
+            if (!family || !document.fonts) return false;
+            const fam = String(family).trim();
+            if (!fam) return false;
+
+            const markerId = `${LOCAL_FONT_MARKER_PREFIX}${fam}`;
+            const existing = document.querySelector(`style[data-storie-local-font="${CSS.escape(markerId)}"]`);
+            if (existing) {
+              await Promise.race([
+                document.fonts.load(`${physicalSizePx}px "${fam}"`),
+                new Promise(resolve => setTimeout(resolve, 750))
+              ]);
+              return true;
+            }
+
+            for (const candidate of getLocalFontCandidates(fam)) {
+              try {
+                const face = new FontFace(fam, `url("${candidate.href}") format("${candidate.format}")`);
+                const loaded = await Promise.race([
+                  face.load().then(() => face, () => null),
+                  new Promise(resolve => setTimeout(() => resolve(null), 750))
+                ]);
+                if (!loaded) continue;
+
+                document.fonts.add(loaded);
+                const marker = document.createElement('style');
+                marker.setAttribute('data-storie-local-font', markerId);
+                marker.textContent = `:root { --${toKebabCase(markerId) || 'storie-local-font'}: 1; }`;
+                document.head.appendChild(marker);
+
+                await Promise.race([
+                  document.fonts.load(`${physicalSizePx}px "${fam}"`),
+                  new Promise(resolve => setTimeout(resolve, 750))
+                ]);
+                return true;
+              } catch {
+                // Try next candidate.
+              }
+            }
+          } catch {
+            // ignore
+          }
+          return false;
         }
 
         async function tryLoadGoogleFont(family, physicalSizePx) {
@@ -669,6 +779,25 @@ This demo showcases:
             return false;
           }
         }
+
+        async function tryLoadPreferredFont(family, physicalSizePx) {
+          if (await tryLoadLocalFont(family, physicalSizePx)) return true;
+          return await tryLoadGoogleFont(family, physicalSizePx);
+        }
+
+        function measureMonospaceCellWidth(ctx, extraGutterPx = 1) {
+          const samples = ['M', 'W', '@', '#', '0', '1', '8', '|', '_'];
+          let maxAdvance = 0;
+          let maxInk = 0;
+          for (const sample of samples) {
+            const metrics = ctx.measureText(sample);
+            if (Number.isFinite(metrics.width)) maxAdvance = Math.max(maxAdvance, metrics.width);
+            const left = Number.isFinite(metrics.actualBoundingBoxLeft) ? Math.abs(metrics.actualBoundingBoxLeft) : 0;
+            const right = Number.isFinite(metrics.actualBoundingBoxRight) ? Math.abs(metrics.actualBoundingBoxRight) : 0;
+            maxInk = Math.max(maxInk, left + right);
+          }
+          return Math.max(1, Math.ceil(Math.max(maxAdvance, maxInk)) + Math.max(0, Math.round(extraGutterPx)));
+        }
         
         // Measure actual font dimensions (must match renderer / glyph atlas)
 
@@ -682,16 +811,18 @@ This demo showcases:
         // a different size than the atlas causes a per-column width mismatch that
         // accumulates into a visible gap at the right edge of the terminal.
         const dpr = window.devicePixelRatio || 1;
-        const physicalFontSize = fontSize * dpr;
+        // Keep physical font size integer-aligned to match GlyphAtlas/WebGPU,
+        // which rasterizes at an integer pixel size.
+        const physicalFontSizePx = Math.max(1, Math.round(fontSize * dpr));
 
         // Best-effort preload of Google Fonts before measurement so our
         // bootstrap cell metrics match the glyph atlas.
-        await tryLoadGoogleFont(primaryFont, physicalFontSize);
+        await tryLoadPreferredFont(primaryFont, physicalFontSizePx);
 
         if (document.fonts && document.fonts.ready) {
           try {
             await document.fonts.ready;
-            await document.fonts.load(`${physicalFontSize}px ${fontStack}`);
+            await document.fonts.load(`${physicalFontSizePx}px ${fontStack}`);
             console.log('✓ Font ready for measurement');
           } catch (e) {
             console.log('⚠ Font readiness check failed, continuing anyway');
@@ -700,24 +831,22 @@ This demo showcases:
 
         // Guardrail: terminal rendering assumes monospace. If the requested
         // font resolves to a proportional face, fall back to monospace.
-        if (!isProbablyMonospaceFontStack(fontStack, physicalFontSize)) {
+        if (!isProbablyMonospaceFontStack(fontStack, physicalFontSizePx)) {
           console.warn('⚠ Requested font is not monospace; falling back for grid alignment:', primaryFont);
           fontStack = fallbackStack;
         }
 
         const tempCanvas = document.createElement('canvas');
         const tempCtx = tempCanvas.getContext('2d');
-        tempCtx.font = `${physicalFontSize}px ${fontStack}`;
+        tempCtx.font = `${physicalFontSizePx}px ${fontStack}`;
         tempCtx.textBaseline = 'top';
 
-        const metrics = tempCtx.measureText('M');
         // Physical char size (matches atlas internals).
-        const charWidthPhysical = Math.ceil(metrics.width);
-        // Match GlyphAtlas / terminal renderer behavior: use actual font bbox height
-        // (or a padded fallback) so grid math matches the renderer.
-        const charHeightPhysical = (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent)
-          ? Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent)
-          : Math.ceil(physicalFontSize * 1.25);
+        const charWidthPhysical = measureMonospaceCellWidth(tempCtx);
+        // Match classic terminal behavior (and GlyphAtlas): one cell row is exactly
+        // one font-size tall. Using font bounding boxes introduces extra leading
+        // and causes grid/canvas mismatch (bottom gap + mouse offset).
+        const charHeightPhysical = physicalFontSizePx;
         // Logical (CSS-pixel) sizes used to compute how many cells fit the viewport.
         const charWidth = charWidthPhysical / dpr;
         const charHeight = charHeightPhysical / dpr;
@@ -809,22 +938,36 @@ This demo showcases:
             const scale  = Math.min(vw / vc.width, vh / vc.height);
             const cssW   = Math.floor(vc.width  * scale);
             const cssH   = Math.floor(vc.height * scale);
-            const leftPx = Math.round((vw - cssW) / 2);
-            const topPx  = Math.round((vh - cssH) / 2);
-            const newGridW = Math.max(1, Math.ceil(cssW / charWidth));
-            const newGridH = Math.max(1, Math.ceil(cssH / charHeight));
+            const newGridW = Math.max(1, Math.floor(cssW / charWidth));
+            const newGridH = Math.max(1, Math.floor(cssH / charHeight));
             // Resize engine first — this sets the canvas backing buffer size
             // internally (via syncCanvasElementSizeToBuffer) and reconfigures
             // compositor/WebGPU with consistent state.
-            canvas.width  = Math.round(cssW * newDpr);
-            canvas.height = Math.round(cssH * newDpr);
+            canvas.width  = newGridW * charWidthPhysical;
+            canvas.height = newGridH * charHeightPhysical;
             engine.resize(newGridW, newGridH);
+
+            // CSS display size: either the exact cell-aligned size (crisp) or the
+            // constraint-fit rectangle (stretched to fill).
+            const logicalW = canvas.width / newDpr;
+            const logicalH = canvas.height / newDpr;
+            const displayW = stretchToFit ? cssW : logicalW;
+            const displayH = stretchToFit ? cssH : logicalH;
+
+            const leftPx = Math.round((vw - displayW) / 2);
+            const topPx  = Math.round((vh - displayH) / 2);
             // Position using explicit pixels — avoids percentage+transform
             // edge cases with position:absolute inside a flex container.
             canvas.style.left      = leftPx + 'px';
             canvas.style.top       = topPx  + 'px';
             canvas.style.transform = '';
-            console.log(`✓ Constrained viewport ${vc.width}x${vc.height}px → ${newGridW}x${newGridH} cells (${cssW}x${cssH} CSS px @ ${leftPx},${topPx})`);
+
+            // Ensure engine's syncCanvasElementSizeToBuffer() doesn't override the
+            // chosen display size.
+            canvas.style.width  = Math.round(displayW) + 'px';
+            canvas.style.height = Math.round(displayH) + 'px';
+
+            console.log(`✓ Constrained viewport ${vc.width}x${vc.height}px → ${newGridW}x${newGridH} cells (${Math.round(displayW)}x${Math.round(displayH)} CSS px @ ${leftPx},${topPx})${stretchToFit ? ' [stretched]' : ''}`);
           } else {
             // Unconstrained: restore default full-viewport positioning.
             canvas.style.left      = '0';
@@ -832,9 +975,20 @@ This demo showcases:
             canvas.style.transform = '';
             const newGridW = Math.max(1, Math.floor(vw / charWidth));
             const newGridH = Math.max(1, Math.floor(vh / charHeight));
-            canvas.width  = Math.round(vw * newDpr);
-            canvas.height = Math.round(vh * newDpr);
+            // Keep the backing buffer cell-aligned so terminal content fills the
+            // canvas exactly (prevents bottom "dead zone" and mouse drift).
+            canvas.width  = newGridW * charWidthPhysical;
+            canvas.height = newGridH * charHeightPhysical;
             engine.resize(newGridW, newGridH);
+
+            // CSS display size: either the exact cell-aligned size (crisp) or
+            // the full viewport (stretched to fill).
+            const logicalW = canvas.width / newDpr;
+            const logicalH = canvas.height / newDpr;
+            const displayW = stretchToFit ? vw : logicalW;
+            const displayH = stretchToFit ? vh : logicalH;
+            canvas.style.width  = Math.round(displayW) + 'px';
+            canvas.style.height = Math.round(displayH) + 'px';
             console.log(`✓ Resized to ${newGridW}x${newGridH}`);
           }
         };

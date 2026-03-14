@@ -9,6 +9,10 @@
 
 export const DEFAULT_FONT_FALLBACK_STACK = "'3270-regular', 'Consolas', 'Monaco', monospace";
 
+const LOCAL_FONT_EXTENSIONS = ['otf', 'ttf', 'woff2', 'woff'];
+const LOCAL_FONT_STYLESHEET_ID_PREFIX = 'storie-local-font-';
+const MONOSPACE_MEASURE_SAMPLES = ['M', 'W', '@', '#', '0', '1', '8', '|', '_'];
+
 function normalizeFontFamilyValue(value: string): string {
   // Frontmatter (and Google Fonts URLs) often use `+` for spaces.
   // Treat it as a space for font-family resolution.
@@ -27,6 +31,121 @@ function safeCssEscape(value: string): string {
   // This isn't a full CSS escape implementation, but is good enough for
   // typical font family names.
   return v.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function toKebabCase(value: string): string {
+  return String(value ?? '')
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function toFilenameStemVariants(family: string): string[] {
+  const normalized = normalizeFontFamilyValue(String(family ?? ''));
+  if (!normalized) return [];
+
+  const compact = normalized.replace(/\s+/g, '');
+  const kebab = toKebabCase(normalized);
+  const variants = [normalized, compact, kebab]
+    .map(v => v.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(variants));
+}
+
+function buildLocalFontCandidates(family: string): Array<{ href: string; format: string }> {
+  if (typeof document === 'undefined') return [];
+
+  const baseUrl = new URL('./assets/', document.baseURI);
+  const stems = toFilenameStemVariants(family);
+  const names = new Set<string>();
+
+  for (const stem of stems) {
+    names.add(stem);
+    names.add(`${stem}-Regular`);
+    names.add(`${stem}-regular`);
+    names.add(`${stem}-VariableFont_wght`);
+  }
+
+  const candidates: Array<{ href: string; format: string }> = [];
+  for (const name of names) {
+    for (const ext of LOCAL_FONT_EXTENSIONS) {
+      candidates.push({
+        href: new URL(`${name}.${ext}`, baseUrl).href,
+        format: ext === 'otf' ? 'opentype' : ext === 'ttf' ? 'truetype' : ext
+      });
+    }
+  }
+
+  return candidates;
+}
+
+async function ensureLocalFontAsset(family: string, opts?: { timeoutMs?: number; weights?: number[] }): Promise<boolean> {
+  if (typeof document === 'undefined' || !(document as any).fonts) return false;
+
+  const fam = normalizeFontFamilyValue(String(family ?? ''));
+  if (!fam || looksLikeGenericFamily(fam)) return false;
+
+  const selectorId = `${LOCAL_FONT_STYLESHEET_ID_PREFIX}${fam}`;
+  const existing = document.querySelector(`style[data-storie-local-font="${safeCssEscape(selectorId)}"]`);
+  if (existing) return true;
+
+  const descriptors: Record<string, string> = {};
+  const firstWeight = Array.isArray(opts?.weights) ? opts?.weights.find(w => Number.isFinite(w) && w > 0) : null;
+  if (Number.isFinite(firstWeight as number)) descriptors.weight = String(firstWeight);
+
+  for (const candidate of buildLocalFontCandidates(fam)) {
+    try {
+      const face = new FontFace(fam, `url("${candidate.href}") format("${candidate.format}")`, descriptors);
+      const loadedFace = await timeout(face.load().then(() => face, () => null), opts?.timeoutMs ?? 750, null);
+      if (!loadedFace) continue;
+
+      (document as any).fonts.add(loadedFace);
+
+      const marker = document.createElement('style');
+      marker.setAttribute('data-storie-local-font', selectorId);
+      marker.textContent = `:root { --${toKebabCase(selectorId) || 'storie-local-font'}: 1; }`;
+      document.head?.appendChild(marker);
+      return true;
+    } catch {
+      // Try the next local asset candidate.
+    }
+  }
+
+  return false;
+}
+
+export function measureMonospaceCellWidth(
+  ctx: CanvasRenderingContext2D,
+  opts?: { extraGutterPx?: number; samples?: string[] }
+): number {
+  const samples = Array.isArray(opts?.samples) && opts!.samples!.length > 0
+    ? opts!.samples!
+    : MONOSPACE_MEASURE_SAMPLES;
+  const extraGutterPx = Number.isFinite(opts?.extraGutterPx as any)
+    ? Math.max(0, Math.round(opts!.extraGutterPx as number))
+    : 1;
+
+  let maxAdvance = 0;
+  let maxInk = 0;
+
+  for (const sample of samples) {
+    const metrics = ctx.measureText(sample);
+    if (Number.isFinite(metrics.width)) {
+      maxAdvance = Math.max(maxAdvance, metrics.width);
+    }
+
+    const left = Number.isFinite((metrics as any).actualBoundingBoxLeft)
+      ? Math.abs((metrics as any).actualBoundingBoxLeft)
+      : 0;
+    const right = Number.isFinite((metrics as any).actualBoundingBoxRight)
+      ? Math.abs((metrics as any).actualBoundingBoxRight)
+      : 0;
+    maxInk = Math.max(maxInk, left + right);
+  }
+
+  const width = Math.max(maxAdvance, maxInk);
+  return Math.max(1, Math.ceil(width) + extraGutterPx);
 }
 
 export function isProbablyMonospaceFontStack(
@@ -171,10 +290,14 @@ async function ensureGoogleFontsStylesheet(family: string, opts?: { display?: st
 }
 
 /**
- * Attempt to load a Google Font into the document.
+ * Attempt to load a font into the document.
+ *
+ * Resolution order:
+ * 1) bundled local asset from ./assets
+ * 2) Google Fonts stylesheet fallback
  *
  * Returns true if we *likely* made the font available. Even when this returns
- * false, callers can still proceed with local fallbacks.
+ * false, callers can still proceed with fallback stacks.
  */
 export async function tryLoadGoogleFontFamily(
   family: string,
@@ -190,7 +313,24 @@ export async function tryLoadGoogleFontFamily(
   const fam = normalizeFontFamilyValue(String(family ?? ''));
   if (!fam || looksLikeGenericFamily(fam)) return false;
 
-  // 1) Ensure the Google Fonts stylesheet exists.
+  // 1) Prefer a bundled local asset when present.
+  const localOk = await ensureLocalFontAsset(fam, {
+    timeoutMs: opts?.timeoutMs,
+    weights: opts?.weights
+  });
+  if (localOk) {
+    const size = Number.isFinite(opts?.fontCssPixelSize as any) && (opts!.fontCssPixelSize as number) > 0
+      ? (opts!.fontCssPixelSize as number)
+      : 16;
+
+    const localLoad = (document as any).fonts.load(`${size}px "${fam}"`).then(
+      () => true,
+      () => false
+    );
+    return await timeout(localLoad, opts?.timeoutMs ?? 1500, true);
+  }
+
+  // 2) Ensure the Google Fonts stylesheet exists.
   const cssOk = await ensureGoogleFontsStylesheet(fam, {
     display: opts?.display,
     weights: opts?.weights,
@@ -198,7 +338,7 @@ export async function tryLoadGoogleFontFamily(
   });
   if (!cssOk) return false;
 
-  // 2) Ask the Font Loading API to resolve the face.
+  // 3) Ask the Font Loading API to resolve the face.
   // Note: for the glyph atlas we typically pass physical pixel size.
   const size = Number.isFinite(opts?.fontCssPixelSize as any) && (opts!.fontCssPixelSize as number) > 0
     ? (opts!.fontCssPixelSize as number)

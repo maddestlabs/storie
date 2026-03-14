@@ -151,7 +151,7 @@ fn fragmentMain(
         
         uniforms: {
             curveStrength: 0.95,      // CRT screen curvature (0.0 = flat, 1.0 = curved)
-            frameSize: 20.0,          // Outer frame thickness in pixels
+            frameSize: 10.0,          // Outer frame thickness in pixels
             frameHue: 0.025,          // Frame color hue (0.0-1.0)
             frameSat: 0.0,            // Frame color saturation (0.0-1.0)
             frameLight: 0.01,         // Frame base brightness (0.0-1.0)

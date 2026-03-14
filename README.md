@@ -5,7 +5,7 @@ The abominal little engine that probably shouldn't. Build stuff using Markdown w
 Check it out: [Intro](https://maddestlabs.github.io/storie/)
 
 Demos:
-- [strain](https://maddestlabs.github.io/storie/?content=strain) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/strain.md)
+- [0rain](https://maddestlabs.github.io/storie/?content=0rain) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/0rain.md)
 - [her.md](https://maddestlabs.github.io/storie/?content=her) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/her.md)
 - [depths.md](https://maddestlabs.github.io/storie/?content=depths&font=Courier+Prime) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/depths.md)
 - [automation-arcade-intro.md](https://maddestlabs.github.io/storie/?content=automation-arcade-intro) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/automation-arcade-intro.md)

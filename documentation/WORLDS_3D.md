@@ -189,6 +189,14 @@ worlds.config.setDefaults({
   // Section texture rendering mode
   sectionTextureMode: 'canvas2d', // 'canvas2d' | 'webgpu-ui'
 
+  // Section overflow / auto-resize behavior
+  // - 'clip' (default): fixed-size cards
+  // - 'expand': only grow to fit content
+  // - 'expand-y': only grow height to fit content
+  // - 'fit': shrink or grow to tightly fit content
+  // - 'fit-y': shrink or grow height to fit content
+  sectionOverflow: 'clip',
+
   sectionBackground: 'surface',   // Section background: 'surface' | 'bg' | 'bgAlt' | 'accent1' | '#RRGGBB' | 0xRRGGBBAA
   sectionBorderEnabled: true,     // Draw a border around each section
   sectionBorderWidth: 2,          // Border thickness (pixels)

@@ -39,7 +39,6 @@ let state = {
 
   // UI widgets
   widgets: null,
-  lastInspector: '',
   lastSelectedId: null,
   nodeJsonDirty: false,
   statusText: ''
@@ -289,63 +288,61 @@ function paramTargetPoint(layout, toId, param) {
   return { x: portX, y: baseY + slot * hStep };
 }
 
-function buildInspectorText(graph, layout, selectedId) {
-  if (!graph || !selectedId) return 'Select a node to inspect.';
-
-  const node = graph.nodeById.get(selectedId);
-  if (!node) return `Unknown node: ${selectedId}`;
-
-  const inbound = [];
-  const outbound = [];
-  for (const e of graph.audioEdges) {
-    if (String(e.to) === selectedId) inbound.push(e);
-    if (String(e.from) === selectedId) outbound.push(e);
-  }
-  for (const e of graph.paramEdges) {
-    if (String(e.to) === selectedId) inbound.push({ from: e.from, to: `${e.to}.${e.param}` });
-    if (String(e.from) === selectedId) outbound.push({ from: e.from, to: `${e.to}.${e.param}` });
-  }
-
-  const targetingEvents = (graph.events || []).filter(ev => String(ev?.node ?? '') === selectedId);
-
-  const lines = [];
-  lines.push(`# ${selectedId}`);
-  lines.push(`kind: ${String(node.kind ?? '')}`);
-
-  const r = layout.get(selectedId);
-  if (r) lines.push(`pos: (${Math.round(r.x)}, ${Math.round(r.y)})  size: (${Math.round(r.w)}x${Math.round(r.h)})`);
-
-  lines.push('');
-  lines.push('## Node');
-
-  // A lightly "pretty" version of the node.
-  const nodeCopy = JSON.parse(JSON.stringify(node));
-  for (const k of Object.keys(nodeCopy)) {
-    const v = nodeCopy[k];
-    if (isObject(v) && v.kind) nodeCopy[k] = shortExpr(v);
-  }
-  lines.push(JSON.stringify(nodeCopy, null, 2));
-
-  lines.push('');
-  lines.push(`## Inbound (${inbound.length})`);
-  for (const e of inbound) lines.push(`- ${e.from} → ${e.to}`);
-
-  lines.push('');
-  lines.push(`## Outbound (${outbound.length})`);
-  for (const e of outbound) lines.push(`- ${e.from} → ${e.to}`);
-
-  lines.push('');
-  lines.push(`## Events (${targetingEvents.length})`);
-  for (const ev of targetingEvents) lines.push(`- ${ev.kind}`);
-
-  return lines.join('\n');
-}
-
 function buildSelectedNodeJson(graph, selectedId) {
   if (!graph || !selectedId) return '';
   const node = graph.nodeById.get(selectedId);
   if (!node) return '';
   return JSON.stringify(node, null, 2);
+}
+
+function getPresetNodeById(id) {
+  if (!state.preset || !Array.isArray(state.preset.nodes)) return null;
+  for (const n of state.preset.nodes) {
+    if (String(n?.id ?? '') === String(id)) return n;
+  }
+  return null;
+}
+
+function computeDefaultNodeSize(node) {
+  const id = String(node?.id ?? '');
+  const kind = String(node?.kind ?? '');
+  const label = `${id}`;
+  const w = Math.max(180, (label.length + Math.max(0, kind.length - 2)) * 9 + 44);
+  const h = 60;
+  return { w, h };
+}
+
+function buildInitialLayout(graph, bounds) {
+  const auto = autoLayout(graph, bounds);
+  const out = new Map(auto);
+
+  for (const n of graph.nodes) {
+    const id = String(n?.id ?? '');
+    if (!id) continue;
+    const cur = out.get(id) || null;
+    const def = computeDefaultNodeSize(n);
+
+    const x = Number(n?.x);
+    const y = Number(n?.y);
+    const nx = Number.isFinite(x) ? x : (cur ? cur.x : bounds.x);
+    const ny = Number.isFinite(y) ? y : (cur ? cur.y : bounds.y);
+    const nw = cur ? cur.w : def.w;
+    const nh = cur ? cur.h : def.h;
+
+    out.set(id, { x: nx, y: ny, w: nw, h: nh });
+  }
+
+  return out;
+}
+
+function writeLayoutToPreset(layout) {
+  if (!state.preset || !Array.isArray(state.preset.nodes)) return;
+  for (const [id, r] of layout.entries()) {
+    const n = getPresetNodeById(id);
+    if (!n || !r) continue;
+    n.x = r.x;
+    n.y = r.y;
+  }
 }
 
 function applySelectedNodeJson(jsonText) {
@@ -393,6 +390,10 @@ function applySelectedNodeJson(jsonText) {
   }
 
   state.graph = computeGraph(state.preset);
+  {
+    const b = graphBounds();
+    state.layoutById = buildInitialLayout(state.graph, b.graph);
+  }
   state.nodeJsonDirty = false;
   state.statusText = `Updated node ${selectedId} and replayed.`;
 
@@ -406,12 +407,28 @@ function ensureGraphLoaded() {
   if (!state.preset) {
     state.preset = JSON.parse(JSON.stringify(BUILTIN_PRESET));
   }
+
+  // Legacy cleanup: older presets may have stored w/h. Keep only x/y.
+  if (state.preset && Array.isArray(state.preset.nodes)) {
+    for (const n of state.preset.nodes) {
+      if (n && typeof n === 'object') {
+        if (Object.prototype.hasOwnProperty.call(n, 'w')) delete n.w;
+        if (Object.prototype.hasOwnProperty.call(n, 'h')) delete n.h;
+      }
+    }
+  }
   if (!state.graph) {
     state.graph = computeGraph(state.preset);
   }
   if (state.graph && (!state.selectedId || !state.graph.nodeById.has(state.selectedId))) {
     const first = state.graph.nodes[0];
     state.selectedId = first ? String(first.id) : null;
+  }
+
+  // Ensure layout exists (prefer preset node x/y when present)
+  if (!state.layoutById || state.layoutById.size === 0) {
+    const b = graphBounds();
+    state.layoutById = buildInitialLayout(state.graph, b.graph);
   }
 }
 
@@ -528,19 +545,6 @@ const vol = gui.createSlider({
   value: Math.round(state.volume * 100)
 });
 
-// Right panel inspector
-const inspectorTitle = gui.createLabel({
-  bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 20, width: 380, height: 22 },
-  text: 'Inspector',
-  align: 'left'
-});
-
-const inspector = gui.createTextEditor({
-  bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 48, width: 380, height: Math.max(220, (ui.metrics.canvasHeight || 720) - 88) },
-  value: 'Loading…',
-  placeholder: 'Select a node'
-});
-
 const nodeJsonLabel = gui.createLabel({
   bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 48, width: 380, height: 18 },
   text: 'Node JSON',
@@ -571,8 +575,6 @@ state.widgets = {
   btnPlay,
   btnAuto,
   btnReset,
-  inspectorTitle,
-  inspector,
   nodeJsonLabel,
   nodeJson,
   btnUpdate,
@@ -584,10 +586,10 @@ layoutToolbar();
 // Load initial preset
 ensureGraphLoaded();
 
-// Populate default layout
+// Populate initial layout (prefer preset node x/y if present)
 if (state.graph) {
   const b = graphBounds();
-  state.layoutById = autoLayout(state.graph, b.graph);
+  state.layoutById = buildInitialLayout(state.graph, b.graph);
 }
 
 // Warm audio unlock
@@ -698,6 +700,13 @@ if (event.type === 'mouse_move') {
         const w = viewToWorld(event.x, event.y);
         r.x = w.x - state.drag.ox;
         r.y = w.y - state.drag.oy;
+
+        // Persist into preset node layout (optional metadata)
+        const pn = getPresetNodeById(id);
+        if (pn) {
+          pn.x = r.x;
+          pn.y = r.y;
+        }
       }
     }
     if (state.drag.mode === 'pan') {
@@ -731,21 +740,10 @@ layoutToolbar();
   const btnH = 42;
   const statusH = 18;
 
-  // Split pane: top summary inspector + bottom editable node JSON.
-  const inspectorH = Math.max(140, Math.floor(h * 0.50));
-  const nodeEditorH = Math.max(120, h - titleH - gap - inspectorH - gap - labelH - gap - btnH - gap - statusH);
+  // Single inspector: editable node JSON
+  const nodeEditorH = Math.max(120, h - labelH - gap - btnH - gap - statusH);
 
-  state.widgets.inspectorTitle.bounds.x = x;
-  state.widgets.inspectorTitle.bounds.y = y;
-  state.widgets.inspectorTitle.bounds.width = w;
-  state.widgets.inspectorTitle.bounds.height = titleH;
-
-  state.widgets.inspector.bounds.x = x;
-  state.widgets.inspector.bounds.y = y + titleH + gap;
-  state.widgets.inspector.bounds.width = w;
-  state.widgets.inspector.bounds.height = inspectorH;
-
-  const nodeLabelY = y + titleH + gap + inspectorH + gap;
+  const nodeLabelY = y;
   state.widgets.nodeJsonLabel.bounds.x = x;
   state.widgets.nodeJsonLabel.bounds.y = nodeLabelY;
   state.widgets.nodeJsonLabel.bounds.width = w;
@@ -791,6 +789,8 @@ if (state.widgets.btnAuto.wasClicked()) {
   if (state.graph) {
     const b = graphBounds();
     state.layoutById = autoLayout(state.graph, b.graph);
+    writeLayoutToPreset(state.layoutById);
+    state.statusText = 'Auto layout applied (saved into node x/y).';
   }
 }
 
@@ -818,6 +818,12 @@ if (state.selectedId !== state.lastSelectedId) {
   state.lastSelectedId = state.selectedId;
 }
 
+// Update label
+{
+  const id = state.selectedId ? String(state.selectedId) : '(none)';
+  state.widgets.nodeJsonLabel.setText(`Node JSON — ${id}`);
+}
+
 // Apply node JSON to preset + replay
 if (state.widgets.btnUpdate.wasClicked()) {
   const ok = applySelectedNodeJson(state.widgets.nodeJson.getValue());
@@ -828,15 +834,6 @@ if (state.widgets.btnUpdate.wasClicked()) {
 }
 
 state.widgets.status.setText(state.statusText);
-
-// Inspector refresh (only when needed)
-{
-  const next = buildInspectorText(state.graph, state.layoutById, state.selectedId);
-  if (next !== state.lastInspector) {
-    state.lastInspector = next;
-    state.widgets.inspector.setValue(next);
-  }
-}
 ```
 
 ```js on:render

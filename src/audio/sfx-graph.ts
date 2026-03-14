@@ -18,16 +18,29 @@ export interface SfxGraphEdge {
   toChannel?: number;
 }
 
+/**
+ * Optional layout metadata for graph tooling.
+ *
+ * These values are ignored by audio synthesis, but can be used by editors/viewers
+ * to persist custom node layout across sessions.
+ */
+export interface SfxGraphNodeLayout {
+  /** X position in editor "world" coordinates (pixels). */
+  x?: number;
+  /** Y position in editor "world" coordinates (pixels). */
+  y?: number;
+}
+
 export type SfxGraphNode =
-  | {
+  | ({
       kind: 'oscVoice';
       id: string;
       oscType: SfxExpr; // OscillatorType
       freqHz: SfxExpr;
       gain: SfxExpr;
       stopAfter?: SfxExpr; // seconds
-    }
-  | {
+    } & SfxGraphNodeLayout)
+  | ({
       kind: 'noiseVoice';
       id: string;
       noiseType?: SfxExpr; // 'white' | 'pink' | 'brown' | 'bitcrush'
@@ -37,21 +50,21 @@ export type SfxGraphNode =
       crushBits?: SfxExpr; // 1..16
       holdHz?: SfxExpr; // sample-and-hold rate (Hz)
       stopAfter?: SfxExpr; // seconds
-    }
-  | {
+    } & SfxGraphNodeLayout)
+  | ({
       kind: 'delay';
       id: string;
       delayTime: SfxExpr; // seconds
       // Sets the maxDelayTime passed to createDelay().
       // If omitted, a conservative default is used.
       maxDelayTime?: SfxExpr; // seconds
-    }
-  | {
+    } & SfxGraphNodeLayout)
+  | ({
       kind: 'stereoPanner';
       id: string;
       pan: SfxExpr; // -1..+1
-    }
-  | {
+    } & SfxGraphNodeLayout)
+  | ({
       kind: 'compressor';
       id: string;
       threshold?: SfxExpr; // dB
@@ -59,8 +72,8 @@ export type SfxGraphNode =
       ratio?: SfxExpr;
       attack?: SfxExpr; // seconds
       release?: SfxExpr; // seconds
-    }
-  | {
+    } & SfxGraphNodeLayout)
+  | ({
       kind: 'convolver';
       id: string;
       // Procedural impulse response parameters.
@@ -70,23 +83,23 @@ export type SfxGraphNode =
       decay?: SfxExpr; // envelope exponent
       reverse?: SfxExpr; // truthy => reverse envelope
       normalize?: SfxExpr; // truthy => convolver.normalize = true
-    }
-  | {
+    } & SfxGraphNodeLayout)
+  | ({
       kind: 'filter';
       id: string;
       filterType: SfxExpr; // BiquadFilterType
       freqHz: SfxExpr;
       q: SfxExpr;
       gain?: SfxExpr; // used by peaking/shelf filters
-    }
-  | {
+    } & SfxGraphNodeLayout)
+  | ({
       kind: 'waveshaper';
       id: string;
       curve: SfxExpr; // 'softClip' | 'hardClip' | 'tanh' | 'atan' | 'fold'
       amount?: SfxExpr; // intensity (default 1)
       oversample?: SfxExpr; // 'none' | '2x' | '4x'
-    }
-  | {
+    } & SfxGraphNodeLayout)
+  | ({
       kind: 'panner';
       id: string;
       panningModel?: SfxExpr; // 'equalpower' | 'HRTF'
@@ -103,42 +116,58 @@ export type SfxGraphNode =
       coneInnerAngle?: SfxExpr;
       coneOuterAngle?: SfxExpr;
       coneOuterGain?: SfxExpr;
-    }
-  | {
+    } & SfxGraphNodeLayout)
+  | ({
       kind: 'channelSplitter';
       id: string;
       outputs?: SfxExpr; // integer >= 1
-    }
-  | {
+    } & SfxGraphNodeLayout)
+  | ({
       kind: 'channelMerger';
       id: string;
       inputs?: SfxExpr; // integer >= 1
-    }
-  | {
+    } & SfxGraphNodeLayout)
+  | ({
       kind: 'iirFilter';
       id: string;
       feedforward: number[];
       feedback: number[];
-    }
-  | {
+    } & SfxGraphNodeLayout)
+  | ({
       kind: 'constantSource';
       id: string;
       offset: SfxExpr;
       stopAfter?: SfxExpr; // seconds
-    }
-  | {
+    } & SfxGraphNodeLayout)
+  | ({
       kind: 'lfo';
       id: string;
       oscType: SfxExpr; // OscillatorType
       freqHz: SfxExpr;
       gain: SfxExpr; // modulation depth
       stopAfter?: SfxExpr; // seconds
-    }
-  | {
+    } & SfxGraphNodeLayout)
+  | ({
       kind: 'gain';
       id: string;
       gain: SfxExpr;
-    };
+    } & SfxGraphNodeLayout);
+
+function parseOptionalFiniteNumber(v: unknown, path: string): number | undefined {
+  if (v === undefined || v === null) return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n)) err(path, 'must be a finite number');
+  return n;
+}
+
+function parseNodeLayout(v: Record<string, unknown>, path: string): SfxGraphNodeLayout {
+  const x = parseOptionalFiniteNumber((v as any).x, `${path}.x`);
+  const y = parseOptionalFiniteNumber((v as any).y, `${path}.y`);
+  return {
+    ...(x === undefined ? {} : { x }),
+    ...(y === undefined ? {} : { y }),
+  };
+}
 
 export type SfxGraphEvent =
   | {
@@ -292,11 +321,14 @@ function parseNode(v: unknown, path: string): SfxGraphNode {
   if (typeof kind !== 'string') err(`${path}.kind`, 'must be a string');
   if (typeof id !== 'string' || !id) err(`${path}.id`, 'must be a non-empty string');
 
+  const layout = parseNodeLayout(v, path);
+
   switch (kind) {
     case 'oscVoice':
       return {
         kind,
         id,
+        ...layout,
         oscType: parseExpr((v as any).oscType, `${path}.oscType`),
         freqHz: parseExpr((v as any).freqHz, `${path}.freqHz`),
         gain: parseExpr((v as any).gain, `${path}.gain`),
@@ -306,6 +338,7 @@ function parseNode(v: unknown, path: string): SfxGraphNode {
       return {
         kind,
         id,
+        ...layout,
         noiseType: (v as any).noiseType === undefined ? undefined : parseExpr((v as any).noiseType, `${path}.noiseType`),
         duration: parseExpr((v as any).duration, `${path}.duration`),
         gain: parseExpr((v as any).gain, `${path}.gain`),
@@ -317,6 +350,7 @@ function parseNode(v: unknown, path: string): SfxGraphNode {
       return {
         kind,
         id,
+        ...layout,
         delayTime: parseExpr((v as any).delayTime, `${path}.delayTime`),
         maxDelayTime: (v as any).maxDelayTime === undefined ? undefined : parseExpr((v as any).maxDelayTime, `${path}.maxDelayTime`)
       };
@@ -324,12 +358,14 @@ function parseNode(v: unknown, path: string): SfxGraphNode {
       return {
         kind,
         id,
+        ...layout,
         pan: parseExpr((v as any).pan, `${path}.pan`)
       };
     case 'compressor':
       return {
         kind,
         id,
+        ...layout,
         threshold: (v as any).threshold === undefined ? undefined : parseExpr((v as any).threshold, `${path}.threshold`),
         knee: (v as any).knee === undefined ? undefined : parseExpr((v as any).knee, `${path}.knee`),
         ratio: (v as any).ratio === undefined ? undefined : parseExpr((v as any).ratio, `${path}.ratio`),
@@ -340,6 +376,7 @@ function parseNode(v: unknown, path: string): SfxGraphNode {
       return {
         kind,
         id,
+        ...layout,
         impulseType: (v as any).impulseType === undefined ? undefined : parseExpr((v as any).impulseType, `${path}.impulseType`),
         seconds: (v as any).seconds === undefined ? undefined : parseExpr((v as any).seconds, `${path}.seconds`),
         decay: (v as any).decay === undefined ? undefined : parseExpr((v as any).decay, `${path}.decay`),
@@ -350,6 +387,7 @@ function parseNode(v: unknown, path: string): SfxGraphNode {
       return {
         kind,
         id,
+        ...layout,
         panningModel: (v as any).panningModel === undefined ? undefined : parseExpr((v as any).panningModel, `${path}.panningModel`),
         distanceModel: (v as any).distanceModel === undefined ? undefined : parseExpr((v as any).distanceModel, `${path}.distanceModel`),
         positionX: (v as any).positionX === undefined ? undefined : parseExpr((v as any).positionX, `${path}.positionX`),
@@ -369,12 +407,14 @@ function parseNode(v: unknown, path: string): SfxGraphNode {
       return {
         kind,
         id,
+        ...layout,
         outputs: (v as any).outputs === undefined ? undefined : parseExpr((v as any).outputs, `${path}.outputs`)
       };
     case 'channelMerger':
       return {
         kind,
         id,
+        ...layout,
         inputs: (v as any).inputs === undefined ? undefined : parseExpr((v as any).inputs, `${path}.inputs`)
       };
     case 'iirFilter': {
@@ -392,12 +432,13 @@ function parseNode(v: unknown, path: string): SfxGraphNode {
         if (!Number.isFinite(x)) err(`${path}.feedback[${i}]`, 'must be a finite number');
         return x;
       });
-      return { kind, id, feedforward, feedback };
+      return { kind, id, ...layout, feedforward, feedback };
     }
     case 'constantSource':
       return {
         kind,
         id,
+        ...layout,
         offset: parseExpr((v as any).offset, `${path}.offset`),
         stopAfter: (v as any).stopAfter === undefined ? undefined : parseExpr((v as any).stopAfter, `${path}.stopAfter`)
       };
@@ -405,6 +446,7 @@ function parseNode(v: unknown, path: string): SfxGraphNode {
       return {
         kind,
         id,
+        ...layout,
         filterType: parseExpr((v as any).filterType, `${path}.filterType`),
         freqHz: parseExpr((v as any).freqHz, `${path}.freqHz`),
         q: parseExpr((v as any).q, `${path}.q`),
@@ -414,6 +456,7 @@ function parseNode(v: unknown, path: string): SfxGraphNode {
       return {
         kind,
         id,
+        ...layout,
         curve: parseExpr((v as any).curve, `${path}.curve`),
         amount: (v as any).amount === undefined ? undefined : parseExpr((v as any).amount, `${path}.amount`),
         oversample: (v as any).oversample === undefined ? undefined : parseExpr((v as any).oversample, `${path}.oversample`)
@@ -422,6 +465,7 @@ function parseNode(v: unknown, path: string): SfxGraphNode {
       return {
         kind,
         id,
+        ...layout,
         oscType: parseExpr((v as any).oscType, `${path}.oscType`),
         freqHz: parseExpr((v as any).freqHz, `${path}.freqHz`),
         gain: parseExpr((v as any).gain, `${path}.gain`),
@@ -431,6 +475,7 @@ function parseNode(v: unknown, path: string): SfxGraphNode {
       return {
         kind,
         id,
+        ...layout,
         gain: parseExpr((v as any).gain, `${path}.gain`)
       };
     default:

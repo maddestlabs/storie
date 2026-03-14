@@ -141,6 +141,16 @@ export const THEMES: Record<string, ThemeColors> = {
     accent1: 0x8DB88DFF,   // Moss green
     accent2: 0xC4A777FF,   // Warm sand
     accent3: 0x5A7A8EFF,   // Blue-gray
+  },
+  
+  zerorain: {
+    bg:      0x101417FF,   // Gray
+    bgAlt:   0x182626FF,   // Slightly lighter teal-gray
+    fg:      0xCCCCCCFF,   // Light white (~#ccc)
+    fgAlt:   0x606060FF,   // Medium gray
+    accent1: 0xFFCC00FF,   // Yellow
+    accent2: 0x00E5FFFF,   // Cyan
+    accent3: 0xFFFFFFFF,   // Bright white (#fff)
   }
 };
 

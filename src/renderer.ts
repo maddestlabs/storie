@@ -5,7 +5,7 @@
 
 import type { Cell, Color } from './types.js';
 import { ColorUtils, COLORS } from './types.js';
-import { getPrimaryFontFamily, tryLoadGoogleFontFamily } from './font-loading.js';
+import { getPrimaryFontFamily, measureMonospaceCellWidth, tryLoadGoogleFontFamily } from './font-loading.js';
 
 export interface RendererConfig {
   fontFamily?: string;
@@ -44,17 +44,11 @@ export class Canvas2DRenderer {
     this.fontFamily = config.fontFamily || '\'3270-regular\', \'Consolas\', \'Monaco\', monospace';
     this.fontSize = config.fontSize || 16;
     
-    // Measure font dimensions properly
+    // Measure font dimensions.
+    // Like tStorie, use fontSize directly for row height to avoid gaps.
     this.ctx.font = `${this.fontSize}px ${this.fontFamily}`;
-    const metrics = this.ctx.measureText('M');
-    
-    // Use actual font bounding box or defaults
-    if (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent) {
-      this.cellHeight = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent);
-    } else {
-      this.cellHeight = config.cellHeight || Math.ceil(this.fontSize * 1.25);
-    }
-    this.cellWidth = config.cellWidth || Math.ceil(metrics.width);
+    this.cellWidth = config.cellWidth || measureMonospaceCellWidth(this.ctx);
+    this.cellHeight = config.cellHeight || Math.max(1, Math.round(this.fontSize));
     
     this.setupCanvas();
     this.waitForFont();
@@ -81,6 +75,7 @@ export class Canvas2DRenderer {
       await document.fonts.load(`${this.fontSize}px ${this.fontFamily}`);
       // Update context with loaded font
       this.ctx.font = `${this.fontSize}px ${this.fontFamily}`;
+      this.cellWidth = measureMonospaceCellWidth(this.ctx);
       this.fontLoaded = true;
     } catch (e) {
       console.warn('Font loading failed, using fallback:', e);
@@ -158,7 +153,7 @@ export class Canvas2DRenderer {
     // Draw character if not space
     if (cell.char && cell.char !== ' ') {
       this.ctx.fillStyle = ColorUtils.toCss(cell.fg);
-      this.ctx.fillText(cell.char, px + 1, py + 2);
+      this.ctx.fillText(cell.char, px + 1, py);
     }
   }
 

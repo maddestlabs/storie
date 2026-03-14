@@ -5,7 +5,7 @@
  */
 
 import type { WebGPUContext } from './webgpu-context.js';
-import { getPrimaryFontFamily, tryLoadGoogleFontFamily } from './font-loading.js';
+import { getPrimaryFontFamily, measureMonospaceCellWidth, tryLoadGoogleFontFamily } from './font-loading.js';
 
 export interface GlyphAtlasConfig {
   fontFamily?: string;
@@ -80,22 +80,20 @@ export class GlyphAtlas {
       ? this.fontFamily
       : `'${this.fontFamily}'`;
     
-    this.atlasCtx.font = `${this.fontSize}px ${fontString}`;
+    // Match classic terminal behavior (and tStorie): treat 1 cell row as exactly
+    // `fontSize` pixels tall. Using font bounding boxes tends to introduce extra
+    // leading and creates visible gaps between stacked glyph rows.
+    const fontSizePx = Math.max(1, Math.round(this.fontSize));
+
+    this.atlasCtx.font = `${fontSizePx}px ${fontString}`;
     this.atlasCtx.textBaseline = 'top';
     this.atlasCtx.textAlign = 'left';
     
     // Measure character dimensions
-    const metrics = this.atlasCtx.measureText('M');
-    this.charWidth = Math.ceil(metrics.width);
-    
-    // Use actual font bounding box height to prevent artifacts
-    // Characters can extend beyond fontSize, especially with line spacing
-    if (metrics.fontBoundingBoxAscent && metrics.fontBoundingBoxDescent) {
-      this.charHeight = Math.ceil(metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent);
-    } else {
-      // Fallback: add 25% padding for safety
-      this.charHeight = Math.ceil(this.fontSize * 1.25);
-    }
+    this.charWidth = measureMonospaceCellWidth(this.atlasCtx);
+
+    // Terminal cell height: exactly one font-size.
+    this.charHeight = fontSizePx;
     
     console.log(`[GlyphAtlas] Font initialized: ${this.atlasCtx.font}`);
     console.log(`[GlyphAtlas] Base char size: ${this.charWidth}x${this.charHeight}px`);
@@ -175,7 +173,8 @@ export class GlyphAtlas {
     const fontString = this.fontFamily.includes(',')
       ? this.fontFamily
       : `'${this.fontFamily}'`;
-    this.atlasCtx.font = `${this.fontSize}px ${fontString}`;
+    const fontSizePx = Math.max(1, Math.round(this.fontSize));
+    this.atlasCtx.font = `${fontSizePx}px ${fontString}`;
     this.atlasCtx.textBaseline = 'top';
     
     // Log font once
@@ -215,8 +214,10 @@ export class GlyphAtlas {
     // Clear area with extra space to ensure no stray pixels remain
     this.atlasCtx.clearRect(this.atlasX, this.atlasY, width, height);
     this.atlasCtx.fillStyle = '#ffffff';
-    // Draw at integer position with padding offset to center glyph
-    this.atlasCtx.fillText(char, Math.floor(this.atlasX + padding), Math.floor(this.atlasY + padding));
+    // Draw at integer position using top baseline.
+    const x = Math.floor(this.atlasX + padding);
+    const y = Math.floor(this.atlasY + padding);
+    this.atlasCtx.fillText(char, x, y);
     
     // Calculate normalized UV coordinates
     // Use inner rect (skip padding) for actual glyph sampling
