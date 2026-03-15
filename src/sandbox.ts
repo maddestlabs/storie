@@ -720,6 +720,7 @@ export interface SandboxAPI {
     links: {
       setKeyHandlingEnabled: (enabled: boolean) => void;
       keyHandlingEnabled: boolean;
+      popActivated: () => { url: string; sectionIndex: number | null; linkIndex: number | null } | null;
     };
 
     nav: {

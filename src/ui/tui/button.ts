@@ -24,7 +24,7 @@ export class TUIButton extends BaseWidget {
   
   constructor(config: TUIButtonConfig) {
     super(config);
-    this.label = config.label;
+    this.label = String(config.label ?? '');
     this.align = config.align || 'center';
     
     // Listen for click events
@@ -46,8 +46,8 @@ export class TUIButton extends BaseWidget {
   /**
    * Update label text
    */
-  setLabel(label: string): void {
-    this.label = label;
+  setLabel(label: unknown): void {
+    this.label = String(label ?? '');
   }
   
   /**
@@ -88,24 +88,26 @@ export class TUIButton extends BaseWidget {
       }
     }
     
+    const label = String(this.label ?? '');
+
     // Draw label (centered vertically)
     const centerY = Math.floor(height / 2);
     let labelX = 1; // Default left-aligned (1 char from left border)
     
     if (this.align === 'center') {
-      labelX = Math.floor((width - this.label.length) / 2);
+      labelX = Math.floor((width - label.length) / 2);
     } else if (this.align === 'right') {
-      labelX = width - this.label.length - 1;
+      labelX = width - label.length - 1;
     }
     
     // Ensure label fits within bounds
-    labelX = Math.max(1, Math.min(labelX, width - this.label.length - 1));
+    labelX = Math.max(1, Math.min(labelX, width - label.length - 1));
     
     // Draw label text
-    for (let i = 0; i < this.label.length; i++) {
+    for (let i = 0; i < label.length; i++) {
       const charX = x + labelX + i;
       if (charX >= x + 1 && charX < x + width - 1) {
-        renderer.setCell(buffer, charX, y + centerY, this.label[i], fg, bg);
+        renderer.setCell(buffer, charX, y + centerY, label[i], fg, bg);
       }
     }
   }

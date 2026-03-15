@@ -22,7 +22,7 @@ export class TUICheckbox extends BaseWidget {
   
   constructor(config: TUICheckboxConfig) {
     super(config);
-    this.label = config.label;
+    this.label = String(config.label ?? '');
     this.checked = config.checked ?? false;
     
     // Toggle on click
@@ -64,8 +64,8 @@ export class TUICheckbox extends BaseWidget {
   /**
    * Update label text
    */
-  setLabel(label: string): void {
-    this.label = label;
+  setLabel(label: unknown): void {
+    this.label = String(label ?? '');
   }
   
   /**
@@ -96,10 +96,12 @@ export class TUICheckbox extends BaseWidget {
       renderer.setCell(buffer, x + i, y, symbol[i], fg, bg);
     }
     
+    const label = String(this.label ?? '');
+
     // Draw label
     const labelStart = x + symbol.length + 1;
-    for (let i = 0; i < this.label.length; i++) {
-      renderer.setCell(buffer, labelStart + i, y, this.label[i], fg, bg);
+    for (let i = 0; i < label.length; i++) {
+      renderer.setCell(buffer, labelStart + i, y, label[i], fg, bg);
     }
   }
 }

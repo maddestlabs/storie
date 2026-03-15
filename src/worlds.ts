@@ -1002,6 +1002,8 @@ export function getDefaultWorldsConfig(): WorldsConfig {
     sectionTextureMode: 'canvas2d',
     sectionBorderEnabled: true,
     sectionBorderWidth: 2,
+    sectionLinkUnderline: false,
+    sectionListMarker: undefined,
     // Use the theme surface by default (typically bgAlt / elevated panel color)
     sectionBackground: 'surface'
   };

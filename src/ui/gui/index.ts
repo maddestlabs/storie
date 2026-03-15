@@ -416,6 +416,7 @@ export class GUISystem {
   private renderButton(button: GUIButton, ui: Draw2D): void {
     const { x, y, width, height } = button.bounds;
     const { fg, bg, borderColor, hoverBg, activeBg } = button.buttonStyle;
+    const label = String(button.label ?? '');
     
     // Background
     const bgColor = button.state.pressed ? activeBg : 
@@ -430,16 +431,17 @@ export class GUISystem {
     
     // Centered label (estimate character width)
     const charW = 10; // Fallback
-    const labelWidth = button.label.length * charW;
+    const labelWidth = label.length * charW;
     const labelX = x + (width - labelWidth) / 2;
     const labelY = y + height / 2;
     
-    ui.text(button.label, labelX, labelY, fg);
+    ui.text(label, labelX, labelY, fg);
   }
   
   private renderLabel(label: GUILabel, ui: Draw2D, charW: number, _charH: number): void {
     const { x, y, width, height } = label.bounds;
     const { fg, bg } = label.labelStyle;
+    const text = String(label.text ?? '');
     
     // Background (if not transparent)
     const bgColor = bg as any;
@@ -450,19 +452,20 @@ export class GUISystem {
     // Text alignment
     let textX = x;
     if (label.align === 'center') {
-      const textWidth = label.text.length * charW;
+      const textWidth = text.length * charW;
       textX = x + (width - textWidth) / 2;
     } else if (label.align === 'right') {
-      const textWidth = label.text.length * charW;
+      const textWidth = text.length * charW;
       textX = x + width - textWidth;
     }
     
-    ui.text(label.text, textX, y + height / 2, fg);
+    ui.text(text, textX, y + height / 2, fg);
   }
   
   private renderCheckbox(checkbox: GUICheckbox, ui: Draw2D, charW: number, _charH: number): void {
     const { x, y, height } = checkbox.bounds;
     const { fg, bg, checkColor, hoverBg } = checkbox.checkboxStyle;
+    const label = String(checkbox.label ?? '');
     
     const boxSize = Math.min(height, charW * 2);
     const boxY = y + (height - boxSize) / 2;
@@ -490,7 +493,7 @@ export class GUISystem {
     }
     
     // Label
-    ui.text(checkbox.label, x + boxSize + 8, y + height / 2, fg);
+    ui.text(label, x + boxSize + 8, y + height / 2, fg);
   }
   
   private renderSlider(slider: GUISlider, ui: Draw2D, _charW: number, charH: number): void {

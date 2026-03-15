@@ -23,7 +23,7 @@ export class GUILabel extends BaseWidget {
   
   constructor(config: GUILabelConfig) {
     super(config);
-    this.text = config.text;
+    this.text = String(config.text ?? '');
     this.align = config.align ?? 'left';
     
     this.labelStyle = {
@@ -32,8 +32,8 @@ export class GUILabel extends BaseWidget {
     };
   }
   
-  setText(text: string): void {
-    this.text = text;
+  setText(text: unknown): void {
+    this.text = String(text ?? '');
   }
   
   /**

@@ -71,6 +71,13 @@ Internal links:
 External links:
 - `https://...` / `http://...` open in a new tab.
 
+Activated link queue:
+- Every activated 3D link is also exposed to scripts through `worlds.links.popActivated()`.
+- The returned object is `{ url, sectionIndex, linkIndex }`.
+- This makes non-navigation links possible, for example `[Toggle audio](action:toggle-audio)`.
+- Built-in behavior still applies for normal links: `#anchor` keeps navigating to sections, `http(s)` still opens externally.
+- Custom schemes such as `action:` are not handled by the engine, so documents can consume them in `on:update` or `on:input`.
+
 ## Section Entry Hooks (`js on:enter`)
 
 You can define section-scoped enter handlers using code blocks inside a section:
@@ -140,7 +147,9 @@ Use built-in effects via `sectionBackground`:
 
 ```js
 worlds.config.setDefaults({
-  sectionBackground: 'paper+ruledlines'  // Notebook-style background
+  sectionBackground: 'paper+ruledlines', // Notebook-style background
+  sectionLinkUnderline: true,            // Optional: underline card links
+  sectionListMarker: '> ',               // Optional: custom list marker in card markdown
 });
 ```
 

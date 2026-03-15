@@ -488,16 +488,6 @@ export class WorldsRenderer {
           if (uniforms.params0.z > 0.5) {
             return vec4<f32>(vec3<f32>(1.0) - outColor.rgb, outColor.a);
           }
-          // params0.w is highlight flag (1 = enabled)
-          if (uniforms.params0.w > 0.5) {
-            let umin = uniforms.params1.x;
-            let vmin = uniforms.params1.y;
-            let umax = uniforms.params1.z;
-            let vmax = uniforms.params1.w;
-            if (input.uv.x >= umin && input.uv.x <= umax && input.uv.y >= vmin && input.uv.y <= vmax) {
-              return vec4<f32>(vec3<f32>(1.0) - outColor.rgb, outColor.a);
-            }
-          }
           return outColor;
         }
       `

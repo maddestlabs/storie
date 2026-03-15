@@ -200,6 +200,10 @@ worlds.config.setDefaults({
   sectionBackground: 'surface',   // Section background: 'surface' | 'bg' | 'bgAlt' | 'accent1' | '#RRGGBB' | 0xRRGGBBAA
   sectionBorderEnabled: true,     // Draw a border around each section
   sectionBorderWidth: 2,          // Border thickness (pixels)
+  sectionLinkUnderline: false,    // Underline markdown links rendered into Worlds cards
+  sectionListMarker: '> ',        // Optional list marker string for Worlds card markdown
+  sectionListMarkerGapPx: 0,      // Optional extra gap between marker and list text
+  sectionListHangIndentPx: 0,     // Optional hanging indent for wrapped list lines
   cameraFov: Math.PI / 4,         // Field of view (45°)
   cameraNear: 0.1,                // Near clipping plane
   cameraFar: 1000,                // Far clipping plane

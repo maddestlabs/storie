@@ -208,4 +208,27 @@ export interface WorldsConfig {
    * without `ruledlines`).
    */
   sectionBackgroundPaperNoiseStrength?: number;
+
+  /**
+   * Whether markdown links rendered into Worlds section cards should draw an
+   * underline. Defaults to false.
+   */
+  sectionLinkUnderline?: boolean;
+
+  /**
+   * Optional list marker string used when rendering markdown lists into Worlds
+   * section cards. Examples: `'> '`, `'• '`, or `''` to hide markers.
+   * When omitted, the shared markdown renderer default is used.
+   */
+  sectionListMarker?: string | null;
+
+  /**
+   * Optional extra gap in pixels between a rendered list marker and item text.
+   */
+  sectionListMarkerGapPx?: number;
+
+  /**
+   * Optional hanging indent in pixels for wrapped list lines.
+   */
+  sectionListHangIndentPx?: number;
 }

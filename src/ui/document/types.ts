@@ -9,7 +9,7 @@ export type Inline =
 export type DocNode =
   | { kind: 'heading'; level: number; inlines: Inline[] }
   | { kind: 'paragraph'; inlines: Inline[] }
-  | { kind: 'list'; items: Inline[][] }
+  | { kind: 'list'; items: Inline[][]; ordered: boolean; start?: number }
   | { kind: 'codeblock'; code: string; lang?: string; metadata?: Record<string, string> };
 
 export interface TextMetrics {
@@ -30,7 +30,14 @@ export interface MarkdownStyle {
   fg: Color;
   mutedFg: Color;
   headingFg: Color;
+  listMarker?: string | null;
+  listMarkerFg?: Color;
+  listMarkerGapPx?: number;
+  listHangIndentPx?: number;
   linkFg: Color;
+  activeLinkFg?: Color;
+  activeLinkIndex?: number | null;
+  linkUnderline?: boolean;
   codeFg: Color;
   codeBg: Color;
   bg: Color;

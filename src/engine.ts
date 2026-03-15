@@ -336,9 +336,10 @@ export class StorieEngine {
   private hovered3DLink: { sectionIndex: number; linkIndex: number } | null = null;
   private focused3DLink: { sectionIndex: number; linkIndex: number } | null = null;
   private current3DSectionIndex: number | null = null;
+  private activated3DLinksQueue: Array<{ url: string; sectionIndex: number | null; linkIndex: number | null }> = [];
 
   // 3D section texture rasterization cache
-  private sectionTextureCache: Map<number, { width: number; height: number }> = new Map();
+  private sectionTextureCache: Map<number, { width: number; height: number; activeLinkIndex: number | null }> = new Map();
   private sectionLinkRegionsCache: Map<number, LinkRegion[]> = new Map();
 
   // Host sync (engine-level, transport pluggable)
@@ -3837,6 +3838,9 @@ export class StorieEngine {
           },
           get keyHandlingEnabled(): boolean {
             return engine.worldsLinkKeyHandlingEnabled;
+          },
+          popActivated: () => {
+            return engine.activated3DLinksQueue.shift() ?? null;
           }
         },
 
@@ -4360,6 +4364,44 @@ export class StorieEngine {
               const v = config.sectionBackgroundPaperNoiseStrength;
               if (Number.isFinite(v as any)) {
                 engine.worldsConfig.sectionBackgroundPaperNoiseStrength = Math.max(0, Math.min(1, v as number));
+              }
+            }
+
+            if (config.sectionLinkUnderline !== undefined) {
+              const prev = engine.worldsConfig.sectionLinkUnderline;
+              engine.worldsConfig.sectionLinkUnderline = !!config.sectionLinkUnderline;
+              if (prev !== engine.worldsConfig.sectionLinkUnderline) {
+                engine.clear3DSectionTextures();
+              }
+            }
+
+            if ((config as any).sectionListMarker !== undefined) {
+              const prev = engine.worldsConfig.sectionListMarker;
+              engine.worldsConfig.sectionListMarker = (config as any).sectionListMarker;
+              if (prev !== engine.worldsConfig.sectionListMarker) {
+                engine.clear3DSectionTextures();
+              }
+            }
+
+            if ((config as any).sectionListMarkerGapPx !== undefined) {
+              const prev = engine.worldsConfig.sectionListMarkerGapPx;
+              const next = Number((config as any).sectionListMarkerGapPx);
+              if (Number.isFinite(next)) {
+                engine.worldsConfig.sectionListMarkerGapPx = Math.max(0, next);
+                if (prev !== engine.worldsConfig.sectionListMarkerGapPx) {
+                  engine.clear3DSectionTextures();
+                }
+              }
+            }
+
+            if ((config as any).sectionListHangIndentPx !== undefined) {
+              const prev = engine.worldsConfig.sectionListHangIndentPx;
+              const next = Number((config as any).sectionListHangIndentPx);
+              if (Number.isFinite(next)) {
+                engine.worldsConfig.sectionListHangIndentPx = Math.max(0, next);
+                if (prev !== engine.worldsConfig.sectionListHangIndentPx) {
+                  engine.clear3DSectionTextures();
+                }
               }
             }
 
@@ -5559,23 +5601,11 @@ ${exportVars}
 
         }
 
-        // Ensure each section has a texture with its rendered heading/content.
-        if (this.worldsEnabled && this.section3DLayouts.length > 0 && this.renderer instanceof WebGPURenderer) {
-          const device = this.renderer.getContext().getDevice();
-          if (device) {
-            if (this.worldsConfig.sectionTextureMode === 'webgpu-ui') {
-              this.ensure3DSectionTexturesWebGPUUI(device);
-            } else {
-              this.ensure3DSectionTextures(device);
-            }
-          }
-        }
-
         // Render 3D canvas to offscreen texture (before compositing)
         if (this.worldsEnabled && this.worldsRenderer && this.camera3D) {
           const pick = this.pick3DAt(this.input.getMouseX(), this.input.getMouseY());
 
-          // Link hover/focus highlight (invert only the link region)
+          // Track the hovered/focused link region for Worlds interaction.
           this.hovered3DLink = null;
           if (pick) {
             const linkHit = this.hitTest3DLinkAtUV(pick.layout.sectionIndex, pick.u, pick.v);
@@ -5584,22 +5614,19 @@ ${exportVars}
             }
           }
 
-          // Clear previous highlights
-          for (const layout of this.section3DLayouts) {
-            layout.highlightUvRect = undefined;
-          }
-
-          // Prefer mouse hover over keyboard focus
-          const active = this.hovered3DLink ?? this.focused3DLink;
-          if (active) {
-            const rect = this.get3DLinkUvRect(active.sectionIndex, active.linkIndex);
-            if (rect) {
-              const layout = this.section3DLayouts.find(l => l.sectionIndex === active.sectionIndex);
-              if (layout) layout.highlightUvRect = rect;
+          // Ensure each section has a texture with its rendered heading/content.
+          if (this.section3DLayouts.length > 0 && this.renderer instanceof WebGPURenderer) {
+            const device = this.renderer.getContext().getDevice();
+            if (device) {
+              if (this.worldsConfig.sectionTextureMode === 'webgpu-ui') {
+                this.ensure3DSectionTexturesWebGPUUI(device);
+              } else {
+                this.ensure3DSectionTextures(device);
+              }
             }
           }
 
-          // Whole-card hover invert disabled (we highlight links instead)
+          // Whole-card hover invert disabled.
           const backgroundChain = this.parseWorldsSectionBackgroundChain();
           const proceduralBackground = this.isWorldsSectionBackgroundProceduralChainEnabled();
           const hasRuledLines = backgroundChain.includes('ruledlines') || backgroundChain.includes('ruled-lines') || backgroundChain.includes('ruled_lines');
@@ -6079,20 +6106,25 @@ ${exportVars}
     for (const layout of this.section3DLayouts) {
       if (!layout.visible) continue;
 
+      const activeLink = this.getActive3DLink();
+      const activeLinkIndex = activeLink && activeLink.sectionIndex === layout.sectionIndex
+        ? activeLink.linkIndex
+        : null;
+
       if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
         continue;
       }
 
-      // Only rasterize once per section for now.
+      // Re-rasterize when the active hovered/focused link changes for this card.
       if (layout.texture) {
         const existing = this.sectionTextureCache.get(layout.sectionIndex);
-        if (existing) {
+        if (existing && existing.activeLinkIndex === activeLinkIndex) {
           const prevW = layout.worldWidth;
           const prevH = layout.worldHeight;
           this.set3DLayoutWorldSizeFromPixels(layout, existing.width, existing.height, baseLineHeight);
           if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
+          continue;
         }
-        continue;
       }
 
       const minW = 256;
@@ -6126,8 +6158,8 @@ ${exportVars}
       if (overflowMode === 'expand' || overflowMode === 'expand-y' || overflowMode === 'fit' || overflowMode === 'fit-y') {
         const base = this.getStyle('default');
         const dim = this.getStyle('dim');
+        const accent1 = this.getStyle('accent1');
         const heading = this.getStyle('heading');
-        const link = this.getStyle('link');
         const code = this.getStyle('code');
         const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
         const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
@@ -6139,7 +6171,13 @@ ${exportVars}
           fg: base.fg,
           mutedFg: dim.fg,
           headingFg: heading.fg,
-          linkFg: link.fg,
+          listMarker: this.getWorldsListMarker(),
+          listMarkerGapPx: this.getWorldsListMarkerGapPx(),
+          listHangIndentPx: this.getWorldsListHangIndentPx(),
+          linkFg: base.fg,
+          activeLinkFg: accent1.fg,
+          activeLinkIndex,
+          linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
           codeFg: code.fg,
           codeBg: code.bg,
           bg: mdBg,
@@ -6234,8 +6272,8 @@ ${exportVars}
 
       const base = this.getStyle('default');
       const dim = this.getStyle('dim');
+      const accent1 = this.getStyle('accent1');
       const heading = this.getStyle('heading');
-      const link = this.getStyle('link');
       const code = this.getStyle('code');
       const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
       const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
@@ -6251,7 +6289,13 @@ ${exportVars}
         fg: base.fg,
         mutedFg: dim.fg,
         headingFg: heading.fg,
-        linkFg: link.fg,
+        listMarker: this.getWorldsListMarker(),
+        listMarkerGapPx: this.getWorldsListMarkerGapPx(),
+        listHangIndentPx: this.getWorldsListHangIndentPx(),
+        linkFg: base.fg,
+        activeLinkFg: accent1.fg,
+        activeLinkIndex,
+        linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
         codeFg: code.fg,
         codeBg: code.bg,
         bg: mdBg,
@@ -6393,7 +6437,7 @@ ${exportVars}
       }
 
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx });
+      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx, activeLinkIndex });
       this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
 
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
@@ -6772,8 +6816,8 @@ ${exportVars}
     // (Theme colors are packed 0xRRGGBBAA, compatible with UI renderer.)
     const base = this.getStyle('default');
     const dim = this.getStyle('dim');
+    const accent1 = this.getStyle('accent1');
     const heading = this.getStyle('heading');
-    const link = this.getStyle('link');
     const code = this.getStyle('code');
     const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
     const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
@@ -6783,22 +6827,16 @@ ${exportVars}
 
     const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
 
-    const style: MarkdownStyle = {
-      fg: base.fg,
-      mutedFg: dim.fg,
-      headingFg: heading.fg,
-      linkFg: link.fg,
-      codeFg: code.fg,
-      codeBg: code.bg,
-      // Give 3D cards a panel-like background; matches theme elevated surfaces.
-      bg: mdBg,
-    };
-
     const borderEnabled = this.worldsConfig.sectionBorderEnabled !== false;
     const borderWidth = Math.max(0, Math.round(this.worldsConfig.sectionBorderWidth ?? 2));
 
     for (const layout of this.section3DLayouts) {
       if (!layout.visible) continue;
+
+      const activeLink = this.getActive3DLink();
+      const activeLinkIndex = activeLink && activeLink.sectionIndex === layout.sectionIndex
+        ? activeLink.linkIndex
+        : null;
 
       // Skip texture work if the card is entirely offscreen.
       if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
@@ -6825,6 +6863,22 @@ ${exportVars}
       const content = (layout.content || '').trim();
       const markdown = `# ${title}\n\n${content}`.trim();
       const nodes = parseMarkdownLite(markdown);
+      const style: MarkdownStyle = {
+        fg: base.fg,
+        mutedFg: dim.fg,
+        headingFg: heading.fg,
+        listMarker: this.getWorldsListMarker(),
+        listMarkerGapPx: this.getWorldsListMarkerGapPx(),
+        listHangIndentPx: this.getWorldsListHangIndentPx(),
+        linkFg: base.fg,
+        activeLinkFg: accent1.fg,
+        activeLinkIndex,
+        linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
+        codeFg: code.fg,
+        codeBg: code.bg,
+        // Give 3D cards a panel-like background; matches theme elevated surfaces.
+        bg: mdBg,
+      };
 
       if (overflowMode === 'expand' || overflowMode === 'expand-y' || overflowMode === 'fit' || overflowMode === 'fit-y') {
         const probeWidthPx = overflowMode === 'fit' ? maxW : widthPx;
@@ -6864,9 +6918,31 @@ ${exportVars}
       }
 
       const existing = this.sectionTextureCache.get(layout.sectionIndex);
-      if (existing && existing.width === widthPx && existing.height === heightPx && layout.texture) {
+      if (
+        existing &&
+        existing.width === widthPx &&
+        existing.height === heightPx &&
+        existing.activeLinkIndex === activeLinkIndex &&
+        layout.texture
+      ) {
         // Texture already matches current size; ensure link regions are present.
         if (!this.sectionLinkRegionsCache.has(layout.sectionIndex)) {
+          const style: MarkdownStyle = {
+            fg: base.fg,
+            mutedFg: dim.fg,
+            headingFg: heading.fg,
+            listMarker: this.getWorldsListMarker(),
+            listMarkerGapPx: this.getWorldsListMarkerGapPx(),
+            listHangIndentPx: this.getWorldsListHangIndentPx(),
+            linkFg: base.fg,
+            activeLinkFg: accent1.fg,
+            activeLinkIndex,
+            linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
+            codeFg: code.fg,
+            codeBg: code.bg,
+            // Give 3D cards a panel-like background; matches theme elevated surfaces.
+            bg: mdBg,
+          };
           const result = layoutMarkdownDocument(
             nodes,
             { x: 0, y: 0, width: widthPx, height: heightPx },
@@ -6966,7 +7042,7 @@ ${exportVars}
       ui.flushTo(texture, widthPx, heightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
 
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx });
+      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx, activeLinkIndex });
 
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }
@@ -7400,7 +7476,7 @@ ${exportVars}
         const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
         if (linkHit) {
           this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
-          this.activate3DLink(linkHit.region.url);
+          this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
         } else {
           const style = this.lastApplied3DCameraFocus;
           const fill = style?.kind === 'fit' ? style.fill : 0.9;
@@ -7720,7 +7796,7 @@ ${exportVars}
         const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
         if (linkHit) {
           this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
-          this.activate3DLink(linkHit.region.url);
+          this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
         } else {
           // Preserve the caller's preferred focus style and zoom (fill).
           // This makes demo-defined camera framing “sticky” across navigation.
@@ -7879,21 +7955,25 @@ ${exportVars}
     return null;
   }
 
-  private get3DLinkUvRect(
-    sectionIndex: number,
-    linkIndex: number
-  ): { uMin: number; vMin: number; uMax: number; vMax: number } | null {
-    const dims = this.sectionTextureCache.get(sectionIndex);
-    const regions = this.sectionLinkRegionsCache.get(sectionIndex);
-    if (!dims || !regions) return null;
-    const r = regions[linkIndex];
-    if (!r) return null;
-    return {
-      uMin: r.x / dims.width,
-      vMin: r.y / dims.height,
-      uMax: (r.x + r.w) / dims.width,
-      vMax: (r.y + r.h) / dims.height,
-    };
+  private getActive3DLink(): { sectionIndex: number; linkIndex: number } | null {
+    return this.hovered3DLink ?? this.focused3DLink;
+  }
+
+  private getWorldsListMarker(): string | null | undefined {
+    const marker = this.worldsConfig.sectionListMarker;
+    if (marker === undefined) return undefined;
+    if (marker === null) return null;
+    return String(marker);
+  }
+
+  private getWorldsListMarkerGapPx(): number | undefined {
+    const value = this.worldsConfig.sectionListMarkerGapPx;
+    return Number.isFinite(value as any) ? Math.max(0, Number(value)) : undefined;
+  }
+
+  private getWorldsListHangIndentPx(): number | undefined {
+    const value = this.worldsConfig.sectionListHangIndentPx;
+    return Number.isFinite(value as any) ? Math.max(0, Number(value)) : undefined;
   }
 
   private activateFocused3DLink(): void {
@@ -7902,7 +7982,7 @@ ${exportVars}
     const regions = this.sectionLinkRegionsCache.get(focused.sectionIndex);
     const region = regions ? regions[focused.linkIndex] : undefined;
     if (!region) return;
-    this.activate3DLink(region.url);
+    this.activate3DLink(region.url, focused.sectionIndex, focused.linkIndex);
   }
 
   private move3DLinkFocus(delta: number): void {
@@ -7923,8 +8003,17 @@ ${exportVars}
     this.focused3DLink = { sectionIndex: sel.sectionIndex, linkIndex: sel.linkIndex };
   }
 
-  private activate3DLink(url: string): void {
+  private activate3DLink(url: string, sectionIndex?: number | null, linkIndex?: number | null): void {
     if (!url) return;
+
+    this.activated3DLinksQueue.push({
+      url,
+      sectionIndex: typeof sectionIndex === 'number' ? sectionIndex : null,
+      linkIndex: typeof linkIndex === 'number' ? linkIndex : null,
+    });
+    if (this.activated3DLinksQueue.length > 32) {
+      this.activated3DLinksQueue.splice(0, this.activated3DLinksQueue.length - 32);
+    }
 
     // Internal link: #anchor
     if (url.startsWith('#')) {
@@ -8138,7 +8227,6 @@ ${exportVars}
     const base = this.getStyle('default');
     const dim = this.getStyle('dim');
     const heading = this.getStyle('heading');
-    const link = this.getStyle('link');
     const code = this.getStyle('code');
     const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
     const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
@@ -8149,7 +8237,11 @@ ${exportVars}
       fg: base.fg,
       mutedFg: dim.fg,
       headingFg: heading.fg,
-      linkFg: link.fg,
+      listMarker: this.getWorldsListMarker(),
+      listMarkerGapPx: this.getWorldsListMarkerGapPx(),
+      listHangIndentPx: this.getWorldsListHangIndentPx(),
+      linkFg: base.fg,
+      linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
       codeFg: code.fg,
       codeBg: code.bg,
       bg: mdBg,

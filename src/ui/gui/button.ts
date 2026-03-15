@@ -29,7 +29,7 @@ export class GUIButton extends BaseWidget {
   
   constructor(config: GUIButtonConfig) {
     super(config);
-    this.label = config.label;
+    this.label = String(config.label ?? '');
     
     // Default style
     this.buttonStyle = {
@@ -46,8 +46,8 @@ export class GUIButton extends BaseWidget {
     });
   }
   
-  setLabel(label: string): void {
-    this.label = label;
+  setLabel(label: unknown): void {
+    this.label = String(label ?? '');
   }
   
   /**

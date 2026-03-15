@@ -11513,13 +11513,13 @@ const THEMES = {
     // Gray
     bgAlt: 405153535,
     // Slightly lighter teal-gray
-    fg: 3435973887,
+    fg: 2863311615,
     // Light white (~#ccc)
     fgAlt: 1616929023,
     // Medium gray
-    accent1: 4291559679,
+    accent2: 4291559679,
     // Yellow
-    accent2: 15073279,
+    accent1: 15073279,
     // Cyan
     accent3: 4294967295
     // Bright white (#fff)
@@ -12434,7 +12434,7 @@ class TUIButton extends BaseWidget {
     __publicField(this, "align");
     // Track if clicked this frame
     __publicField(this, "clickedThisFrame", false);
-    this.label = config.label;
+    this.label = String(config.label ?? "");
     this.align = config.align || "center";
     this.on("click", () => {
       this.clickedThisFrame = true;
@@ -12453,7 +12453,7 @@ class TUIButton extends BaseWidget {
    * Update label text
    */
   setLabel(label) {
-    this.label = label;
+    this.label = String(label ?? "");
   }
   /**
    * Render button to cell buffer
@@ -12478,18 +12478,19 @@ class TUIButton extends BaseWidget {
         renderer.setCell(buffer, x + col, y + row, char, fg, bg);
       }
     }
+    const label = String(this.label ?? "");
     const centerY = Math.floor(height / 2);
     let labelX = 1;
     if (this.align === "center") {
-      labelX = Math.floor((width - this.label.length) / 2);
+      labelX = Math.floor((width - label.length) / 2);
     } else if (this.align === "right") {
-      labelX = width - this.label.length - 1;
+      labelX = width - label.length - 1;
     }
-    labelX = Math.max(1, Math.min(labelX, width - this.label.length - 1));
-    for (let i = 0; i < this.label.length; i++) {
+    labelX = Math.max(1, Math.min(labelX, width - label.length - 1));
+    for (let i = 0; i < label.length; i++) {
       const charX = x + labelX + i;
       if (charX >= x + 1 && charX < x + width - 1) {
-        renderer.setCell(buffer, charX, y + centerY, this.label[i], fg, bg);
+        renderer.setCell(buffer, charX, y + centerY, label[i], fg, bg);
       }
     }
   }
@@ -12499,14 +12500,14 @@ class TUILabel extends BaseWidget {
     super({ ...config, focusable: false });
     __publicField(this, "text");
     __publicField(this, "align");
-    this.text = config.text;
+    this.text = String(config.text ?? "");
     this.align = config.align || "left";
   }
   /**
    * Update label text
    */
   setText(text) {
-    this.text = text;
+    this.text = String(text ?? "");
   }
   /**
    * Render label to cell buffer
@@ -12523,18 +12524,19 @@ class TUILabel extends BaseWidget {
         renderer.setCell(buffer, x + col, y + row, " ", fg, bg);
       }
     }
+    const text = String(this.text ?? "");
     const centerY = Math.floor(height / 2);
     let textX = 0;
     if (this.align === "center") {
-      textX = Math.floor((width - this.text.length) / 2);
+      textX = Math.floor((width - text.length) / 2);
     } else if (this.align === "right") {
-      textX = width - this.text.length;
+      textX = width - text.length;
     }
-    textX = Math.max(0, Math.min(textX, width - this.text.length));
-    for (let i = 0; i < this.text.length && i < width; i++) {
+    textX = Math.max(0, Math.min(textX, width - text.length));
+    for (let i = 0; i < text.length && i < width; i++) {
       const charX = x + textX + i;
       if (charX >= x && charX < x + width) {
-        renderer.setCell(buffer, charX, y + centerY, this.text[i], fg, bg);
+        renderer.setCell(buffer, charX, y + centerY, text[i], fg, bg);
       }
     }
   }
@@ -12545,7 +12547,7 @@ class TUICheckbox extends BaseWidget {
     __publicField(this, "label");
     __publicField(this, "checked");
     __publicField(this, "toggledThisFrame", false);
-    this.label = config.label;
+    this.label = String(config.label ?? "");
     this.checked = config.checked ?? false;
     this.on("click", () => {
       this.checked = !this.checked;
@@ -12582,7 +12584,7 @@ class TUICheckbox extends BaseWidget {
    * Update label text
    */
   setLabel(label) {
-    this.label = label;
+    this.label = String(label ?? "");
   }
   /**
    * Render checkbox to cell buffer
@@ -12603,9 +12605,10 @@ class TUICheckbox extends BaseWidget {
     for (let i = 0; i < symbol.length; i++) {
       renderer.setCell(buffer, x + i, y, symbol[i], fg, bg);
     }
+    const label = String(this.label ?? "");
     const labelStart = x + symbol.length + 1;
-    for (let i = 0; i < this.label.length; i++) {
-      renderer.setCell(buffer, labelStart + i, y, this.label[i], fg, bg);
+    for (let i = 0; i < label.length; i++) {
+      renderer.setCell(buffer, labelStart + i, y, label[i], fg, bg);
     }
   }
 }
@@ -13562,7 +13565,7 @@ class GUIButton extends BaseWidget {
     __publicField(this, "label");
     __publicField(this, "buttonStyle");
     __publicField(this, "clickedThisFrame", false);
-    this.label = config.label;
+    this.label = String(config.label ?? "");
     this.buttonStyle = {
       fg: ((_a = config.buttonStyle) == null ? void 0 : _a.fg) ?? { r: 240, g: 240, b: 240 },
       bg: ((_b = config.buttonStyle) == null ? void 0 : _b.bg) ?? { r: 60, g: 60, b: 60 },
@@ -13575,7 +13578,7 @@ class GUIButton extends BaseWidget {
     });
   }
   setLabel(label) {
-    this.label = label;
+    this.label = String(label ?? "");
   }
   /**
    * Check if button was clicked this frame
@@ -13598,7 +13601,7 @@ class GUILabel extends BaseWidget {
     __publicField(this, "text");
     __publicField(this, "align");
     __publicField(this, "labelStyle");
-    this.text = config.text;
+    this.text = String(config.text ?? "");
     this.align = config.align ?? "left";
     this.labelStyle = {
       fg: ((_a = config.labelStyle) == null ? void 0 : _a.fg) ?? { r: 220, g: 220, b: 220 },
@@ -13607,7 +13610,7 @@ class GUILabel extends BaseWidget {
     };
   }
   setText(text) {
-    this.text = text;
+    this.text = String(text ?? "");
   }
   /**
    * Render method (rendering is handled by GUISystem)
@@ -13623,7 +13626,7 @@ class GUICheckbox extends BaseWidget {
     __publicField(this, "checked");
     __publicField(this, "wasToggledThisFrame", false);
     __publicField(this, "checkboxStyle");
-    this.label = config.label;
+    this.label = String(config.label ?? "");
     this.checked = config.checked ?? false;
     this.checkboxStyle = {
       fg: ((_a = config.checkboxStyle) == null ? void 0 : _a.fg) ?? { r: 220, g: 220, b: 220 },
@@ -14257,17 +14260,24 @@ function parseMarkdownLite(source) {
         items.push(parseInlines(itemText));
         i++;
       }
-      nodes.push({ kind: "list", items });
+      nodes.push({ kind: "list", items, ordered: false });
       continue;
     }
     if (/^\s*\d+\.\s+/.test(line)) {
       const items = [];
+      let start;
       while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
-        const itemText = lines[i].replace(/^\s*\d+\.\s+/, "").trimEnd();
+        const match = lines[i].match(/^\s*(\d+)\.\s+(.*)$/);
+        if (!match) break;
+        if (start === void 0) {
+          const parsed = Number(match[1]);
+          start = Number.isFinite(parsed) ? parsed : 1;
+        }
+        const itemText = match[2].trimEnd();
         items.push(parseInlines(itemText));
         i++;
       }
-      nodes.push({ kind: "list", items });
+      nodes.push({ kind: "list", items, ordered: true, start: start ?? 1 });
       continue;
     }
     const para = [];
@@ -14408,6 +14418,8 @@ function wrapRunsByWidth(runs, maxWidthPx, measure) {
 function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding = 10, options) {
   const ops = [];
   const linkRegions = [];
+  let linkIndex = 0;
+  const linkUnderline = style.linkUnderline ?? true;
   const charW = Math.max(1, metrics.charW);
   const charH = Math.max(1, metrics.charH);
   const measure = typeof metrics.measureTextWidth === "function" ? metrics.measureTextWidth : null;
@@ -14429,7 +14441,8 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
     let cx = lineX;
     for (const run of line) {
       if (run.kind === "newline") continue;
-      const color = fgOverride ?? (run.kind === "link" ? style.linkFg : run.kind === "code" ? style.codeFg : style.fg);
+      const isActiveLink = run.kind === "link" && style.activeLinkIndex === linkIndex;
+      const color = fgOverride ?? (run.kind === "link" ? isActiveLink ? style.activeLinkFg ?? style.linkFg : style.linkFg : run.kind === "code" ? style.codeFg : style.fg);
       if (run.kind === "code" && run.text.trim().length > 0) {
         const w = measure ? measure(run.text) : run.text.length * charW;
         ops.push({ kind: "rect", x: cx, y: lineY - Math.round(charH * 0.15), w, h: Math.round(charH * 1.15), color: style.codeBg });
@@ -14443,8 +14456,11 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
       if (run.kind === "link" && run.url && run.text.trim().length > 0) {
         const w = measure ? measure(run.text) : run.text.length * charW;
         linkRegions.push({ x: cx, y: lineY, w, h: charH, url: run.url, text: run.text });
-        ops.push({ kind: "rect", x: cx, y: lineY + charH - 2, w, h: 2, color: style.linkFg });
-        bumpMax(cx, lineY + charH - 2, w);
+        if (linkUnderline) {
+          ops.push({ kind: "rect", x: cx, y: lineY + charH - 2, w, h: 2, color });
+          bumpMax(cx, lineY + charH - 2, w);
+        }
+        linkIndex++;
       }
       cx += measure ? measure(run.text) : run.text.length * charW;
     }
@@ -14498,15 +14514,29 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
       continue;
     }
     if (node.kind === "list") {
-      const indentChars = 2;
-      const bullet = "- ";
-      for (const item of node.items) {
-        const itemRuns = [{ kind: "text", text: bullet }, ...tokenizeInlines(item)];
-        const lines = measure ? wrapRunsByWidth(itemRuns, Math.max(1, innerW - measure(" ".repeat(indentChars))), measure) : wrapRuns(itemRuns, Math.max(1, maxChars - indentChars));
+      const customMarkerText = style.listMarker === void 0 ? "- " : String(style.listMarker ?? "");
+      const gapPx = Number.isFinite(style.listMarkerGapPx) ? Math.max(0, style.listMarkerGapPx) : void 0;
+      const markerColor = style.listMarkerFg ?? style.fg;
+      for (let itemIndex = 0; itemIndex < node.items.length; itemIndex++) {
+        const item = node.items[itemIndex];
+        const markerText = node.ordered ? `${(node.start ?? 1) + itemIndex}.` : customMarkerText;
+        const markerWidth = markerText.length > 0 ? measure ? measure(markerText) : markerText.length * charW : 0;
+        const defaultGapPx = markerText.length > 0 && !/\s$/.test(markerText) ? charW : 0;
+        const resolvedGapPx = gapPx ?? defaultGapPx;
+        const markerAdvance = markerText.length > 0 ? markerWidth + resolvedGapPx : 0;
+        const hangIndentPx = Number.isFinite(style.listHangIndentPx) ? Math.max(0, style.listHangIndentPx) : markerAdvance;
+        const wrapIndentPx = Math.max(markerAdvance, hangIndentPx);
+        const listInnerWidth = Math.max(1, innerW - wrapIndentPx);
+        const listMaxChars = Math.max(1, Math.floor(listInnerWidth / charW));
+        const itemRuns = tokenizeInlines(item);
+        const lines = measure ? wrapRunsByWidth(itemRuns, listInnerWidth, measure) : wrapRuns(itemRuns, listMaxChars);
         let first = true;
         for (const ln of lines) {
-          const bulletIndent = measure ? measure(bullet) : bullet.length * charW;
-          const x = x0 + padding + (first ? 0 : bulletIndent);
+          if (first && markerText.length > 0) {
+            ops.push({ kind: "text", text: markerText, x: x0 + padding, y: cursorY, color: markerColor });
+            bumpMax(x0 + padding, cursorY, markerWidth);
+          }
+          const x = x0 + padding + (first ? markerAdvance : hangIndentPx);
           emitTextLine(ln, x, cursorY);
           cursorY += baseLineHeight;
           first = false;
@@ -15025,6 +15055,7 @@ class GUISystem {
   renderButton(button, ui) {
     const { x, y, width, height } = button.bounds;
     const { fg, bg, borderColor, hoverBg, activeBg } = button.buttonStyle;
+    const label = String(button.label ?? "");
     const bgColor = button.state.pressed ? activeBg : button.state.hovered ? hoverBg : bg;
     ui.rect(x, y, width, height, bgColor);
     ui.rect(x, y, width, 2, borderColor);
@@ -15032,31 +15063,33 @@ class GUISystem {
     ui.rect(x, y, 2, height, borderColor);
     ui.rect(x + width - 2, y, 2, height, borderColor);
     const charW = 10;
-    const labelWidth = button.label.length * charW;
+    const labelWidth = label.length * charW;
     const labelX = x + (width - labelWidth) / 2;
     const labelY = y + height / 2;
-    ui.text(button.label, labelX, labelY, fg);
+    ui.text(label, labelX, labelY, fg);
   }
   renderLabel(label, ui, charW, _charH) {
     const { x, y, width, height } = label.bounds;
     const { fg, bg } = label.labelStyle;
+    const text = String(label.text ?? "");
     const bgColor = bg;
     if (bgColor.a !== void 0 && bgColor.a !== 0) {
       ui.rect(x, y, width, height, bg);
     }
     let textX = x;
     if (label.align === "center") {
-      const textWidth = label.text.length * charW;
+      const textWidth = text.length * charW;
       textX = x + (width - textWidth) / 2;
     } else if (label.align === "right") {
-      const textWidth = label.text.length * charW;
+      const textWidth = text.length * charW;
       textX = x + width - textWidth;
     }
-    ui.text(label.text, textX, y + height / 2, fg);
+    ui.text(text, textX, y + height / 2, fg);
   }
   renderCheckbox(checkbox, ui, charW, _charH) {
     const { x, y, height } = checkbox.bounds;
     const { fg, bg, checkColor, hoverBg } = checkbox.checkboxStyle;
+    const label = String(checkbox.label ?? "");
     const boxSize = Math.min(height, charW * 2);
     const boxY = y + (height - boxSize) / 2;
     const bgColor = checkbox.state.hovered ? hoverBg : bg;
@@ -15075,7 +15108,7 @@ class GUISystem {
         checkColor
       );
     }
-    ui.text(checkbox.label, x + boxSize + 8, y + height / 2, fg);
+    ui.text(label, x + boxSize + 8, y + height / 2, fg);
   }
   renderSlider(slider, ui, _charW, charH) {
     const { x, y, width, height } = slider.bounds;
@@ -18271,6 +18304,8 @@ function getDefaultWorldsConfig() {
     sectionTextureMode: "canvas2d",
     sectionBorderEnabled: true,
     sectionBorderWidth: 2,
+    sectionLinkUnderline: false,
+    sectionListMarker: void 0,
     // Use the theme surface by default (typically bgAlt / elevated panel color)
     sectionBackground: "surface"
   };
@@ -18813,16 +18848,6 @@ class WorldsRenderer {
           // params0.z is full-card hover flag (1 = hovered)
           if (uniforms.params0.z > 0.5) {
             return vec4<f32>(vec3<f32>(1.0) - outColor.rgb, outColor.a);
-          }
-          // params0.w is highlight flag (1 = enabled)
-          if (uniforms.params0.w > 0.5) {
-            let umin = uniforms.params1.x;
-            let vmin = uniforms.params1.y;
-            let umax = uniforms.params1.z;
-            let vmax = uniforms.params1.w;
-            if (input.uv.x >= umin && input.uv.x <= umax && input.uv.y >= vmin && input.uv.y <= vmax) {
-              return vec4<f32>(vec3<f32>(1.0) - outColor.rgb, outColor.a);
-            }
           }
           return outColor;
         }
@@ -22047,6 +22072,7 @@ class StorieEngine {
     __publicField(this, "hovered3DLink", null);
     __publicField(this, "focused3DLink", null);
     __publicField(this, "current3DSectionIndex", null);
+    __publicField(this, "activated3DLinksQueue", []);
     // 3D section texture rasterization cache
     __publicField(this, "sectionTextureCache", /* @__PURE__ */ new Map());
     __publicField(this, "sectionLinkRegionsCache", /* @__PURE__ */ new Map());
@@ -25063,6 +25089,9 @@ class StorieEngine {
           },
           get keyHandlingEnabled() {
             return engine.worldsLinkKeyHandlingEnabled;
+          },
+          popActivated: () => {
+            return engine.activated3DLinksQueue.shift() ?? null;
           }
         },
         // Outline-based navigation helpers.
@@ -25497,6 +25526,40 @@ class StorieEngine {
               const v2 = config.sectionBackgroundPaperNoiseStrength;
               if (Number.isFinite(v2)) {
                 engine.worldsConfig.sectionBackgroundPaperNoiseStrength = Math.max(0, Math.min(1, v2));
+              }
+            }
+            if (config.sectionLinkUnderline !== void 0) {
+              const prev = engine.worldsConfig.sectionLinkUnderline;
+              engine.worldsConfig.sectionLinkUnderline = !!config.sectionLinkUnderline;
+              if (prev !== engine.worldsConfig.sectionLinkUnderline) {
+                engine.clear3DSectionTextures();
+              }
+            }
+            if (config.sectionListMarker !== void 0) {
+              const prev = engine.worldsConfig.sectionListMarker;
+              engine.worldsConfig.sectionListMarker = config.sectionListMarker;
+              if (prev !== engine.worldsConfig.sectionListMarker) {
+                engine.clear3DSectionTextures();
+              }
+            }
+            if (config.sectionListMarkerGapPx !== void 0) {
+              const prev = engine.worldsConfig.sectionListMarkerGapPx;
+              const next = Number(config.sectionListMarkerGapPx);
+              if (Number.isFinite(next)) {
+                engine.worldsConfig.sectionListMarkerGapPx = Math.max(0, next);
+                if (prev !== engine.worldsConfig.sectionListMarkerGapPx) {
+                  engine.clear3DSectionTextures();
+                }
+              }
+            }
+            if (config.sectionListHangIndentPx !== void 0) {
+              const prev = engine.worldsConfig.sectionListHangIndentPx;
+              const next = Number(config.sectionListHangIndentPx);
+              if (Number.isFinite(next)) {
+                engine.worldsConfig.sectionListHangIndentPx = Math.max(0, next);
+                if (prev !== engine.worldsConfig.sectionListHangIndentPx) {
+                  engine.clear3DSectionTextures();
+                }
               }
             }
             engine.applyWorldsLayoutCallback();
@@ -26395,16 +26458,6 @@ ${exportVars}
             console.warn("[Compositor] Terminal render texture missing; frame may be blank");
           }
         }
-        if (this.worldsEnabled && this.section3DLayouts.length > 0 && this.renderer instanceof WebGPURenderer) {
-          const device = this.renderer.getContext().getDevice();
-          if (device) {
-            if (this.worldsConfig.sectionTextureMode === "webgpu-ui") {
-              this.ensure3DSectionTexturesWebGPUUI(device);
-            } else {
-              this.ensure3DSectionTextures(device);
-            }
-          }
-        }
         if (this.worldsEnabled && this.worldsRenderer && this.camera3D) {
           const pick = this.pick3DAt(this.input.getMouseX(), this.input.getMouseY());
           this.hovered3DLink = null;
@@ -26414,15 +26467,14 @@ ${exportVars}
               this.hovered3DLink = { sectionIndex: pick.layout.sectionIndex, linkIndex: linkHit.linkIndex };
             }
           }
-          for (const layout of this.section3DLayouts) {
-            layout.highlightUvRect = void 0;
-          }
-          const active = this.hovered3DLink ?? this.focused3DLink;
-          if (active) {
-            const rect = this.get3DLinkUvRect(active.sectionIndex, active.linkIndex);
-            if (rect) {
-              const layout = this.section3DLayouts.find((l) => l.sectionIndex === active.sectionIndex);
-              if (layout) layout.highlightUvRect = rect;
+          if (this.section3DLayouts.length > 0 && this.renderer instanceof WebGPURenderer) {
+            const device = this.renderer.getContext().getDevice();
+            if (device) {
+              if (this.worldsConfig.sectionTextureMode === "webgpu-ui") {
+                this.ensure3DSectionTexturesWebGPUUI(device);
+              } else {
+                this.ensure3DSectionTextures(device);
+              }
             }
           }
           const backgroundChain = this.parseWorldsSectionBackgroundChain();
@@ -26764,18 +26816,20 @@ ${exportVars}
     })();
     for (const layout of this.section3DLayouts) {
       if (!layout.visible) continue;
+      const activeLink = this.getActive3DLink();
+      const activeLinkIndex = activeLink && activeLink.sectionIndex === layout.sectionIndex ? activeLink.linkIndex : null;
       if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
         continue;
       }
       if (layout.texture) {
         const existing = this.sectionTextureCache.get(layout.sectionIndex);
-        if (existing) {
+        if (existing && existing.activeLinkIndex === activeLinkIndex) {
           const prevW = layout.worldWidth;
           const prevH = layout.worldHeight;
           this.set3DLayoutWorldSizeFromPixels(layout, existing.width, existing.height, baseLineHeight);
           if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
+          continue;
         }
-        continue;
       }
       const minW = 256;
       const minH = 128;
@@ -26796,8 +26850,8 @@ ${content}`.trim();
       if (overflowMode === "expand" || overflowMode === "expand-y" || overflowMode === "fit" || overflowMode === "fit-y") {
         const base2 = this.getStyle("default");
         const dim2 = this.getStyle("dim");
+        const accent12 = this.getStyle("accent1");
         const heading2 = this.getStyle("heading");
-        const link22 = this.getStyle("link");
         const code2 = this.getStyle("code");
         const proceduralRuledPaper2 = this.isWorldsSectionBackgroundProceduralChainEnabled();
         const bakedRuledPaper2 = this.isWorldsSectionBackgroundBakedRuledLines();
@@ -26808,7 +26862,13 @@ ${content}`.trim();
           fg: base2.fg,
           mutedFg: dim2.fg,
           headingFg: heading2.fg,
-          linkFg: link22.fg,
+          listMarker: this.getWorldsListMarker(),
+          listMarkerGapPx: this.getWorldsListMarkerGapPx(),
+          listHangIndentPx: this.getWorldsListHangIndentPx(),
+          linkFg: base2.fg,
+          activeLinkFg: accent12.fg,
+          activeLinkIndex,
+          linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
           codeFg: code2.fg,
           codeBg: code2.bg,
           bg: mdBg2
@@ -26874,8 +26934,8 @@ ${content}`.trim();
       const charH = measuredCharH;
       const base = this.getStyle("default");
       const dim = this.getStyle("dim");
+      const accent1 = this.getStyle("accent1");
       const heading = this.getStyle("heading");
-      const link2 = this.getStyle("link");
       const code = this.getStyle("code");
       const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
       const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
@@ -26887,7 +26947,13 @@ ${content}`.trim();
         fg: base.fg,
         mutedFg: dim.fg,
         headingFg: heading.fg,
-        linkFg: link2.fg,
+        listMarker: this.getWorldsListMarker(),
+        listMarkerGapPx: this.getWorldsListMarkerGapPx(),
+        listHangIndentPx: this.getWorldsListHangIndentPx(),
+        linkFg: base.fg,
+        activeLinkFg: accent1.fg,
+        activeLinkIndex,
+        linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
         codeFg: code.fg,
         codeBg: code.bg,
         bg: mdBg
@@ -27016,7 +27082,7 @@ ${content}`.trim();
         continue;
       }
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx });
+      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx, activeLinkIndex });
       this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }
@@ -27288,8 +27354,8 @@ ${content}`.trim();
     const format = ui.getTextureFormat();
     const base = this.getStyle("default");
     const dim = this.getStyle("dim");
+    const accent1 = this.getStyle("accent1");
     const heading = this.getStyle("heading");
-    const link2 = this.getStyle("link");
     const code = this.getStyle("code");
     const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
     const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
@@ -27297,20 +27363,12 @@ ${content}`.trim();
     const surfaceBg = this.resolveWorldsSectionBackground();
     const borderStyle = this.getStyle("border");
     const mdBg = proceduralRuledPaper || bakedRuledPaper || shaderBg ? this.withAlpha(surfaceBg, 0) : surfaceBg;
-    const style = {
-      fg: base.fg,
-      mutedFg: dim.fg,
-      headingFg: heading.fg,
-      linkFg: link2.fg,
-      codeFg: code.fg,
-      codeBg: code.bg,
-      // Give 3D cards a panel-like background; matches theme elevated surfaces.
-      bg: mdBg
-    };
     const borderEnabled = this.worldsConfig.sectionBorderEnabled !== false;
     const borderWidth = Math.max(0, Math.round(this.worldsConfig.sectionBorderWidth ?? 2));
     for (const layout of this.section3DLayouts) {
       if (!layout.visible) continue;
+      const activeLink = this.getActive3DLink();
+      const activeLinkIndex = activeLink && activeLink.sectionIndex === layout.sectionIndex ? activeLink.linkIndex : null;
       if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
         continue;
       }
@@ -27329,6 +27387,22 @@ ${content}`.trim();
 
 ${content}`.trim();
       const nodes = parseMarkdownLite(markdown);
+      const style = {
+        fg: base.fg,
+        mutedFg: dim.fg,
+        headingFg: heading.fg,
+        listMarker: this.getWorldsListMarker(),
+        listMarkerGapPx: this.getWorldsListMarkerGapPx(),
+        listHangIndentPx: this.getWorldsListHangIndentPx(),
+        linkFg: base.fg,
+        activeLinkFg: accent1.fg,
+        activeLinkIndex,
+        linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
+        codeFg: code.fg,
+        codeBg: code.bg,
+        // Give 3D cards a panel-like background; matches theme elevated surfaces.
+        bg: mdBg
+      };
       if (overflowMode === "expand" || overflowMode === "expand-y" || overflowMode === "fit" || overflowMode === "fit-y") {
         const probeWidthPx = overflowMode === "fit" ? maxW : widthPx;
         const probe = layoutMarkdownDocument(
@@ -27363,13 +27437,29 @@ ${content}`.trim();
         if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
       }
       const existing = this.sectionTextureCache.get(layout.sectionIndex);
-      if (existing && existing.width === widthPx && existing.height === heightPx && layout.texture) {
+      if (existing && existing.width === widthPx && existing.height === heightPx && existing.activeLinkIndex === activeLinkIndex && layout.texture) {
         if (!this.sectionLinkRegionsCache.has(layout.sectionIndex)) {
+          const style2 = {
+            fg: base.fg,
+            mutedFg: dim.fg,
+            headingFg: heading.fg,
+            listMarker: this.getWorldsListMarker(),
+            listMarkerGapPx: this.getWorldsListMarkerGapPx(),
+            listHangIndentPx: this.getWorldsListHangIndentPx(),
+            linkFg: base.fg,
+            activeLinkFg: accent1.fg,
+            activeLinkIndex,
+            linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
+            codeFg: code.fg,
+            codeBg: code.bg,
+            // Give 3D cards a panel-like background; matches theme elevated surfaces.
+            bg: mdBg
+          };
           const result2 = layoutMarkdownDocument(
             nodes,
             { x: 0, y: 0, width: widthPx, height: heightPx },
             { charW, charH },
-            style,
+            style2,
             0,
             texturePadding,
             { overflow: layoutOverflow }
@@ -27449,7 +27539,7 @@ ${content}`.trim();
       }
       ui.flushTo(texture, widthPx, heightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx });
+      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx, activeLinkIndex });
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }
     if (worldSizeChanged) {
@@ -27781,7 +27871,7 @@ ${content}`.trim();
         const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
         if (linkHit) {
           this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
-          this.activate3DLink(linkHit.region.url);
+          this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
         } else {
           const style = this.lastApplied3DCameraFocus;
           const fill = (style == null ? void 0 : style.kind) === "fit" ? style.fill : 0.9;
@@ -28026,7 +28116,7 @@ ${content}`.trim();
         const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
         if (linkHit) {
           this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
-          this.activate3DLink(linkHit.region.url);
+          this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
         } else {
           const style = this.lastApplied3DCameraFocus;
           const fill = (style == null ? void 0 : style.kind) === "fit" ? style.fill : 0.9;
@@ -28143,18 +28233,22 @@ ${content}`.trim();
     }
     return null;
   }
-  get3DLinkUvRect(sectionIndex, linkIndex) {
-    const dims = this.sectionTextureCache.get(sectionIndex);
-    const regions = this.sectionLinkRegionsCache.get(sectionIndex);
-    if (!dims || !regions) return null;
-    const r2 = regions[linkIndex];
-    if (!r2) return null;
-    return {
-      uMin: r2.x / dims.width,
-      vMin: r2.y / dims.height,
-      uMax: (r2.x + r2.w) / dims.width,
-      vMax: (r2.y + r2.h) / dims.height
-    };
+  getActive3DLink() {
+    return this.hovered3DLink ?? this.focused3DLink;
+  }
+  getWorldsListMarker() {
+    const marker = this.worldsConfig.sectionListMarker;
+    if (marker === void 0) return void 0;
+    if (marker === null) return null;
+    return String(marker);
+  }
+  getWorldsListMarkerGapPx() {
+    const value = this.worldsConfig.sectionListMarkerGapPx;
+    return Number.isFinite(value) ? Math.max(0, Number(value)) : void 0;
+  }
+  getWorldsListHangIndentPx() {
+    const value = this.worldsConfig.sectionListHangIndentPx;
+    return Number.isFinite(value) ? Math.max(0, Number(value)) : void 0;
   }
   activateFocused3DLink() {
     const focused = this.focused3DLink;
@@ -28162,7 +28256,7 @@ ${content}`.trim();
     const regions = this.sectionLinkRegionsCache.get(focused.sectionIndex);
     const region = regions ? regions[focused.linkIndex] : void 0;
     if (!region) return;
-    this.activate3DLink(region.url);
+    this.activate3DLink(region.url, focused.sectionIndex, focused.linkIndex);
   }
   move3DLinkFocus(delta) {
     const links = this.getVisible3DLinks();
@@ -28179,8 +28273,16 @@ ${content}`.trim();
     const sel = links[next];
     this.focused3DLink = { sectionIndex: sel.sectionIndex, linkIndex: sel.linkIndex };
   }
-  activate3DLink(url) {
+  activate3DLink(url, sectionIndex, linkIndex) {
     if (!url) return;
+    this.activated3DLinksQueue.push({
+      url,
+      sectionIndex: typeof sectionIndex === "number" ? sectionIndex : null,
+      linkIndex: typeof linkIndex === "number" ? linkIndex : null
+    });
+    if (this.activated3DLinksQueue.length > 32) {
+      this.activated3DLinksQueue.splice(0, this.activated3DLinksQueue.length - 32);
+    }
     if (url.startsWith("#")) {
       const target = decodeURIComponent(url.slice(1)).trim();
       if (!target || !this.camera3D) return;
@@ -28318,7 +28420,6 @@ ${content}`.trim();
     const base = this.getStyle("default");
     const dim = this.getStyle("dim");
     const heading = this.getStyle("heading");
-    const link2 = this.getStyle("link");
     const code = this.getStyle("code");
     const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
     const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
@@ -28329,7 +28430,11 @@ ${content}`.trim();
       fg: base.fg,
       mutedFg: dim.fg,
       headingFg: heading.fg,
-      linkFg: link2.fg,
+      listMarker: this.getWorldsListMarker(),
+      listMarkerGapPx: this.getWorldsListMarkerGapPx(),
+      listHangIndentPx: this.getWorldsListHangIndentPx(),
+      linkFg: base.fg,
+      linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
       codeFg: code.fg,
       codeBg: code.bg,
       bg: mdBg

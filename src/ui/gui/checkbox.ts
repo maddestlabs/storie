@@ -28,7 +28,7 @@ export class GUICheckbox extends BaseWidget {
   
   constructor(config: GUICheckboxConfig) {
     super(config);
-    this.label = config.label;
+    this.label = String(config.label ?? '');
     this.checked = config.checked ?? false;
     
     this.checkboxStyle = {

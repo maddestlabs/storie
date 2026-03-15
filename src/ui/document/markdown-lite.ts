@@ -174,19 +174,26 @@ export function parseMarkdownLite(source: string): DocNode[] {
         items.push(parseInlines(itemText));
         i++;
       }
-      nodes.push({ kind: 'list', items });
+      nodes.push({ kind: 'list', items, ordered: false });
       continue;
     }
 
     // Ordered list
     if (/^\s*\d+\.\s+/.test(line)) {
       const items: Inline[][] = [];
+      let start: number | undefined;
       while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
-        const itemText = lines[i].replace(/^\s*\d+\.\s+/, '').trimEnd();
+        const match = lines[i].match(/^\s*(\d+)\.\s+(.*)$/);
+        if (!match) break;
+        if (start === undefined) {
+          const parsed = Number(match[1]);
+          start = Number.isFinite(parsed) ? parsed : 1;
+        }
+        const itemText = match[2].trimEnd();
         items.push(parseInlines(itemText));
         i++;
       }
-      nodes.push({ kind: 'list', items });
+      nodes.push({ kind: 'list', items, ordered: true, start: start ?? 1 });
       continue;
     }
 

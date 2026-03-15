@@ -164,6 +164,8 @@ export function layoutMarkdownDocument(
 ): LayoutResult {
   const ops: DrawOp[] = [];
   const linkRegions: LinkRegion[] = [];
+  let linkIndex = 0;
+  const linkUnderline = style.linkUnderline ?? true;
 
   const charW = Math.max(1, metrics.charW);
   const charH = Math.max(1, metrics.charH);
@@ -200,9 +202,14 @@ export function layoutMarkdownDocument(
     let cx = lineX;
     for (const run of line) {
       if (run.kind === 'newline') continue;
+      const isActiveLink = run.kind === 'link' && style.activeLinkIndex === linkIndex;
       const color =
         fgOverride ??
-        (run.kind === 'link' ? style.linkFg : run.kind === 'code' ? style.codeFg : style.fg);
+        (run.kind === 'link'
+          ? (isActiveLink ? (style.activeLinkFg ?? style.linkFg) : style.linkFg)
+          : run.kind === 'code'
+            ? style.codeFg
+            : style.fg);
 
       // code: draw a small background behind the run
       if (run.kind === 'code' && run.text.trim().length > 0) {
@@ -220,9 +227,11 @@ export function layoutMarkdownDocument(
       if (run.kind === 'link' && run.url && run.text.trim().length > 0) {
         const w = measure ? measure(run.text) : run.text.length * charW;
         linkRegions.push({ x: cx, y: lineY, w, h: charH, url: run.url, text: run.text });
-        // underline
-        ops.push({ kind: 'rect', x: cx, y: lineY + charH - 2, w, h: 2, color: style.linkFg });
-        bumpMax(cx, lineY + charH - 2, w, 2);
+        if (linkUnderline) {
+          ops.push({ kind: 'rect', x: cx, y: lineY + charH - 2, w, h: 2, color });
+          bumpMax(cx, lineY + charH - 2, w, 2);
+        }
+        linkIndex++;
       }
 
       cx += measure ? measure(run.text) : run.text.length * charW;
@@ -289,18 +298,40 @@ export function layoutMarkdownDocument(
     }
 
     if (node.kind === 'list') {
-      const indentChars = 2;
-      const bullet = '- ';
-      for (const item of node.items) {
-        const itemRuns = [{ kind: 'text' as const, text: bullet }, ...tokenizeInlines(item)];
+      const customMarkerText = style.listMarker === undefined ? '- ' : String(style.listMarker ?? '');
+      const gapPx = Number.isFinite(style.listMarkerGapPx as number)
+        ? Math.max(0, style.listMarkerGapPx as number)
+        : undefined;
+      const markerColor = style.listMarkerFg ?? style.fg;
+
+      for (let itemIndex = 0; itemIndex < node.items.length; itemIndex++) {
+        const item = node.items[itemIndex];
+        const markerText = node.ordered
+          ? `${(node.start ?? 1) + itemIndex}.`
+          : customMarkerText;
+        const markerWidth = markerText.length > 0
+          ? (measure ? measure(markerText) : markerText.length * charW)
+          : 0;
+        const defaultGapPx = markerText.length > 0 && !/\s$/.test(markerText) ? charW : 0;
+        const resolvedGapPx = gapPx ?? defaultGapPx;
+        const markerAdvance = markerText.length > 0 ? markerWidth + resolvedGapPx : 0;
+        const hangIndentPx = Number.isFinite(style.listHangIndentPx as number)
+          ? Math.max(0, style.listHangIndentPx as number)
+          : markerAdvance;
+        const wrapIndentPx = Math.max(markerAdvance, hangIndentPx);
+        const listInnerWidth = Math.max(1, innerW - wrapIndentPx);
+        const listMaxChars = Math.max(1, Math.floor(listInnerWidth / charW));
+        const itemRuns = tokenizeInlines(item);
         const lines = measure
-          ? wrapRunsByWidth(itemRuns, Math.max(1, innerW - measure(' '.repeat(indentChars))), measure)
-          : wrapRuns(itemRuns, Math.max(1, maxChars - indentChars));
+          ? wrapRunsByWidth(itemRuns, listInnerWidth, measure)
+          : wrapRuns(itemRuns, listMaxChars);
         let first = true;
         for (const ln of lines) {
-          const bulletIndent = measure ? measure(bullet) : bullet.length * charW;
-          const x = x0 + padding + (first ? 0 : bulletIndent);
-          // for wrapped lines, indent without repeating bullet
+          if (first && markerText.length > 0) {
+            ops.push({ kind: 'text', text: markerText, x: x0 + padding, y: cursorY, color: markerColor });
+            bumpMax(x0 + padding, cursorY, markerWidth, charH);
+          }
+          const x = x0 + padding + (first ? markerAdvance : hangIndentPx);
           emitTextLine(ln, x, cursorY);
           cursorY += baseLineHeight;
           first = false;

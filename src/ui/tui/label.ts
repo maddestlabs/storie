@@ -21,15 +21,15 @@ export class TUILabel extends BaseWidget {
   
   constructor(config: TUILabelConfig) {
     super({ ...config, focusable: false }); // Labels are not focusable
-    this.text = config.text;
+    this.text = String(config.text ?? '');
     this.align = config.align || 'left';
   }
   
   /**
    * Update label text
    */
-  setText(text: string): void {
-    this.text = text;
+  setText(text: unknown): void {
+    this.text = String(text ?? '');
   }
   
   /**
@@ -54,24 +54,26 @@ export class TUILabel extends BaseWidget {
       }
     }
     
+    const text = String(this.text ?? '');
+
     // Draw text (centered vertically)
     const centerY = Math.floor(height / 2);
     let textX = 0;
     
     if (this.align === 'center') {
-      textX = Math.floor((width - this.text.length) / 2);
+      textX = Math.floor((width - text.length) / 2);
     } else if (this.align === 'right') {
-      textX = width - this.text.length;
+      textX = width - text.length;
     }
     
     // Ensure text fits within bounds
-    textX = Math.max(0, Math.min(textX, width - this.text.length));
+    textX = Math.max(0, Math.min(textX, width - text.length));
     
     // Draw text
-    for (let i = 0; i < this.text.length && i < width; i++) {
+    for (let i = 0; i < text.length && i < width; i++) {
       const charX = x + textX + i;
       if (charX >= x && charX < x + width) {
-        renderer.setCell(buffer, charX, y + centerY, this.text[i], fg, bg);
+        renderer.setCell(buffer, charX, y + centerY, text[i], fg, bg);
       }
     }
   }
