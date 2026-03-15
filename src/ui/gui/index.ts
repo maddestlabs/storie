@@ -69,6 +69,14 @@ export class GUISystem {
       return { ...base, kind: 'markdownView' };
     }
 
+    if (widget instanceof GUITextField) {
+      return { ...base, kind: 'textField', align: widget.align, value: widget.getValue(), placeholder: widget.placeholder };
+    }
+
+    if (widget instanceof GUITextEditor) {
+      return { ...base, kind: 'textEditor', align: widget.align, value: widget.getValue(), placeholder: widget.placeholder };
+    }
+
     return { ...base, kind: 'unknown' };
   }
   
@@ -228,6 +236,20 @@ export class GUISystem {
   handleText(text: string): void {
     this.inputRouter.handleText(text);
   }
+
+  /**
+   * Clear focused widget, if any.
+   */
+  clearFocus(): void {
+    this.widgetManager.focus(null);
+  }
+
+  /**
+   * Get the currently focused widget, if any.
+   */
+  getFocusedWidget(): any | null {
+    return this.widgetManager.getFocused();
+  }
   
   /**
    * Render all visible widgets
@@ -263,7 +285,7 @@ export class GUISystem {
       } else if (widget instanceof GUISlider) {
         this.renderSlider(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUITextField) {
-        this.renderTextField(widget, uiAPI, charWidth);
+        this.renderTextField(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUITextEditor) {
         this.renderTextEditor(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUIMarkdownView) {
@@ -272,20 +294,22 @@ export class GUISystem {
     }
   }
 
-  private renderTextField(tf: GUITextField, ui: Draw2D, charW: number): void {
+  private renderTextField(tf: GUITextField, ui: Draw2D, charW: number, charH: number): void {
     const { x, y, width, height } = tf.bounds;
-    const { fg, bg, borderColor, focusBorderColor } = tf.textFieldStyle;
+    const { fg, bg, borderColor, focusBorderColor, drawBackground, drawBorder } = tf.textFieldStyle;
 
-    // Background
-    ui.rect(x, y, width, height, bg);
+    if (drawBackground) {
+      ui.rect(x, y, width, height, bg);
+    }
 
-    // Border (thicker when focused)
-    const b = tf.state.focused ? 3 : 2;
-    const bc = tf.state.focused ? focusBorderColor : borderColor;
-    ui.rect(x, y, width, b, bc);
-    ui.rect(x, y + height - b, width, b, bc);
-    ui.rect(x, y, b, height, bc);
-    ui.rect(x + width - b, y, b, height, bc);
+    if (drawBorder) {
+      const b = tf.state.focused ? 3 : 2;
+      const bc = tf.state.focused ? focusBorderColor : borderColor;
+      ui.rect(x, y, width, b, bc);
+      ui.rect(x, y + height - b, width, b, bc);
+      ui.rect(x, y, b, height, bc);
+      ui.rect(x + width - b, y, b, height, bc);
+    }
 
     const padX = 8;
     const innerX = x + padX;
@@ -303,21 +327,27 @@ export class GUISystem {
     tf.setScrollOffset(scroll);
 
     const visibleText = value.slice(scroll, scroll + maxChars);
-    const textY = y + height / 2;
+    const textOffsetCols = tf.getAlignedColumnOffset(maxChars, visibleText.length);
+    const textX = innerX + textOffsetCols * charW;
+    const clipPadY = 2;
+    const clipY = y + clipPadY;
+    const clipH = Math.max(0, height - clipPadY * 2);
+    const textY = y + Math.max(0, Math.floor((height - charH) / 2));
 
     // Optional clip to inner region (if backend supports it)
-    if (ui.pushClipRect) ui.pushClipRect(innerX, y, innerW, height);
+    if (ui.pushClipRect) ui.pushClipRect(innerX, clipY, innerW, clipH);
 
     if (visibleText.length > 0) {
-      ui.text(visibleText, innerX, textY, fg);
+      ui.text(visibleText, textX, textY, fg);
     } else if (tf.placeholder) {
-      ui.text(tf.placeholder, innerX, textY, fg);
+      const placeholderCols = tf.getAlignedColumnOffset(maxChars, Math.min(maxChars, tf.placeholder.length));
+      ui.text(tf.placeholder, innerX + placeholderCols * charW, textY, fg);
     }
 
     // Caret: invert by drawing a filled rect and re-drawing the character.
     if (tf.state.focused) {
       const caretLocal = cursorPos - scroll;
-      const caretX = innerX + caretLocal * charW;
+      const caretX = textX + caretLocal * charW;
       const caretW = charW;
       const caretH = Math.max(2, height - 8);
       const caretY = y + (height - caretH) / 2;
@@ -334,18 +364,20 @@ export class GUISystem {
 
   private renderTextEditor(ed: GUITextEditor, ui: Draw2D, charW: number, charH: number): void {
     const { x, y, width, height } = ed.bounds;
-    const { fg, bg, borderColor, focusBorderColor } = ed.textEditorStyle;
+    const { fg, bg, borderColor, focusBorderColor, drawBackground, drawBorder } = ed.textEditorStyle;
 
-    // Background
-    ui.rect(x, y, width, height, bg);
+    if (drawBackground) {
+      ui.rect(x, y, width, height, bg);
+    }
 
-    // Border (thicker when focused)
-    const b = ed.state.focused ? 3 : 2;
-    const bc = ed.state.focused ? focusBorderColor : borderColor;
-    ui.rect(x, y, width, b, bc);
-    ui.rect(x, y + height - b, width, b, bc);
-    ui.rect(x, y, b, height, bc);
-    ui.rect(x + width - b, y, b, height, bc);
+    if (drawBorder) {
+      const b = ed.state.focused ? 3 : 2;
+      const bc = ed.state.focused ? focusBorderColor : borderColor;
+      ui.rect(x, y, width, b, bc);
+      ui.rect(x, y + height - b, width, b, bc);
+      ui.rect(x, y, b, height, bc);
+      ui.rect(x + width - b, y, b, height, bc);
+    }
 
     const padX = 8;
     const padY = 8;
@@ -377,7 +409,8 @@ export class GUISystem {
 
     const value = ed.getValue();
     if (value.length === 0 && ed.placeholder) {
-      ui.text(ed.placeholder, innerX, innerY, fg);
+      const placeholderCols = ed.getAlignedColumnOffset(maxCols, ed.placeholder.length, 0);
+      ui.text(ed.placeholder, innerX + placeholderCols * charW, innerY, fg);
     } else {
       for (let row = 0; row < maxRows; row++) {
         const lineIdx = scrollY + row;
@@ -386,7 +419,9 @@ export class GUISystem {
         const visible = line.slice(scrollX, scrollX + maxCols);
         if (!visible) continue;
         const textY = innerY + row * charH;
-        ui.text(visible, innerX, textY, fg);
+        const textOffsetCols = ed.getAlignedColumnOffset(maxCols, line.length, scrollX);
+        const textX = innerX + textOffsetCols * charW;
+        ui.text(visible, textX, textY, fg);
       }
     }
 
@@ -395,12 +430,13 @@ export class GUISystem {
       const caretRow = info.cursorRow - scrollY;
       const caretCol = info.cursorCol - scrollX;
       if (caretRow >= 0 && caretRow < maxRows && caretCol >= 0 && caretCol < maxCols) {
-        const caretX = innerX + caretCol * charW;
+        const line = ed.getLine(info.cursorRow);
+        const caretOffsetCols = ed.getAlignedColumnOffset(maxCols, line.length, scrollX);
+        const caretX = innerX + (caretOffsetCols + caretCol) * charW;
         const caretY = innerY + caretRow * charH;
 
         ui.rect(caretX, caretY, charW, charH, fg);
 
-        const line = ed.getLine(info.cursorRow);
         const ch = info.cursorCol < line.length ? line[info.cursorCol] : ' ';
         ui.text(ch, caretX, caretY, bg);
       }

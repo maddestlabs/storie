@@ -13730,9 +13730,10 @@ class GUISlider extends BaseWidget {
 }
 class GUITextField extends BaseWidget {
   constructor(config) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f;
     super(config);
     __publicField(this, "placeholder");
+    __publicField(this, "align");
     __publicField(this, "textFieldStyle");
     __publicField(this, "value");
     __publicField(this, "cursorPos");
@@ -13743,11 +13744,14 @@ class GUITextField extends BaseWidget {
     this.cursorPos = this.value.length;
     this.scrollOffset = 0;
     this.placeholder = config.placeholder ?? "";
+    this.align = config.align ?? "left";
     this.textFieldStyle = {
       fg: ((_a = config.textFieldStyle) == null ? void 0 : _a.fg) ?? { r: 240, g: 240, b: 240 },
       bg: ((_b = config.textFieldStyle) == null ? void 0 : _b.bg) ?? { r: 30, g: 30, b: 30, a: 0.95 },
       borderColor: ((_c = config.textFieldStyle) == null ? void 0 : _c.borderColor) ?? { r: 90, g: 90, b: 90 },
-      focusBorderColor: ((_d = config.textFieldStyle) == null ? void 0 : _d.focusBorderColor) ?? { r: 120, g: 170, b: 220 }
+      focusBorderColor: ((_d = config.textFieldStyle) == null ? void 0 : _d.focusBorderColor) ?? { r: 120, g: 170, b: 220 },
+      drawBackground: ((_e = config.textFieldStyle) == null ? void 0 : _e.drawBackground) ?? true,
+      drawBorder: ((_f = config.textFieldStyle) == null ? void 0 : _f.drawBorder) ?? true
     };
     this.on("click", (ev) => {
       var _a2;
@@ -13757,7 +13761,10 @@ class GUITextField extends BaseWidget {
       const innerX = this.bounds.x + padX;
       const innerW = Math.max(0, this.bounds.width - padX * 2);
       if (innerW <= 0) return;
-      const relPx = Math.max(0, Math.min(innerW, clickX - innerX));
+      const maxChars = Math.max(0, Math.floor(innerW / Math.max(1, this.charWidth)));
+      const visibleLength = Math.min(maxChars, Math.max(0, this.value.length - this.scrollOffset));
+      const textStartX = innerX + this.getAlignedColumnOffset(maxChars, visibleLength) * this.charWidth;
+      const relPx = Math.max(0, Math.min(innerW, clickX - textStartX));
       const relChars = Math.floor(relPx / Math.max(1, this.charWidth));
       const target = this.scrollOffset + relChars;
       this.cursorPos = Math.max(0, Math.min(this.value.length, target));
@@ -13841,6 +13848,15 @@ class GUITextField extends BaseWidget {
   setScrollOffset(offset) {
     this.scrollOffset = Math.max(0, offset | 0);
   }
+  getAlignedColumnOffset(maxChars, visibleLength) {
+    if (maxChars <= 0) return 0;
+    if (this.scrollOffset > 0) return 0;
+    const gap = Math.max(0, maxChars - Math.max(0, visibleLength));
+    if (gap === 0) return 0;
+    if (this.align === "right") return gap;
+    if (this.align === "center") return Math.floor(gap / 2);
+    return 0;
+  }
   markChanged() {
     this.changedThisFrame = true;
     this.emit({
@@ -13860,9 +13876,10 @@ function splitLines(value) {
 }
 class GUITextEditor extends BaseWidget {
   constructor(config) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f;
     super(config);
     __publicField(this, "placeholder");
+    __publicField(this, "align");
     __publicField(this, "textEditorStyle");
     __publicField(this, "lines");
     __publicField(this, "cursorRow");
@@ -13880,11 +13897,14 @@ class GUITextEditor extends BaseWidget {
     this.scrollX = 0;
     this.scrollY = 0;
     this.placeholder = config.placeholder ?? "";
+    this.align = config.align ?? "left";
     this.textEditorStyle = {
       fg: ((_a = config.textEditorStyle) == null ? void 0 : _a.fg) ?? { r: 240, g: 240, b: 240 },
       bg: ((_b = config.textEditorStyle) == null ? void 0 : _b.bg) ?? { r: 30, g: 30, b: 30, a: 0.95 },
       borderColor: ((_c = config.textEditorStyle) == null ? void 0 : _c.borderColor) ?? { r: 90, g: 90, b: 90 },
-      focusBorderColor: ((_d = config.textEditorStyle) == null ? void 0 : _d.focusBorderColor) ?? { r: 120, g: 170, b: 220 }
+      focusBorderColor: ((_d = config.textEditorStyle) == null ? void 0 : _d.focusBorderColor) ?? { r: 120, g: 170, b: 220 },
+      drawBackground: ((_e = config.textEditorStyle) == null ? void 0 : _e.drawBackground) ?? true,
+      drawBorder: ((_f = config.textEditorStyle) == null ? void 0 : _f.drawBorder) ?? true
     };
     this.on("click", (ev) => {
       var _a2, _b2;
@@ -13900,10 +13920,13 @@ class GUITextEditor extends BaseWidget {
       if (innerW <= 0 || innerH <= 0) return;
       const relPxX = Math.max(0, Math.min(innerW - 1, clickX - innerX));
       const relPxY = Math.max(0, Math.min(innerH - 1, clickY - innerY));
-      const relCol = Math.floor(relPxX / Math.max(1, this.charWidth));
       const relRow = Math.floor(relPxY / Math.max(1, this.charHeight));
       const targetRow = Math.max(0, Math.min(this.lines.length - 1, this.scrollY + relRow));
-      const targetCol = Math.max(0, Math.min(this.lines[targetRow].length, this.scrollX + relCol));
+      const maxCols = Math.max(0, Math.floor(innerW / Math.max(1, this.charWidth)));
+      const lineLength = this.lines[targetRow].length;
+      const alignedX = this.getAlignedColumnOffset(maxCols, lineLength, this.scrollX);
+      const relColAligned = Math.floor(relPxX / Math.max(1, this.charWidth)) - alignedX;
+      const targetCol = Math.max(0, Math.min(lineLength, this.scrollX + relColAligned));
       this.cursorRow = targetRow;
       this.cursorCol = targetCol;
       this.desiredCol = this.cursorCol;
@@ -14008,6 +14031,16 @@ class GUITextEditor extends BaseWidget {
   setScroll(scrollX, scrollY) {
     this.scrollX = Math.max(0, scrollX | 0);
     this.scrollY = Math.max(0, scrollY | 0);
+  }
+  getAlignedColumnOffset(maxCols, lineLength, scrollX) {
+    if (maxCols <= 0) return 0;
+    if (scrollX > 0) return 0;
+    const visibleLength = Math.min(maxCols, Math.max(0, lineLength - scrollX));
+    const gap = Math.max(0, maxCols - visibleLength);
+    if (gap === 0) return 0;
+    if (this.align === "right") return gap;
+    if (this.align === "center") return Math.floor(gap / 2);
+    return 0;
   }
   insertText(text) {
     const parts = (text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
@@ -14780,6 +14813,12 @@ class GUISystem {
     if (widget instanceof GUIMarkdownView) {
       return { ...base, kind: "markdownView" };
     }
+    if (widget instanceof GUITextField) {
+      return { ...base, kind: "textField", align: widget.align, value: widget.getValue(), placeholder: widget.placeholder };
+    }
+    if (widget instanceof GUITextEditor) {
+      return { ...base, kind: "textEditor", align: widget.align, value: widget.getValue(), placeholder: widget.placeholder };
+    }
     return { ...base, kind: "unknown" };
   }
   /**
@@ -14911,6 +14950,18 @@ class GUISystem {
     this.inputRouter.handleText(text);
   }
   /**
+   * Clear focused widget, if any.
+   */
+  clearFocus() {
+    this.widgetManager.focus(null);
+  }
+  /**
+   * Get the currently focused widget, if any.
+   */
+  getFocusedWidget() {
+    return this.widgetManager.getFocused();
+  }
+  /**
    * Render all visible widgets
    * Call this in your render loop
    */
@@ -14939,7 +14990,7 @@ class GUISystem {
       } else if (widget instanceof GUISlider) {
         this.renderSlider(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUITextField) {
-        this.renderTextField(widget, uiAPI, charWidth);
+        this.renderTextField(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUITextEditor) {
         this.renderTextEditor(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUIMarkdownView) {
@@ -14947,16 +14998,20 @@ class GUISystem {
       }
     }
   }
-  renderTextField(tf, ui, charW) {
+  renderTextField(tf, ui, charW, charH) {
     const { x, y, width, height } = tf.bounds;
-    const { fg, bg, borderColor, focusBorderColor } = tf.textFieldStyle;
-    ui.rect(x, y, width, height, bg);
-    const b = tf.state.focused ? 3 : 2;
-    const bc = tf.state.focused ? focusBorderColor : borderColor;
-    ui.rect(x, y, width, b, bc);
-    ui.rect(x, y + height - b, width, b, bc);
-    ui.rect(x, y, b, height, bc);
-    ui.rect(x + width - b, y, b, height, bc);
+    const { fg, bg, borderColor, focusBorderColor, drawBackground, drawBorder } = tf.textFieldStyle;
+    if (drawBackground) {
+      ui.rect(x, y, width, height, bg);
+    }
+    if (drawBorder) {
+      const b = tf.state.focused ? 3 : 2;
+      const bc = tf.state.focused ? focusBorderColor : borderColor;
+      ui.rect(x, y, width, b, bc);
+      ui.rect(x, y + height - b, width, b, bc);
+      ui.rect(x, y, b, height, bc);
+      ui.rect(x + width - b, y, b, height, bc);
+    }
     const padX = 8;
     const innerX = x + padX;
     const innerW = Math.max(0, width - padX * 2);
@@ -14969,16 +15024,22 @@ class GUISystem {
     scroll = Math.max(0, Math.min(scroll, Math.max(0, value.length - maxChars)));
     tf.setScrollOffset(scroll);
     const visibleText = value.slice(scroll, scroll + maxChars);
-    const textY = y + height / 2;
-    if (ui.pushClipRect) ui.pushClipRect(innerX, y, innerW, height);
+    const textOffsetCols = tf.getAlignedColumnOffset(maxChars, visibleText.length);
+    const textX = innerX + textOffsetCols * charW;
+    const clipPadY = 2;
+    const clipY = y + clipPadY;
+    const clipH = Math.max(0, height - clipPadY * 2);
+    const textY = y + Math.max(0, Math.floor((height - charH) / 2));
+    if (ui.pushClipRect) ui.pushClipRect(innerX, clipY, innerW, clipH);
     if (visibleText.length > 0) {
-      ui.text(visibleText, innerX, textY, fg);
+      ui.text(visibleText, textX, textY, fg);
     } else if (tf.placeholder) {
-      ui.text(tf.placeholder, innerX, textY, fg);
+      const placeholderCols = tf.getAlignedColumnOffset(maxChars, Math.min(maxChars, tf.placeholder.length));
+      ui.text(tf.placeholder, innerX + placeholderCols * charW, textY, fg);
     }
     if (tf.state.focused) {
       const caretLocal = cursorPos - scroll;
-      const caretX = innerX + caretLocal * charW;
+      const caretX = textX + caretLocal * charW;
       const caretW = charW;
       const caretH = Math.max(2, height - 8);
       const caretY = y + (height - caretH) / 2;
@@ -14992,14 +15053,18 @@ class GUISystem {
   }
   renderTextEditor(ed, ui, charW, charH) {
     const { x, y, width, height } = ed.bounds;
-    const { fg, bg, borderColor, focusBorderColor } = ed.textEditorStyle;
-    ui.rect(x, y, width, height, bg);
-    const b = ed.state.focused ? 3 : 2;
-    const bc = ed.state.focused ? focusBorderColor : borderColor;
-    ui.rect(x, y, width, b, bc);
-    ui.rect(x, y + height - b, width, b, bc);
-    ui.rect(x, y, b, height, bc);
-    ui.rect(x + width - b, y, b, height, bc);
+    const { fg, bg, borderColor, focusBorderColor, drawBackground, drawBorder } = ed.textEditorStyle;
+    if (drawBackground) {
+      ui.rect(x, y, width, height, bg);
+    }
+    if (drawBorder) {
+      const b = ed.state.focused ? 3 : 2;
+      const bc = ed.state.focused ? focusBorderColor : borderColor;
+      ui.rect(x, y, width, b, bc);
+      ui.rect(x, y + height - b, width, b, bc);
+      ui.rect(x, y, b, height, bc);
+      ui.rect(x + width - b, y, b, height, bc);
+    }
     const padX = 8;
     const padY = 8;
     const innerX = x + padX;
@@ -15023,7 +15088,8 @@ class GUISystem {
     if (ui.pushClipRect) ui.pushClipRect(innerX, innerY, innerW, innerH);
     const value = ed.getValue();
     if (value.length === 0 && ed.placeholder) {
-      ui.text(ed.placeholder, innerX, innerY, fg);
+      const placeholderCols = ed.getAlignedColumnOffset(maxCols, ed.placeholder.length, 0);
+      ui.text(ed.placeholder, innerX + placeholderCols * charW, innerY, fg);
     } else {
       for (let row = 0; row < maxRows; row++) {
         const lineIdx = scrollY + row;
@@ -15032,17 +15098,20 @@ class GUISystem {
         const visible = line.slice(scrollX, scrollX + maxCols);
         if (!visible) continue;
         const textY = innerY + row * charH;
-        ui.text(visible, innerX, textY, fg);
+        const textOffsetCols = ed.getAlignedColumnOffset(maxCols, line.length, scrollX);
+        const textX = innerX + textOffsetCols * charW;
+        ui.text(visible, textX, textY, fg);
       }
     }
     if (ed.state.focused) {
       const caretRow = info.cursorRow - scrollY;
       const caretCol = info.cursorCol - scrollX;
       if (caretRow >= 0 && caretRow < maxRows && caretCol >= 0 && caretCol < maxCols) {
-        const caretX = innerX + caretCol * charW;
+        const line = ed.getLine(info.cursorRow);
+        const caretOffsetCols = ed.getAlignedColumnOffset(maxCols, line.length, scrollX);
+        const caretX = innerX + (caretOffsetCols + caretCol) * charW;
         const caretY = innerY + caretRow * charH;
         ui.rect(caretX, caretY, charW, charH, fg);
-        const line = ed.getLine(info.cursorRow);
         const ch = info.cursorCol < line.length ? line[info.cursorCol] : " ";
         ui.text(ch, caretX, caretY, bg);
       }
@@ -15425,6 +15494,20 @@ function createGUIAPI(getMetrics, isTrustedUserInput, getPixelScale) {
     handleText(text) {
       if (!this._system) return;
       this._system.handleText(text);
+    },
+    /**
+     * Clear focus from the currently focused widget.
+     */
+    clearFocus() {
+      if (!this._system) return;
+      this._system.clearFocus();
+    },
+    /**
+     * Return the currently focused widget, if any.
+     */
+    getFocusedWidget() {
+      if (!this._system) return null;
+      return this._system.getFocusedWidget();
     },
     /**
      * Render all widgets

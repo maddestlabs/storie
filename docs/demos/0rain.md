@@ -5,17 +5,561 @@ width: 1080
 height: 2400
 shaders: "bloom+zerorain+zerocrt"
 font: "AnomalyMono"
-fontsize: 18
+fontsize: 28
 ---
 
-Binary strains of rain fall. Type `0` or `1` to match the **bottom digit** of each falling strain.  
-Clear the full strain from bottom to top for points. Miss a key and it resets.  
-A strain reaching the bottom ends the game.
+# 0RAIN
 
-**Keys:** `0` / `1` (or numpad) · `S` start · `R` restart same seed  
-**Touch/click:** left half = `1` · right half = `0`
+- [Play](#play)
+- [Random Seed](action:randomize-seed)
+- [Intro](#intro)
+- [Settings](#settings)
 
-## Game Code
+```js on:enter
+if (typeof worlds.currentSection === 'number') {
+  g.titleSectionIndex = worlds.currentSection;
+}
+setRainLevel(RAIN_IDLE_GAIN, 0.35);
+```
+
+# Intro
+
+Rain needles the dead glass. Somewhere beyond the blackout skyline, the voice from the dream keeps singing.
+
+The *Meridian* is gone. Kess wants movement. The city wants obedience. In the noise between those two things, you built a drill: catch the falling bits before they hit bottom.
+
+- [Wake to the wreck](#awake)
+- [Exit](#0RAIN)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN, 0.35);
+```
+
+# Awake
+
+You wake gasping.
+
+A voice, feminine and singing, calls from impossible distance. In the dream, a city of rain and light beckons you. But the *Meridian* groans around you, dying. Metal cooling. Fluids dripping.
+
+Kess moves through darkness checking heads. Five crew. Everyone breathing. Not everyone whole.
+
+The dream lingers. The voice lingers.
+
+- [What's our status?](#assess-damage)
+- [Where are we?](#question-location)
+- [Exit](#0RAIN)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN, 0.35);
+```
+
+# Assess Damage
+
+The crash site is a tomb. Twisted corridors. Broken systems. In the engine room, Dax sits against a bulkhead, holding his ribs. Something is cracked inside him.
+
+"I'll live," he mutters.
+
+The engines are scrap. Fuel cells ruptured. No beacon. No rescue signal. The *Meridian* will not fly again. At the navigation console, one file survives the corruption: coordinates labeled simply **HER**.
+
+- [Plan with Kess](#plan-with-kess)
+- [Back to intro](#intro)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN, 0.35);
+```
+
+# Question Location
+
+You pull Kess aside. Her expression darkens.
+
+"The trajectory was wrong. Navigation got hijacked or the charts were compromised." She glances at the wasteland. "Resistance channels used to mention a place called Her. A megacity where they test control systems."
+
+She meets your eyes. "We need to be very careful."
+
+- [Prepare to move](#plan-with-kess)
+- [Back to intro](#intro)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN, 0.35);
+```
+
+# Plan with Kess
+
+Kess is moving through the main cabin distributing rations. Her face is stone cold.
+
+"Enough for a week if we're strict. There's a city marked here. Four, maybe five days on foot through that wasteland out there."
+
+She points to the viewport. Concrete plains. Gray sky. Ruins stretching endlessly.
+
+"We move at first light. Travel light. Travel quiet. This zone exists for a reason, and it's not good."
+
+- [Head out at dawn](#day-one)
+- [Exit](#0RAIN)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN, 0.35);
+```
+
+# Day One
+
+The first day, hope is swallowed in a desolate landscape.
+
+Concrete plains. Dead factories. Residential blocks in various states of collapse. Everything gray. Everything silent. The system broadcasts insisted the world was cultivated, content, controlled.
+
+You are seeing the lie. You are in the place the system pretends does not exist.
+
+Dax struggles to keep pace. His fever is rising.
+
+- [Continue walking](#day-two)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 1.1, 0.35);
+```
+
+# Day Two
+
+By the second day, you wish you were back in the system.
+
+The rain starts, not a downpour, just constant merciless drizzle that soaks everything and makes the ground slick. Your clothes are damp. Your skin is damp. Everything is damp.
+
+Marta remarks quietly, "It always rains here."
+
+Kess does not look back. "Didn't you know? It always rains in Dystopia."
+
+- [Press on](#day-three)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 1.35, 0.35);
+```
+
+# Day Three
+
+Dax is worse. His fever climbs. He moves slower. The group tightens rations. The remaining supplies from the *Meridian* dwindle faster than expected.
+
+The landscape remains unchanging, as if you are walking in circles, as if the city is keeping you at a distance and testing your resolve before allowing you closer.
+
+The voice from your dream whispers at the edge of awareness. Almost subliminal.
+
+- [Keep moving](#day-four)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 1.45, 0.35);
+```
+
+# Day Four
+
+On the evening of the fourth day, exhaustion settles into your bones like sediment. The rain intensifies. Your visibility drops.
+
+Then you see it ahead.
+
+A structure still standing. Windows intact. Power flowing to its lights. In the middle of a dead zone. With electricity. Impossible.
+
+Kess stops the group. Her hand moves to her weapon. "No structure should have independent power out here."
+
+- [Approach cautiously](#cautious-approach)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 1.55, 0.35);
+```
+
+# Cautious Approach
+
+A neon sign flickers pink. *Laundromat.* Warm light spills through glass doors. Inside: rows of machines with clothes strewn about. The mundane infrastructure of ordinary life in a dead world.
+
+The surrounding buildings are hollowed. Windows are empty sockets. Doors hang at wrong angles. The system erases inconvenient zones and inconvenient people. This building is a ghost of what was, but it still lives.
+
+Kess scans the interior carefully before signaling you forward.
+
+- [Enter the laundromat](#inside-laundromat)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 1.5, 0.35);
+```
+
+# Inside Laundromat
+
+Inside: warmth. Dry air. Humming machines cycling through their routines. No people visible. No signs of recent habitation.
+
+On a bench: a journal. Sketches. Maps of the city. Observations about *the Voice*. Warnings about towers. References to *Station V*.
+
+Dax sinks onto a bench, fever making him docile. The warmth helps. Kess photographs pages carefully with an old camera, nothing digital that could be traced.
+
+Behind the machines, you notice a door marked *Maintenance*.
+
+- [Check the back room](#maintenance-room)
+- [Rest here with the others](#rest-here)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 1.15, 0.35);
+```
+
+# Maintenance Room
+
+Behind the door: a small room. At its center, a power conduit. Jury-rigged but functional. It runs from somewhere buried beneath the laundromat, splitting into multiple directions.
+
+This power source should not exist. The government controls all infrastructure. But this is independent. Defiant. Someone maintains this space. Someone wants this laundromat alive.
+
+Kess examines it with a grim expression. "Resistance. Or fragments of it. A network keeping safe spaces alive in the dead zones."
+
+- [Return to the main room](#rest-here)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN, 0.35);
+```
+
+# Rest Here
+
+Kess gathers the crew. "Two hours rest. Then we move toward the city."
+
+You find yourself staring at the washing machines. Their rhythm is hypnotic. Almost meditative. Then the voice comes, not external, but inside your head.
+
+*You are safe here. You are valued. You are home.*
+
+For a moment, you believe it absolutely. Then Kess grabs your shoulder, snapping you back to reality. She is terrified.
+
+"Whatever's in that city, it's reaching out. The Voice is here. We need to move. Now."
+
+- [Head toward the city](#city-approach)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 0.9, 0.35);
+```
+
+# City Approach
+
+The transition from wasteland to civilization is gradual, then sudden. Abandoned buildings become maintained structures. Power lines multiply. The rain intensifies.
+
+Then you see it.
+
+Brutalist towers of concrete and dark glass rise from rain-soaked earth. Some towers disappear into cloud cover. Impossible architecture. Overwhelming presence.
+
+Beneath it all, that voice again. Louder now. Broadcast outward but also seemingly in your skull.
+
+*You are valued. You are appreciated.*
+
+- [Enter the city](#city-entrance)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 1.7, 0.35);
+```
+
+# City Entrance
+
+People move through the streets with purpose but without energy. Everyone has the implant, visible port behind their left ear. Everyone is listening to something invisible.
+
+You pass a monolithic building. Sign reads: *Human Resource Center - Daily Affirmation Sessions 9AM to 8PM.* Through windows: people in meditation posture, eyes closed, faces peaceful.
+
+The Voice speaks directly into their skulls. It tells them they are valued, safe, loved. Lies they desperately want to believe.
+
+Your crew is conspicuous. Wrong clothes. Wrong bearing. Implants without proper status markers.
+
+- [Find Kess's contact](#find-contact)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 1.6, 0.35);
+```
+
+# Find Contact
+
+Kess leads through back streets. Her movements are practiced. She has been here before. The contact is in what she calls the *Marginal Zones*, areas that exist but are not officially listed.
+
+A ground-floor apartment. An unmarked door. Kess knocks.
+
+When it opens: an old man. Sharp eyes. Intelligence burning behind them. Something like defiance in his posture.
+
+"Kess," he says, and smiles. "It's been a long time."
+
+"Marcus," Kess responds. "We need shelter. Answers."
+
+- [Listen to Marcus](#marcus-begins)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 1.05, 0.35);
+```
+
+# Marcus Begins
+
+His apartment is crammed with contraband. Physical books. Pre-government recordings. Photographs of a city that was different. Alive.
+
+Marcus moves among his collection like a priest tending a shrine.
+
+"I remember when this city was alive," he says quietly. "Before the Voice. Before the government. Artists. Musicians. People who made things for joy. Real joy, not the artificial kind the Voice provides."
+
+He turns to face you directly.
+
+- [Ask about the Voice](#ask-voice)
+- [Ask about Station V](#ask-station)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 0.95, 0.35);
+```
+
+# Ask Voice
+
+"The government came slowly at first," Marcus explains. "Public safety programs. Social optimization. Mental health support. Everyone was tired. Ready to let someone else decide."
+
+He pauses.
+
+"Then the implants. Just communication devices, they said. But it was access. Access to the part of your mind that decides what you want. Who you are. The Voice tells you good things. Makes you feel loved. But it also tells you not to remember. Not to ask questions."
+
+- [Ask about Station V](#ask-station)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 0.85, 0.35);
+```
+
+# Ask Station
+
+"Station V," Marcus says grimly. "The central system. Where the Voice originates. Where the control algorithms run. If you want to survive, if you want to do anything, you need to understand Station V."
+
+He moves to a hidden panel. Pulls it back. A terminal glows faintly. Offline. Not connected.
+
+"Station V is sealed. Protected. Guarded. In the highest tower. The one that reaches beyond the rain."
+
+Then: sirens. Distant, but growing closer.
+
+- [Hide or flee?](#sirens-approach)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN, 0.35);
+```
+
+# Sirens Approach
+
+The sirens stop suddenly. Worse than when they were wailing. Silence is more ominous than noise.
+
+Marcus does not flinch. His hand moves toward a concealed compartment.
+
+"There's a way out. Through the maintenance tunnels beneath the city. They connect to the utility core. Station V is accessible from there. But you have to go now."
+
+He hands you a data drive. "Maps. Schematics. Everything I could gather."
+
+A soft knock at the door. Polite. Terrifying in its politeness.
+
+- [Flee through the tunnels](#maintenance-tunnels)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 0.8, 0.35);
+```
+
+# Maintenance Tunnels
+
+The tunnels are dark. Older than the city above. Remnants of something else. Repurposed and adapted for modern systems.
+
+Marcus moves with practiced ease. He knows these paths well. Has used them before. Many times.
+
+"Station V is at the apex of the utility core," he explains quietly. "The government sealed the main entrances, but they cannot seal the service conduits without disrupting the system. These tunnels connect to them."
+
+The air grows cooler. You hear water in pipes. Machinery humming. Vast systems performing their functions.
+
+- [Continue through the tunnels](#deep-tunnels)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 0.7, 0.35);
+```
+
+# Deep Tunnels
+
+After what feels like hours, you reach a grate. Through it: a massive space. Equipment humming with power and purpose.
+
+The core systems. The heart of the city.
+
+Marcus stops. His expression is heavy with meaning.
+
+"This is as far as I can take you. What happens next is your choice. But understand: if you destroy Station V, you destroy the Voice holding this entire city. What happens after, no one knows."
+
+- [Enter the core](#enter-core)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 0.6, 0.35);
+```
+
+# Enter Core
+
+Inside: terrible order. Glass chambers everywhere. Hundreds of them in geometric patterns. Inside each chamber: neural monitoring systems, signal amplifiers, and data storage so dense it hums with barely contained power.
+
+Kess runs diagnostics through an old device. Her expression darkens with each result.
+
+"The Voice is not centralized," she whispers. "It's distributed. Every chamber is a relay. Every piece of equipment is networked. Destroying one does nothing. We need the center."
+
+Then: a voice.
+
+"There is a center."
+
+- [Who's speaking?](#who-speaks)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 0.55, 0.35);
+```
+
+# Who Speaks
+
+A figure emerges from the shadows. Tall. Dark clothed. Face hidden.
+
+Your hand moves to your weapon. Government agent, you think.
+
+The figure removes their hood.
+
+The face is scarred. Badly. Burned. Healed wrong. But the eyes are human, intelligent, and filled with something you cannot name yet.
+
+"Station V," the figure says. "Central processing. Destroy that, the network becomes inert. The Voice goes silent."
+
+- [Trust this figure](#trust-figure)
+- [Demand answers](#trust-figure)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 0.5, 0.35);
+```
+
+# Trust Figure
+
+"I'm Del," the figure says. "Former city engineer. Before the government. Before the Voice. I built this place when it was supposed to be a city of innovation. A free city in a controlled world."
+
+Del moves through the chamber network with practiced ease.
+
+"The government saw it as a test bed. A perfect place to experiment with control systems before rolling them out everywhere. Station V is at the apex. It's not just processing. It's administration."
+
+Del stops at a checkpoint.
+
+"Someone's in charge up there. Someone who volunteered for it."
+
+- [Ask about the administrator](#ask-administrator)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 0.45, 0.35);
+```
+
+# Ask Administrator
+
+"A woman named Aria," Del says. "Former mayor. Before mayors were elected by Voice consensus. She volunteered for the position. The Voice offered her something. Power. Certainty. Purpose."
+
+Del moves forward through the checkpoints. They open for them as if expected.
+
+"She took it, and it took her. Now she's more linked to the system than human. Neural integration is almost complete. Her consciousness is distributed across the entire city."
+
+Ahead: a lift. Massive. Glass. Reaching upward into darkness.
+
+"This is it," Del says. "The lift to Station V."
+
+- [Enter the lift](#lift-up)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 0.4, 0.35);
+```
+
+# Lift Up
+
+The lift is massive. Reinforced glass. Designed to intimidate. Designed to remind you that you are ascending toward something vast and powerful.
+
+As the lift rises, the city falls away beneath you. Rain-soaked streets become patterns. Buildings become geography. People become statistics. Higher. Higher. Endlessly higher.
+
+And as you rise, the Voice gets louder.
+
+*You are valued. You are home. You are part of something greater.*
+
+It is harder to resist here. For a moment, you almost want to believe.
+
+Then the lift stops.
+
+- [Enter Station V](#station-v-enter)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 0.35, 0.35);
+```
+
+# Station V Enter
+
+Silence. Not quiet. Silence. The absence of sound.
+
+But beneath it you feel the Voice, not heard but felt, resonating through bone, structure, architecture.
+
+At the center of the chamber, suspended in neural interfaces, is a figure.
+
+Her name is Aria.
+
+She was beautiful once. The bone structure shows it. But the machinery is extensive. Neural ports across her skull. Sensory deprivation suit wired with thousands of connections. Her eyes are closed. Atrophied.
+
+She is the Voice.
+
+- [Examine the systems](#aria-awakens)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 0.3, 0.35);
+```
+
+# Aria Awakens
+
+The sound comes first. Not loud. Barely a whisper. But in the silence it is catastrophic.
+
+Aria's eyes snap open.
+
+She screams.
+
+It is not a human scream. It is the sound of a system overloading, of something too vast and too networked to remain human experiencing pain in every direction simultaneously.
+
+The whole city convulses with her agony.
+
+"Run," Del shouts.
+
+- [Flee into the aftermath](#aftermath)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 0.95, 0.35);
+```
+
+# Aftermath
+
+You run through endless chambers, through corridors that multiply. Behind you: sounds, movement, something broken and vast moving through the darkness.
+
+You emerge into another ruined cityscape. Another wasteland. But this one feels different. Alive with possibility.
+
+Station V still hums above you, but the signal is weaker now. Fractured. Damaged beyond immediate repair. You have broken something fundamental.
+
+Rain falls. Or maybe it never stopped.
+
+Then one of you notices movement in the rubble. Small. Quick. A dog. Alive. Free. Darting through the rain toward a faint light in the distance.
+
+Kess looks at you. Something flickers across her face. Not hope exactly. But conviction. Possibility.
+
+- [Exit](#0RAIN)
+
+```js on:enter
+setRainLevel(RAIN_IDLE_GAIN * 1.2, 0.35);
+```
+
+# Play
+
+Binary strains fall through the terminal layer.
+
+Match the **bottom digit** of each falling strain with `0` or `1`. Clear a full strain from bottom to top for points. Miss and the strain resets. A strain reaching bottom ends the run.
+
+Keys: `0` / `1` · `S` start · `R` restart same seed · `Esc` settings · `H` entry
+
+Touch/click is still active here: left half = `1`, right half = `0`.
+
+```js on:enter
+if (typeof worlds.currentSection === 'number') {
+  g.playSectionIndex = worlds.currentSection;
+}
+if (g.gameMode === 'play') restartGame();
+else startGame();
+setRainLevel(g.gameMode === 'play' ? RAIN_PLAY_GAIN : RAIN_IDLE_GAIN, 0.35);
+```
+
+# Settings
+
+Press 0|1 or tap LEFT|RIGHT to clear digits.
+
+- [Audio on](action:audio-on)
+- [Audio off](action:audio-off)
+- [Back](#0RAIN)
+
+```js on:enter
+if (typeof worlds.currentSection === 'number') {
+  g.settingsSectionIndex = worlds.currentSection;
+}
+setRainLevel(RAIN_IDLE_GAIN, 0.35);
+```
 
 ```js
 // ── Constants (module-level, safe to re-declare as var) ───────────────────
@@ -23,31 +567,24 @@ var STRAIN_MIN  = 3;
 var STRAIN_MAX  = 6;
 var SPEED_MIN   = 1.4;
 var SPEED_MAX   = 3.2;
-var MAX_STRAINS = 20;
+var MAX_STRAINS = 30;
 var DESTROY_DUR = 0.55;
 var RAIN_PLAY_GAIN = 0.11;
 var RAIN_IDLE_GAIN = 0.06;
 var RAIN_DROP_MIN_GAP = 0.085;
 var RAIN_DROP_MAX_GAP = 0.16;
+var WORLDS_SECTION_FIT = 3.0;
+var WORLDS_CARD_WIDTH = 500;
+var WORLDS_CARD_HEIGHT = 1960;
+var GUI_GROUP_HUD = 1;
+var SEED_MAX_DIGITS = 12;
 
-// ── Palette (derived from the active theme) ─────────────────────────────
-// Theme colors are packed 0xRRGGBBAA integers, so they can be used directly.
-var C_TARGET   = theme.accent3;
-var C_LEAD     = theme.accent1;
-var C_PENDING  = theme.fg;
-var C_DONE     = theme.fgAlt;
-var C_FADE1    = theme.accent3;
-var C_FADE2    = theme.fgAlt;
-var C_SCORE    = theme.accent2;
-var C_SEED_HUD = theme.fgAlt;
-var C_TITLE    = theme.fgAlt;
-var C_MENU     = theme.fg;
-var C_MENUALT  = theme.accent1;
+var guiWidgets = null;
 
 var g = {
     gameMode: 'start',
     score:    0,
-    seed:     Math.floor(Math.random() * 1000000),
+    seed:     random.seed(),
     rng:      null,
   urlSeed:  null,
   firstStartPending: true,
@@ -56,7 +593,14 @@ var g = {
   rain:     null,
   gameSfx:  {},
   lastDropSfxAt: -999,
-  nextDropSfxGap: 0.11
+  nextDropSfxGap: 0.11,
+  audioEnabled: true,
+  audioUnlocked: false,
+  guiMouseDown: false,
+  titleSectionIndex: null,
+  playSectionIndex: null,
+  settingsSectionIndex: null,
+  playSectionHidden: false
   };
 
 // ── PRNG helpers (take the raw ()=>number from random.rng) ────────────────
@@ -80,6 +624,236 @@ function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
 
+function setAudioEnabled(enabled) {
+  g.audioEnabled = !!enabled;
+  if (!g.audioEnabled) {
+    for (var name in g.gameSfx) stopGameSfx(name);
+  }
+  setRainLevel(g.audioEnabled ? (g.gameMode === 'play' ? RAIN_PLAY_GAIN : RAIN_IDLE_GAIN) : 0, 0.25);
+}
+
+function randomizeSeed() {
+  g.seed = random.seed();
+  g.rng = random.rng(g.seed);
+}
+
+function normalizeSeedText(value) {
+  return String(value == null ? '' : value).replace(/\D+/g, '').slice(0, SEED_MAX_DIGITS);
+}
+
+function applyManualSeed(value) {
+  var normalized = normalizeSeedText(value);
+  if (guiWidgets && guiWidgets.seedInput && guiWidgets.seedInput.getValue() !== normalized) {
+    guiWidgets.seedInput.setValue(normalized);
+  }
+  if (!normalized.length) return;
+
+  var nextSeed = Math.floor(Number(normalized));
+  if (!isFinite(nextSeed) || nextSeed === g.seed) return;
+
+  g.seed = nextSeed;
+  g.rng = random.rng(g.seed);
+}
+
+function isSeedInputFocused() {
+  return !!(
+    guiWidgets &&
+    guiWidgets.seedInput &&
+    guiWidgets.seedInput.state.visible &&
+    guiWidgets.seedInput.state.enabled &&
+    guiWidgets.seedInput.state.focused
+  );
+}
+
+function clearSeedInputFocus() {
+  if (!isSeedInputFocused()) return;
+  if (gui && typeof gui.clearFocus === 'function') gui.clearFocus();
+}
+
+function isSeedInputPointerEvent(event) {
+  if (!event || !guiWidgets || !guiWidgets.seedInput || typeof guiWidgets.seedInput.containsPoint !== 'function') {
+    return false;
+  }
+  if (typeof event.x !== 'number' || typeof event.y !== 'number') return false;
+  return guiWidgets.seedInput.containsPoint({ x: event.x, y: event.y });
+}
+
+function shouldKeepSeedFocusOnKey(key) {
+  if (!key) return false;
+  if ((key >= '0' && key <= '9') || key === 'Numpad0' || key === 'Numpad1' || key === 'Numpad2' || key === 'Numpad3' || key === 'Numpad4' || key === 'Numpad5' || key === 'Numpad6' || key === 'Numpad7' || key === 'Numpad8' || key === 'Numpad9') {
+    return true;
+  }
+  return key === 'Backspace' || key === 'Delete' || key === 'ArrowLeft' || key === 'ArrowRight' || key === 'Home' || key === 'End';
+}
+
+function shouldKeepSeedFocusOnText(text) {
+  return typeof text === 'string' && /^\d+$/.test(text);
+}
+
+function handleWorldLinkActions() {
+  if (!worlds || !worlds.links || !worlds.links.popActivated) return;
+
+  for (;;) {
+    var activated = worlds.links.popActivated();
+    if (!activated) break;
+
+    if (activated.url === 'action:randomize-seed') {
+      randomizeSeed();
+      continue;
+    }
+
+    if (activated.url === 'action:audio-on') {
+      setAudioEnabled(true);
+      continue;
+    }
+
+    if (activated.url === 'action:audio-off') {
+      setAudioEnabled(false);
+      continue;
+    }
+
+    if (activated.url === 'action:toggle-audio') {
+      setAudioEnabled(!g.audioEnabled);
+    }
+  }
+}
+
+function focusWorldSection(title) {
+  if (!worlds || !worlds.camera || !worlds.camera.focusOnSectionFit) return;
+  worlds.camera.focusOnSectionFit(title, WORLDS_SECTION_FIT, { keepRotation: true });
+}
+
+function syncPlaySectionVisibility() {
+  if (typeof g.playSectionIndex !== 'number') return;
+
+  var shouldHide = worlds.currentSection === g.playSectionIndex;
+  if (g.playSectionHidden === shouldHide) return;
+
+  worlds.setSectionVisible(g.playSectionIndex, !shouldHide);
+  g.playSectionHidden = shouldHide;
+}
+
+function unlockExperienceAudio() {
+  if (g.audioUnlocked || !g.audioEnabled) return;
+  g.audioUnlocked = true;
+  startRainAudio();
+  setRainLevel(g.gameMode === 'play' ? RAIN_PLAY_GAIN : RAIN_IDLE_GAIN, 0.35);
+}
+
+function initOverlayGui() {
+  gui.init({ boundsSpace: 'device' });
+
+  guiWidgets = {
+    seedCaption: gui.createLabel({
+      group: GUI_GROUP_HUD,
+      focusable: false,
+      align: 'right',
+      bounds: { x: 0, y: 0, width: 120, height: 20 },
+      text: 'ˢᴱᴱᴰ',
+      labelStyle: {
+        fg: ui.colors.rgba(255, 255, 255, 255)
+      }
+    }),
+    seedInput: gui.createTextField({
+      group: GUI_GROUP_HUD,
+      align: 'right',
+      bounds: { x: 0, y: 0, width: 240, height: 40 },
+      value: String(g.seed),
+      placeholder: 'Seed',
+      textFieldStyle: {
+        fg: ui.colors.rgba(255, 255, 255, 170)
+      }
+    }),
+    scoreLabel: gui.createLabel({
+      group: GUI_GROUP_HUD,
+      focusable: false,
+      align: 'right',
+      bounds: { x: 0, y: 0, width: 280, height: 40 },
+      text: ''
+    }),
+    audioStateLabel: gui.createLabel({
+      group: GUI_GROUP_HUD,
+      focusable: false,
+      align: 'left',
+      bounds: { x: 0, y: 0, width: 280, height: 40 },
+      text: ''
+    })
+  };
+
+  gui.setGroupVisible(GUI_GROUP_HUD, true);
+}
+
+function layoutOverlayGui() {
+  if (!guiWidgets) return;
+
+  var width = ui.metrics.canvasWidth;
+  var height = ui.metrics.canvasHeight;
+  var inset = Math.max(28, Math.floor(Math.min(width, height) * 0.028));
+  var hudWidth = Math.min(420, Math.floor(width * 0.42));
+  var hudHeight = Math.max(34, Math.floor(ui.metrics.charHeight * 1.35));
+  var seedX = width - inset - hudWidth;
+  var seedY = inset;
+
+  guiWidgets.seedCaption.setBounds({
+    x: seedX - 6,
+    y: seedY + 10,
+    width: hudWidth,
+    height: hudHeight
+  });
+  guiWidgets.seedInput.setBounds({
+    x: seedX,
+    y: seedY,
+    width: hudWidth,
+    height: hudHeight
+  });
+  guiWidgets.audioStateLabel.setBounds({
+    x: inset,
+    y: height - inset - hudHeight,
+    width: hudWidth,
+    height: hudHeight
+  });
+  guiWidgets.scoreLabel.setBounds({
+    x: width - inset - hudWidth,
+    y: height - inset - hudHeight,
+    width: hudWidth,
+    height: hudHeight
+  });
+}
+
+function updateOverlayHud() {
+  if (!guiWidgets) return;
+
+  var onTitle = typeof g.titleSectionIndex === 'number' && worlds.currentSection === g.titleSectionIndex;
+  var onSettings = typeof g.settingsSectionIndex === 'number' && worlds.currentSection === g.settingsSectionIndex;
+  var canEditSeed = onTitle || onSettings;
+  var seedFocused = isSeedInputFocused();
+  guiWidgets.seedInput.setEnabled(canEditSeed);
+  guiWidgets.seedCaption.setVisible(canEditSeed && !seedFocused);
+
+  if (!canEditSeed) {
+    clearSeedInputFocus();
+  }
+
+  guiWidgets.seedInput.textFieldStyle.drawBorder = seedFocused;
+  guiWidgets.seedInput.textFieldStyle.drawBackground = seedFocused;
+
+  if (guiWidgets.seedInput.wasChanged()) {
+    applyManualSeed(guiWidgets.seedInput.getValue());
+  }
+
+  if (!seedFocused) {
+    var seedText = String(g.seed);
+    if (guiWidgets.seedInput.getValue() !== seedText) {
+      guiWidgets.seedInput.setValue(seedText);
+    }
+  }
+
+  guiWidgets.scoreLabel.setText(g.gameMode === 'start' ? '' : String(g.score));
+
+  var showAudioState = typeof g.settingsSectionIndex === 'number' && worlds.currentSection === g.settingsSectionIndex;
+  guiWidgets.audioStateLabel.setText(showAudioState ? ('Audio: ' + (g.audioEnabled ? 'On' : 'Off')) : '');
+}
+
 function getDigitColor(s, i, alpha) {
   var baseAlpha = 0.6 * alpha;
   var a = baseAlpha;
@@ -94,7 +868,7 @@ function getDigitColor(s, i, alpha) {
   }
 
   if (i === s.highlight) {
-    return alphaColor(theme.accent3, Math.max(a, 0.95 * alpha));
+    return alphaColor(theme.accent1, Math.max(a, 0.95 * alpha));
   }
 
   if (pulse) {
@@ -199,11 +973,13 @@ function stopGameSfx(name) {
 }
 
 function playGameSfx(name, vol) {
+  if (!g.audioEnabled) return;
   stopGameSfx(name);
   g.gameSfx[name] = stfxr.play(name, undefined, { volume: vol });
 }
 
 function playGameBlobSfx(name, blobName, vol) {
+  if (!g.audioEnabled) return;
   stopGameSfx(name);
   audio.context.resume().catch(function () {});
 
@@ -246,6 +1022,7 @@ function playGameBlobSfx(name, blobName, vol) {
 }
 
 function maybePlayRainDrop(drop, r) {
+  if (!g.audioEnabled) return;
   var now = audio.currentTime;
   if (now - g.lastDropSfxAt < g.nextDropSfxGap) return;
 
@@ -420,15 +1197,21 @@ function ensureRainAudio() {
 function setRainLevel(level, rampSeconds) {
   var rain = ensureRainAudio();
   var now = audio.currentTime;
-  var target = clamp(level, 0, 0.25);
+  var target = g.audioEnabled ? clamp(level, 0, 0.25) : 0;
   var current = rain.master.gain.value;
+  var modDepth = target > 0 ? 0.018 : 0;
 
   rain.master.gain.cancelScheduledValues(now);
   rain.master.gain.setValueAtTime(current, now);
   rain.master.gain.linearRampToValueAtTime(target, now + Math.max(0.01, rampSeconds || 0.6));
+
+  rain.lfoDepth.gain.cancelScheduledValues(now);
+  rain.lfoDepth.gain.setValueAtTime(rain.lfoDepth.gain.value, now);
+  rain.lfoDepth.gain.linearRampToValueAtTime(modDepth, now + Math.max(0.01, rampSeconds || 0.6));
 }
 
 function startRainAudio() {
+  if (!g.audioEnabled) return;
   var rain = ensureRainAudio();
   audio.context.resume().catch(function () {});
   if (!rain.started) {
@@ -470,11 +1253,6 @@ function startGame() {
   stopGameSfx('rain_over');
   startRainAudio();
   setRainLevel(RAIN_PLAY_GAIN, 1.2);
-  if (g.firstStartPending && g.urlSeed !== null) {
-    g.seed = g.urlSeed;
-  } else {
-    g.seed = random.seed();
-  }
   g.firstStartPending = false;
   g.rng     = random.rng(g.seed);
   g.gameMode = 'play';
@@ -502,6 +1280,7 @@ function doGameOver() {
   for (var i = 0; i < g.strains.length; i++) {
     if (g.strains[i].destroyTimer <= 0) g.strains[i].destroyTimer = DESTROY_DUR;
   }
+  focusWorldSection('0RAIN');
 }
 
 // ── Update ────────────────────────────────────────────────────────────────
@@ -552,45 +1331,32 @@ function drawStrains() {
     }
   }
 }
-
-function drawHUD() {
-  var sStr = 'S:' + g.seed;
-    var tw = getTermWidth();
-    term.write(tw - sStr.length - 1, 1, sStr, C_SEED_HUD);
-  if (g.gameMode !== 'start') {
-    var sc = String(g.score);
-      var th = getTermHeight();
-      term.write(tw - sc.length - 1, th - 2, sc, C_SCORE);
-  }
-}
-
-function drawMenu() {
-  var tw = getTermWidth();
-  var th = getTermHeight();
-  var cx = Math.floor(tw / 2);
-  var cy = Math.floor(th / 2);
-  var title = '0RAIN';
-  term.write(cx - Math.floor(title.length / 2), cy - 4, title, C_TITLE);
-  if (g.gameMode === 'start') {
-    var s1 = '[S]tart';
-    term.write(cx - Math.floor(s1.length / 2), cy - 1, s1, C_MENU);
-    var sd = 'Seed: ' + g.seed;
-    term.write(cx - Math.floor(sd.length / 2), cy + 1, sd, C_MENUALT);
-    var hint = '0/1 keys or tap left/right';
-    term.write(cx - Math.floor(hint.length / 2), cy + 3, hint, C_TITLE);
-  } else if (g.gameMode === 'gameover') {
-    var s1 = '[S]tart';
-    var s2 = '[R]estart with seed';
-    term.write(cx - Math.floor(s1.length / 2), cy - 2, s1, C_MENU);
-    term.write(cx - Math.floor(s2.length / 2), cy,     s2, C_MENUALT);
-    var sd = 'Seed: ' + g.seed;
-    term.write(cx - Math.floor(sd.length / 2), cy + 2, sd, C_SCORE);
-  }
-}
 ```
 
 ```js on:init
 term.layerID = 'default';
+initOverlayGui();
+worlds.enable();
+worlds.controls.setEnabled(false);
+worlds.config.setDefaults({
+  keepRotation: true,
+  straightenOnFocus: true,
+  screenSpaceRecenter: true,
+  screenSpaceRecenterIters: 6,
+  sectionSizeUnits: 'px',
+  sectionOverflow: 'fit-y',
+  sectionListMarker: '⥤',
+  sectionListMarkerGapPx: 20,
+  sectionListHangIndentPx: 24,
+  defaultSectionWidth: WORLDS_CARD_WIDTH,
+  defaultSectionHeight: WORLDS_CARD_HEIGHT,
+  autoLayoutSpacing: 220,
+  sectionBorderEnabled: false,
+  sectionBackground: 'shader:zerorain'
+});
+worlds.camera.setPosition(0, 20, 235);
+worlds.camera.setRotation(-0.06, 0.09, 0);
+worlds.camera.setEaseSpeed(0.12, 0.14);
 
 // Apply URL seed override on first load only
 var urlSeed = getParam('seed', '');
@@ -604,16 +1370,72 @@ if (urlSeed !== '' && isFinite(parsedUrlSeed) && g.gameMode === 'start') {
 g.rng = random.rng(g.seed);
 ensureRainAudio();
 audio.loadSoundFromBlob('rain_over_huh').catch(function () {});
+setAudioEnabled(g.audioEnabled);
 setRainLevel(RAIN_IDLE_GAIN, 0.01);
+worlds.camera.focusOnSectionFit('0RAIN', WORLDS_SECTION_FIT, { keepRotation: true });
 
 ```
 
 ```js on:input
 if (!event) return;
+
+if (isSeedInputFocused()) {
+  if (event.type === 'keydown' && !shouldKeepSeedFocusOnKey(event.key)) {
+    clearSeedInputFocus();
+  }
+
+  if (event.type === 'text' && !shouldKeepSeedFocusOnText(event.text)) {
+    clearSeedInputFocus();
+    return;
+  }
+
+  if (event.type === 'mouse' && event.action === 'press' && !isSeedInputPointerEvent(event)) {
+    clearSeedInputFocus();
+  }
+}
+
+if (event.type === 'keydown') {
+  gui.handleKey(event.key, {
+    shift: (event.mods || []).includes('shift'),
+    ctrl: (event.mods || []).includes('ctrl'),
+    alt: (event.mods || []).includes('alt'),
+    meta: (event.mods || []).includes('meta')
+  });
+}
+
+if (event.type === 'text') {
+  gui.handleText(event.text);
+}
+
+if (event.type === 'mouse') {
+  if (event.button === 'left') {
+    g.guiMouseDown = event.action === 'press' || event.action === 'repeat';
+  }
+  gui.handleMouse(event.x, event.y, !!g.guiMouseDown);
+}
+
+if (event.type === 'mouse_move') {
+  gui.handleMouse(event.x, event.y, !!g.guiMouseDown);
+}
+
+var shouldUnlockAudio =
+  event.type === 'keydown' ||
+  event.type === 'text' ||
+  (event.type === 'mouse' && event.action === 'press');
+
+if (shouldUnlockAudio) unlockExperienceAudio();
+```
+
+```js on:input section:play
+if (!event) return;
 var _gm = g.gameMode;
+
+if (isSeedInputFocused()) return;
 
 if (event.type === 'keydown') {
   var k = event.key;
+  if (k === 'Escape')                            { focusWorldSection('Settings'); return; }
+  else if (k === 'h' || k === 'H')              { focusWorldSection('0RAIN'); return; }
   if      (k === '0' || k === 'Numpad0')       { if (_gm === 'play') handleDigit('0'); }
   else if (k === '1' || k === 'Numpad1')        { if (_gm === 'play') handleDigit('1'); }
   else if (k.toLowerCase() === 's')             { if (_gm !== 'play') startGame(); }
@@ -629,7 +1451,7 @@ if (event.type === 'mouse' && event.action === 'press') {
 }
 ```
 
-```js on:update
+```js on:update section:play
 if (!g.rng) return;
 var dt = Math.min(getDelta(), 0.05);
 
@@ -649,20 +1471,23 @@ if (g.gameMode === 'play') {
 }
 ```
 
+```js on:update
+handleWorldLinkActions();
+gui.update(getMouseX(), getMouseY(), !!g.guiMouseDown);
+layoutOverlayGui();
+updateOverlayHud();
+syncPlaySectionVisibility();
+```
+
 ```js on:render
 term.layerID = 'default';
 term.clear();
-
-drawBgDrops();
-drawStrains();
-drawHUD();
-
-if (g.gameMode !== 'play') {
-  drawMenu();
-}
 ```
 
-## Sounds
+```js on:render section:play
+drawBgDrops();
+drawStrains();
+```
 
 ```stfxr name:rain_hit
 {

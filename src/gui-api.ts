@@ -332,6 +332,22 @@ export function createGUIAPI(
       if (!this._system) return;
       this._system.handleText(text);
     },
+
+    /**
+     * Clear focus from the currently focused widget.
+     */
+    clearFocus() {
+      if (!this._system) return;
+      this._system.clearFocus();
+    },
+
+    /**
+     * Return the currently focused widget, if any.
+     */
+    getFocusedWidget() {
+      if (!this._system) return null;
+      return this._system.getFocusedWidget();
+    },
     
     /**
      * Render all widgets

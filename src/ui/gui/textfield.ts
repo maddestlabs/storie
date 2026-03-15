@@ -1,14 +1,19 @@
 import { BaseWidget, type WidgetConfig } from '../core/base-widget.js';
 import type { Color } from '../../types.js';
 
+export type GUITextAlign = 'left' | 'center' | 'right';
+
 export interface GUITextFieldConfig extends WidgetConfig {
   value?: string;
   placeholder?: string;
+  align?: GUITextAlign;
   textFieldStyle?: {
     fg?: Color;
     bg?: Color;
     borderColor?: Color;
     focusBorderColor?: Color;
+    drawBackground?: boolean;
+    drawBorder?: boolean;
   };
 }
 
@@ -20,11 +25,14 @@ type KeyModifiers = { shift?: boolean; ctrl?: boolean; alt?: boolean };
  */
 export class GUITextField extends BaseWidget {
   public placeholder: string;
+  public align: GUITextAlign;
   public textFieldStyle: {
     fg: Color;
     bg: Color;
     borderColor: Color;
     focusBorderColor: Color;
+    drawBackground: boolean;
+    drawBorder: boolean;
   };
 
   private value: string;
@@ -40,12 +48,15 @@ export class GUITextField extends BaseWidget {
     this.cursorPos = this.value.length;
     this.scrollOffset = 0;
     this.placeholder = config.placeholder ?? '';
+    this.align = config.align ?? 'left';
 
     this.textFieldStyle = {
       fg: (config.textFieldStyle?.fg ?? { r: 240, g: 240, b: 240 }) as Color,
       bg: (config.textFieldStyle?.bg ?? { r: 30, g: 30, b: 30, a: 0.95 }) as Color,
       borderColor: (config.textFieldStyle?.borderColor ?? { r: 90, g: 90, b: 90 }) as Color,
-      focusBorderColor: (config.textFieldStyle?.focusBorderColor ?? { r: 120, g: 170, b: 220 }) as Color
+      focusBorderColor: (config.textFieldStyle?.focusBorderColor ?? { r: 120, g: 170, b: 220 }) as Color,
+      drawBackground: config.textFieldStyle?.drawBackground ?? true,
+      drawBorder: config.textFieldStyle?.drawBorder ?? true
     };
 
     this.on('click', (ev) => {
@@ -57,7 +68,10 @@ export class GUITextField extends BaseWidget {
       const innerW = Math.max(0, this.bounds.width - padX * 2);
       if (innerW <= 0) return;
 
-      const relPx = Math.max(0, Math.min(innerW, clickX - innerX));
+      const maxChars = Math.max(0, Math.floor(innerW / Math.max(1, this.charWidth)));
+      const visibleLength = Math.min(maxChars, Math.max(0, this.value.length - this.scrollOffset));
+      const textStartX = innerX + this.getAlignedColumnOffset(maxChars, visibleLength) * this.charWidth;
+      const relPx = Math.max(0, Math.min(innerW, clickX - textStartX));
       const relChars = Math.floor(relPx / Math.max(1, this.charWidth));
       const target = this.scrollOffset + relChars;
       this.cursorPos = Math.max(0, Math.min(this.value.length, target));
@@ -154,6 +168,17 @@ export class GUITextField extends BaseWidget {
 
   setScrollOffset(offset: number): void {
     this.scrollOffset = Math.max(0, offset | 0);
+  }
+
+  getAlignedColumnOffset(maxChars: number, visibleLength: number): number {
+    if (maxChars <= 0) return 0;
+    if (this.scrollOffset > 0) return 0;
+
+    const gap = Math.max(0, maxChars - Math.max(0, visibleLength));
+    if (gap === 0) return 0;
+    if (this.align === 'right') return gap;
+    if (this.align === 'center') return Math.floor(gap / 2);
+    return 0;
   }
 
   private markChanged(): void {

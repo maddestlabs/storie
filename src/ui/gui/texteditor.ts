@@ -1,14 +1,18 @@
 import { BaseWidget, type WidgetConfig } from '../core/base-widget.js';
 import type { Color } from '../../types.js';
+import type { GUITextAlign } from './textfield.js';
 
 export interface GUITextEditorConfig extends WidgetConfig {
   value?: string;
   placeholder?: string;
+  align?: GUITextAlign;
   textEditorStyle?: {
     fg?: Color;
     bg?: Color;
     borderColor?: Color;
     focusBorderColor?: Color;
+    drawBackground?: boolean;
+    drawBorder?: boolean;
   };
 }
 
@@ -26,11 +30,14 @@ function splitLines(value: string): string[] {
  */
 export class GUITextEditor extends BaseWidget {
   public placeholder: string;
+  public align: GUITextAlign;
   public textEditorStyle: {
     fg: Color;
     bg: Color;
     borderColor: Color;
     focusBorderColor: Color;
+    drawBackground: boolean;
+    drawBorder: boolean;
   };
 
   private lines: string[];
@@ -55,11 +62,14 @@ export class GUITextEditor extends BaseWidget {
     this.scrollY = 0;
 
     this.placeholder = config.placeholder ?? '';
+    this.align = config.align ?? 'left';
     this.textEditorStyle = {
       fg: (config.textEditorStyle?.fg ?? { r: 240, g: 240, b: 240 }) as Color,
       bg: (config.textEditorStyle?.bg ?? { r: 30, g: 30, b: 30, a: 0.95 }) as Color,
       borderColor: (config.textEditorStyle?.borderColor ?? { r: 90, g: 90, b: 90 }) as Color,
-      focusBorderColor: (config.textEditorStyle?.focusBorderColor ?? { r: 120, g: 170, b: 220 }) as Color
+      focusBorderColor: (config.textEditorStyle?.focusBorderColor ?? { r: 120, g: 170, b: 220 }) as Color,
+      drawBackground: config.textEditorStyle?.drawBackground ?? true,
+      drawBorder: config.textEditorStyle?.drawBorder ?? true
     };
 
     this.on('click', (ev) => {
@@ -78,11 +88,14 @@ export class GUITextEditor extends BaseWidget {
       const relPxX = Math.max(0, Math.min(innerW - 1, clickX - innerX));
       const relPxY = Math.max(0, Math.min(innerH - 1, clickY - innerY));
 
-      const relCol = Math.floor(relPxX / Math.max(1, this.charWidth));
       const relRow = Math.floor(relPxY / Math.max(1, this.charHeight));
 
       const targetRow = Math.max(0, Math.min(this.lines.length - 1, this.scrollY + relRow));
-      const targetCol = Math.max(0, Math.min(this.lines[targetRow].length, this.scrollX + relCol));
+      const maxCols = Math.max(0, Math.floor(innerW / Math.max(1, this.charWidth)));
+      const lineLength = this.lines[targetRow].length;
+      const alignedX = this.getAlignedColumnOffset(maxCols, lineLength, this.scrollX);
+      const relColAligned = Math.floor(relPxX / Math.max(1, this.charWidth)) - alignedX;
+      const targetCol = Math.max(0, Math.min(lineLength, this.scrollX + relColAligned));
 
       this.cursorRow = targetRow;
       this.cursorCol = targetCol;
@@ -209,6 +222,18 @@ export class GUITextEditor extends BaseWidget {
   setScroll(scrollX: number, scrollY: number): void {
     this.scrollX = Math.max(0, scrollX | 0);
     this.scrollY = Math.max(0, scrollY | 0);
+  }
+
+  getAlignedColumnOffset(maxCols: number, lineLength: number, scrollX: number): number {
+    if (maxCols <= 0) return 0;
+    if (scrollX > 0) return 0;
+
+    const visibleLength = Math.min(maxCols, Math.max(0, lineLength - scrollX));
+    const gap = Math.max(0, maxCols - visibleLength);
+    if (gap === 0) return 0;
+    if (this.align === 'right') return gap;
+    if (this.align === 'center') return Math.floor(gap / 2);
+    return 0;
   }
 
   private insertText(text: string): void {

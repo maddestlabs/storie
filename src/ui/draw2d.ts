@@ -45,7 +45,7 @@ export interface Draw2D {
   metrics?: { charWidth?: number; charHeight?: number };
 }
 
-export type WidgetDrawKind = 'button' | 'label' | 'checkbox' | 'slider' | 'markdownView' | 'unknown';
+export type WidgetDrawKind = 'button' | 'label' | 'checkbox' | 'slider' | 'textField' | 'textEditor' | 'markdownView' | 'unknown';
 
 export type WidgetDrawInfoCommon = {
   id: string;
@@ -60,5 +60,7 @@ export type WidgetDrawInfo =
   | (WidgetDrawInfoCommon & { kind: 'label'; text: string; align: string })
   | (WidgetDrawInfoCommon & { kind: 'checkbox'; label: string; checked: boolean })
   | (WidgetDrawInfoCommon & { kind: 'slider'; label: string; min: number; max: number; value: number })
+  | (WidgetDrawInfoCommon & { kind: 'textField'; align: string; value: string; placeholder: string })
+  | (WidgetDrawInfoCommon & { kind: 'textEditor'; align: string; value: string; placeholder: string })
   | (WidgetDrawInfoCommon & { kind: 'markdownView' })
   | (WidgetDrawInfoCommon & { kind: 'unknown' });
