@@ -25721,6 +25721,22 @@ class StorieEngine {
       return { charW: Math.max(1, Math.round(fontSizePx * 0.6)), charH: fallbackH, baseLineHeight: Math.max(1, Math.round(fallbackH * 1.25)) };
     }
   }
+  getWorldsTextureScale() {
+    const dpr = typeof window !== "undefined" && window.devicePixelRatio ? Number(window.devicePixelRatio) : 1;
+    return Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  }
+  scaleLinkRegions(regions, scale) {
+    if (!(scale > 0) || Math.abs(scale - 1) < 1e-6) {
+      return regions.map((region) => ({ ...region }));
+    }
+    return regions.map((region) => ({
+      ...region,
+      x: region.x * scale,
+      y: region.y * scale,
+      w: region.w * scale,
+      h: region.h * scale
+    }));
+  }
   async loadMarkdown(documentId, markdown) {
     var _a, _b, _c, _d, _e, _f, _g, _h;
     try {
@@ -26786,11 +26802,11 @@ ${exportVars}
     const view = getCameraViewMatrix(this.camera3D);
     const proj = getCameraProjectionMatrix(this.camera3D, aspect);
     const viewProj = mat4Multiply(proj, view);
-    const atlas = this.renderer instanceof WebGPURenderer ? this.renderer.getAtlas() : null;
-    const fontSizePx = atlas ? atlas.getFontSize() : 16;
+    const textureScale = this.getWorldsTextureScale();
+    const logicalFontSizePx = Math.max(1, this.fontSize || 16);
     const fontStack = this.worldsCardFontStack || this.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
     const texturePadding = 12;
-    const measured = this.measureFontMetrics(fontStack, fontSizePx);
+    const measured = this.measureFontMetrics(fontStack, logicalFontSizePx);
     const measuredCharW = Math.max(1, measured.charW);
     const measuredCharH = Math.max(1, measured.charH);
     const baseLineHeight = Math.max(1, measured.baseLineHeight);
@@ -26808,7 +26824,7 @@ ${exportVars}
         if (!ctx) return null;
         ctx.textBaseline = "top";
         ctx.textAlign = "left";
-        ctx.font = `${fontSizePx}px ${fontStack}`;
+        ctx.font = `${logicalFontSizePx}px ${fontStack}`;
         return ctx;
       } catch {
         return null;
@@ -26826,7 +26842,7 @@ ${exportVars}
         if (existing && existing.activeLinkIndex === activeLinkIndex) {
           const prevW = layout.worldWidth;
           const prevH = layout.worldHeight;
-          this.set3DLayoutWorldSizeFromPixels(layout, existing.width, existing.height, baseLineHeight);
+          this.set3DLayoutWorldSizeFromPixels(layout, existing.width / textureScale, existing.height / textureScale, baseLineHeight);
           if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
           continue;
         }
@@ -26834,8 +26850,10 @@ ${exportVars}
       const minW = 256;
       const minH = 128;
       const deviceMax = device.limits && device.limits.maxTextureDimension2D ? Number(device.limits.maxTextureDimension2D) : 2048;
-      const maxW = Math.max(256, Math.min(2048, deviceMax));
-      const maxH = Math.max(256, Math.min(2048, deviceMax));
+      const maxTextureW = Math.max(256, Math.min(2048, deviceMax));
+      const maxTextureH = Math.max(256, Math.min(2048, deviceMax));
+      const maxW = Math.max(minW, Math.floor(maxTextureW / textureScale));
+      const maxH = Math.max(minH, Math.floor(maxTextureH / textureScale));
       const units = this.worldsConfig.sectionSizeUnits === "px" ? "px" : "text";
       const desiredW = units === "px" ? Math.round(layout.width + texturePadding * 2) : Math.round(layout.width * measuredCharW + texturePadding * 2);
       const desiredH = units === "px" ? Math.round(layout.height + texturePadding * 2) : Math.round(layout.height * baseLineHeight + texturePadding * 2);
@@ -26906,20 +26924,22 @@ ${content}`.trim();
         this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
         if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
       }
+      const textureWidthPx = Math.max(1, Math.round(widthPx * textureScale));
+      const textureHeightPx = Math.max(1, Math.round(heightPx * textureScale));
       let canvas;
       try {
         if (typeof OffscreenCanvas !== "undefined") {
-          canvas = new OffscreenCanvas(widthPx, heightPx);
+          canvas = new OffscreenCanvas(textureWidthPx, textureHeightPx);
         } else {
           const c2 = document.createElement("canvas");
-          c2.width = widthPx;
-          c2.height = heightPx;
+          c2.width = textureWidthPx;
+          c2.height = textureHeightPx;
           canvas = c2;
         }
       } catch {
         const c2 = document.createElement("canvas");
-        c2.width = widthPx;
-        c2.height = heightPx;
+        c2.width = textureWidthPx;
+        c2.height = textureHeightPx;
         canvas = c2;
       }
       const isOffscreenCanvas = typeof OffscreenCanvas !== "undefined" && canvas instanceof OffscreenCanvas;
@@ -26927,9 +26947,10 @@ ${content}`.trim();
       if (!ctx) {
         continue;
       }
+      ctx.setTransform(textureScale, 0, 0, textureScale, 0, 0);
       ctx.textBaseline = "top";
       ctx.textAlign = "left";
-      ctx.font = `${fontSizePx}px ${fontStack}`;
+      ctx.font = `${logicalFontSizePx}px ${fontStack}`;
       const charW = measuredCharW;
       const charH = measuredCharH;
       const base = this.getStyle("default");
@@ -26994,6 +27015,7 @@ ${content}`.trim();
           }
         }
       }
+      const scaledLinkRegions = this.scaleLinkRegions(result.linkRegions, textureScale);
       ctx.clearRect(0, 0, widthPx, heightPx);
       if (bakedRuledPaper) {
         const ruledLine = this.withAlpha(dim.fg, 64);
@@ -27017,7 +27039,7 @@ ${content}`.trim();
         ctx.strokeRect(inset, inset, widthPx - borderWidth, heightPx - borderWidth);
       }
       const texture = device.createTexture({
-        size: { width: widthPx, height: heightPx },
+        size: { width: textureWidthPx, height: textureHeightPx },
         format: "rgba8unorm",
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
       });
@@ -27026,7 +27048,7 @@ ${content}`.trim();
         device.queue.copyExternalImageToTexture(
           { source: canvas },
           { texture },
-          { width: widthPx, height: heightPx }
+          { width: textureWidthPx, height: textureHeightPx }
         );
         uploaded = true;
       } catch {
@@ -27036,7 +27058,7 @@ ${content}`.trim();
             device.queue.copyExternalImageToTexture(
               { source: bitmap },
               { texture },
-              { width: widthPx, height: heightPx }
+              { width: textureWidthPx, height: textureHeightPx }
             );
             bitmap.close();
             uploaded = true;
@@ -27052,12 +27074,12 @@ ${content}`.trim();
       }
       if (!uploaded) {
         try {
-          const imageData = (_a = ctx.getImageData) == null ? void 0 : _a.call(ctx, 0, 0, widthPx, heightPx);
+          const imageData = (_a = ctx.getImageData) == null ? void 0 : _a.call(ctx, 0, 0, textureWidthPx, textureHeightPx);
           if (imageData && imageData.data) {
-            const unpaddedBytesPerRow = widthPx * 4;
+            const unpaddedBytesPerRow = textureWidthPx * 4;
             const bytesPerRow = Math.ceil(unpaddedBytesPerRow / 256) * 256;
-            const padded = new Uint8Array(bytesPerRow * heightPx);
-            for (let y = 0; y < heightPx; y++) {
+            const padded = new Uint8Array(bytesPerRow * textureHeightPx);
+            for (let y = 0; y < textureHeightPx; y++) {
               const srcStart = y * unpaddedBytesPerRow;
               const dstStart = y * bytesPerRow;
               padded.set(imageData.data.subarray(srcStart, srcStart + unpaddedBytesPerRow), dstStart);
@@ -27066,7 +27088,7 @@ ${content}`.trim();
               { texture },
               padded,
               { bytesPerRow },
-              { width: widthPx, height: heightPx }
+              { width: textureWidthPx, height: textureHeightPx }
             );
             uploaded = true;
           }
@@ -27082,8 +27104,8 @@ ${content}`.trim();
         continue;
       }
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx, activeLinkIndex });
-      this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
+      this.sectionTextureCache.set(layout.sectionIndex, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
+      this.sectionLinkRegionsCache.set(layout.sectionIndex, scaledLinkRegions);
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }
     if (worldSizeChanged) {
@@ -27160,10 +27182,8 @@ ${content}`.trim();
       const units = this.worldsConfig.sectionSizeUnits === "px" ? "px" : "text";
       if (units === "px") {
         const texturePadding = 12;
-        const atlas = this.renderer instanceof WebGPURenderer ? this.renderer.getAtlas() : null;
-        const fontSizePx = atlas ? atlas.getFontSize() : 16;
         const fontStack = this.worldsCardFontStack || this.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
-        const measured = this.measureFontMetrics(fontStack, fontSizePx);
+        const measured = this.measureFontMetrics(fontStack, Math.max(1, this.fontSize || 16));
         const ppu = Math.max(1, measured.baseLineHeight);
         baseW = (layout.width + texturePadding * 2) / ppu;
         baseH = (layout.height + texturePadding * 2) / ppu;
@@ -27339,8 +27359,9 @@ ${content}`.trim();
     const proj = getCameraProjectionMatrix(this.camera3D, aspect);
     const viewProj = mat4Multiply(proj, view);
     const atlas = this.renderer.getAtlas();
-    const charW = atlas ? atlas.getCharWidth() : 10;
-    const charH = atlas ? atlas.getCharHeight() : 16;
+    const textureScale = this.getWorldsTextureScale();
+    const charW = atlas ? atlas.getCharWidth() / textureScale : 10;
+    const charH = atlas ? atlas.getCharHeight() / textureScale : 16;
     const texturePadding = 12;
     const baseLineHeight = Math.max(1, Math.round(charH * 1.25));
     let worldSizeChanged = false;
@@ -27374,8 +27395,8 @@ ${content}`.trim();
       }
       const minW = 256;
       const minH = 128;
-      const maxW = 1024;
-      const maxH = 1024;
+      const maxW = Math.max(minW, Math.floor(1024 / textureScale));
+      const maxH = Math.max(minH, Math.floor(1024 / textureScale));
       const units = this.worldsConfig.sectionSizeUnits === "px" ? "px" : "text";
       const desiredW = units === "px" ? Math.round(layout.width + texturePadding * 2) : Math.round(layout.width * charW + texturePadding * 2);
       const desiredH = units === "px" ? Math.round(layout.height + texturePadding * 2) : Math.round(layout.height * baseLineHeight + texturePadding * 2);
@@ -27436,8 +27457,10 @@ ${content}`.trim();
         this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
         if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
       }
+      const textureWidthPx = Math.max(1, Math.round(widthPx * textureScale));
+      const textureHeightPx = Math.max(1, Math.round(heightPx * textureScale));
       const existing = this.sectionTextureCache.get(layout.sectionIndex);
-      if (existing && existing.width === widthPx && existing.height === heightPx && existing.activeLinkIndex === activeLinkIndex && layout.texture) {
+      if (existing && existing.width === textureWidthPx && existing.height === textureHeightPx && existing.activeLinkIndex === activeLinkIndex && layout.texture) {
         if (!this.sectionLinkRegionsCache.has(layout.sectionIndex)) {
           const style2 = {
             fg: base.fg,
@@ -27464,7 +27487,7 @@ ${content}`.trim();
             texturePadding,
             { overflow: layoutOverflow }
           );
-          this.sectionLinkRegionsCache.set(layout.sectionIndex, result2.linkRegions);
+          this.sectionLinkRegionsCache.set(layout.sectionIndex, this.scaleLinkRegions(result2.linkRegions, textureScale));
         }
         continue;
       }
@@ -27476,7 +27499,7 @@ ${content}`.trim();
         layout.texture = null;
       }
       const texture = device.createTexture({
-        size: { width: widthPx, height: heightPx },
+        size: { width: textureWidthPx, height: textureHeightPx },
         format,
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
       });
@@ -27510,36 +27533,36 @@ ${content}`.trim();
           }
         }
       }
-      this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
+      this.sectionLinkRegionsCache.set(layout.sectionIndex, this.scaleLinkRegions(result.linkRegions, textureScale));
       ui.clearCommands();
       if (bakedRuledPaper) {
         const ruledLine = this.withAlpha(dim.fg, 64);
-        ui.rect(0, 0, widthPx, heightPx, surfaceBg);
-        const spacing = Math.max(6, Math.round(baseLineHeight));
-        const thickness = 1;
-        const startY = Math.max(0, Math.round(texturePadding + spacing - 3));
-        for (let y = startY; y < heightPx; y += spacing) {
-          ui.rect(0, y, widthPx, thickness, ruledLine);
+        ui.rect(0, 0, textureWidthPx, textureHeightPx, surfaceBg);
+        const spacing = Math.max(1, Math.round(baseLineHeight * textureScale));
+        const thickness = Math.max(1, Math.round(textureScale));
+        const startY = Math.max(0, Math.round((texturePadding + baseLineHeight - 3) * textureScale));
+        for (let y = startY; y < textureHeightPx; y += spacing) {
+          ui.rect(0, y, textureWidthPx, thickness, ruledLine);
         }
       }
       for (const op of result.ops) {
         if (op.kind === "rect") {
-          ui.rect(op.x, op.y, op.w, op.h, op.color);
+          ui.rect(op.x * textureScale, op.y * textureScale, op.w * textureScale, op.h * textureScale, op.color);
         } else {
-          ui.text(op.text, op.x, op.y, op.color);
+          ui.text(op.text, op.x * textureScale, op.y * textureScale, op.color);
         }
       }
       if (borderEnabled && borderWidth > 0) {
-        const bw = Math.max(1, borderWidth);
+        const bw = Math.max(1, Math.round(borderWidth * textureScale));
         const c2 = borderStyle.fg;
-        ui.rect(0, 0, widthPx, bw, c2);
-        ui.rect(0, heightPx - bw, widthPx, bw, c2);
-        ui.rect(0, 0, bw, heightPx, c2);
-        ui.rect(widthPx - bw, 0, bw, heightPx, c2);
+        ui.rect(0, 0, textureWidthPx, bw, c2);
+        ui.rect(0, textureHeightPx - bw, textureWidthPx, bw, c2);
+        ui.rect(0, 0, bw, textureHeightPx, c2);
+        ui.rect(textureWidthPx - bw, 0, bw, textureHeightPx, c2);
       }
-      ui.flushTo(texture, widthPx, heightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
+      ui.flushTo(texture, textureWidthPx, textureHeightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx, activeLinkIndex });
+      this.sectionTextureCache.set(layout.sectionIndex, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }
     if (worldSizeChanged) {
@@ -27557,10 +27580,8 @@ ${content}`.trim();
       }
     }
     if (!(this.renderer instanceof WebGPURenderer)) return 1;
-    const atlas = this.renderer.getAtlas();
-    const fontSizePx = atlas ? atlas.getFontSize() : 16;
     const fontStack = this.worldsCardFontStack || this.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
-    const measured = this.measureFontMetrics(fontStack, fontSizePx);
+    const measured = this.measureFontMetrics(fontStack, Math.max(1, this.fontSize || 16));
     const charW = measured.charW;
     const baseLineHeight = measured.baseLineHeight;
     if (!(charW > 0 && baseLineHeight > 0)) return 1;
@@ -28415,8 +28436,11 @@ ${content}`.trim();
     const textureMode = this.worldsConfig.sectionTextureMode;
     const minW = 256;
     const minH = 128;
-    const maxW = textureMode === "webgpu-ui" ? 1024 : 2048;
-    const maxH = textureMode === "webgpu-ui" ? 1024 : 2048;
+    const textureScale = this.getWorldsTextureScale();
+    const maxTextureW = textureMode === "webgpu-ui" ? 1024 : 2048;
+    const maxTextureH = textureMode === "webgpu-ui" ? 1024 : 2048;
+    const maxW = Math.max(minW, Math.floor(maxTextureW / textureScale));
+    const maxH = Math.max(minH, Math.floor(maxTextureH / textureScale));
     const base = this.getStyle("default");
     const dim = this.getStyle("dim");
     const heading = this.getStyle("heading");
@@ -28439,8 +28463,7 @@ ${content}`.trim();
       codeBg: code.bg,
       bg: mdBg
     };
-    const atlas = this.renderer instanceof WebGPURenderer ? this.renderer.getAtlas() : null;
-    const fontSizePx = atlas ? atlas.getFontSize() : 16;
+    const fontSizePx = Math.max(1, this.fontSize || 16);
     const fontStack = this.worldsCardFontStack || this.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
     const measured = this.measureFontMetrics(fontStack, fontSizePx);
     const measuredCharW = Math.max(1, measured.charW);

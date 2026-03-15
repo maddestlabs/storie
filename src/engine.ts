@@ -4614,6 +4614,27 @@ export class StorieEngine {
     }
   }
 
+  private getWorldsTextureScale(): number {
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio)
+      ? Number(window.devicePixelRatio)
+      : 1;
+    return Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  }
+
+  private scaleLinkRegions(regions: LinkRegion[], scale: number): LinkRegion[] {
+    if (!(scale > 0) || Math.abs(scale - 1) < 1e-6) {
+      return regions.map(region => ({ ...region }));
+    }
+
+    return regions.map(region => ({
+      ...region,
+      x: region.x * scale,
+      y: region.y * scale,
+      w: region.w * scale,
+      h: region.h * scale,
+    }));
+  }
+
   async loadMarkdown(documentId: string, markdown: string): Promise<boolean> {
     try {
       console.log(`Loading document: ${documentId}`);
@@ -6060,18 +6081,14 @@ ${exportVars}
     // - text units (legacy): width/height are columns/rows
     // - pixels: width/height are content box pixels (padding is added)
     //
-    // Use atlas charW/charH (physical pixels) so that the texture dimensions and
-    // drawn font size are consistent with get3DCardXScaleFactor(), which also
-    // reads from the atlas. Mismatched metrics caused visible X-compression of
-    // card content (scale factor used physical px, texture used hardcoded logical px).
-    const atlas = (this.renderer instanceof WebGPURenderer) ? this.renderer.getAtlas() : null;
-    const fontSizePx = atlas ? atlas.getFontSize() : 16;
+    const textureScale = this.getWorldsTextureScale();
+    const logicalFontSizePx = Math.max(1, this.fontSize || 16);
     const fontStack =
       this.worldsCardFontStack ||
       this.fontFamily ||
       "'3270-regular', 'Consolas', 'Monaco', monospace";
     const texturePadding = 12;
-    const measured = this.measureFontMetrics(fontStack, fontSizePx);
+    const measured = this.measureFontMetrics(fontStack, logicalFontSizePx);
     const measuredCharW = Math.max(1, measured.charW);
     const measuredCharH = Math.max(1, measured.charH);
     const baseLineHeight = Math.max(1, measured.baseLineHeight);
@@ -6096,7 +6113,7 @@ ${exportVars}
         if (!ctx) return null;
         ctx.textBaseline = 'top';
         ctx.textAlign = 'left';
-        ctx.font = `${fontSizePx}px ${fontStack}`;
+        ctx.font = `${logicalFontSizePx}px ${fontStack}`;
         return ctx;
       } catch {
         return null;
@@ -6121,7 +6138,7 @@ ${exportVars}
         if (existing && existing.activeLinkIndex === activeLinkIndex) {
           const prevW = layout.worldWidth;
           const prevH = layout.worldHeight;
-          this.set3DLayoutWorldSizeFromPixels(layout, existing.width, existing.height, baseLineHeight);
+          this.set3DLayoutWorldSizeFromPixels(layout, existing.width / textureScale, existing.height / textureScale, baseLineHeight);
           if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
           continue;
         }
@@ -6132,8 +6149,10 @@ ${exportVars}
       const deviceMax = (device.limits && (device.limits as any).maxTextureDimension2D)
         ? Number((device.limits as any).maxTextureDimension2D)
         : 2048;
-      const maxW = Math.max(256, Math.min(2048, deviceMax));
-      const maxH = Math.max(256, Math.min(2048, deviceMax));  // allow for DPR-scaled physical font sizes
+      const maxTextureW = Math.max(256, Math.min(2048, deviceMax));
+      const maxTextureH = Math.max(256, Math.min(2048, deviceMax));
+      const maxW = Math.max(minW, Math.floor(maxTextureW / textureScale));
+      const maxH = Math.max(minH, Math.floor(maxTextureH / textureScale));
 
       const units = (this.worldsConfig as any).sectionSizeUnits === 'px' ? 'px' : 'text';
       const desiredW = units === 'px'
@@ -6226,21 +6245,24 @@ ${exportVars}
         if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
       }
 
+      const textureWidthPx = Math.max(1, Math.round(widthPx * textureScale));
+      const textureHeightPx = Math.max(1, Math.round(heightPx * textureScale));
+
       let canvas: OffscreenCanvas | HTMLCanvasElement;
       try {
         if (typeof OffscreenCanvas !== 'undefined') {
-          canvas = new OffscreenCanvas(widthPx, heightPx);
+          canvas = new OffscreenCanvas(textureWidthPx, textureHeightPx);
         } else {
           const c = document.createElement('canvas');
-          c.width = widthPx;
-          c.height = heightPx;
+          c.width = textureWidthPx;
+          c.height = textureHeightPx;
           canvas = c;
         }
       } catch {
         // Some environments throw on OffscreenCanvas construction.
         const c = document.createElement('canvas');
-        c.width = widthPx;
-        c.height = heightPx;
+        c.width = textureWidthPx;
+        c.height = textureHeightPx;
         canvas = c;
       }
 
@@ -6262,9 +6284,10 @@ ${exportVars}
       // layout (charW/charH) won’t match the actual rendered glyph widths.
       // That mismatch shows up as “extra spaces” between words.
 
+      ctx.setTransform(textureScale, 0, 0, textureScale, 0, 0);
       ctx.textBaseline = 'top';
       ctx.textAlign = 'left';
-      ctx.font = `${fontSizePx}px ${fontStack}`;
+      ctx.font = `${logicalFontSizePx}px ${fontStack}`;
 
       // Use the same metrics we used to size the texture.
       const charW = measuredCharW;
@@ -6340,6 +6363,8 @@ ${exportVars}
         }
       }
 
+      const scaledLinkRegions = this.scaleLinkRegions(result.linkRegions, textureScale);
+
       // Draw ops into the Canvas2D surface
       ctx.clearRect(0, 0, widthPx, heightPx);
       if (bakedRuledPaper) {
@@ -6369,7 +6394,7 @@ ${exportVars}
 
       // Create GPU texture + upload
       const texture = device.createTexture({
-        size: { width: widthPx, height: heightPx },
+        size: { width: textureWidthPx, height: textureHeightPx },
         format: 'rgba8unorm',
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
       });
@@ -6379,7 +6404,7 @@ ${exportVars}
         device.queue.copyExternalImageToTexture(
           { source: canvas as any },
           { texture },
-          { width: widthPx, height: heightPx }
+          { width: textureWidthPx, height: textureHeightPx }
         );
         uploaded = true;
       } catch {
@@ -6390,7 +6415,7 @@ ${exportVars}
             device.queue.copyExternalImageToTexture(
               { source: bitmap },
               { texture },
-              { width: widthPx, height: heightPx }
+              { width: textureWidthPx, height: textureHeightPx }
             );
             bitmap.close();
             uploaded = true;
@@ -6405,14 +6430,14 @@ ${exportVars}
       // Final fallback: upload raw pixels via writeTexture (slower, but widely supported).
       if (!uploaded) {
         try {
-          const imageData = (ctx as any).getImageData?.(0, 0, widthPx, heightPx);
+          const imageData = (ctx as any).getImageData?.(0, 0, textureWidthPx, textureHeightPx);
           if (imageData && imageData.data) {
-            const unpaddedBytesPerRow = widthPx * 4;
+            const unpaddedBytesPerRow = textureWidthPx * 4;
             const bytesPerRow = Math.ceil(unpaddedBytesPerRow / 256) * 256;
-            const padded = new Uint8Array(bytesPerRow * heightPx);
+            const padded = new Uint8Array(bytesPerRow * textureHeightPx);
 
             // Copy row-by-row into padded buffer.
-            for (let y = 0; y < heightPx; y++) {
+            for (let y = 0; y < textureHeightPx; y++) {
               const srcStart = y * unpaddedBytesPerRow;
               const dstStart = y * bytesPerRow;
               padded.set(imageData.data.subarray(srcStart, srcStart + unpaddedBytesPerRow), dstStart);
@@ -6422,7 +6447,7 @@ ${exportVars}
               { texture },
               padded,
               { bytesPerRow },
-              { width: widthPx, height: heightPx }
+              { width: textureWidthPx, height: textureHeightPx }
             );
             uploaded = true;
           }
@@ -6437,8 +6462,8 @@ ${exportVars}
       }
 
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx, activeLinkIndex });
-      this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
+        this.sectionTextureCache.set(layout.sectionIndex, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
+        this.sectionLinkRegionsCache.set(layout.sectionIndex, scaledLinkRegions);
 
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }
@@ -6555,14 +6580,11 @@ ${exportVars}
         // Keep this consistent with set3DLayoutWorldSizeFromPixels(), which
         // uses a pixels-per-world-unit scale derived from baseLineHeight.
         const texturePadding = 12;
-
-        const atlas = (this.renderer instanceof WebGPURenderer) ? this.renderer.getAtlas() : null;
-        const fontSizePx = atlas ? atlas.getFontSize() : 16;
         const fontStack =
           this.worldsCardFontStack ||
           this.fontFamily ||
           "'3270-regular', 'Consolas', 'Monaco', monospace";
-        const measured = this.measureFontMetrics(fontStack, fontSizePx);
+        const measured = this.measureFontMetrics(fontStack, Math.max(1, this.fontSize || 16));
         const ppu = Math.max(1, measured.baseLineHeight);
 
         baseW = (layout.width + texturePadding * 2) / ppu;
@@ -6791,8 +6813,9 @@ ${exportVars}
     const viewProj = mat4Multiply(proj, view);
 
     const atlas = this.renderer.getAtlas();
-    const charW = atlas ? atlas.getCharWidth() : 10;
-    const charH = atlas ? atlas.getCharHeight() : 16;
+    const textureScale = this.getWorldsTextureScale();
+    const charW = atlas ? (atlas.getCharWidth() / textureScale) : 10;
+    const charH = atlas ? (atlas.getCharHeight() / textureScale) : 16;
     const texturePadding = 12;
     const baseLineHeight = Math.max(1, Math.round(charH * 1.25));
 
@@ -6845,8 +6868,8 @@ ${exportVars}
 
       const minW = 256;
       const minH = 128;
-      const maxW = 1024;
-      const maxH = 1024;
+      const maxW = Math.max(minW, Math.floor(1024 / textureScale));
+      const maxH = Math.max(minH, Math.floor(1024 / textureScale));
 
       const units = (this.worldsConfig as any).sectionSizeUnits === 'px' ? 'px' : 'text';
       const desiredW = units === 'px'
@@ -6917,11 +6940,14 @@ ${exportVars}
         if (layout.worldWidth !== prevW || layout.worldHeight !== prevH) worldSizeChanged = true;
       }
 
+      const textureWidthPx = Math.max(1, Math.round(widthPx * textureScale));
+      const textureHeightPx = Math.max(1, Math.round(heightPx * textureScale));
+
       const existing = this.sectionTextureCache.get(layout.sectionIndex);
       if (
         existing &&
-        existing.width === widthPx &&
-        existing.height === heightPx &&
+        existing.width === textureWidthPx &&
+        existing.height === textureHeightPx &&
         existing.activeLinkIndex === activeLinkIndex &&
         layout.texture
       ) {
@@ -6952,7 +6978,7 @@ ${exportVars}
             texturePadding,
             { overflow: layoutOverflow }
           );
-          this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
+          this.sectionLinkRegionsCache.set(layout.sectionIndex, this.scaleLinkRegions(result.linkRegions, textureScale));
         }
         continue;
       }
@@ -6968,7 +6994,7 @@ ${exportVars}
       }
 
       const texture = device.createTexture({
-        size: { width: widthPx, height: heightPx },
+        size: { width: textureWidthPx, height: textureHeightPx },
         format,
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
       });
@@ -7006,43 +7032,43 @@ ${exportVars}
         }
       }
 
-      this.sectionLinkRegionsCache.set(layout.sectionIndex, result.linkRegions);
+      this.sectionLinkRegionsCache.set(layout.sectionIndex, this.scaleLinkRegions(result.linkRegions, textureScale));
 
       // Replay ops into UI renderer and render into this section texture.
       ui.clearCommands();
 
       if (bakedRuledPaper) {
         const ruledLine = this.withAlpha(dim.fg, 0x40) as any;
-        ui.rect(0, 0, widthPx, heightPx, surfaceBg as any);
+        ui.rect(0, 0, textureWidthPx, textureHeightPx, surfaceBg as any);
 
-        const spacing = Math.max(6, Math.round(baseLineHeight));
-        const thickness = 1;
-        const startY = Math.max(0, Math.round(texturePadding + spacing - 3));
-        for (let y = startY; y < heightPx; y += spacing) {
-          ui.rect(0, y, widthPx, thickness, ruledLine);
+        const spacing = Math.max(1, Math.round(baseLineHeight * textureScale));
+        const thickness = Math.max(1, Math.round(textureScale));
+        const startY = Math.max(0, Math.round((texturePadding + baseLineHeight - 3) * textureScale));
+        for (let y = startY; y < textureHeightPx; y += spacing) {
+          ui.rect(0, y, textureWidthPx, thickness, ruledLine);
         }
       }
       for (const op of result.ops) {
         if (op.kind === 'rect') {
-          ui.rect(op.x, op.y, op.w, op.h, op.color as any);
+          ui.rect(op.x * textureScale, op.y * textureScale, op.w * textureScale, op.h * textureScale, op.color as any);
         } else {
-          ui.text(op.text, op.x, op.y, op.color as any);
+          ui.text(op.text, op.x * textureScale, op.y * textureScale, op.color as any);
         }
       }
 
       if (borderEnabled && borderWidth > 0) {
-        const bw = Math.max(1, borderWidth);
+        const bw = Math.max(1, Math.round(borderWidth * textureScale));
         const c = borderStyle.fg as any;
-        ui.rect(0, 0, widthPx, bw, c);
-        ui.rect(0, heightPx - bw, widthPx, bw, c);
-        ui.rect(0, 0, bw, heightPx, c);
-        ui.rect(widthPx - bw, 0, bw, heightPx, c);
+        ui.rect(0, 0, textureWidthPx, bw, c);
+        ui.rect(0, textureHeightPx - bw, textureWidthPx, bw, c);
+        ui.rect(0, 0, bw, textureHeightPx, c);
+        ui.rect(textureWidthPx - bw, 0, bw, textureHeightPx, c);
       }
 
-      ui.flushTo(texture, widthPx, heightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
+      ui.flushTo(texture, textureWidthPx, textureHeightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
 
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionIndex, { width: widthPx, height: heightPx, activeLinkIndex });
+      this.sectionTextureCache.set(layout.sectionIndex, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
 
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }
@@ -7073,14 +7099,12 @@ ${exportVars}
     // Fallback: estimate from current font metrics.
     if (!(this.renderer instanceof WebGPURenderer)) return 1;
 
-    const atlas = this.renderer.getAtlas();
-    const fontSizePx = atlas ? atlas.getFontSize() : 16;
     const fontStack =
       this.worldsCardFontStack ||
       this.fontFamily ||
       "'3270-regular', 'Consolas', 'Monaco', monospace";
 
-    const measured = this.measureFontMetrics(fontStack, fontSizePx);
+    const measured = this.measureFontMetrics(fontStack, Math.max(1, this.fontSize || 16));
     const charW = measured.charW;
     const baseLineHeight = measured.baseLineHeight;
     if (!(charW > 0 && baseLineHeight > 0)) return 1;
@@ -8220,8 +8244,11 @@ ${exportVars}
     // Defaults shared by both render paths.
     const minW = 256;
     const minH = 128;
-    const maxW = textureMode === 'webgpu-ui' ? 1024 : 2048;
-    const maxH = textureMode === 'webgpu-ui' ? 1024 : 2048;
+    const textureScale = this.getWorldsTextureScale();
+    const maxTextureW = textureMode === 'webgpu-ui' ? 1024 : 2048;
+    const maxTextureH = textureMode === 'webgpu-ui' ? 1024 : 2048;
+    const maxW = Math.max(minW, Math.floor(maxTextureW / textureScale));
+    const maxH = Math.max(minH, Math.floor(maxTextureH / textureScale));
 
     // Theme-derived style (colors don't affect layout, but keep it consistent).
     const base = this.getStyle('default');
@@ -8247,9 +8274,9 @@ ${exportVars}
       bg: mdBg,
     };
 
-    // Metrics: prefer the renderer's atlas when available.
-    const atlas = (this.renderer instanceof WebGPURenderer) ? this.renderer.getAtlas() : null;
-    const fontSizePx = atlas ? atlas.getFontSize() : 16;
+    // Measure in logical CSS pixels; the runtime render path applies DPR only
+    // when rasterizing the final card texture.
+    const fontSizePx = Math.max(1, this.fontSize || 16);
     const fontStack =
       this.worldsCardFontStack ||
       this.fontFamily ||
