@@ -7419,14 +7419,6 @@ ${exportVars}
    * Set up input event listeners for on:input handlers
    */
   private setupEventListeners(): void {
-    // Prefer disabling default touch gestures (scroll/zoom) on the canvas.
-    // This helps mobile browsers deliver continuous pointer movement.
-    try {
-      (this.canvas.style as any).touchAction = 'none';
-    } catch {
-      // ignore
-    }
-
     // Key events
     this.canvas.addEventListener('keydown', (e) => this.handleKeyEvent(e, 'press'));
     this.canvas.addEventListener('keyup', (e) => this.handleKeyEvent(e, 'release'));
@@ -7436,21 +7428,11 @@ ${exportVars}
     this.canvas.addEventListener('mouseup', (e) => this.handleMouseEvent(e, 'release'));
     this.canvas.addEventListener('mousemove', (e) => this.handleMouseMoveEvent(e));
     this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-
-    // Touch events (mobile): translate to mouse events for sandbox demos.
-    // Use passive:false so preventDefault works to stop page scroll.
-    this.canvas.addEventListener('touchstart', (e) => this.handleTouchEvent(e, 'press'), { passive: false });
-    this.canvas.addEventListener('touchmove', (e) => this.handleTouchMoveEvent(e), { passive: false });
-    this.canvas.addEventListener('touchend', (e) => this.handleTouchEvent(e, 'release'), { passive: false });
-    this.canvas.addEventListener('touchcancel', (e) => this.handleTouchEvent(e, 'release'), { passive: false });
     
     // Ensure canvas can receive keyboard events
     this.canvas.tabIndex = 0;
     this.canvas.focus();
   }
-
-  // Guard against iOS mouse-compat events firing after touch.
-  private lastTouchEventAt: number = 0;
 
   private beginTrustedAudioGesture(): void {
     this.trustedAudioGestureDepth++;
@@ -7542,156 +7524,6 @@ ${exportVars}
       .catch(() => {
         // Keep retrying on future gestures until iOS accepts the unlock.
       });
-  }
-
-  private touchToPixelXY(t: Touch): { pixelX: number; pixelY: number } {
-    const rect = this.canvas.getBoundingClientRect();
-    const cssX = t.clientX - rect.left;
-    const cssY = t.clientY - rect.top;
-    const pixelX = cssX * (this.canvas.width / rect.width);
-    const pixelY = cssY * (this.canvas.height / rect.height);
-    return { pixelX, pixelY };
-  }
-
-  private handleTouchMoveEvent(e: TouchEvent): void {
-    if (this.hostAudienceView) {
-      e.preventDefault();
-      return;
-    }
-
-    const doc = this.getActiveDocument();
-    const t = (e.touches && e.touches.length) ? e.touches[0] : (e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : null);
-    if (!t) {
-      e.preventDefault();
-      return;
-    }
-
-    this.lastTouchEventAt = Date.now();
-
-    const { pixelX, pixelY } = this.touchToPixelXY(t);
-    this.input.updateMousePosition(pixelX, pixelY);
-    this.input.applySyntheticEvent({ type: 'mouse_move', x: pixelX, y: pixelY });
-
-    let dispatchedToDoc = false;
-    if (doc?.handlers?.input) {
-      const charWidth = this.canvas.width / this.width;
-      const charHeight = this.canvas.height / this.height;
-      const cellX = Math.floor(pixelX / charWidth);
-      const cellY = Math.floor(pixelY / charHeight);
-
-      const event: InputEvent = {
-        type: 'mouse_move',
-        x: pixelX,
-        y: pixelY,
-        cellX,
-        cellY,
-        mods: []
-      };
-
-      this.inputDispatchDepth++;
-      try {
-        const shouldContinue = doc.handlers.input(event);
-        if (shouldContinue === false) this.stop();
-      } catch (error) {
-        console.error('Error in input handler:', error);
-      } finally {
-        this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
-      }
-
-      dispatchedToDoc = true;
-    }
-
-    // Prevent default scrolling/zooming when the engine or doc is actively handling input.
-    if (this.worldsEnabled || dispatchedToDoc) e.preventDefault();
-  }
-
-  private handleTouchEvent(e: TouchEvent, action: 'press' | 'release'): void {
-    if (this.hostAudienceView) {
-      e.preventDefault();
-      return;
-    }
-
-    const isGesturePress = action === 'press';
-    if (isGesturePress) this.beginTrustedAudioGesture();
-
-    try {
-      const doc = this.getActiveDocument();
-
-      const t = (e.changedTouches && e.changedTouches.length)
-        ? e.changedTouches[0]
-        : ((e.touches && e.touches.length) ? e.touches[0] : null);
-      if (!t) {
-        e.preventDefault();
-        return;
-      }
-
-      this.lastTouchEventAt = Date.now();
-
-      const { pixelX, pixelY } = this.touchToPixelXY(t);
-      this.input.updateMousePosition(pixelX, pixelY);
-      this.input.applySyntheticEvent({ type: 'mouse', action, button: 'left', x: pixelX, y: pixelY });
-
-      // Built-in 3D picking/navigation (touch behaves like left click).
-      let handledBy3D = false;
-      if (action === 'press') {
-        const picked = this.pick3DAt(pixelX, pixelY);
-        if (picked && this.camera3D) {
-          handledBy3D = true;
-          const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
-          if (linkHit) {
-            this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
-            this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
-          } else {
-            const style = this.lastApplied3DCameraFocus;
-            const fill = style?.kind === 'fit' ? style.fill : 0.9;
-            this.request3DCameraFocus({
-              kind: 'fit',
-              sectionIndex: picked.layout.sectionIndex,
-              fill,
-              ...(style?.keepRotation ? { keepRotation: true } : {}),
-              ...(style?.positionOffset ? { positionOffset: style.positionOffset } : {}),
-              ...(style?.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
-            });
-          }
-        }
-      }
-
-      let dispatchedToDoc = false;
-      if (doc?.handlers?.input) {
-        const charWidth = this.canvas.width / this.width;
-        const charHeight = this.canvas.height / this.height;
-        const cellX = Math.floor(pixelX / charWidth);
-        const cellY = Math.floor(pixelY / charHeight);
-
-        const event: InputEvent = {
-          type: 'mouse',
-          action,
-          button: 'left',
-          x: pixelX,
-          y: pixelY,
-          cellX,
-          cellY,
-          mods: []
-        };
-
-        this.inputDispatchDepth++;
-        try {
-          const shouldContinue = doc.handlers.input(event);
-          if (shouldContinue === false) this.stop();
-        } catch (error) {
-          console.error('Error in input handler:', error);
-        } finally {
-          this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
-        }
-
-        dispatchedToDoc = true;
-      }
-
-      // Match mouse handler: only prevent defaults when the engine/doc handled it.
-      if (handledBy3D || dispatchedToDoc || this.worldsEnabled) e.preventDefault();
-    } finally {
-      if (isGesturePress) this.endTrustedAudioGesture();
-    }
   }
 
   private isTruthyDropTarget(value: any): boolean {
@@ -7929,12 +7761,6 @@ ${exportVars}
    * Handle mouse button events for on:input
    */
   private handleMouseEvent(e: MouseEvent, action: 'press' | 'release'): void {
-    // Mobile browsers may emit mouse-compat events after touch.
-    if (Date.now() - this.lastTouchEventAt < 750) {
-      e.preventDefault();
-      return;
-    }
-
     if (this.hostAudienceView) {
       // Audience/client view: display-only.
       e.preventDefault();
@@ -8864,12 +8690,6 @@ ${exportVars}
    * Handle mouse move events for on:input
    */
   private handleMouseMoveEvent(e: MouseEvent): void {
-    // Mobile browsers may emit mouse-compat events after touch.
-    if (Date.now() - this.lastTouchEventAt < 750) {
-      e.preventDefault();
-      return;
-    }
-
     if (this.hostAudienceView) return;
 
     const doc = this.getActiveDocument();
