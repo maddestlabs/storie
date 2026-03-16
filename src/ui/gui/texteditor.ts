@@ -1,6 +1,9 @@
 import { BaseWidget, type WidgetConfig } from '../core/base-widget.js';
 import type { Color } from '../../types.js';
 import type { GUITextAlign } from './textfield.js';
+import { createDefaultGUITokens, type GUITypographyRole } from './tokens.js';
+
+const defaultTokens = createDefaultGUITokens();
 
 export interface GUITextEditorConfig extends WidgetConfig {
   value?: string;
@@ -13,6 +16,11 @@ export interface GUITextEditorConfig extends WidgetConfig {
     focusBorderColor?: Color;
     drawBackground?: boolean;
     drawBorder?: boolean;
+    paddingX?: number;
+    paddingY?: number;
+    borderWidth?: number;
+    focusBorderWidth?: number;
+    typographyRole?: GUITypographyRole;
   };
 }
 
@@ -38,6 +46,11 @@ export class GUITextEditor extends BaseWidget {
     focusBorderColor: Color;
     drawBackground: boolean;
     drawBorder: boolean;
+    paddingX: number;
+    paddingY: number;
+    borderWidth: number;
+    focusBorderWidth: number;
+    typographyRole: GUITypographyRole;
   };
 
   private lines: string[];
@@ -69,7 +82,12 @@ export class GUITextEditor extends BaseWidget {
       borderColor: (config.textEditorStyle?.borderColor ?? { r: 90, g: 90, b: 90 }) as Color,
       focusBorderColor: (config.textEditorStyle?.focusBorderColor ?? { r: 120, g: 170, b: 220 }) as Color,
       drawBackground: config.textEditorStyle?.drawBackground ?? true,
-      drawBorder: config.textEditorStyle?.drawBorder ?? true
+      drawBorder: config.textEditorStyle?.drawBorder ?? true,
+      paddingX: config.textEditorStyle?.paddingX ?? defaultTokens.controls.input.paddingX,
+      paddingY: config.textEditorStyle?.paddingY ?? defaultTokens.controls.input.paddingY,
+      borderWidth: config.textEditorStyle?.borderWidth ?? defaultTokens.controls.input.borderWidth,
+      focusBorderWidth: config.textEditorStyle?.focusBorderWidth ?? defaultTokens.controls.input.focusBorderWidth,
+      typographyRole: config.textEditorStyle?.typographyRole ?? 'body'
     };
 
     this.on('click', (ev) => {
@@ -77,8 +95,8 @@ export class GUITextEditor extends BaseWidget {
       const clickY = typeof ev.data?.y === 'number' ? (ev.data.y as number) : null;
       if (clickX === null || clickY === null) return;
 
-      const padX = 8;
-      const padY = 8;
+      const padX = this.textEditorStyle.paddingX;
+      const padY = this.textEditorStyle.paddingY;
       const innerX = this.bounds.x + padX;
       const innerY = this.bounds.y + padY;
       const innerW = Math.max(0, this.bounds.width - padX * 2);
@@ -367,5 +385,16 @@ export class GUITextEditor extends BaseWidget {
 
   render(): void {
     // No-op: GUI widgets are rendered by GUISystem.render().
+  }
+
+  protected getPreferredSize(): { width: number; height: number } {
+    const lines = this.lines.length || 1;
+    const maxLine = this.getMaxLineLength();
+    const contentWidth = maxLine * 10 + this.textEditorStyle.paddingX * 2;
+    const contentHeight = lines * 18 + this.textEditorStyle.paddingY * 2;
+    return {
+      width: Math.max(this.bounds.width, contentWidth, 160),
+      height: Math.max(this.bounds.height, contentHeight, defaultTokens.controls.input.minHeight)
+    };
   }
 }

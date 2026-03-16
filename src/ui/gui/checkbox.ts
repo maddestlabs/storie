@@ -1,5 +1,8 @@
 import { BaseWidget, type WidgetConfig } from '../core/base-widget.js';
 import type { Color } from '../../types.js';
+import { createDefaultGUITokens, type GUITypographyRole } from './tokens.js';
+
+const defaultTokens = createDefaultGUITokens();
 
 export interface GUICheckboxConfig extends WidgetConfig {
   label: string;
@@ -9,6 +12,10 @@ export interface GUICheckboxConfig extends WidgetConfig {
     bg?: Color;
     checkColor?: Color;
     hoverBg?: Color;
+    boxSize?: number;
+    labelGap?: number;
+    borderWidth?: number;
+    typographyRole?: GUITypographyRole;
   };
 }
 
@@ -24,6 +31,10 @@ export class GUICheckbox extends BaseWidget {
     bg: Color;
     checkColor: Color;
     hoverBg: Color;
+    boxSize: number;
+    labelGap: number;
+    borderWidth: number;
+    typographyRole: GUITypographyRole;
   };
   
   constructor(config: GUICheckboxConfig) {
@@ -35,7 +46,11 @@ export class GUICheckbox extends BaseWidget {
       fg: (config.checkboxStyle?.fg ?? { r: 220, g: 220, b: 220 }) as Color,
       bg: (config.checkboxStyle?.bg ?? { r: 40, g: 40, b: 40 }) as Color,
       checkColor: (config.checkboxStyle?.checkColor ?? { r: 0, g: 200, b: 100 }) as Color,
-      hoverBg: (config.checkboxStyle?.hoverBg ?? { r: 60, g: 60, b: 60 }) as Color
+      hoverBg: (config.checkboxStyle?.hoverBg ?? { r: 60, g: 60, b: 60 }) as Color,
+      boxSize: config.checkboxStyle?.boxSize ?? defaultTokens.controls.checkbox.boxSize,
+      labelGap: config.checkboxStyle?.labelGap ?? defaultTokens.controls.checkbox.labelGap,
+      borderWidth: config.checkboxStyle?.borderWidth ?? defaultTokens.controls.checkbox.borderWidth,
+      typographyRole: config.checkboxStyle?.typographyRole ?? 'body'
     };
     
     // Listen for click events
@@ -64,5 +79,14 @@ export class GUICheckbox extends BaseWidget {
    */
   render(): void {
     // No-op: GUI widgets are rendered by GUISystem.render()
+  }
+
+  protected getPreferredSize(): { width: number; height: number } {
+    const labelWidth = this.label.length * 10;
+    const contentWidth = this.checkboxStyle.boxSize + this.checkboxStyle.labelGap + labelWidth;
+    return {
+      width: Math.max(this.bounds.width, contentWidth),
+      height: Math.max(this.bounds.height, this.checkboxStyle.boxSize, defaultTokens.controls.checkbox.minHeight)
+    };
   }
 }

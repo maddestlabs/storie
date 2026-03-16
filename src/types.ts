@@ -9,6 +9,13 @@
  */
 export type Color = number;
 
+export interface SafeAreaInsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
 /**
  * Color utility functions for working with packed integers
  */

@@ -166,9 +166,20 @@ The GUI system provides retained-mode widgets rendered using WebGPU primitives (
 // Initialize the GUI system (call in on:init)
 gui.init();
 
+// Optional: tune shared spacing / typography / control-size defaults
+gui.setTokens({
+  spacing: { sm: 10, md: 14, lg: 20 },
+  controls: {
+    button: { minHeight: 48 },
+    input: { minHeight: 44 }
+  }
+});
+
+const tokens = gui.getTokens();
+
 // Create widgets (bounds in CSS pixels)
 const button = gui.createButton({
-  bounds: { x: 20, y: 80, width: 260, height: 50 },
+  bounds: { x: tokens.spacing.lg, y: 80, width: 260, height: tokens.controls.button.minHeight },
   label: 'Click Me'
 });
 
@@ -189,9 +200,175 @@ const slider = gui.createSlider({
 const label = gui.createLabel({
   bounds: { x: 20, y: 30, width: 600, height: 30 },
   text: 'GUI Demo',
-  align: 'center'
+  align: 'center',
+  labelStyle: { typographyRole: 'title' }
 });
 ```
+
+### GUI Tokens
+
+The retained GUI now supports a small shared token layer for authoring consistent UI:
+
+- `gui.getTokens()` returns the active spacing, typography, and control-size defaults.
+- `gui.setTokens(patch)` updates those defaults for subsequently created widgets and layout helpers.
+
+Current token groups:
+
+- `spacing`: `xs`, `sm`, `md`, `lg`, `xl`
+- `typography`: `caption`, `body`, `button`, `title`, `input`
+- `controls.button`: minimum height, padding, border widths
+- `controls.input`: minimum height, padding, border widths
+- `controls.checkbox`: box size, gap, minimum height
+- `controls.slider`: track/knob sizing, gaps, minimum height
+
+This is the first step toward a fuller design system. Layout is still mostly absolute today, but tokens let stories and widgets share the same sizing language instead of scattering magic numbers.
+
+### GUI Layout Containers
+
+Retained GUI also supports lightweight layout containers for mutating widget bounds in groups:
+
+```javascript
+const panel = gui.createContainer({
+  bounds: { x: 20, y: 20, width: 760, height: 560 },
+  mode: 'stack',
+  maxWidth: 620,
+  padding: tokens.spacing.lg,
+  gap: tokens.spacing.sm,
+  alignX: 'stretch'
+});
+
+panel.add(title).add(subtitle).add(input);
+panel.layout();
+
+const keypad = gui.createContainer({
+  bounds: { x: 20, y: 260, width: 760, height: 260 },
+  mode: 'grid',
+  maxWidth: 620,
+  columns: 4,
+  columnGap: tokens.spacing.md,
+  rowGap: tokens.spacing.md,
+  alignX: 'stretch'
+});
+
+keypad.addMany(buttons);
+keypad.layout();
+
+const viewport = { x: 0, y: 0, width: ui.metrics.canvasWidth, height: ui.metrics.canvasHeight };
+panel.fitToViewport(viewport, {
+  insetX: tokens.spacing.lg,
+  insetY: tokens.spacing.lg,
+  maxWidth: 620,
+  anchorX: 'center'
+});
+
+// Containers can also be nested.
+const root = gui.createContainer({
+  bounds: { x: 0, y: 0, width: 620, height: 1 },
+  mode: 'stack',
+  gap: tokens.spacing.lg,
+  alignX: 'stretch',
+  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content' }
+});
+
+root.add(panel).add(keypad);
+root.fitToViewport(viewport, {
+  inset: tokens.spacing.lg,
+  maxWidth: 620,
+  anchorX: 'center'
+});
+```
+
+For the common case of a top-level centered panel, use `gui.createResponsivePanel(...)`:
+
+```javascript
+const responsive = gui.createResponsivePanel({
+  bounds: { x: 0, y: 0, width: 620, height: 1 },
+  gap: tokens.spacing.lg,
+  maxWidth: 620,
+  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content' }
+});
+
+responsive.add(panel).add(keypad).add(footer);
+
+const viewport = gui.getViewportRect();
+responsive.fitToViewport(viewport, {
+  inset: tokens.spacing.lg,
+  safeArea: true,
+  maxWidth: 620,
+  anchorX: 'center',
+  anchorY: 'start'
+});
+```
+
+Breakpoint helpers are also available for responsive decisions:
+
+```javascript
+const viewport = gui.getViewportRect();
+const info = gui.getResponsiveInfo({ width: viewport.width, height: viewport.height });
+if (info.breakpoint === 'xs' || info.breakpoint === 'sm') {
+  // compact layout rules
+}
+```
+
+Safe-area helpers are available when the host/browser reports CSS safe-area env values:
+
+```javascript
+const viewport = gui.getViewportRect();
+const safeArea = gui.getSafeAreaInsets();
+
+const info = gui.getResponsiveInfo({ width: viewport.width, height: viewport.height });
+// info.safeAreaInsets, info.usableWidth, info.usableHeight
+```
+
+Supported modes today:
+
+- `stack`: vertical flow
+- `row`: horizontal flow
+- `grid`: fixed-column grid
+
+Children can also declare size policy through `layout` hints:
+
+```javascript
+const title = gui.createLabel({
+  bounds: { x: 0, y: 0, width: 1, height: 1 },
+  text: 'Settings',
+  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content' },
+  labelStyle: { typographyRole: 'title' }
+});
+
+const input = gui.createTextField({
+  bounds: { x: 0, y: 0, width: 1, height: 1 },
+  value: '',
+  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content' }
+});
+
+const button = gui.createButton({
+  bounds: { x: 0, y: 0, width: 1, height: 1 },
+  label: 'Apply',
+  layout: { widthPolicy: 'fill', heightPolicy: 'fill' }
+});
+```
+
+Policies:
+
+- `fixed`: use preferred/min size from the widget
+- `fit-content`: size to the widget's intrinsic content measurement
+- `fill`: take available space on that axis within the container
+
+Useful options:
+
+- `padding`
+- `gap`, `rowGap`, `columnGap`
+- `alignX`, `alignY`
+- `columns` for grids
+- `maxWidth` for centered panels within larger bounds
+- `measureLayout()` to get the container's preferred size
+- `fitToViewport(...)` to place the container responsively within screen bounds
+- containers can be nested to build larger responsive panels from smaller sublayouts
+- `gui.createResponsivePanel(...)` for the common “centered responsive root panel” pattern
+- `gui.getBreakpoint(...)` / `gui.getResponsiveInfo(...)` for viewport-driven layout rules
+- `gui.getViewportRect()` for CSS-space viewport bounds in the current GUI coordinate space
+- `gui.getSafeAreaInsets()` for host/browser safe-area insets
 
 ### Input Handling
 

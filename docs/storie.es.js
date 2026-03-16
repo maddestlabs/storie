@@ -11349,6 +11349,22 @@ const THEMES = {
     // Mid gray (tertiary)
   },
   neotopia: {
+    bg: 151587327,
+    // Dark gray
+    bgAlt: 154417919,
+    // Lighter teal
+    fg: 3772834047,
+    // Bright gray
+    fgAlt: 2425393407,
+    // Medium gray
+    accent1: 14257919,
+    // Aquamarine
+    accent2: 4278190335,
+    // Bold red
+    accent3: 4278218495
+    // Pink
+  },
+  aquatopia: {
     bg: 1118719,
     // Deep teal
     bgAlt: 154417919,
@@ -12248,12 +12264,14 @@ class BaseWidget {
     __publicField(this, "group");
     __publicField(this, "state");
     __publicField(this, "focusable");
+    __publicField(this, "layout");
     __publicField(this, "eventListeners");
     this.id = config.id ?? `widget_${nextAutoId++}`;
     this.bounds = { ...config.bounds };
     this.style = config.style || {};
     this.group = config.group || 0;
     this.focusable = config.focusable ?? true;
+    this.layout = { ...config.layout || {} };
     this.state = {
       visible: config.visible ?? true,
       enabled: config.enabled ?? true,
@@ -12349,6 +12367,37 @@ class BaseWidget {
    */
   setBounds(bounds) {
     this.bounds = { ...this.bounds, ...bounds };
+  }
+  getLayoutSize() {
+    const preferred = this.getPreferredSize();
+    const min = this.getMinSize(preferred);
+    return {
+      minWidth: min.width,
+      minHeight: min.height,
+      preferredWidth: Math.max(min.width, preferred.width),
+      preferredHeight: Math.max(min.height, preferred.height),
+      widthPolicy: this.getWidthPolicy(),
+      heightPolicy: this.getHeightPolicy()
+    };
+  }
+  getWidthPolicy() {
+    return this.layout.widthPolicy ?? "fixed";
+  }
+  getHeightPolicy() {
+    return this.layout.heightPolicy ?? "fixed";
+  }
+  getPreferredSize() {
+    return {
+      width: Number.isFinite(this.layout.preferredWidth) ? Number(this.layout.preferredWidth) : this.bounds.width,
+      height: Number.isFinite(this.layout.preferredHeight) ? Number(this.layout.preferredHeight) : this.bounds.height
+    };
+  }
+  getMinSize(preferred) {
+    const base = preferred || this.getPreferredSize();
+    return {
+      width: Number.isFinite(this.layout.minWidth) ? Number(this.layout.minWidth) : Math.max(0, base.width),
+      height: Number.isFinite(this.layout.minHeight) ? Number(this.layout.minHeight) : Math.max(0, base.height)
+    };
   }
 }
 const FALLBACKS = {
@@ -13558,9 +13607,241 @@ function createTUIAPI(renderer, getCellBuffer, getStyle, isTrustedUserInput) {
     }
   };
 }
+function cloneBounds(bounds) {
+  return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+}
+function finiteOr(value, fallback) {
+  return Number.isFinite(value) ? Number(value) : fallback;
+}
+function positiveOr(value, fallback) {
+  const next = finiteOr(value, fallback);
+  return next > 0 ? next : fallback;
+}
+function createDefaultGUITokens() {
+  return {
+    spacing: {
+      xs: 4,
+      sm: 8,
+      md: 12,
+      lg: 16,
+      xl: 24
+    },
+    typography: {
+      caption: { role: "caption", lineHeight: 1, minHeight: 18, letterSpacing: 0 },
+      body: { role: "body", lineHeight: 1.15, minHeight: 22, letterSpacing: 0 },
+      button: { role: "button", lineHeight: 1.1, minHeight: 22, letterSpacing: 0 },
+      title: { role: "title", lineHeight: 1.25, minHeight: 28, letterSpacing: 0 },
+      input: { role: "input", lineHeight: 1.15, minHeight: 22, letterSpacing: 0 }
+    },
+    controls: {
+      button: {
+        minHeight: 44,
+        paddingX: 12,
+        paddingY: 8,
+        borderWidth: 2,
+        focusBorderWidth: 3
+      },
+      input: {
+        minHeight: 44,
+        paddingX: 8,
+        paddingY: 6,
+        borderWidth: 2,
+        focusBorderWidth: 3
+      },
+      checkbox: {
+        minHeight: 24,
+        boxSize: 18,
+        labelGap: 8,
+        borderWidth: 1
+      },
+      slider: {
+        minHeight: 36,
+        labelGap: 4,
+        trackHeight: 8,
+        knobWidth: 16,
+        knobHeight: 24,
+        valueGap: 8
+      }
+    }
+  };
+}
+function cloneGUITokens(tokens) {
+  return {
+    spacing: { ...tokens.spacing },
+    typography: {
+      caption: { ...tokens.typography.caption },
+      body: { ...tokens.typography.body },
+      button: { ...tokens.typography.button },
+      title: { ...tokens.typography.title },
+      input: { ...tokens.typography.input }
+    },
+    controls: {
+      button: { ...tokens.controls.button },
+      input: { ...tokens.controls.input },
+      checkbox: { ...tokens.controls.checkbox },
+      slider: { ...tokens.controls.slider }
+    }
+  };
+}
+function mergeGUITokens(base, patch) {
+  var _a, _b, _c, _d;
+  const next = cloneGUITokens(base);
+  if (!patch) return next;
+  if (patch.spacing) {
+    next.spacing.xs = positiveOr(patch.spacing.xs, next.spacing.xs);
+    next.spacing.sm = positiveOr(patch.spacing.sm, next.spacing.sm);
+    next.spacing.md = positiveOr(patch.spacing.md, next.spacing.md);
+    next.spacing.lg = positiveOr(patch.spacing.lg, next.spacing.lg);
+    next.spacing.xl = positiveOr(patch.spacing.xl, next.spacing.xl);
+  }
+  if (patch.typography) {
+    Object.keys(next.typography).forEach((role) => {
+      var _a2;
+      const src = (_a2 = patch.typography) == null ? void 0 : _a2[role];
+      if (!src) return;
+      next.typography[role] = {
+        role,
+        lineHeight: positiveOr(src.lineHeight, next.typography[role].lineHeight),
+        minHeight: positiveOr(src.minHeight, next.typography[role].minHeight),
+        letterSpacing: finiteOr(src.letterSpacing, next.typography[role].letterSpacing)
+      };
+    });
+  }
+  if ((_a = patch.controls) == null ? void 0 : _a.button) {
+    const src = patch.controls.button;
+    next.controls.button = {
+      minHeight: positiveOr(src.minHeight, next.controls.button.minHeight),
+      paddingX: positiveOr(src.paddingX, next.controls.button.paddingX),
+      paddingY: positiveOr(src.paddingY, next.controls.button.paddingY),
+      borderWidth: positiveOr(src.borderWidth, next.controls.button.borderWidth),
+      focusBorderWidth: positiveOr(src.focusBorderWidth, next.controls.button.focusBorderWidth)
+    };
+  }
+  if ((_b = patch.controls) == null ? void 0 : _b.input) {
+    const src = patch.controls.input;
+    next.controls.input = {
+      minHeight: positiveOr(src.minHeight, next.controls.input.minHeight),
+      paddingX: positiveOr(src.paddingX, next.controls.input.paddingX),
+      paddingY: positiveOr(src.paddingY, next.controls.input.paddingY),
+      borderWidth: positiveOr(src.borderWidth, next.controls.input.borderWidth),
+      focusBorderWidth: positiveOr(src.focusBorderWidth, next.controls.input.focusBorderWidth)
+    };
+  }
+  if ((_c = patch.controls) == null ? void 0 : _c.checkbox) {
+    const src = patch.controls.checkbox;
+    next.controls.checkbox = {
+      minHeight: positiveOr(src.minHeight, next.controls.checkbox.minHeight),
+      boxSize: positiveOr(src.boxSize, next.controls.checkbox.boxSize),
+      labelGap: positiveOr(src.labelGap, next.controls.checkbox.labelGap),
+      borderWidth: positiveOr(src.borderWidth, next.controls.checkbox.borderWidth)
+    };
+  }
+  if ((_d = patch.controls) == null ? void 0 : _d.slider) {
+    const src = patch.controls.slider;
+    next.controls.slider = {
+      minHeight: positiveOr(src.minHeight, next.controls.slider.minHeight),
+      labelGap: positiveOr(src.labelGap, next.controls.slider.labelGap),
+      trackHeight: positiveOr(src.trackHeight, next.controls.slider.trackHeight),
+      knobWidth: positiveOr(src.knobWidth, next.controls.slider.knobWidth),
+      knobHeight: positiveOr(src.knobHeight, next.controls.slider.knobHeight),
+      valueGap: positiveOr(src.valueGap, next.controls.slider.valueGap)
+    };
+  }
+  return next;
+}
+function withMinHeight(bounds, minHeight) {
+  const next = cloneBounds(bounds);
+  next.height = Math.max(next.height, minHeight);
+  return next;
+}
+function mergeStyle(style, patch) {
+  return { ...style || {}, ...patch };
+}
+function applyButtonTokens(config, tokens) {
+  return {
+    ...config,
+    bounds: withMinHeight(config.bounds, tokens.controls.button.minHeight),
+    buttonStyle: mergeStyle(config.buttonStyle, {
+      paddingX: tokens.controls.button.paddingX,
+      paddingY: tokens.controls.button.paddingY,
+      borderWidth: tokens.controls.button.borderWidth,
+      focusBorderWidth: tokens.controls.button.focusBorderWidth,
+      typographyRole: "button"
+    })
+  };
+}
+function applyLabelTokens(config, tokens) {
+  return {
+    ...config,
+    bounds: withMinHeight(config.bounds, tokens.typography.body.minHeight),
+    labelStyle: mergeStyle(config.labelStyle, {
+      typographyRole: "body"
+    })
+  };
+}
+function applyTextFieldTokens(config, tokens) {
+  return {
+    ...config,
+    bounds: withMinHeight(config.bounds, tokens.controls.input.minHeight),
+    textFieldStyle: mergeStyle(config.textFieldStyle, {
+      paddingX: tokens.controls.input.paddingX,
+      paddingY: tokens.controls.input.paddingY,
+      borderWidth: tokens.controls.input.borderWidth,
+      focusBorderWidth: tokens.controls.input.focusBorderWidth,
+      typographyRole: "input"
+    })
+  };
+}
+function applyTextEditorTokens(config, tokens) {
+  return {
+    ...config,
+    bounds: withMinHeight(config.bounds, tokens.controls.input.minHeight),
+    textEditorStyle: mergeStyle(config.textEditorStyle, {
+      paddingX: tokens.controls.input.paddingX,
+      paddingY: tokens.controls.input.paddingY,
+      borderWidth: tokens.controls.input.borderWidth,
+      focusBorderWidth: tokens.controls.input.focusBorderWidth,
+      typographyRole: "body"
+    })
+  };
+}
+function applyCheckboxTokens(config, tokens) {
+  return {
+    ...config,
+    bounds: withMinHeight(config.bounds, tokens.controls.checkbox.minHeight),
+    checkboxStyle: mergeStyle(config.checkboxStyle, {
+      boxSize: tokens.controls.checkbox.boxSize,
+      labelGap: tokens.controls.checkbox.labelGap,
+      borderWidth: tokens.controls.checkbox.borderWidth,
+      typographyRole: "body"
+    })
+  };
+}
+function applySliderTokens(config, tokens) {
+  return {
+    ...config,
+    bounds: withMinHeight(config.bounds, tokens.controls.slider.minHeight),
+    sliderStyle: mergeStyle(config.sliderStyle, {
+      labelGap: tokens.controls.slider.labelGap,
+      trackHeight: tokens.controls.slider.trackHeight,
+      knobWidth: tokens.controls.slider.knobWidth,
+      knobHeight: tokens.controls.slider.knobHeight,
+      valueGap: tokens.controls.slider.valueGap,
+      typographyRole: "body"
+    })
+  };
+}
+function applyContainerTokens(config, tokens) {
+  return {
+    ...config,
+    padding: positiveOr(config.padding, tokens.spacing.md),
+    gap: positiveOr(config.gap, tokens.spacing.sm)
+  };
+}
+const defaultTokens$5 = createDefaultGUITokens();
 class GUIButton extends BaseWidget {
   constructor(config) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     super(config);
     __publicField(this, "label");
     __publicField(this, "buttonStyle");
@@ -13571,7 +13852,12 @@ class GUIButton extends BaseWidget {
       bg: ((_b = config.buttonStyle) == null ? void 0 : _b.bg) ?? { r: 60, g: 60, b: 60 },
       borderColor: ((_c = config.buttonStyle) == null ? void 0 : _c.borderColor) ?? { r: 100, g: 100, b: 100 },
       hoverBg: ((_d = config.buttonStyle) == null ? void 0 : _d.hoverBg) ?? { r: 80, g: 80, b: 80 },
-      activeBg: ((_e = config.buttonStyle) == null ? void 0 : _e.activeBg) ?? { r: 40, g: 120, b: 180 }
+      activeBg: ((_e = config.buttonStyle) == null ? void 0 : _e.activeBg) ?? { r: 40, g: 120, b: 180 },
+      paddingX: ((_f = config.buttonStyle) == null ? void 0 : _f.paddingX) ?? defaultTokens$5.controls.button.paddingX,
+      paddingY: ((_g = config.buttonStyle) == null ? void 0 : _g.paddingY) ?? defaultTokens$5.controls.button.paddingY,
+      borderWidth: ((_h = config.buttonStyle) == null ? void 0 : _h.borderWidth) ?? defaultTokens$5.controls.button.borderWidth,
+      focusBorderWidth: ((_i = config.buttonStyle) == null ? void 0 : _i.focusBorderWidth) ?? defaultTokens$5.controls.button.focusBorderWidth,
+      typographyRole: ((_j = config.buttonStyle) == null ? void 0 : _j.typographyRole) ?? "button"
     };
     this.on("click", () => {
       this.clickedThisFrame = true;
@@ -13593,10 +13879,20 @@ class GUIButton extends BaseWidget {
    */
   render() {
   }
+  getPreferredSize() {
+    const labelWidth = this.label.length * 10;
+    const contentWidth = labelWidth + this.buttonStyle.paddingX * 2;
+    const contentHeight = defaultTokens$5.typography[this.buttonStyle.typographyRole].minHeight + this.buttonStyle.paddingY * 2;
+    return {
+      width: Math.max(this.bounds.width, contentWidth),
+      height: Math.max(this.bounds.height, contentHeight, defaultTokens$5.controls.button.minHeight)
+    };
+  }
 }
+const defaultTokens$4 = createDefaultGUITokens();
 class GUILabel extends BaseWidget {
   constructor(config) {
-    var _a, _b;
+    var _a, _b, _c;
     super(config);
     __publicField(this, "text");
     __publicField(this, "align");
@@ -13605,8 +13901,8 @@ class GUILabel extends BaseWidget {
     this.align = config.align ?? "left";
     this.labelStyle = {
       fg: ((_a = config.labelStyle) == null ? void 0 : _a.fg) ?? { r: 220, g: 220, b: 220 },
-      bg: ((_b = config.labelStyle) == null ? void 0 : _b.bg) ?? { r: 0, g: 0, b: 0, a: 0 }
-      // Transparent by default
+      bg: ((_b = config.labelStyle) == null ? void 0 : _b.bg) ?? { r: 0, g: 0, b: 0, a: 0 },
+      typographyRole: ((_c = config.labelStyle) == null ? void 0 : _c.typographyRole) ?? defaultTokens$4.typography.body.role
     };
   }
   setText(text) {
@@ -13617,10 +13913,18 @@ class GUILabel extends BaseWidget {
    */
   render() {
   }
+  getPreferredSize() {
+    const type = defaultTokens$4.typography[this.labelStyle.typographyRole];
+    return {
+      width: Math.max(this.bounds.width, this.text.length * 10),
+      height: Math.max(this.bounds.height, type.minHeight)
+    };
+  }
 }
+const defaultTokens$3 = createDefaultGUITokens();
 class GUICheckbox extends BaseWidget {
   constructor(config) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     super(config);
     __publicField(this, "label");
     __publicField(this, "checked");
@@ -13632,7 +13936,11 @@ class GUICheckbox extends BaseWidget {
       fg: ((_a = config.checkboxStyle) == null ? void 0 : _a.fg) ?? { r: 220, g: 220, b: 220 },
       bg: ((_b = config.checkboxStyle) == null ? void 0 : _b.bg) ?? { r: 40, g: 40, b: 40 },
       checkColor: ((_c = config.checkboxStyle) == null ? void 0 : _c.checkColor) ?? { r: 0, g: 200, b: 100 },
-      hoverBg: ((_d = config.checkboxStyle) == null ? void 0 : _d.hoverBg) ?? { r: 60, g: 60, b: 60 }
+      hoverBg: ((_d = config.checkboxStyle) == null ? void 0 : _d.hoverBg) ?? { r: 60, g: 60, b: 60 },
+      boxSize: ((_e = config.checkboxStyle) == null ? void 0 : _e.boxSize) ?? defaultTokens$3.controls.checkbox.boxSize,
+      labelGap: ((_f = config.checkboxStyle) == null ? void 0 : _f.labelGap) ?? defaultTokens$3.controls.checkbox.labelGap,
+      borderWidth: ((_g = config.checkboxStyle) == null ? void 0 : _g.borderWidth) ?? defaultTokens$3.controls.checkbox.borderWidth,
+      typographyRole: ((_h = config.checkboxStyle) == null ? void 0 : _h.typographyRole) ?? "body"
     };
     this.on("click", () => {
       this.checked = !this.checked;
@@ -13655,10 +13963,19 @@ class GUICheckbox extends BaseWidget {
    */
   render() {
   }
+  getPreferredSize() {
+    const labelWidth = this.label.length * 10;
+    const contentWidth = this.checkboxStyle.boxSize + this.checkboxStyle.labelGap + labelWidth;
+    return {
+      width: Math.max(this.bounds.width, contentWidth),
+      height: Math.max(this.bounds.height, this.checkboxStyle.boxSize, defaultTokens$3.controls.checkbox.minHeight)
+    };
+  }
 }
+const defaultTokens$2 = createDefaultGUITokens();
 class GUISlider extends BaseWidget {
   constructor(config) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     super(config);
     __publicField(this, "label");
     __publicField(this, "min");
@@ -13677,21 +13994,27 @@ class GUISlider extends BaseWidget {
       fg: ((_a = config.sliderStyle) == null ? void 0 : _a.fg) ?? { r: 220, g: 220, b: 220 },
       trackColor: ((_b = config.sliderStyle) == null ? void 0 : _b.trackColor) ?? { r: 60, g: 60, b: 60 },
       knobColor: ((_c = config.sliderStyle) == null ? void 0 : _c.knobColor) ?? { r: 100, g: 150, b: 200 },
-      knobHoverColor: ((_d = config.sliderStyle) == null ? void 0 : _d.knobHoverColor) ?? { r: 120, g: 170, b: 220 }
+      knobHoverColor: ((_d = config.sliderStyle) == null ? void 0 : _d.knobHoverColor) ?? { r: 120, g: 170, b: 220 },
+      labelGap: ((_e = config.sliderStyle) == null ? void 0 : _e.labelGap) ?? defaultTokens$2.controls.slider.labelGap,
+      trackHeight: ((_f = config.sliderStyle) == null ? void 0 : _f.trackHeight) ?? defaultTokens$2.controls.slider.trackHeight,
+      knobWidth: ((_g = config.sliderStyle) == null ? void 0 : _g.knobWidth) ?? defaultTokens$2.controls.slider.knobWidth,
+      knobHeight: ((_h = config.sliderStyle) == null ? void 0 : _h.knobHeight) ?? defaultTokens$2.controls.slider.knobHeight,
+      valueGap: ((_i = config.sliderStyle) == null ? void 0 : _i.valueGap) ?? defaultTokens$2.controls.slider.valueGap,
+      typographyRole: ((_j = config.sliderStyle) == null ? void 0 : _j.typographyRole) ?? "body"
     };
   }
   handleDrag(mouseX, mouseY, mouseDown, charHeight = 0) {
     if (!this.state.visible) return;
     const { x, y, width, height } = this.bounds;
-    const labelH = this.label ? charHeight : 0;
+    const labelH = this.label ? charHeight + this.sliderStyle.labelGap : 0;
     const trackTopY = y + labelH;
     const trackAreaH = Math.max(0, height - labelH);
-    const knobWidth = 16;
+    const knobWidth = this.sliderStyle.knobWidth;
     const range = this.max - this.min;
     const ratio = range > 0 ? (this.value - this.min) / range : 0;
     const knobX = x + ratio * (width - knobWidth);
     const knobY = trackTopY;
-    const knobHeight = trackAreaH;
+    const knobHeight = Math.min(trackAreaH, this.sliderStyle.knobHeight);
     const overKnob = mouseX >= knobX && mouseX < knobX + knobWidth && mouseY >= knobY && mouseY < knobY + knobHeight;
     const overTrack = mouseX >= x && mouseX < x + width && mouseY >= trackTopY && mouseY < trackTopY + trackAreaH;
     if (mouseDown && (overKnob || overTrack) && !this.dragging) {
@@ -13727,10 +14050,20 @@ class GUISlider extends BaseWidget {
    */
   render() {
   }
+  getPreferredSize() {
+    const labelWidth = this.label.length * 10;
+    const trackWidth = Math.max(120, this.bounds.width);
+    const contentHeight = this.label ? 18 + this.sliderStyle.labelGap + this.sliderStyle.knobHeight : this.sliderStyle.knobHeight;
+    return {
+      width: Math.max(this.bounds.width, labelWidth + trackWidth + this.sliderStyle.valueGap + 32),
+      height: Math.max(this.bounds.height, contentHeight, defaultTokens$2.controls.slider.minHeight)
+    };
+  }
 }
+const defaultTokens$1 = createDefaultGUITokens();
 class GUITextField extends BaseWidget {
   constructor(config) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     super(config);
     __publicField(this, "placeholder");
     __publicField(this, "align");
@@ -13751,13 +14084,18 @@ class GUITextField extends BaseWidget {
       borderColor: ((_c = config.textFieldStyle) == null ? void 0 : _c.borderColor) ?? { r: 90, g: 90, b: 90 },
       focusBorderColor: ((_d = config.textFieldStyle) == null ? void 0 : _d.focusBorderColor) ?? { r: 120, g: 170, b: 220 },
       drawBackground: ((_e = config.textFieldStyle) == null ? void 0 : _e.drawBackground) ?? true,
-      drawBorder: ((_f = config.textFieldStyle) == null ? void 0 : _f.drawBorder) ?? true
+      drawBorder: ((_f = config.textFieldStyle) == null ? void 0 : _f.drawBorder) ?? true,
+      paddingX: ((_g = config.textFieldStyle) == null ? void 0 : _g.paddingX) ?? defaultTokens$1.controls.input.paddingX,
+      paddingY: ((_h = config.textFieldStyle) == null ? void 0 : _h.paddingY) ?? defaultTokens$1.controls.input.paddingY,
+      borderWidth: ((_i = config.textFieldStyle) == null ? void 0 : _i.borderWidth) ?? defaultTokens$1.controls.input.borderWidth,
+      focusBorderWidth: ((_j = config.textFieldStyle) == null ? void 0 : _j.focusBorderWidth) ?? defaultTokens$1.controls.input.focusBorderWidth,
+      typographyRole: ((_k = config.textFieldStyle) == null ? void 0 : _k.typographyRole) ?? "input"
     };
     this.on("click", (ev) => {
       var _a2;
       const clickX = typeof ((_a2 = ev.data) == null ? void 0 : _a2.x) === "number" ? ev.data.x : null;
       if (clickX === null) return;
-      const padX = 8;
+      const padX = this.textFieldStyle.paddingX;
       const innerX = this.bounds.x + padX;
       const innerW = Math.max(0, this.bounds.width - padX * 2);
       if (innerW <= 0) return;
@@ -13868,7 +14206,17 @@ class GUITextField extends BaseWidget {
   }
   render() {
   }
+  getPreferredSize() {
+    const sample = this.value || this.placeholder || "";
+    const contentWidth = sample.length * 10 + this.textFieldStyle.paddingX * 2;
+    const contentHeight = defaultTokens$1.typography[this.textFieldStyle.typographyRole].minHeight + this.textFieldStyle.paddingY * 2;
+    return {
+      width: Math.max(this.bounds.width, contentWidth, 120),
+      height: Math.max(this.bounds.height, contentHeight, defaultTokens$1.controls.input.minHeight)
+    };
+  }
 }
+const defaultTokens = createDefaultGUITokens();
 function splitLines(value) {
   const normalized = (value ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines = normalized.split("\n");
@@ -13876,7 +14224,7 @@ function splitLines(value) {
 }
 class GUITextEditor extends BaseWidget {
   constructor(config) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     super(config);
     __publicField(this, "placeholder");
     __publicField(this, "align");
@@ -13904,15 +14252,20 @@ class GUITextEditor extends BaseWidget {
       borderColor: ((_c = config.textEditorStyle) == null ? void 0 : _c.borderColor) ?? { r: 90, g: 90, b: 90 },
       focusBorderColor: ((_d = config.textEditorStyle) == null ? void 0 : _d.focusBorderColor) ?? { r: 120, g: 170, b: 220 },
       drawBackground: ((_e = config.textEditorStyle) == null ? void 0 : _e.drawBackground) ?? true,
-      drawBorder: ((_f = config.textEditorStyle) == null ? void 0 : _f.drawBorder) ?? true
+      drawBorder: ((_f = config.textEditorStyle) == null ? void 0 : _f.drawBorder) ?? true,
+      paddingX: ((_g = config.textEditorStyle) == null ? void 0 : _g.paddingX) ?? defaultTokens.controls.input.paddingX,
+      paddingY: ((_h = config.textEditorStyle) == null ? void 0 : _h.paddingY) ?? defaultTokens.controls.input.paddingY,
+      borderWidth: ((_i = config.textEditorStyle) == null ? void 0 : _i.borderWidth) ?? defaultTokens.controls.input.borderWidth,
+      focusBorderWidth: ((_j = config.textEditorStyle) == null ? void 0 : _j.focusBorderWidth) ?? defaultTokens.controls.input.focusBorderWidth,
+      typographyRole: ((_k = config.textEditorStyle) == null ? void 0 : _k.typographyRole) ?? "body"
     };
     this.on("click", (ev) => {
       var _a2, _b2;
       const clickX = typeof ((_a2 = ev.data) == null ? void 0 : _a2.x) === "number" ? ev.data.x : null;
       const clickY = typeof ((_b2 = ev.data) == null ? void 0 : _b2.y) === "number" ? ev.data.y : null;
       if (clickX === null || clickY === null) return;
-      const padX = 8;
-      const padY = 8;
+      const padX = this.textEditorStyle.paddingX;
+      const padY = this.textEditorStyle.paddingY;
       const innerX = this.bounds.x + padX;
       const innerY = this.bounds.y + padY;
       const innerW = Math.max(0, this.bounds.width - padX * 2);
@@ -14155,6 +14508,16 @@ class GUITextEditor extends BaseWidget {
     });
   }
   render() {
+  }
+  getPreferredSize() {
+    const lines = this.lines.length || 1;
+    const maxLine = this.getMaxLineLength();
+    const contentWidth = maxLine * 10 + this.textEditorStyle.paddingX * 2;
+    const contentHeight = lines * 18 + this.textEditorStyle.paddingY * 2;
+    return {
+      width: Math.max(this.bounds.width, contentWidth, 160),
+      height: Math.max(this.bounds.height, contentHeight, defaultTokens.controls.input.minHeight)
+    };
   }
 }
 function isBrailleBlankLine(text) {
@@ -14706,15 +15069,29 @@ class GUIMarkdownView extends BaseWidget {
 class GUILayoutContainer {
   constructor(config) {
     __publicField(this, "bounds");
+    __publicField(this, "layoutHints");
     __publicField(this, "padding");
     __publicField(this, "gap");
+    __publicField(this, "rowGap");
+    __publicField(this, "columnGap");
+    __publicField(this, "mode");
     __publicField(this, "alignX");
+    __publicField(this, "alignY");
+    __publicField(this, "columns");
+    __publicField(this, "maxWidth");
     __publicField(this, "includeHidden");
     __publicField(this, "children", []);
     this.bounds = { ...config.bounds };
+    this.layoutHints = { ...config.layout || {} };
     this.padding = config.padding ?? 0;
     this.gap = config.gap ?? 0;
+    this.rowGap = config.rowGap ?? config.gap ?? 0;
+    this.columnGap = config.columnGap ?? config.gap ?? 0;
+    this.mode = config.mode ?? "stack";
     this.alignX = config.alignX ?? "start";
+    this.alignY = config.alignY ?? "start";
+    this.columns = Math.max(1, Math.floor(config.columns ?? 1));
+    this.maxWidth = Number.isFinite(config.maxWidth) && config.maxWidth > 0 ? Number(config.maxWidth) : null;
     this.includeHidden = config.includeHidden ?? false;
   }
   add(child) {
@@ -14739,35 +15116,276 @@ class GUILayoutContainer {
   getChildren() {
     return [...this.children];
   }
+  getLayoutSize() {
+    const measured = this.measureLayout();
+    const minWidth = Number.isFinite(this.layoutHints.minWidth) ? Number(this.layoutHints.minWidth) : measured.width;
+    const minHeight = Number.isFinite(this.layoutHints.minHeight) ? Number(this.layoutHints.minHeight) : measured.height;
+    const preferredWidth = Number.isFinite(this.layoutHints.preferredWidth) ? Number(this.layoutHints.preferredWidth) : measured.width;
+    const preferredHeight = Number.isFinite(this.layoutHints.preferredHeight) ? Number(this.layoutHints.preferredHeight) : measured.height;
+    return {
+      minWidth,
+      minHeight,
+      preferredWidth: Math.max(minWidth, preferredWidth),
+      preferredHeight: Math.max(minHeight, preferredHeight),
+      widthPolicy: this.layoutHints.widthPolicy ?? "fixed",
+      heightPolicy: this.layoutHints.heightPolicy ?? "fixed"
+    };
+  }
+  getContentBounds() {
+    return this.getInnerBounds();
+  }
   setBounds(bounds, relayout = true) {
     this.bounds = { ...bounds };
     if (relayout) this.layout();
   }
+  setMode(mode, relayout = true) {
+    this.mode = mode;
+    if (relayout) this.layout();
+  }
+  setColumns(columns, relayout = true) {
+    this.columns = Math.max(1, Math.floor(columns || 1));
+    if (relayout) this.layout();
+  }
+  setMaxWidth(maxWidth, relayout = true) {
+    this.maxWidth = Number.isFinite(maxWidth) && maxWidth > 0 ? Number(maxWidth) : null;
+    if (relayout) this.layout();
+  }
+  fitToViewport(viewport, options, relayout = true) {
+    const inset = Number.isFinite(options == null ? void 0 : options.inset) ? Number(options == null ? void 0 : options.inset) : 0;
+    const insetX = Number.isFinite(options == null ? void 0 : options.insetX) ? Number(options == null ? void 0 : options.insetX) : inset;
+    const insetY = Number.isFinite(options == null ? void 0 : options.insetY) ? Number(options == null ? void 0 : options.insetY) : inset;
+    const insetTop = Number.isFinite(options == null ? void 0 : options.insetTop) ? Number(options == null ? void 0 : options.insetTop) : insetY;
+    const insetRight = Number.isFinite(options == null ? void 0 : options.insetRight) ? Number(options == null ? void 0 : options.insetRight) : insetX;
+    const insetBottom = Number.isFinite(options == null ? void 0 : options.insetBottom) ? Number(options == null ? void 0 : options.insetBottom) : insetY;
+    const insetLeft = Number.isFinite(options == null ? void 0 : options.insetLeft) ? Number(options == null ? void 0 : options.insetLeft) : insetX;
+    const availableX = viewport.x + insetLeft;
+    const availableY = viewport.y + insetTop;
+    const availableW = Math.max(0, viewport.width - insetLeft - insetRight);
+    const availableH = Math.max(0, viewport.height - insetTop - insetBottom);
+    const measured = this.measureLayout();
+    const currentWidth = Number.isFinite(this.bounds.width) && this.bounds.width > 1 ? Number(this.bounds.width) : measured.width;
+    const currentHeight = Number.isFinite(this.bounds.height) && this.bounds.height > 1 ? Number(this.bounds.height) : measured.height;
+    const desiredW = Number.isFinite(options == null ? void 0 : options.width) ? Number(options == null ? void 0 : options.width) : currentWidth;
+    const desiredH = Number.isFinite(options == null ? void 0 : options.height) ? Number(options == null ? void 0 : options.height) : currentHeight;
+    const maxW = Number.isFinite(options == null ? void 0 : options.maxWidth) ? Number(options == null ? void 0 : options.maxWidth) : availableW;
+    const maxH = Number.isFinite(options == null ? void 0 : options.maxHeight) ? Number(options == null ? void 0 : options.maxHeight) : availableH;
+    const width = Math.max(0, Math.min(availableW, maxW, desiredW));
+    const height = Math.max(0, Math.min(availableH, maxH, desiredH));
+    const anchorX = (options == null ? void 0 : options.anchorX) ?? "start";
+    const anchorY = (options == null ? void 0 : options.anchorY) ?? "start";
+    let x = availableX;
+    let y = availableY;
+    if (anchorX === "center") x = availableX + (availableW - width) / 2;
+    else if (anchorX === "end") x = availableX + (availableW - width);
+    if (anchorY === "center") y = availableY + (availableH - height) / 2;
+    else if (anchorY === "end") y = availableY + (availableH - height);
+    this.bounds = { x, y, width, height };
+    if (relayout) this.layout();
+    return { ...this.bounds };
+  }
+  isChildVisible(child) {
+    if (child instanceof GUILayoutContainer) return true;
+    return child.state.visible;
+  }
+  getLayoutChildren() {
+    return this.includeHidden ? [...this.children] : this.children.filter((child) => this.isChildVisible(child));
+  }
+  getInnerBounds() {
+    const paddedX = this.bounds.x + this.padding;
+    const paddedY = this.bounds.y + this.padding;
+    const paddedW = Math.max(0, this.bounds.width - this.padding * 2);
+    const paddedH = Math.max(0, this.bounds.height - this.padding * 2);
+    if (!this.maxWidth || paddedW <= this.maxWidth) {
+      return { x: paddedX, y: paddedY, width: paddedW, height: paddedH };
+    }
+    const clampedW = this.maxWidth;
+    const extraX = (paddedW - clampedW) / 2;
+    return {
+      x: paddedX + extraX,
+      y: paddedY,
+      width: clampedW,
+      height: paddedH
+    };
+  }
+  alignOffset(available, actual, align) {
+    const slack = Math.max(0, available - actual);
+    if (align === "center") return slack / 2;
+    if (align === "end") return slack;
+    return 0;
+  }
+  getChildSize(child) {
+    return child.getLayoutSize();
+  }
+  setChildBounds(child, bounds) {
+    if (child instanceof GUILayoutContainer) {
+      child.setBounds(bounds, true);
+      return;
+    }
+    child.bounds.x = bounds.x;
+    child.bounds.y = bounds.y;
+    child.bounds.width = bounds.width;
+    child.bounds.height = bounds.height;
+  }
+  measureStack(children) {
+    let width = 0;
+    let height = 0;
+    for (let i = 0; i < children.length; i++) {
+      const size = this.getChildSize(children[i]);
+      width = Math.max(width, Math.max(size.minWidth, size.preferredWidth));
+      height += Math.max(size.minHeight, size.preferredHeight);
+      if (i < children.length - 1) height += this.rowGap;
+    }
+    return { width: width + this.padding * 2, height: height + this.padding * 2 };
+  }
+  measureRow(children) {
+    let width = 0;
+    let height = 0;
+    for (let i = 0; i < children.length; i++) {
+      const size = this.getChildSize(children[i]);
+      width += Math.max(size.minWidth, size.preferredWidth);
+      if (i < children.length - 1) width += this.columnGap;
+      height = Math.max(height, Math.max(size.minHeight, size.preferredHeight));
+    }
+    return { width: width + this.padding * 2, height: height + this.padding * 2 };
+  }
+  measureGrid(children) {
+    const columns = Math.max(1, this.columns);
+    const columnWidths = new Array(columns).fill(0);
+    const rowHeights = [];
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
+      const size = this.getChildSize(child);
+      const col = i % columns;
+      const row = Math.floor(i / columns);
+      const width = Math.max(size.minWidth, size.preferredWidth);
+      const height = Math.max(size.minHeight, size.preferredHeight);
+      columnWidths[col] = Math.max(columnWidths[col], width);
+      rowHeights[row] = Math.max(rowHeights[row] ?? 0, height);
+    }
+    const totalWidth = columnWidths.reduce((sum, value) => sum + value, 0) + this.columnGap * Math.max(0, columns - 1);
+    const totalHeight = rowHeights.reduce((sum, value) => sum + value, 0) + this.rowGap * Math.max(0, rowHeights.length - 1);
+    return { width: totalWidth + this.padding * 2, height: totalHeight + this.padding * 2 };
+  }
+  measureLayout() {
+    const children = this.getLayoutChildren();
+    if (this.mode === "row") return this.measureRow(children);
+    if (this.mode === "grid") return this.measureGrid(children);
+    return this.measureStack(children);
+  }
+  distributeMainAxis(available, fixedTotal, fillCount) {
+    if (fillCount <= 0) return 0;
+    const remaining = Math.max(0, available - fixedTotal);
+    return remaining / fillCount;
+  }
+  layoutStack(children, inner) {
+    const sizes = children.map((child) => this.getChildSize(child));
+    let fixedHeight = 0;
+    let fillCount = 0;
+    for (let i = 0; i < children.length; i++) {
+      const size = sizes[i];
+      if (size.heightPolicy === "fill") fillCount += 1;
+      else fixedHeight += Math.max(size.minHeight, size.preferredHeight);
+    }
+    fixedHeight += this.rowGap * Math.max(0, children.length - 1);
+    const fillHeight = this.distributeMainAxis(inner.height, fixedHeight, fillCount);
+    let cursorY = inner.y;
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
+      const size = sizes[i];
+      const naturalHeight = Math.max(size.minHeight, size.preferredHeight);
+      const childHeight = size.heightPolicy === "fill" ? Math.max(size.minHeight, fillHeight) : naturalHeight;
+      const naturalWidth = Math.max(size.minWidth, size.preferredWidth);
+      const childWidth = this.alignX === "stretch" || size.widthPolicy === "fill" ? inner.width : Math.min(naturalWidth, inner.width);
+      const childX = inner.x + this.alignOffset(inner.width, childWidth, this.alignX);
+      this.setChildBounds(child, {
+        x: childX,
+        y: cursorY,
+        width: childWidth,
+        height: childHeight
+      });
+      cursorY += childHeight + this.rowGap;
+    }
+  }
+  layoutRow(children, inner) {
+    const sizes = children.map((child) => this.getChildSize(child));
+    let fixedWidth = 0;
+    let fillCount = 0;
+    for (let i = 0; i < children.length; i++) {
+      const size = sizes[i];
+      if (size.widthPolicy === "fill") fillCount += 1;
+      else fixedWidth += Math.max(size.minWidth, size.preferredWidth);
+    }
+    fixedWidth += this.columnGap * Math.max(0, children.length - 1);
+    const fillWidth = this.distributeMainAxis(inner.width, fixedWidth, fillCount);
+    let cursorX = inner.x;
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
+      const size = sizes[i];
+      const naturalWidth = Math.max(size.minWidth, size.preferredWidth);
+      const naturalHeight = Math.max(size.minHeight, size.preferredHeight);
+      const childWidth = size.widthPolicy === "fill" ? Math.max(size.minWidth, fillWidth) : Math.min(naturalWidth, inner.width);
+      const childHeight = this.alignY === "stretch" || size.heightPolicy === "fill" ? inner.height : Math.min(naturalHeight, inner.height);
+      const childY = inner.y + this.alignOffset(inner.height, childHeight, this.alignY);
+      this.setChildBounds(child, {
+        x: cursorX,
+        y: childY,
+        width: childWidth,
+        height: childHeight
+      });
+      cursorX += childWidth + this.columnGap;
+    }
+  }
+  layoutGrid(children, inner) {
+    const columns = Math.max(1, this.columns);
+    const cellW = columns > 1 ? Math.max(0, (inner.width - this.columnGap * (columns - 1)) / columns) : inner.width;
+    const rowHeights = [];
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
+      const row = Math.floor(i / columns);
+      const size = child.getLayoutSize();
+      const naturalHeight = Math.max(size.minHeight, size.preferredHeight);
+      rowHeights[row] = Math.max(rowHeights[row] ?? 0, naturalHeight);
+    }
+    let cursorY = inner.y;
+    for (let row = 0; row < rowHeights.length; row++) {
+      const rowHeight = rowHeights[row] ?? 0;
+      for (let col = 0; col < columns; col++) {
+        const index = row * columns + col;
+        const child = children[index];
+        if (!child) continue;
+        const size = child.getLayoutSize();
+        const cellX = inner.x + col * (cellW + this.columnGap);
+        const naturalWidth = Math.max(size.minWidth, size.preferredWidth);
+        const naturalHeight = Math.max(size.minHeight, size.preferredHeight);
+        const childWidth = this.alignX === "stretch" || size.widthPolicy === "fill" ? cellW : Math.min(naturalWidth, cellW);
+        const childHeight = this.alignY === "stretch" || size.heightPolicy === "fill" ? rowHeight : naturalHeight;
+        const childX = cellX + this.alignOffset(cellW, childWidth, this.alignX);
+        const childY = cursorY + this.alignOffset(rowHeight, childHeight, this.alignY);
+        this.setChildBounds(child, {
+          x: childX,
+          y: childY,
+          width: childWidth,
+          height: childHeight
+        });
+      }
+      cursorY += rowHeight + this.rowGap;
+    }
+  }
   /**
-   * Apply a vertical stack layout to children.
-   * Uses each child's current `bounds.height` (and `bounds.width` unless alignX='stretch').
+   * Apply the configured layout to children.
    */
   layout() {
-    const innerX = this.bounds.x + this.padding;
-    const innerY = this.bounds.y + this.padding;
-    const innerW = Math.max(0, this.bounds.width - this.padding * 2);
-    let cursorY = innerY;
-    for (const child of this.children) {
-      if (!this.includeHidden && !child.state.visible) continue;
-      const childHeight = child.bounds.height;
-      const childWidth = this.alignX === "stretch" ? innerW : child.bounds.width;
-      let childX = innerX;
-      if (this.alignX === "center") {
-        childX = innerX + (innerW - childWidth) / 2;
-      } else if (this.alignX === "end") {
-        childX = innerX + (innerW - childWidth);
-      }
-      child.bounds.x = childX;
-      child.bounds.y = cursorY;
-      child.bounds.width = childWidth;
-      child.bounds.height = childHeight;
-      cursorY += childHeight + this.gap;
+    const children = this.getLayoutChildren();
+    const inner = this.getInnerBounds();
+    if (this.mode === "row") {
+      this.layoutRow(children, inner);
+      return;
     }
+    if (this.mode === "grid") {
+      this.layoutGrid(children, inner);
+      return;
+    }
+    this.layoutStack(children, inner);
   }
 }
 class GUISystem {
@@ -14777,10 +15395,19 @@ class GUISystem {
     __publicField(this, "lastMouseX", 0);
     __publicField(this, "lastMouseY", 0);
     __publicField(this, "lastMouseDown", false);
+    __publicField(this, "tokens");
     // Optional draw override hook. If it returns true, default drawing is skipped.
     __publicField(this, "widgetRenderer", null);
     this.widgetManager = new WidgetManager();
     this.inputRouter = new InputRouter({ widgetManager: this.widgetManager });
+    this.tokens = createDefaultGUITokens();
+  }
+  getTokens() {
+    return cloneGUITokens(this.tokens);
+  }
+  setTokens(patch) {
+    this.tokens = mergeGUITokens(this.tokens, patch);
+    return this.getTokens();
   }
   /**
    * Set a custom renderer hook for widgets.
@@ -14825,7 +15452,7 @@ class GUISystem {
    * Create a button widget
    */
   createButton(config) {
-    const button = new GUIButton(config);
+    const button = new GUIButton(applyButtonTokens(config, this.tokens));
     this.widgetManager.register(button);
     return button;
   }
@@ -14833,7 +15460,7 @@ class GUISystem {
    * Create a label widget
    */
   createLabel(config) {
-    const label = new GUILabel(config);
+    const label = new GUILabel(applyLabelTokens(config, this.tokens));
     this.widgetManager.register(label);
     return label;
   }
@@ -14841,7 +15468,7 @@ class GUISystem {
    * Create a checkbox widget
    */
   createCheckbox(config) {
-    const checkbox = new GUICheckbox(config);
+    const checkbox = new GUICheckbox(applyCheckboxTokens(config, this.tokens));
     this.widgetManager.register(checkbox);
     return checkbox;
   }
@@ -14849,7 +15476,7 @@ class GUISystem {
    * Create a slider widget
    */
   createSlider(config) {
-    const slider = new GUISlider(config);
+    const slider = new GUISlider(applySliderTokens(config, this.tokens));
     this.widgetManager.register(slider);
     return slider;
   }
@@ -14857,7 +15484,7 @@ class GUISystem {
    * Create a text field widget
    */
   createTextField(config) {
-    const tf = new GUITextField(config);
+    const tf = new GUITextField(applyTextFieldTokens(config, this.tokens));
     this.widgetManager.register(tf);
     return tf;
   }
@@ -14865,7 +15492,7 @@ class GUISystem {
    * Create a text editor widget (multi-line)
    */
   createTextEditor(config) {
-    const editor = new GUITextEditor(config);
+    const editor = new GUITextEditor(applyTextEditorTokens(config, this.tokens));
     this.widgetManager.register(editor);
     return editor;
   }
@@ -14882,7 +15509,7 @@ class GUISystem {
    * Note: this does not register with the widget manager; it only updates child widget bounds.
    */
   createContainer(config) {
-    return new GUILayoutContainer(config);
+    return new GUILayoutContainer(applyContainerTokens(config, this.tokens));
   }
   /**
    * Update all widgets with current input state (pixel coordinates)
@@ -14967,9 +15594,8 @@ class GUISystem {
    */
   render(uiAPI, charWidth, charHeight) {
     if (!uiAPI) return;
-    const widgets = this.widgetManager.getAll();
+    const widgets = this.widgetManager.getVisible();
     for (const widget of widgets) {
-      if (!widget.state.visible) continue;
       if (this.widgetRenderer) {
         try {
           const info = this.buildWidgetInfo(widget, charWidth, charHeight);
@@ -14982,7 +15608,7 @@ class GUISystem {
         }
       }
       if (widget instanceof GUIButton) {
-        this.renderButton(widget, uiAPI);
+        this.renderButton(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUILabel) {
         this.renderLabel(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUICheckbox) {
@@ -15000,21 +15626,31 @@ class GUISystem {
   }
   renderTextField(tf, ui, charW, charH) {
     const { x, y, width, height } = tf.bounds;
-    const { fg, bg, borderColor, focusBorderColor, drawBackground, drawBorder } = tf.textFieldStyle;
+    const {
+      fg,
+      bg,
+      borderColor,
+      focusBorderColor,
+      drawBackground,
+      drawBorder,
+      paddingX,
+      paddingY,
+      borderWidth,
+      focusBorderWidth
+    } = tf.textFieldStyle;
     if (drawBackground) {
       ui.rect(x, y, width, height, bg);
     }
     if (drawBorder) {
-      const b = tf.state.focused ? 3 : 2;
+      const b = tf.state.focused ? focusBorderWidth : borderWidth;
       const bc = tf.state.focused ? focusBorderColor : borderColor;
       ui.rect(x, y, width, b, bc);
       ui.rect(x, y + height - b, width, b, bc);
       ui.rect(x, y, b, height, bc);
       ui.rect(x + width - b, y, b, height, bc);
     }
-    const padX = 8;
-    const innerX = x + padX;
-    const innerW = Math.max(0, width - padX * 2);
+    const innerX = x + paddingX;
+    const innerW = Math.max(0, width - paddingX * 2);
     const maxChars = Math.max(0, Math.floor(innerW / Math.max(1, charW)));
     const value = tf.getValue();
     const { cursorPos, scrollOffset } = tf.getCursorInfo();
@@ -15026,9 +15662,8 @@ class GUISystem {
     const visibleText = value.slice(scroll, scroll + maxChars);
     const textOffsetCols = tf.getAlignedColumnOffset(maxChars, visibleText.length);
     const textX = innerX + textOffsetCols * charW;
-    const clipPadY = 2;
-    const clipY = y + clipPadY;
-    const clipH = Math.max(0, height - clipPadY * 2);
+    const clipY = y + paddingY;
+    const clipH = Math.max(0, height - paddingY * 2);
     const textY = y + Math.max(0, Math.floor((height - charH) / 2));
     if (ui.pushClipRect) ui.pushClipRect(innerX, clipY, innerW, clipH);
     if (visibleText.length > 0) {
@@ -15053,24 +15688,33 @@ class GUISystem {
   }
   renderTextEditor(ed, ui, charW, charH) {
     const { x, y, width, height } = ed.bounds;
-    const { fg, bg, borderColor, focusBorderColor, drawBackground, drawBorder } = ed.textEditorStyle;
+    const {
+      fg,
+      bg,
+      borderColor,
+      focusBorderColor,
+      drawBackground,
+      drawBorder,
+      paddingX,
+      paddingY,
+      borderWidth,
+      focusBorderWidth
+    } = ed.textEditorStyle;
     if (drawBackground) {
       ui.rect(x, y, width, height, bg);
     }
     if (drawBorder) {
-      const b = ed.state.focused ? 3 : 2;
+      const b = ed.state.focused ? focusBorderWidth : borderWidth;
       const bc = ed.state.focused ? focusBorderColor : borderColor;
       ui.rect(x, y, width, b, bc);
       ui.rect(x, y + height - b, width, b, bc);
       ui.rect(x, y, b, height, bc);
       ui.rect(x + width - b, y, b, height, bc);
     }
-    const padX = 8;
-    const padY = 8;
-    const innerX = x + padX;
-    const innerY = y + padY;
-    const innerW = Math.max(0, width - padX * 2);
-    const innerH = Math.max(0, height - padY * 2);
+    const innerX = x + paddingX;
+    const innerY = y + paddingY;
+    const innerW = Math.max(0, width - paddingX * 2);
+    const innerH = Math.max(0, height - paddingY * 2);
     const maxCols = Math.max(0, Math.floor(innerW / Math.max(1, charW)));
     const maxRows = Math.max(0, Math.floor(innerH / Math.max(1, charH)));
     const info = ed.getCursorInfo();
@@ -15121,23 +15765,23 @@ class GUISystem {
   renderMarkdownView(view, ui, charW, charH) {
     view.renderToUI(ui, charW, charH);
   }
-  renderButton(button, ui) {
+  renderButton(button, ui, charW, charH) {
     const { x, y, width, height } = button.bounds;
-    const { fg, bg, borderColor, hoverBg, activeBg } = button.buttonStyle;
+    const { fg, bg, borderColor, hoverBg, activeBg, borderWidth, focusBorderWidth } = button.buttonStyle;
     const label = String(button.label ?? "");
     const bgColor = button.state.pressed ? activeBg : button.state.hovered ? hoverBg : bg;
     ui.rect(x, y, width, height, bgColor);
-    ui.rect(x, y, width, 2, borderColor);
-    ui.rect(x, y + height - 2, width, 2, borderColor);
-    ui.rect(x, y, 2, height, borderColor);
-    ui.rect(x + width - 2, y, 2, height, borderColor);
-    const charW = 10;
+    const border = button.state.focused ? focusBorderWidth : borderWidth;
+    ui.rect(x, y, width, border, borderColor);
+    ui.rect(x, y + height - border, width, border, borderColor);
+    ui.rect(x, y, border, height, borderColor);
+    ui.rect(x + width - border, y, border, height, borderColor);
     const labelWidth = label.length * charW;
     const labelX = x + (width - labelWidth) / 2;
-    const labelY = y + height / 2;
+    const labelY = y + Math.max(0, Math.floor((height - charH) / 2));
     ui.text(label, labelX, labelY, fg);
   }
-  renderLabel(label, ui, charW, _charH) {
+  renderLabel(label, ui, charW, charH) {
     const { x, y, width, height } = label.bounds;
     const { fg, bg } = label.labelStyle;
     const text = String(label.text ?? "");
@@ -15153,53 +15797,51 @@ class GUISystem {
       const textWidth = text.length * charW;
       textX = x + width - textWidth;
     }
-    ui.text(text, textX, y + height / 2, fg);
+    ui.text(text, textX, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
   }
   renderCheckbox(checkbox, ui, charW, _charH) {
     const { x, y, height } = checkbox.bounds;
-    const { fg, bg, checkColor, hoverBg } = checkbox.checkboxStyle;
+    const { fg, bg, checkColor, hoverBg, boxSize, labelGap, borderWidth } = checkbox.checkboxStyle;
     const label = String(checkbox.label ?? "");
-    const boxSize = Math.min(height, charW * 2);
-    const boxY = y + (height - boxSize) / 2;
+    const actualBoxSize = Math.min(height, Math.max(boxSize, charW));
+    const boxY = y + (height - actualBoxSize) / 2;
     const bgColor = checkbox.state.hovered ? hoverBg : bg;
-    ui.rect(x, boxY, boxSize, boxSize, bgColor);
-    ui.rect(x, boxY, boxSize, 1, fg);
-    ui.rect(x, boxY + boxSize - 1, boxSize, 1, fg);
-    ui.rect(x, boxY, 1, boxSize, fg);
-    ui.rect(x + boxSize - 1, boxY, 1, boxSize, fg);
+    ui.rect(x, boxY, actualBoxSize, actualBoxSize, bgColor);
+    ui.rect(x, boxY, actualBoxSize, borderWidth, fg);
+    ui.rect(x, boxY + actualBoxSize - borderWidth, actualBoxSize, borderWidth, fg);
+    ui.rect(x, boxY, borderWidth, actualBoxSize, fg);
+    ui.rect(x + actualBoxSize - borderWidth, boxY, borderWidth, actualBoxSize, fg);
     if (checkbox.checked) {
-      const checkPadding = boxSize * 0.25;
+      const checkPadding = actualBoxSize * 0.25;
       ui.rect(
         x + checkPadding,
         boxY + checkPadding,
-        boxSize - checkPadding * 2,
-        boxSize - checkPadding * 2,
+        actualBoxSize - checkPadding * 2,
+        actualBoxSize - checkPadding * 2,
         checkColor
       );
     }
-    ui.text(label, x + boxSize + 8, y + height / 2, fg);
+    ui.text(label, x + actualBoxSize + labelGap, y + Math.max(0, Math.floor((height - charW) / 2)), fg);
   }
   renderSlider(slider, ui, _charW, charH) {
     const { x, y, width, height } = slider.bounds;
-    const { fg, trackColor, knobColor, knobHoverColor } = slider.sliderStyle;
+    const { fg, trackColor, knobColor, knobHoverColor, labelGap, trackHeight, knobWidth, knobHeight, valueGap } = slider.sliderStyle;
     let trackY = y;
     if (slider.label) {
       ui.text(slider.label, x, y, fg);
-      trackY += charH;
+      trackY += charH + labelGap;
     }
-    const trackHeight = 8;
     const trackYPos = trackY + (height - trackHeight) / 2;
     ui.rect(x, trackYPos, width, trackHeight, trackColor);
-    const knobWidth = 16;
-    const knobHeight = Math.min(height - (slider.label ? charH : 0), 24);
+    const actualKnobHeight = Math.min(height - (slider.label ? charH + labelGap : 0), knobHeight);
     const range = slider.max - slider.min;
     const ratio = range > 0 ? (slider.value - slider.min) / range : 0;
     const knobX = x + ratio * (width - knobWidth);
-    const knobY = trackY + (height - knobHeight) / 2;
+    const knobY = trackY + (height - actualKnobHeight) / 2;
     const knobCol = slider.state.hovered || slider.isDragging() ? knobHoverColor : knobColor;
-    ui.rect(knobX, knobY, knobWidth, knobHeight, knobCol);
+    ui.rect(knobX, knobY, knobWidth, actualKnobHeight, knobCol);
     const valueText = `${Math.round(slider.value)}`;
-    ui.text(valueText, x + width + 8, y + height / 2, fg);
+    ui.text(valueText, x + width + valueGap, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
   }
   /**
    * Set visibility for all widgets in a group
@@ -15220,7 +15862,13 @@ class GUISystem {
     return this.widgetManager;
   }
 }
-function createGUIAPI(getMetrics, isTrustedUserInput, getPixelScale) {
+function createGUIAPI(getMetrics, isTrustedUserInput, getPixelScale, getViewportRect, getSafeAreaInsets) {
+  const defaultBreakpointThresholds = {
+    sm: 480,
+    md: 768,
+    lg: 1024,
+    xl: 1440
+  };
   const safeGetScale = () => {
     try {
       if (typeof getPixelScale === "function") {
@@ -15259,6 +15907,239 @@ function createGUIAPI(getMetrics, isTrustedUserInput, getPixelScale) {
     const s = Math.max(scaleX, scaleY);
     return n * s;
   };
+  const unscaleLength = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return value;
+    const { scaleX, scaleY } = safeGetScale();
+    const s = Math.max(scaleX, scaleY);
+    if (!Number.isFinite(s) || s <= 0) return value;
+    return n / s;
+  };
+  const scaleTokenPatch = (patch) => {
+    var _a;
+    if (!patch) return patch ?? null;
+    const next = {};
+    if (patch.spacing) {
+      next.spacing = {};
+      if (typeof patch.spacing.xs === "number") next.spacing.xs = scaleLength(patch.spacing.xs);
+      if (typeof patch.spacing.sm === "number") next.spacing.sm = scaleLength(patch.spacing.sm);
+      if (typeof patch.spacing.md === "number") next.spacing.md = scaleLength(patch.spacing.md);
+      if (typeof patch.spacing.lg === "number") next.spacing.lg = scaleLength(patch.spacing.lg);
+      if (typeof patch.spacing.xl === "number") next.spacing.xl = scaleLength(patch.spacing.xl);
+    }
+    if (patch.typography) {
+      next.typography = {};
+      for (const role of Object.keys(patch.typography)) {
+        const src = (_a = patch.typography) == null ? void 0 : _a[role];
+        if (!src) continue;
+        next.typography[role] = {
+          ...typeof src.lineHeight === "number" ? { lineHeight: src.lineHeight } : {},
+          ...typeof src.minHeight === "number" ? { minHeight: scaleLength(src.minHeight) } : {},
+          ...typeof src.letterSpacing === "number" ? { letterSpacing: scaleLength(src.letterSpacing) } : {}
+        };
+      }
+    }
+    if (patch.controls) {
+      next.controls = {};
+      if (patch.controls.button) {
+        next.controls.button = {
+          ...typeof patch.controls.button.minHeight === "number" ? { minHeight: scaleLength(patch.controls.button.minHeight) } : {},
+          ...typeof patch.controls.button.paddingX === "number" ? { paddingX: scaleLength(patch.controls.button.paddingX) } : {},
+          ...typeof patch.controls.button.paddingY === "number" ? { paddingY: scaleLength(patch.controls.button.paddingY) } : {},
+          ...typeof patch.controls.button.borderWidth === "number" ? { borderWidth: scaleLength(patch.controls.button.borderWidth) } : {},
+          ...typeof patch.controls.button.focusBorderWidth === "number" ? { focusBorderWidth: scaleLength(patch.controls.button.focusBorderWidth) } : {}
+        };
+      }
+      if (patch.controls.input) {
+        next.controls.input = {
+          ...typeof patch.controls.input.minHeight === "number" ? { minHeight: scaleLength(patch.controls.input.minHeight) } : {},
+          ...typeof patch.controls.input.paddingX === "number" ? { paddingX: scaleLength(patch.controls.input.paddingX) } : {},
+          ...typeof patch.controls.input.paddingY === "number" ? { paddingY: scaleLength(patch.controls.input.paddingY) } : {},
+          ...typeof patch.controls.input.borderWidth === "number" ? { borderWidth: scaleLength(patch.controls.input.borderWidth) } : {},
+          ...typeof patch.controls.input.focusBorderWidth === "number" ? { focusBorderWidth: scaleLength(patch.controls.input.focusBorderWidth) } : {}
+        };
+      }
+      if (patch.controls.checkbox) {
+        next.controls.checkbox = {
+          ...typeof patch.controls.checkbox.minHeight === "number" ? { minHeight: scaleLength(patch.controls.checkbox.minHeight) } : {},
+          ...typeof patch.controls.checkbox.boxSize === "number" ? { boxSize: scaleLength(patch.controls.checkbox.boxSize) } : {},
+          ...typeof patch.controls.checkbox.labelGap === "number" ? { labelGap: scaleLength(patch.controls.checkbox.labelGap) } : {},
+          ...typeof patch.controls.checkbox.borderWidth === "number" ? { borderWidth: scaleLength(patch.controls.checkbox.borderWidth) } : {}
+        };
+      }
+      if (patch.controls.slider) {
+        next.controls.slider = {
+          ...typeof patch.controls.slider.minHeight === "number" ? { minHeight: scaleLength(patch.controls.slider.minHeight) } : {},
+          ...typeof patch.controls.slider.labelGap === "number" ? { labelGap: scaleLength(patch.controls.slider.labelGap) } : {},
+          ...typeof patch.controls.slider.trackHeight === "number" ? { trackHeight: scaleLength(patch.controls.slider.trackHeight) } : {},
+          ...typeof patch.controls.slider.knobWidth === "number" ? { knobWidth: scaleLength(patch.controls.slider.knobWidth) } : {},
+          ...typeof patch.controls.slider.knobHeight === "number" ? { knobHeight: scaleLength(patch.controls.slider.knobHeight) } : {},
+          ...typeof patch.controls.slider.valueGap === "number" ? { valueGap: scaleLength(patch.controls.slider.valueGap) } : {}
+        };
+      }
+    }
+    return next;
+  };
+  const unscaleTokens = (tokens) => ({
+    spacing: {
+      xs: unscaleLength(tokens.spacing.xs),
+      sm: unscaleLength(tokens.spacing.sm),
+      md: unscaleLength(tokens.spacing.md),
+      lg: unscaleLength(tokens.spacing.lg),
+      xl: unscaleLength(tokens.spacing.xl)
+    },
+    typography: {
+      caption: {
+        role: tokens.typography.caption.role,
+        lineHeight: tokens.typography.caption.lineHeight,
+        minHeight: unscaleLength(tokens.typography.caption.minHeight),
+        letterSpacing: unscaleLength(tokens.typography.caption.letterSpacing)
+      },
+      body: {
+        role: tokens.typography.body.role,
+        lineHeight: tokens.typography.body.lineHeight,
+        minHeight: unscaleLength(tokens.typography.body.minHeight),
+        letterSpacing: unscaleLength(tokens.typography.body.letterSpacing)
+      },
+      button: {
+        role: tokens.typography.button.role,
+        lineHeight: tokens.typography.button.lineHeight,
+        minHeight: unscaleLength(tokens.typography.button.minHeight),
+        letterSpacing: unscaleLength(tokens.typography.button.letterSpacing)
+      },
+      title: {
+        role: tokens.typography.title.role,
+        lineHeight: tokens.typography.title.lineHeight,
+        minHeight: unscaleLength(tokens.typography.title.minHeight),
+        letterSpacing: unscaleLength(tokens.typography.title.letterSpacing)
+      },
+      input: {
+        role: tokens.typography.input.role,
+        lineHeight: tokens.typography.input.lineHeight,
+        minHeight: unscaleLength(tokens.typography.input.minHeight),
+        letterSpacing: unscaleLength(tokens.typography.input.letterSpacing)
+      }
+    },
+    controls: {
+      button: {
+        minHeight: unscaleLength(tokens.controls.button.minHeight),
+        paddingX: unscaleLength(tokens.controls.button.paddingX),
+        paddingY: unscaleLength(tokens.controls.button.paddingY),
+        borderWidth: unscaleLength(tokens.controls.button.borderWidth),
+        focusBorderWidth: unscaleLength(tokens.controls.button.focusBorderWidth)
+      },
+      input: {
+        minHeight: unscaleLength(tokens.controls.input.minHeight),
+        paddingX: unscaleLength(tokens.controls.input.paddingX),
+        paddingY: unscaleLength(tokens.controls.input.paddingY),
+        borderWidth: unscaleLength(tokens.controls.input.borderWidth),
+        focusBorderWidth: unscaleLength(tokens.controls.input.focusBorderWidth)
+      },
+      checkbox: {
+        minHeight: unscaleLength(tokens.controls.checkbox.minHeight),
+        boxSize: unscaleLength(tokens.controls.checkbox.boxSize),
+        labelGap: unscaleLength(tokens.controls.checkbox.labelGap),
+        borderWidth: unscaleLength(tokens.controls.checkbox.borderWidth)
+      },
+      slider: {
+        minHeight: unscaleLength(tokens.controls.slider.minHeight),
+        labelGap: unscaleLength(tokens.controls.slider.labelGap),
+        trackHeight: unscaleLength(tokens.controls.slider.trackHeight),
+        knobWidth: unscaleLength(tokens.controls.slider.knobWidth),
+        knobHeight: unscaleLength(tokens.controls.slider.knobHeight),
+        valueGap: unscaleLength(tokens.controls.slider.valueGap)
+      }
+    }
+  });
+  const normalizeViewport = (viewport) => {
+    if (!viewport || typeof viewport !== "object") return viewport;
+    const next = { ...viewport };
+    const space = viewport.boundsSpace === "device" || api._boundsSpace === "device" ? "device" : "css";
+    if (space === "css") {
+      next.x = scaleLength(next.x ?? 0);
+      next.y = scaleLength(next.y ?? 0);
+      next.width = scaleLength(next.width ?? 0);
+      next.height = scaleLength(next.height ?? 0);
+      if (typeof next.inset === "number") next.inset = scaleLength(next.inset);
+      if (typeof next.insetX === "number") next.insetX = scaleLength(next.insetX);
+      if (typeof next.insetY === "number") next.insetY = scaleLength(next.insetY);
+      if (typeof next.insetTop === "number") next.insetTop = scaleLength(next.insetTop);
+      if (typeof next.insetRight === "number") next.insetRight = scaleLength(next.insetRight);
+      if (typeof next.insetBottom === "number") next.insetBottom = scaleLength(next.insetBottom);
+      if (typeof next.insetLeft === "number") next.insetLeft = scaleLength(next.insetLeft);
+      if (typeof next.maxWidth === "number") next.maxWidth = scaleLength(next.maxWidth);
+      if (typeof next.maxHeight === "number") next.maxHeight = scaleLength(next.maxHeight);
+      if (typeof next.width === "number" && typeof viewport.width === "number") next.width = scaleLength(viewport.width);
+      if (typeof next.height === "number" && typeof viewport.height === "number") next.height = scaleLength(viewport.height);
+    }
+    return next;
+  };
+  const safeGetViewportRect = () => {
+    try {
+      if (typeof getViewportRect === "function") {
+        const rect = getViewportRect();
+        const x = Number((rect == null ? void 0 : rect.x) ?? 0);
+        const y = Number((rect == null ? void 0 : rect.y) ?? 0);
+        const width = Number((rect == null ? void 0 : rect.width) ?? 0);
+        const height = Number((rect == null ? void 0 : rect.height) ?? 0);
+        if ([x, y, width, height].every(Number.isFinite)) {
+          return api._boundsSpace === "device" ? normalizeViewport({ x, y, width, height, boundsSpace: "css" }) : { x, y, width, height };
+        }
+      }
+    } catch {
+    }
+    return api._boundsSpace === "device" ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: 0, height: 0 };
+  };
+  const safeGetSafeAreaInsets = () => {
+    const zero = { top: 0, right: 0, bottom: 0, left: 0 };
+    try {
+      if (typeof getSafeAreaInsets === "function") {
+        const insets = getSafeAreaInsets();
+        const next = {
+          top: Number((insets == null ? void 0 : insets.top) ?? 0),
+          right: Number((insets == null ? void 0 : insets.right) ?? 0),
+          bottom: Number((insets == null ? void 0 : insets.bottom) ?? 0),
+          left: Number((insets == null ? void 0 : insets.left) ?? 0)
+        };
+        if (Object.values(next).every((value) => Number.isFinite(value) && value >= 0)) {
+          if (api._boundsSpace === "device") {
+            return {
+              top: scaleLength(next.top),
+              right: scaleLength(next.right),
+              bottom: scaleLength(next.bottom),
+              left: scaleLength(next.left)
+            };
+          }
+          return next;
+        }
+      }
+    } catch {
+    }
+    return zero;
+  };
+  const isFiniteViewportRect = (value) => {
+    if (!value || typeof value !== "object") return false;
+    return ["x", "y", "width", "height"].every((key) => Number.isFinite(Number(value[key])));
+  };
+  const isCanvasViewportRect = (viewport) => {
+    if (!isFiniteViewportRect(viewport)) return false;
+    const canvasViewport = safeGetViewportRect();
+    const epsilon = 0.5;
+    return Math.abs(Number(viewport.x) - canvasViewport.x) <= epsilon && Math.abs(Number(viewport.y) - canvasViewport.y) <= epsilon && Math.abs(Number(viewport.width) - canvasViewport.width) <= epsilon && Math.abs(Number(viewport.height) - canvasViewport.height) <= epsilon;
+  };
+  const toBreakpoint = (width, thresholds) => {
+    const t = {
+      sm: Number((thresholds == null ? void 0 : thresholds.sm) ?? defaultBreakpointThresholds.sm),
+      md: Number((thresholds == null ? void 0 : thresholds.md) ?? defaultBreakpointThresholds.md),
+      lg: Number((thresholds == null ? void 0 : thresholds.lg) ?? defaultBreakpointThresholds.lg),
+      xl: Number((thresholds == null ? void 0 : thresholds.xl) ?? defaultBreakpointThresholds.xl)
+    };
+    if (!Number.isFinite(width) || width < t.sm) return "xs";
+    if (width < t.md) return "sm";
+    if (width < t.lg) return "md";
+    if (width < t.xl) return "lg";
+    return "xl";
+  };
   const api = {
     _system: null,
     _boundsSpace: "css",
@@ -15269,6 +16150,10 @@ function createGUIAPI(getMetrics, isTrustedUserInput, getPixelScale) {
     init(options) {
       this._boundsSpace = options && options.boundsSpace === "device" ? "device" : "css";
       this._system = new GUISystem();
+      if (this._boundsSpace === "css") {
+        const currentTokens = this._system.getTokens();
+        this._system.setTokens(scaleTokenPatch(currentTokens));
+      }
       return this._system;
     },
     _normalizeConfig(config) {
@@ -15281,6 +16166,10 @@ function createGUIAPI(getMetrics, isTrustedUserInput, getPixelScale) {
       if (next.bounds) next.bounds = scaleBounds(next.bounds);
       if (typeof next.padding === "number") next.padding = scaleLength(next.padding);
       if (typeof next.gap === "number") next.gap = scaleLength(next.gap);
+      if (typeof next.rowGap === "number") next.rowGap = scaleLength(next.rowGap);
+      if (typeof next.columnGap === "number") next.columnGap = scaleLength(next.columnGap);
+      if (typeof next.maxWidth === "number") next.maxWidth = scaleLength(next.maxWidth);
+      if (typeof next.maxHeight === "number") next.maxHeight = scaleLength(next.maxHeight);
       return next;
     },
     /**
@@ -15288,6 +16177,46 @@ function createGUIAPI(getMetrics, isTrustedUserInput, getPixelScale) {
      */
     getSystem() {
       return this._system;
+    },
+    getTokens() {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      const tokens = this._system.getTokens();
+      return this._boundsSpace === "device" ? tokens : unscaleTokens(tokens);
+    },
+    setTokens(tokens) {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      const patch = this._boundsSpace === "device" ? tokens ?? null : scaleTokenPatch(tokens ?? null);
+      this._system.setTokens(patch ?? null);
+      return this.getTokens();
+    },
+    getBreakpoint(width, thresholds) {
+      return toBreakpoint(Number(width), thresholds);
+    },
+    getViewportRect() {
+      return safeGetViewportRect();
+    },
+    getSafeAreaInsets() {
+      return safeGetSafeAreaInsets();
+    },
+    getResponsiveInfo(viewport, thresholds) {
+      const width = Number((viewport == null ? void 0 : viewport.width) ?? 0);
+      const height = Number((viewport == null ? void 0 : viewport.height) ?? 0);
+      const safeAreaInsets = safeGetSafeAreaInsets();
+      const usableWidth = Math.max(0, width - safeAreaInsets.left - safeAreaInsets.right);
+      const usableHeight = Math.max(0, height - safeAreaInsets.top - safeAreaInsets.bottom);
+      return {
+        width,
+        height,
+        safeAreaInsets,
+        usableWidth,
+        usableHeight,
+        orientation: width >= height ? "landscape" : "portrait",
+        breakpoint: toBreakpoint(usableWidth || width, thresholds)
+      };
     },
     /**
      * Create a button widget
@@ -15390,20 +16319,29 @@ function createGUIAPI(getMetrics, isTrustedUserInput, getPixelScale) {
       return this._system.createMarkdownView(this._normalizeConfig(config));
     },
     /**
-     * Create a simple layout helper container for stacking widgets.
+     * Create a layout helper container.
      * This does not create a widget; it mutates child widget bounds when layout() is called.
      *
      * @example
      * ```javascript
-     * const container = gui.createContainer({
+     * const stack = gui.createContainer({
      *   bounds: { x: 20, y: 20, width: 300, height: 400 },
+     *   mode: 'stack',
      *   padding: 10,
      *   gap: 8,
      *   alignX: 'stretch'
      * });
      *
-     * container.add(btn).add(chk).add(slider);
-     * container.layout();
+     * stack.add(btn).add(chk).add(slider);
+     * stack.layout();
+     *
+     * const grid = gui.createContainer({
+     *   bounds: { x: 20, y: 440, width: 300, height: 200 },
+     *   mode: 'grid',
+     *   columns: 3,
+     *   gap: 8,
+     *   alignX: 'stretch'
+     * });
      * ```
      */
     createContainer(config) {
@@ -15411,6 +16349,59 @@ function createGUIAPI(getMetrics, isTrustedUserInput, getPixelScale) {
         throw new Error("GUI system not initialized. Call gui.init() first.");
       }
       return this._system.createContainer(this._normalizeConfig(config));
+    },
+    createResponsivePanel(config) {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      const normalized = this._normalizeConfig({
+        mode: "stack",
+        alignX: "stretch",
+        ...config || {}
+      });
+      const container = this._system.createContainer(normalized);
+      const panel = {
+        container,
+        add: (child) => {
+          container.add(child);
+          return panel;
+        },
+        addMany: (children) => {
+          container.addMany(children);
+          return panel;
+        },
+        setMaxWidth: (maxWidth, relayout = true) => {
+          const nextMaxWidth = maxWidth == null || api._boundsSpace === "device" ? maxWidth : scaleLength(maxWidth);
+          container.setMaxWidth(nextMaxWidth, relayout);
+          return panel;
+        },
+        setBounds: (bounds, relayout = true) => {
+          const nextBounds = api._boundsSpace === "device" ? bounds : scaleBounds(bounds);
+          container.setBounds(nextBounds, relayout);
+          return container.bounds;
+        },
+        layout: () => {
+          container.layout();
+          return container;
+        },
+        measureLayout: () => container.measureLayout(),
+        fitToViewport: (viewport, options, relayout = true) => {
+          const v2 = isFiniteViewportRect(viewport) ? { ...viewport } : safeGetViewportRect();
+          const o = options && typeof options === "object" ? { ...options } : {};
+          if (o.safeArea && !isCanvasViewportRect(v2)) {
+            const insets = safeGetSafeAreaInsets();
+            o.insetTop = Number(o.insetTop ?? 0) + insets.top;
+            o.insetRight = Number(o.insetRight ?? 0) + insets.right;
+            o.insetBottom = Number(o.insetBottom ?? 0) + insets.bottom;
+            o.insetLeft = Number(o.insetLeft ?? 0) + insets.left;
+          }
+          delete o.safeArea;
+          return container.fitToViewport(v2, o, relayout);
+        },
+        getBounds: () => ({ ...container.bounds }),
+        getContentBounds: () => container.getContentBounds()
+      };
+      return panel;
     },
     /**
      * Update GUI with input state (pixel coordinates)
@@ -18309,10 +19300,13 @@ function parseTransform3D(section, sectionIndex, config) {
   const rotY = parseFloat(metaStr("rotate-y", "0")) * Math.PI / 180;
   const rotZ = parseFloat(metaStr("rotate-z", "0")) * Math.PI / 180;
   const scale = parseFloat(metaStr("scale", "1"));
+  const rawOpacity = parseFloat(metaStr("opacity", "1"));
+  const opacity = Number.isFinite(rawOpacity) ? Math.max(0, Math.min(1, rawOpacity)) : 1;
   const width = parseFloat(metaStr("width", String(config.defaultSectionWidth)));
   const height = parseFloat(metaStr("height", String(config.defaultSectionHeight)));
   const visible = !metaTruthy("hidden");
   const navigable = metaStr("navigable", "true").trim().toLowerCase() !== "false";
+  const interactive = metaStr("interactive", "true").trim().toLowerCase() !== "false";
   const displayTitle = section.directive ? section.title : section.title.replace(/\s*\{[^}]+\}\s*$/, "").trim();
   return {
     sectionIndex,
@@ -18328,8 +19322,10 @@ function parseTransform3D(section, sectionIndex, config) {
     width,
     height,
     texture: null,
+    opacity,
     visible,
-    navigable
+    navigable,
+    interactive
   };
 }
 function parseSectionMetadata(title) {
@@ -18369,6 +19365,7 @@ function getDefaultWorldsConfig() {
     // Sections start 100 units in front of camera (negative Z)
     defaultSectionWidth: 60,
     defaultSectionHeight: 20,
+    sectionClickFocusEnabled: true,
     sectionSizeUnits: "text",
     sectionOverflow: "clip",
     cameraFov: Math.PI / 4,
@@ -18928,6 +19925,10 @@ class WorldsRenderer {
             }
           }
 
+          if (!isBackground) {
+            outColor = vec4<f32>(outColor.rgb, outColor.a * clamp(uniforms.paperParams.w, 0.0, 1.0));
+          }
+
           // params0.z is full-card hover flag (1 = hovered)
           if (uniforms.params0.z > 0.5) {
             return vec4<f32>(vec3<f32>(1.0) - outColor.rgb, outColor.a);
@@ -19283,7 +20284,7 @@ class WorldsRenderer {
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 96, new Float32Array(paperColor));
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 112, new Float32Array(lineColor));
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array([0, 0, 0, 0]));
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array([0, 0, 0, layout.opacity]));
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
@@ -22122,6 +23123,7 @@ class StorieEngine {
     __publicField(this, "lastTouchEventAt", 0);
     __publicField(this, "canvas2DContext", null);
     __publicField(this, "offscreenCanvas2D", null);
+    __publicField(this, "safeAreaProbeElement", null);
     __publicField(this, "webglContext", null);
     __publicField(this, "webgpuDevice", null);
     // WebGPU UI (optional)
@@ -22456,6 +23458,55 @@ class StorieEngine {
     const logicalH = this.canvas.height / dpr;
     if (logicalW > 0) this.canvas.style.width = `${logicalW}px`;
     if (logicalH > 0) this.canvas.style.height = `${logicalH}px`;
+  }
+  ensureSafeAreaProbe() {
+    if (typeof document === "undefined" || !document.body) return null;
+    if (this.safeAreaProbeElement && this.safeAreaProbeElement.isConnected) {
+      return this.safeAreaProbeElement;
+    }
+    const probe = document.createElement("div");
+    probe.setAttribute("data-storie-safe-area-probe", "true");
+    probe.style.position = "fixed";
+    probe.style.left = "0";
+    probe.style.top = "0";
+    probe.style.width = "0";
+    probe.style.height = "0";
+    probe.style.visibility = "hidden";
+    probe.style.pointerEvents = "none";
+    probe.style.paddingTop = "env(safe-area-inset-top, 0px)";
+    probe.style.paddingRight = "env(safe-area-inset-right, 0px)";
+    probe.style.paddingBottom = "env(safe-area-inset-bottom, 0px)";
+    probe.style.paddingLeft = "env(safe-area-inset-left, 0px)";
+    document.body.appendChild(probe);
+    this.safeAreaProbeElement = probe;
+    return probe;
+  }
+  getSafeAreaInsetsCss() {
+    const zero = { top: 0, right: 0, bottom: 0, left: 0 };
+    if (typeof window === "undefined" || typeof document === "undefined") return zero;
+    const probe = this.ensureSafeAreaProbe();
+    if (!probe) return zero;
+    const style = window.getComputedStyle(probe);
+    return {
+      top: Number.parseFloat(style.paddingTop || "0") || 0,
+      right: Number.parseFloat(style.paddingRight || "0") || 0,
+      bottom: Number.parseFloat(style.paddingBottom || "0") || 0,
+      left: Number.parseFloat(style.paddingLeft || "0") || 0
+    };
+  }
+  getCanvasViewportRectCss() {
+    try {
+      const rect = this.canvas.getBoundingClientRect();
+      return { x: 0, y: 0, width: rect.width, height: rect.height };
+    } catch {
+      const dpr = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
+      return {
+        x: 0,
+        y: 0,
+        width: this.canvas.width / dpr,
+        height: this.canvas.height / dpr
+      };
+    }
   }
   initHostSync(cfg) {
     if (typeof window === "undefined" || typeof URL === "undefined") return;
@@ -23244,7 +24295,9 @@ class StorieEngine {
           const dpr = typeof window !== "undefined" && window.devicePixelRatio ? Number(window.devicePixelRatio) : 1;
           const v2 = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
           return { scaleX: v2, scaleY: v2 };
-        }
+        },
+        () => this.getCanvasViewportRectCss(),
+        () => this.getSafeAreaInsetsCss()
       ),
       // Theme API
       getStyle: (name) => this.getStyle(name),
@@ -24692,6 +25745,9 @@ class StorieEngine {
           get canvasHeight() {
             return engine.canvas.height;
           },
+          get safeAreaInsets() {
+            return engine.getSafeAreaInsetsCss();
+          },
           get charWidth() {
             return engine.renderer instanceof WebGPURenderer ? engine.renderer.getAtlas().getCharWidth() : 0;
           },
@@ -25518,8 +26574,10 @@ class StorieEngine {
             scale: { ...layout.transform.scale },
             width: layout.width,
             height: layout.height,
+            opacity: layout.opacity,
             visible: layout.visible,
-            navigable: layout.navigable
+            navigable: layout.navigable,
+            interactive: layout.interactive
           };
         },
         setSectionTransform: (sectionIndex, transform) => {
@@ -25565,6 +26623,9 @@ class StorieEngine {
             }
             if (config.defaultSectionHeight !== void 0) {
               engine.worldsConfig.defaultSectionHeight = config.defaultSectionHeight;
+            }
+            if (config.sectionClickFocusEnabled !== void 0) {
+              engine.worldsConfig.sectionClickFocusEnabled = !!config.sectionClickFocusEnabled;
             }
             if (config.sectionSizeUnits !== void 0) {
               const next = config.sectionSizeUnits;
@@ -28102,12 +29163,13 @@ ${content}`.trim();
       if (action === "press") {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
-          handledBy3D = true;
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
           if (linkHit) {
+            handledBy3D = true;
             this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
             this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
-          } else {
+          } else if (this.worldsConfig.sectionClickFocusEnabled !== false) {
+            handledBy3D = true;
             const style = this.lastApplied3DCameraFocus;
             const fill = (style == null ? void 0 : style.kind) === "fit" ? style.fill : 0.9;
             this.request3DCameraFocus({
@@ -28360,7 +29422,7 @@ ${content}`.trim();
           if (linkHit) {
             this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
             this.activate3DLink(linkHit.region.url);
-          } else {
+          } else if (this.worldsConfig.sectionClickFocusEnabled !== false) {
             const style = this.lastApplied3DCameraFocus;
             const fill = (style == null ? void 0 : style.kind) === "fit" ? style.fill : 0.9;
             this.request3DCameraFocus({
@@ -28430,7 +29492,7 @@ ${content}`.trim();
     const rayDirWorld = vec3Normalize(vec3Sub(farWorld, nearWorld));
     let best = null;
     for (const layout of this.section3DLayouts) {
-      if (!layout.visible || !layout.texture) continue;
+      if (!layout.visible || !layout.texture || layout.interactive === false) continue;
       const baseW = layout.worldWidth ?? layout.width * this.get3DCardXScaleFactor(layout);
       const baseH = layout.worldHeight ?? layout.height;
       const sectionTransform = {
@@ -28939,8 +30001,12 @@ ${content}`.trim();
         }
         if (typeof out.width === "number") layout.width = out.width;
         if (typeof out.height === "number") layout.height = out.height;
+        if (typeof out.opacity === "number" && Number.isFinite(out.opacity)) {
+          layout.opacity = Math.max(0, Math.min(1, out.opacity));
+        }
         if (typeof out.visible === "boolean") layout.visible = out.visible;
         if (typeof out.navigable === "boolean") layout.navigable = out.navigable;
+        if (typeof out.interactive === "boolean") layout.interactive = out.interactive;
       } catch (error) {
         console.error("[worlds.layout] callback error:", error);
       }
@@ -28980,7 +30046,7 @@ ${content}`.trim();
     const viewProj = mat4Multiply(proj, view);
     const out = [];
     for (const layout of this.section3DLayouts) {
-      if (!layout.visible || !layout.texture) continue;
+      if (!layout.visible || !layout.texture || layout.interactive === false) continue;
       if (!this.is3DCardPossiblyVisible(viewProj, layout)) continue;
       const dims = this.sectionTextureCache.get(layout.sectionIndex);
       const regions = this.sectionLinkRegionsCache.get(layout.sectionIndex);
@@ -29064,6 +30130,10 @@ ${content}`.trim();
     if (this.offscreenCanvas2D && this.offscreenCanvas2D.parentElement) {
       this.offscreenCanvas2D.parentElement.removeChild(this.offscreenCanvas2D);
     }
+    if (this.safeAreaProbeElement && this.safeAreaProbeElement.parentElement) {
+      this.safeAreaProbeElement.parentElement.removeChild(this.safeAreaProbeElement);
+    }
+    this.safeAreaProbeElement = null;
   }
   /**
    * Get the canvas element

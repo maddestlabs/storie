@@ -13,7 +13,10 @@ import type {
   WidgetState,
   WidgetStyle,
   WidgetEvent,
-  InputCoordinate
+  InputCoordinate,
+  WidgetLayoutHints,
+  WidgetLayoutSize,
+  WidgetSizePolicy
 } from './types.js';
 
 export interface WidgetConfig {
@@ -24,6 +27,7 @@ export interface WidgetConfig {
   visible?: boolean;
   enabled?: boolean;
   focusable?: boolean;
+  layout?: WidgetLayoutHints;
 }
 
 // Auto-increment counter for widget IDs
@@ -40,6 +44,7 @@ export abstract class BaseWidget {
   public group: string | number;
   public state: WidgetState;
   public focusable: boolean;
+  public layout: WidgetLayoutHints;
   
   protected eventListeners: Map<string, ((event: WidgetEvent) => void)[]>;
   
@@ -50,6 +55,7 @@ export abstract class BaseWidget {
     this.style = config.style || {};
     this.group = config.group || 0;
     this.focusable = config.focusable ?? true;
+    this.layout = { ...(config.layout || {}) };
     
     this.state = {
       visible: config.visible ?? true,
@@ -173,6 +179,42 @@ export abstract class BaseWidget {
    */
   setBounds(bounds: Partial<Bounds>): void {
     this.bounds = { ...this.bounds, ...bounds };
+  }
+
+  getLayoutSize(): WidgetLayoutSize {
+    const preferred = this.getPreferredSize();
+    const min = this.getMinSize(preferred);
+    return {
+      minWidth: min.width,
+      minHeight: min.height,
+      preferredWidth: Math.max(min.width, preferred.width),
+      preferredHeight: Math.max(min.height, preferred.height),
+      widthPolicy: this.getWidthPolicy(),
+      heightPolicy: this.getHeightPolicy()
+    };
+  }
+
+  protected getWidthPolicy(): WidgetSizePolicy {
+    return this.layout.widthPolicy ?? 'fixed';
+  }
+
+  protected getHeightPolicy(): WidgetSizePolicy {
+    return this.layout.heightPolicy ?? 'fixed';
+  }
+
+  protected getPreferredSize(): { width: number; height: number } {
+    return {
+      width: Number.isFinite(this.layout.preferredWidth) ? Number(this.layout.preferredWidth) : this.bounds.width,
+      height: Number.isFinite(this.layout.preferredHeight) ? Number(this.layout.preferredHeight) : this.bounds.height
+    };
+  }
+
+  protected getMinSize(preferred?: { width: number; height: number }): { width: number; height: number } {
+    const base = preferred || this.getPreferredSize();
+    return {
+      width: Number.isFinite(this.layout.minWidth) ? Number(this.layout.minWidth) : Math.max(0, base.width),
+      height: Number.isFinite(this.layout.minHeight) ? Number(this.layout.minHeight) : Math.max(0, base.height)
+    };
   }
   
   /**

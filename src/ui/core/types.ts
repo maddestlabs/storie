@@ -20,6 +20,26 @@ export interface Bounds {
   height: number;
 }
 
+export interface WidgetLayoutHints {
+  minWidth?: number;
+  minHeight?: number;
+  preferredWidth?: number;
+  preferredHeight?: number;
+  widthPolicy?: WidgetSizePolicy;
+  heightPolicy?: WidgetSizePolicy;
+}
+
+export interface WidgetLayoutSize {
+  minWidth: number;
+  minHeight: number;
+  preferredWidth: number;
+  preferredHeight: number;
+  widthPolicy: WidgetSizePolicy;
+  heightPolicy: WidgetSizePolicy;
+}
+
+export type WidgetSizePolicy = 'fixed' | 'fill' | 'fit-content';
+
 /**
  * Widget state flags
  */

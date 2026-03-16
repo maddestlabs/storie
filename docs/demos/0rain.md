@@ -1,6 +1,7 @@
 ---
 name: "0RAIN"
 theme: "zerorain"
+requiresAudioGesture: true
 width: 1080
 height: 2400
 shaders: "bloom+zerorain+zerocrt"
@@ -8,12 +9,14 @@ font: "AnomalyMono"
 fontsize: 28
 ---
 
-# 0RAIN
+# 0RAIN {"x": "0", "y": "0"}
 
 - [Play](#play)
 - [Random Seed](action:randomize-seed)
-- [Intro](#intro)
 - [Settings](#settings)
+
+Read the backstory.
+- [Intro](#awake)
 
 ```js on:enter
 if (typeof worlds.currentSection === 'number') {
@@ -22,18 +25,8 @@ if (typeof worlds.currentSection === 'number') {
 setRainLevel(RAIN_IDLE_GAIN, 0.35);
 ```
 
-# Intro
-
-Rain needles the dead glass. Somewhere beyond the blackout skyline, the voice from the dream keeps singing.
-
-The *Meridian* is gone. Kess wants movement. The city wants obedience. In the noise between those two things, you built a drill: catch the falling bits before they hit bottom.
-
-- [Wake to the wreck](#awake)
-- [Exit](#0RAIN)
-
-```js on:enter
-setRainLevel(RAIN_IDLE_GAIN, 0.35);
-```
+# H3R {"x": "6", "y": "-58", "rotate-z": "270", "scale": "8", "opacity": "0.8", "interactive": "false"}
+0RAIN
 
 # Awake
 
@@ -62,7 +55,7 @@ The crash site is a tomb. Twisted corridors. Broken systems. In the engine room,
 The engines are scrap. Fuel cells ruptured. No beacon. No rescue signal. The *Meridian* will not fly again. At the navigation console, one file survives the corruption: coordinates labeled simply **HER**.
 
 - [Plan with Kess](#plan-with-kess)
-- [Back to intro](#intro)
+- [Exit](#0RAIN)
 
 ```js on:enter
 setRainLevel(RAIN_IDLE_GAIN, 0.35);
@@ -548,7 +541,8 @@ setRainLevel(g.gameMode === 'play' ? RAIN_PLAY_GAIN : RAIN_IDLE_GAIN, 0.35);
 
 # Settings
 
-Press 0|1 or tap LEFT|RIGHT to clear digits.
+To play, clear digits by:
+Pressing 0|1 or tapping LEFT|RIGHT
 
 - [Audio on](action:audio-on)
 - [Audio off](action:audio-off)
@@ -577,6 +571,7 @@ var WORLDS_SECTION_FIT = 3.0;
 var WORLDS_CARD_WIDTH = 500;
 var WORLDS_CARD_HEIGHT = 1960;
 var GUI_GROUP_HUD = 1;
+var GUI_GROUP_KEYPAD = 2;
 var SEED_MAX_DIGITS = 12;
 
 var guiWidgets = null;
@@ -656,6 +651,68 @@ function applyManualSeed(value) {
   g.rng = random.rng(g.seed);
 }
 
+function insertSeedDigitAtCursor(digit) {
+  if (!isSeedInputFocused() || !guiWidgets || !guiWidgets.seedInput) return false;
+  var current = String(guiWidgets.seedInput.getValue() || '');
+  if (current.length >= SEED_MAX_DIGITS) return false;
+  if (typeof guiWidgets.seedInput.handleText !== 'function') return false;
+  return !!guiWidgets.seedInput.handleText(String(digit));
+}
+
+function backspaceSeedAtCursor() {
+  if (!isSeedInputFocused() || !guiWidgets || !guiWidgets.seedInput) return false;
+  if (typeof guiWidgets.seedInput.handleKey !== 'function') return false;
+  return !!guiWidgets.seedInput.handleKey('Backspace');
+}
+
+function replaceSeedText(value) {
+  if (!guiWidgets || !guiWidgets.seedInput) return;
+  var normalized = normalizeSeedText(value);
+  guiWidgets.seedInput.setValue(normalized);
+  applyManualSeed(normalized);
+}
+
+function applySeedKeypadAction(action, value) {
+  if (action === 'digit') {
+    insertSeedDigitAtCursor(value);
+    return;
+  }
+  if (action === 'backspace') {
+    backspaceSeedAtCursor();
+    return;
+  }
+  if (action === 'clear') {
+    replaceSeedText('');
+    return;
+  }
+  if (action === 'randomize') {
+    randomizeSeed();
+    replaceSeedText(String(g.seed));
+    return;
+  }
+  if (action === 'copy') {
+    if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') return;
+    void navigator.clipboard.writeText(String(guiWidgets && guiWidgets.seedInput ? guiWidgets.seedInput.getValue() : g.seed)).catch(function () {});
+    return;
+  }
+  if (action === 'paste') {
+    if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.readText !== 'function') return;
+    void navigator.clipboard.readText().then(function (text) {
+      var normalized = normalizeSeedText(text);
+      if (!normalized.length) return;
+      if (isSeedInputFocused() && guiWidgets && guiWidgets.seedInput && typeof guiWidgets.seedInput.handleText === 'function') {
+        guiWidgets.seedInput.handleText(normalized);
+      } else {
+        replaceSeedText(normalized);
+      }
+    }).catch(function () {});
+    return;
+  }
+  if (action === 'done') {
+    clearSeedInputFocus();
+  }
+}
+
 function isSeedInputFocused() {
   return !!(
     guiWidgets &&
@@ -677,6 +734,22 @@ function isSeedInputPointerEvent(event) {
   }
   if (typeof event.x !== 'number' || typeof event.y !== 'number') return false;
   return guiWidgets.seedInput.containsPoint({ x: event.x, y: event.y });
+}
+
+function isSeedKeypadPointerEvent(event) {
+  if (!event || !guiWidgets || !guiWidgets.keypadButtons) return false;
+  if (typeof event.x !== 'number' || typeof event.y !== 'number') return false;
+  for (var i = 0; i < guiWidgets.keypadButtons.length; i++) {
+    var button = guiWidgets.keypadButtons[i].button;
+    if (button && typeof button.containsPoint === 'function' && button.containsPoint({ x: event.x, y: event.y })) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isSeedEditorPointerEvent(event) {
+  return isSeedInputPointerEvent(event) || isSeedKeypadPointerEvent(event);
 }
 
 function shouldKeepSeedFocusOnKey(key) {
@@ -750,6 +823,25 @@ function unlockExperienceAudio() {
 function initOverlayGui() {
   gui.init({ boundsSpace: 'device' });
 
+  var keypadSpec = [
+    { label: '1', action: 'digit', value: '1' },
+    { label: '2', action: 'digit', value: '2' },
+    { label: '3', action: 'digit', value: '3' },
+    { label: '<', action: 'backspace' },
+    { label: '4', action: 'digit', value: '4' },
+    { label: '5', action: 'digit', value: '5' },
+    { label: '6', action: 'digit', value: '6' },
+    { label: 'X', action: 'clear' },
+    { label: '7', action: 'digit', value: '7' },
+    { label: '8', action: 'digit', value: '8' },
+    { label: '9', action: 'digit', value: '9' },
+    { label: '?', action: 'randomize' },
+    { label: '⧉', action: 'copy' },
+    { label: '0', action: 'digit', value: '0' },
+    { label: '⎘', action: 'paste' },
+    { label: '↵', action: 'done' }
+  ];
+
   guiWidgets = {
     seedCaption: gui.createLabel({
       group: GUI_GROUP_HUD,
@@ -784,10 +876,28 @@ function initOverlayGui() {
       align: 'left',
       bounds: { x: 0, y: 0, width: 280, height: 40 },
       text: ''
-    })
+    }),
+    keypadButtons: []
   };
 
+  for (var i = 0; i < keypadSpec.length; i++) {
+    var spec = keypadSpec[i];
+    var button = gui.createButton({
+      group: GUI_GROUP_KEYPAD,
+      focusable: false,
+      bounds: { x: 0, y: 0, width: 1, height: 1 },
+      label: spec.label
+    });
+    (function (buttonAction, buttonValue) {
+      button.on('click', function () {
+        applySeedKeypadAction(buttonAction, buttonValue);
+      });
+    })(spec.action, spec.value);
+    guiWidgets.keypadButtons.push({ action: spec.action, value: spec.value, button: button });
+  }
+
   gui.setGroupVisible(GUI_GROUP_HUD, true);
+  gui.setGroupVisible(GUI_GROUP_KEYPAD, false);
 }
 
 function layoutOverlayGui() {
@@ -800,10 +910,19 @@ function layoutOverlayGui() {
   var hudHeight = Math.max(34, Math.floor(ui.metrics.charHeight * 1.35));
   var seedX = width - inset - hudWidth;
   var seedY = inset;
+  var keypadGap = Math.max(12, Math.floor(hudHeight * 0.35));
+  var keypadColumns = 4;
+  var keypadButtonHeight = hudHeight;
+  var keypadRowGap = Math.max(8, Math.floor(hudHeight * 0.18));
+  var keypadColumnGap = keypadRowGap;
+  var keypadButtonWidth = Math.max(56, Math.floor((hudWidth - keypadColumnGap * (keypadColumns - 1)) / keypadColumns));
+  var keypadWidth = keypadButtonWidth * keypadColumns + keypadColumnGap * (keypadColumns - 1);
+  var keypadX = Math.max(inset, seedX + hudWidth - keypadWidth);
+  var keypadY = seedY + hudHeight + keypadGap;
 
   guiWidgets.seedCaption.setBounds({
-    x: seedX - 6,
-    y: seedY + 10,
+    x: seedX - 10,
+    y: seedY + fontsize,
     width: hudWidth,
     height: hudHeight
   });
@@ -825,6 +944,18 @@ function layoutOverlayGui() {
     width: hudWidth,
     height: hudHeight
   });
+
+  for (var i = 0; i < guiWidgets.keypadButtons.length; i++) {
+    var keypad = guiWidgets.keypadButtons[i];
+    var col = i % keypadColumns;
+    var row = Math.floor(i / keypadColumns);
+    keypad.button.setBounds({
+      x: keypadX + col * (keypadButtonWidth + keypadColumnGap),
+      y: keypadY + row * (keypadButtonHeight + keypadRowGap),
+      width: keypadButtonWidth,
+      height: keypadButtonHeight
+    });
+  }
 }
 
 function updateOverlayHud() {
@@ -834,8 +965,10 @@ function updateOverlayHud() {
   var onSettings = typeof g.settingsSectionIndex === 'number' && worlds.currentSection === g.settingsSectionIndex;
   var canEditSeed = onTitle || onSettings;
   var seedFocused = isSeedInputFocused();
+  var showKeypad = canEditSeed && seedFocused;
   guiWidgets.seedInput.setEnabled(canEditSeed);
   guiWidgets.seedCaption.setVisible(canEditSeed && !seedFocused);
+  gui.setGroupVisible(GUI_GROUP_KEYPAD, showKeypad);
 
   if (!canEditSeed) {
     clearSeedInputFocus();
@@ -1370,6 +1503,7 @@ worlds.enable();
 worlds.controls.setEnabled(false);
 worlds.config.setDefaults({
   keepRotation: true,
+  sectionClickFocusEnabled: false,
   straightenOnFocus: true,
   screenSpaceRecenter: true,
   screenSpaceRecenterIters: 6,
@@ -1424,12 +1558,16 @@ if (isSeedInputFocused()) {
     return;
   }
 
-  if (event.type === 'mouse' && event.action === 'press' && !isSeedInputPointerEvent(event)) {
+  if (event.type === 'mouse' && event.action === 'press' && !isSeedEditorPointerEvent(event)) {
     clearSeedInputFocus();
   }
 }
 
 if (event.type === 'keydown') {
+  if (!isSeedInputFocused() && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    return;
+  }
+
   gui.handleKey(event.key, {
     shift: (event.mods || []).includes('shift'),
     ctrl: (event.mods || []).includes('ctrl'),

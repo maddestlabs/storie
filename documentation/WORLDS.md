@@ -47,8 +47,9 @@ Supported keys:
 - Position: `x`, `y`, `z` (or `depth`)
 - Rotation (degrees): `rotate-x`, `rotate-y`, `rotate-z`
 - Uniform scale: `scale`
+- Alpha: `opacity` (`0..1`)
 - Dimensions: `width`, `height`
-- Flags: `hidden: "true"` (visibility), `navigable: "false"`
+- Flags: `hidden: "true"` (visibility), `navigable: "false"`, `interactive: "false"`
 
 Notes:
 - Rotations are specified in degrees in metadata but are stored internally as radians.
@@ -59,10 +60,19 @@ Notes:
 Worlds is optimized for a “document navigation” feel:
 - Hover highlights links (not whole cards).
 - Clicking an internal link (e.g. `#card-one`) focuses the linked section.
+- Clicking a non-link area of a card focuses that section by default.
 - Keyboard navigation:
   - `Tab` / `Shift+Tab` cycles through visible links.
   - Arrow keys also cycle link focus.
   - `Enter` activates the focused link.
+
+If you want link-only interaction, disable non-link click focus:
+
+```js
+worlds.config.setDefaults({
+  sectionClickFocusEnabled: false,
+});
+```
 
 Internal links:
 - `#anchor` links are treated as “navigate to section”.
@@ -236,6 +246,7 @@ Shader backgrounds maintain world-space coordinates, so they move naturally with
 Focus helpers:
 - `worlds.camera.focusOnSection(sectionIndexOrTitle, distance?, options?)`
 - `worlds.camera.focusOnSectionFit(sectionIndexOrTitle, fill?, options?)`
+- `worlds.config.setDefaults({ sectionClickFocusEnabled: false })`
 
 `sectionIndexOrTitle` can be:
 - a numeric section index (`0..N-1`), or
@@ -247,6 +258,8 @@ Focus helpers:
 - `worlds.setSectionTransform(sectionIndex, { position?, rotation?, scale? })`
 - `worlds.setSectionVisible(sectionIndex, visible)`
 - `worlds.getSectionCount()`
+
+`getSectionLayout()` also exposes `opacity` and `interactive`.
 
 Rotation passed to `setSectionTransform` is in degrees.
 

@@ -1,5 +1,8 @@
 import { BaseWidget, type WidgetConfig } from '../core/base-widget.js';
 import type { Color } from '../../types.js';
+import { createDefaultGUITokens, type GUITypographyRole } from './tokens.js';
+
+const defaultTokens = createDefaultGUITokens();
 
 export interface GUISliderConfig extends WidgetConfig {
   label?: string;
@@ -12,6 +15,12 @@ export interface GUISliderConfig extends WidgetConfig {
     trackColor?: Color;
     knobColor?: Color;
     knobHoverColor?: Color;
+    labelGap?: number;
+    trackHeight?: number;
+    knobWidth?: number;
+    knobHeight?: number;
+    valueGap?: number;
+    typographyRole?: GUITypographyRole;
   };
 }
 
@@ -30,6 +39,12 @@ export class GUISlider extends BaseWidget {
     trackColor: Color;
     knobColor: Color;
     knobHoverColor: Color;
+    labelGap: number;
+    trackHeight: number;
+    knobWidth: number;
+    knobHeight: number;
+    valueGap: number;
+    typographyRole: GUITypographyRole;
   };
 
   private dragOffsetX: number = 0;
@@ -46,7 +61,13 @@ export class GUISlider extends BaseWidget {
       fg: (config.sliderStyle?.fg ?? { r: 220, g: 220, b: 220 }) as Color,
       trackColor: (config.sliderStyle?.trackColor ?? { r: 60, g: 60, b: 60 }) as Color,
       knobColor: (config.sliderStyle?.knobColor ?? { r: 100, g: 150, b: 200 }) as Color,
-      knobHoverColor: (config.sliderStyle?.knobHoverColor ?? { r: 120, g: 170, b: 220 }) as Color
+      knobHoverColor: (config.sliderStyle?.knobHoverColor ?? { r: 120, g: 170, b: 220 }) as Color,
+      labelGap: config.sliderStyle?.labelGap ?? defaultTokens.controls.slider.labelGap,
+      trackHeight: config.sliderStyle?.trackHeight ?? defaultTokens.controls.slider.trackHeight,
+      knobWidth: config.sliderStyle?.knobWidth ?? defaultTokens.controls.slider.knobWidth,
+      knobHeight: config.sliderStyle?.knobHeight ?? defaultTokens.controls.slider.knobHeight,
+      valueGap: config.sliderStyle?.valueGap ?? defaultTokens.controls.slider.valueGap,
+      typographyRole: config.sliderStyle?.typographyRole ?? 'body'
     };
   }
   
@@ -56,17 +77,17 @@ export class GUISlider extends BaseWidget {
     const { x, y, width, height } = this.bounds;
 
     // Match GUISystem.renderSlider layout: label consumes one charHeight row.
-    const labelH = this.label ? charHeight : 0;
+    const labelH = this.label ? charHeight + this.sliderStyle.labelGap : 0;
     const trackTopY = y + labelH;
     const trackAreaH = Math.max(0, height - labelH);
     
     // Calculate knob position and size
-    const knobWidth = 16;
+    const knobWidth = this.sliderStyle.knobWidth;
     const range = this.max - this.min;
     const ratio = range > 0 ? (this.value - this.min) / range : 0;
     const knobX = x + ratio * (width - knobWidth);
     const knobY = trackTopY;
-    const knobHeight = trackAreaH;
+    const knobHeight = Math.min(trackAreaH, this.sliderStyle.knobHeight);
     
     // Check if mouse is over the knob specifically
     const overKnob = mouseX >= knobX && mouseX < knobX + knobWidth &&
@@ -122,5 +143,17 @@ export class GUISlider extends BaseWidget {
    */
   render(): void {
     // No-op: GUI widgets are rendered by GUISystem.render()
+  }
+
+  protected getPreferredSize(): { width: number; height: number } {
+    const labelWidth = this.label.length * 10;
+    const trackWidth = Math.max(120, this.bounds.width);
+    const contentHeight = this.label
+      ? 18 + this.sliderStyle.labelGap + this.sliderStyle.knobHeight
+      : this.sliderStyle.knobHeight;
+    return {
+      width: Math.max(this.bounds.width, labelWidth + trackWidth + this.sliderStyle.valueGap + 32),
+      height: Math.max(this.bounds.height, contentHeight, defaultTokens.controls.slider.minHeight)
+    };
   }
 }

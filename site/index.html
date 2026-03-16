@@ -43,32 +43,12 @@
       pointer-events: none;
     }
 
-    #audio-test-btn {
-      position: fixed;
-      top: 12px;
-      right: 12px;
-      z-index: 10001;
-      border: 1px solid rgba(255, 255, 255, 0.45);
-      background: rgba(0, 0, 0, 0.72);
-      color: #fff;
-      font: 11px/1.2 monospace;
-      padding: 6px 8px;
-      border-radius: 4px;
-      cursor: pointer;
-      -webkit-appearance: none;
-      appearance: none;
-    }
-
-    #audio-test-btn:active {
-      transform: translateY(1px);
-    }
   </style>
 </head>
 <body>
   <div id="audio-gate" aria-hidden="true">
     <div id="audio-gate-card">Tap once to enable audio</div>
   </div>
-  <button id="audio-test-btn" type="button">SFX</button>
   <div id="container">
     <div id="loading">
       <div>Loading <span id="t">S</span><span id="cursor">|</span>torie...</div>
@@ -254,10 +234,6 @@ This demo showcases:
     import { StorieEngine } from './storie.es.js?v=__BUILD_ID__';
 
     const audioGate = document.getElementById('audio-gate');
-    const audioTestButton = document.getElementById('audio-test-btn');
-    const hostAudioTest = new Audio('./demos/fx-huh.ogg');
-    hostAudioTest.preload = 'auto';
-
     const makeSilentWavUrl = (durationMs = 120, sampleRate = 8000) => {
       const frameCount = Math.max(1, Math.round(sampleRate * (durationMs / 1000)));
       const dataSize = frameCount * 2;
@@ -334,7 +310,7 @@ This demo showcases:
       }
     };
 
-    const shouldUseAudioGate = (() => {
+    const isTouchLikeDevice = (() => {
       try {
         return !!(
           navigator.maxTouchPoints > 0 ||
@@ -345,27 +321,6 @@ This demo showcases:
         return false;
       }
     })();
-
-    if (audioTestButton) {
-      audioTestButton.addEventListener('click', async () => {
-        try {
-          hostAudioTest.pause();
-          hostAudioTest.currentTime = 0;
-          await hostAudioTest.play();
-          if (activeEngine) {
-            try {
-              activeEngine.unlockAudioFromHostGesture();
-            } catch {
-              // ignore
-            }
-          }
-          dismissAudioGate();
-          console.log('[host-audio-test] fx-huh.ogg played');
-        } catch (error) {
-          console.error('[host-audio-test] failed to play fx-huh.ogg:', error);
-        }
-      });
-    }
 
     /**
      * Parse URL parameters to load content from various sources
@@ -788,6 +743,7 @@ This demo showcases:
         }
 
         const fm = parseFrontmatterLite(markdown);
+        const requiresAudioGesture = parseBoolish(fm.requiresAudioGesture) === true;
 
         // Frontmatter keys used by demos:
         // - font: "Rye"
@@ -1081,7 +1037,7 @@ This demo showcases:
         });
         activeEngine = engine;
 
-        if (audioGate && shouldUseAudioGate) {
+        if (audioGate && isTouchLikeDevice && requiresAudioGesture) {
           audioGate.classList.add('visible');
           audioGate.setAttribute('aria-hidden', 'false');
 

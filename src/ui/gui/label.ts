@@ -1,5 +1,8 @@
 import { BaseWidget, type WidgetConfig } from '../core/base-widget.js';
 import type { Color } from '../../types.js';
+import { createDefaultGUITokens, type GUITypographyRole } from './tokens.js';
+
+const defaultTokens = createDefaultGUITokens();
 
 export interface GUILabelConfig extends WidgetConfig {
   text: string;
@@ -7,6 +10,7 @@ export interface GUILabelConfig extends WidgetConfig {
   labelStyle?: {
     fg?: Color;
     bg?: Color;
+    typographyRole?: GUITypographyRole;
   };
 }
 
@@ -19,6 +23,7 @@ export class GUILabel extends BaseWidget {
   public labelStyle: {
     fg: Color;
     bg: Color;
+    typographyRole: GUITypographyRole;
   };
   
   constructor(config: GUILabelConfig) {
@@ -28,7 +33,8 @@ export class GUILabel extends BaseWidget {
     
     this.labelStyle = {
       fg: (config.labelStyle?.fg ?? { r: 220, g: 220, b: 220 }) as Color,
-      bg: (config.labelStyle?.bg ?? { r: 0, g: 0, b: 0, a: 0 }) as Color // Transparent by default
+      bg: (config.labelStyle?.bg ?? { r: 0, g: 0, b: 0, a: 0 }) as Color,
+      typographyRole: config.labelStyle?.typographyRole ?? defaultTokens.typography.body.role
     };
   }
   
@@ -41,5 +47,13 @@ export class GUILabel extends BaseWidget {
    */
   render(): void {
     // No-op: GUI widgets are rendered by GUISystem.render()
+  }
+
+  protected getPreferredSize(): { width: number; height: number } {
+    const type = defaultTokens.typography[this.labelStyle.typographyRole];
+    return {
+      width: Math.max(this.bounds.width, this.text.length * 10),
+      height: Math.max(this.bounds.height, type.minHeight)
+    };
   }
 }

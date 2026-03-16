@@ -1,5 +1,8 @@
 import { BaseWidget, type WidgetConfig } from '../core/base-widget.js';
 import type { Color } from '../../types.js';
+import { createDefaultGUITokens, type GUITypographyRole } from './tokens.js';
+
+const defaultTokens = createDefaultGUITokens();
 
 export type GUITextAlign = 'left' | 'center' | 'right';
 
@@ -14,6 +17,11 @@ export interface GUITextFieldConfig extends WidgetConfig {
     focusBorderColor?: Color;
     drawBackground?: boolean;
     drawBorder?: boolean;
+    paddingX?: number;
+    paddingY?: number;
+    borderWidth?: number;
+    focusBorderWidth?: number;
+    typographyRole?: GUITypographyRole;
   };
 }
 
@@ -33,6 +41,11 @@ export class GUITextField extends BaseWidget {
     focusBorderColor: Color;
     drawBackground: boolean;
     drawBorder: boolean;
+    paddingX: number;
+    paddingY: number;
+    borderWidth: number;
+    focusBorderWidth: number;
+    typographyRole: GUITypographyRole;
   };
 
   private value: string;
@@ -56,14 +69,19 @@ export class GUITextField extends BaseWidget {
       borderColor: (config.textFieldStyle?.borderColor ?? { r: 90, g: 90, b: 90 }) as Color,
       focusBorderColor: (config.textFieldStyle?.focusBorderColor ?? { r: 120, g: 170, b: 220 }) as Color,
       drawBackground: config.textFieldStyle?.drawBackground ?? true,
-      drawBorder: config.textFieldStyle?.drawBorder ?? true
+      drawBorder: config.textFieldStyle?.drawBorder ?? true,
+      paddingX: config.textFieldStyle?.paddingX ?? defaultTokens.controls.input.paddingX,
+      paddingY: config.textFieldStyle?.paddingY ?? defaultTokens.controls.input.paddingY,
+      borderWidth: config.textFieldStyle?.borderWidth ?? defaultTokens.controls.input.borderWidth,
+      focusBorderWidth: config.textFieldStyle?.focusBorderWidth ?? defaultTokens.controls.input.focusBorderWidth,
+      typographyRole: config.textFieldStyle?.typographyRole ?? 'input'
     };
 
     this.on('click', (ev) => {
       const clickX = typeof ev.data?.x === 'number' ? (ev.data.x as number) : null;
       if (clickX === null) return;
 
-      const padX = 8;
+      const padX = this.textFieldStyle.paddingX;
       const innerX = this.bounds.x + padX;
       const innerW = Math.max(0, this.bounds.width - padX * 2);
       if (innerW <= 0) return;
@@ -193,5 +211,15 @@ export class GUITextField extends BaseWidget {
 
   render(): void {
     // No-op: GUI widgets are rendered by GUISystem.render()
+  }
+
+  protected getPreferredSize(): { width: number; height: number } {
+    const sample = this.value || this.placeholder || '';
+    const contentWidth = sample.length * 10 + this.textFieldStyle.paddingX * 2;
+    const contentHeight = defaultTokens.typography[this.textFieldStyle.typographyRole].minHeight + this.textFieldStyle.paddingY * 2;
+    return {
+      width: Math.max(this.bounds.width, contentWidth, 120),
+      height: Math.max(this.bounds.height, contentHeight, defaultTokens.controls.input.minHeight)
+    };
   }
 }

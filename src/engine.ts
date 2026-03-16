@@ -60,7 +60,7 @@ import {
   type WorldsConfig
 } from './worlds.js';
 import type { ModuleResolverConfig } from './modules/types.js';
-import type { UserScript, Color, InputEvent, ThemeColors, ThemeStyleSheet, NamedStyle, DroppedFile } from './types.js';
+import type { UserScript, Color, InputEvent, ThemeColors, ThemeStyleSheet, NamedStyle, DroppedFile, SafeAreaInsets } from './types.js';
 import { detectPeaksFromAudioBuffer, type PeakDetectionOptions, type PeakDetectionResult } from './audio/peaks.js';
 import { analyzeBeatsFromAudioBuffer, getBeatState, type BeatAnalysisResult, type BeatDetectionOptions, type BeatState } from './audio/beats.js';
 import { KEY } from './types.js';
@@ -240,6 +240,7 @@ export class StorieEngine {
   private lastTouchEventAt: number = 0;
   private canvas2DContext: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null = null;
   private offscreenCanvas2D: HTMLCanvasElement | null = null;
+  private safeAreaProbeElement: HTMLDivElement | null = null;
   private webglContext: WebGLRenderingContext | null = null;
   private webgpuDevice: GPUDevice | null = null;
 
@@ -322,8 +323,10 @@ export class StorieEngine {
         scale?: { x: number; y: number; z: number };
         width?: number;
         height?: number;
+        opacity?: number;
         visible?: boolean;
         navigable?: boolean;
+        interactive?: boolean;
       }
     | void) | null = null;
 
@@ -742,6 +745,61 @@ export class StorieEngine {
     const logicalH = this.canvas.height / dpr;
     if (logicalW > 0) this.canvas.style.width = `${logicalW}px`;
     if (logicalH > 0) this.canvas.style.height = `${logicalH}px`;
+  }
+
+  private ensureSafeAreaProbe(): HTMLDivElement | null {
+    if (typeof document === 'undefined' || !document.body) return null;
+    if (this.safeAreaProbeElement && this.safeAreaProbeElement.isConnected) {
+      return this.safeAreaProbeElement;
+    }
+
+    const probe = document.createElement('div');
+    probe.setAttribute('data-storie-safe-area-probe', 'true');
+    probe.style.position = 'fixed';
+    probe.style.left = '0';
+    probe.style.top = '0';
+    probe.style.width = '0';
+    probe.style.height = '0';
+    probe.style.visibility = 'hidden';
+    probe.style.pointerEvents = 'none';
+    probe.style.paddingTop = 'env(safe-area-inset-top, 0px)';
+    probe.style.paddingRight = 'env(safe-area-inset-right, 0px)';
+    probe.style.paddingBottom = 'env(safe-area-inset-bottom, 0px)';
+    probe.style.paddingLeft = 'env(safe-area-inset-left, 0px)';
+    document.body.appendChild(probe);
+    this.safeAreaProbeElement = probe;
+    return probe;
+  }
+
+  private getSafeAreaInsetsCss(): SafeAreaInsets {
+    const zero: SafeAreaInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+    if (typeof window === 'undefined' || typeof document === 'undefined') return zero;
+
+    const probe = this.ensureSafeAreaProbe();
+    if (!probe) return zero;
+
+    const style = window.getComputedStyle(probe);
+    return {
+      top: Number.parseFloat(style.paddingTop || '0') || 0,
+      right: Number.parseFloat(style.paddingRight || '0') || 0,
+      bottom: Number.parseFloat(style.paddingBottom || '0') || 0,
+      left: Number.parseFloat(style.paddingLeft || '0') || 0
+    };
+  }
+
+  private getCanvasViewportRectCss(): { x: number; y: number; width: number; height: number } {
+    try {
+      const rect = this.canvas.getBoundingClientRect();
+      return { x: 0, y: 0, width: rect.width, height: rect.height };
+    } catch {
+      const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+      return {
+        x: 0,
+        y: 0,
+        width: this.canvas.width / dpr,
+        height: this.canvas.height / dpr
+      };
+    }
   }
 
   private initHostSync(cfg?: EngineConfig['host']): void {
@@ -1676,7 +1734,9 @@ export class StorieEngine {
             : 1;
           const v = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
           return { scaleX: v, scaleY: v };
-        }
+        },
+        () => this.getCanvasViewportRectCss(),
+        () => this.getSafeAreaInsetsCss()
       ),
       
       // Theme API
@@ -3253,6 +3313,7 @@ export class StorieEngine {
         metrics: {
           get canvasWidth() { return engine.canvas.width; },
           get canvasHeight() { return engine.canvas.height; },
+          get safeAreaInsets() { return engine.getSafeAreaInsetsCss(); },
           get charWidth() {
             return engine.renderer instanceof WebGPURenderer
               ? engine.renderer.getAtlas().getCharWidth()
@@ -4258,8 +4319,10 @@ export class StorieEngine {
             scale: { ...layout.transform.scale },
             width: layout.width,
             height: layout.height,
+            opacity: layout.opacity,
             visible: layout.visible,
-            navigable: layout.navigable
+            navigable: layout.navigable,
+            interactive: layout.interactive
           };
         },
         
@@ -4314,6 +4377,9 @@ export class StorieEngine {
             }
             if (config.defaultSectionHeight !== undefined) {
               engine.worldsConfig.defaultSectionHeight = config.defaultSectionHeight;
+            }
+            if ((config as any).sectionClickFocusEnabled !== undefined) {
+              engine.worldsConfig.sectionClickFocusEnabled = !!(config as any).sectionClickFocusEnabled;
             }
             if ((config as any).sectionSizeUnits !== undefined) {
               const next = (config as any).sectionSizeUnits;
@@ -7638,12 +7704,13 @@ ${exportVars}
       if (action === 'press') {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
-          handledBy3D = true;
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
           if (linkHit) {
+            handledBy3D = true;
             this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
             this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
-          } else {
+          } else if (this.worldsConfig.sectionClickFocusEnabled !== false) {
+            handledBy3D = true;
             const style = this.lastApplied3DCameraFocus;
             const fill = style?.kind === 'fit' ? style.fill : 0.9;
             this.request3DCameraFocus({
@@ -7968,7 +8035,7 @@ ${exportVars}
           if (linkHit) {
             this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
             this.activate3DLink(linkHit.region.url);
-          } else {
+          } else if (this.worldsConfig.sectionClickFocusEnabled !== false) {
             // Preserve the caller's preferred focus style and zoom (fill).
             // This makes demo-defined camera framing “sticky” across navigation.
             const style = this.lastApplied3DCameraFocus;
@@ -8057,7 +8124,7 @@ ${exportVars}
     let best: { layout: Section3DLayout; dist: number; u: number; v: number } | null = null;
 
     for (const layout of this.section3DLayouts) {
-      if (!layout.visible || !layout.texture) continue;
+      if (!layout.visible || !layout.texture || layout.interactive === false) continue;
 
       const baseW = layout.worldWidth ?? (layout.width * this.get3DCardXScaleFactor(layout));
       const baseH = layout.worldHeight ?? layout.height;
@@ -8756,8 +8823,12 @@ ${exportVars}
         }
         if (typeof out.width === 'number') layout.width = out.width;
         if (typeof out.height === 'number') layout.height = out.height;
+        if (typeof out.opacity === 'number' && Number.isFinite(out.opacity)) {
+          layout.opacity = Math.max(0, Math.min(1, out.opacity));
+        }
         if (typeof out.visible === 'boolean') layout.visible = out.visible;
         if (typeof out.navigable === 'boolean') layout.navigable = out.navigable;
+        if (typeof out.interactive === 'boolean') layout.interactive = out.interactive;
       } catch (error) {
         console.error('[worlds.layout] callback error:', error);
       }
@@ -8825,7 +8896,7 @@ ${exportVars}
     }> = [];
 
     for (const layout of this.section3DLayouts) {
-      if (!layout.visible || !layout.texture) continue;
+      if (!layout.visible || !layout.texture || layout.interactive === false) continue;
       if (!this.is3DCardPossiblyVisible(viewProj, layout)) continue;
 
       const dims = this.sectionTextureCache.get(layout.sectionIndex);
@@ -8934,6 +9005,11 @@ ${exportVars}
     if (this.offscreenCanvas2D && this.offscreenCanvas2D.parentElement) {
       this.offscreenCanvas2D.parentElement.removeChild(this.offscreenCanvas2D);
     }
+
+    if (this.safeAreaProbeElement && this.safeAreaProbeElement.parentElement) {
+      this.safeAreaProbeElement.parentElement.removeChild(this.safeAreaProbeElement);
+    }
+    this.safeAreaProbeElement = null;
   }
   
   /**

@@ -484,6 +484,10 @@ export class WorldsRenderer {
             }
           }
 
+          if (!isBackground) {
+            outColor = vec4<f32>(outColor.rgb, outColor.a * clamp(uniforms.paperParams.w, 0.0, 1.0));
+          }
+
           // params0.z is full-card hover flag (1 = hovered)
           if (uniforms.params0.z > 0.5) {
             return vec4<f32>(vec3<f32>(1.0) - outColor.rgb, outColor.a);
@@ -906,7 +910,7 @@ export class WorldsRenderer {
       // Paper uniforms (used only for background pass; set disabled for cards)
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 96, new Float32Array(paperColor));
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 112, new Float32Array(lineColor));
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array([0, 0, 0, 0]));
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array([0, 0, 0, layout.opacity]));
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);

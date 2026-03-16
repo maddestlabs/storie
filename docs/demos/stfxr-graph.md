@@ -1,6 +1,7 @@
 ---
 name: "STFXR: Graph Viewer"
 theme: "neotopia"
+requiresAudioGesture: true
 ---
 
 A basic **graph viewer** for a single `stfxr` preset.

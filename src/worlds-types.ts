@@ -86,14 +86,24 @@ export interface Section3DLayout {
   texture: GPUTexture | null; // Rendered section content
   /** Optional UV rect (0..1) to highlight (e.g. hovered/focused link). */
   highlightUvRect?: { uMin: number; vMin: number; uMax: number; vMax: number };
+  /** Final alpha multiplier applied when rendering this card. */
+  opacity: number;
   visible: boolean;
   navigable: boolean;
+  /** Whether the section participates in picking and link interaction. */
+  interactive: boolean;
 }
 
 export interface WorldsConfig {
   defaultDepth: number;
   defaultSectionWidth: number;
   defaultSectionHeight: number;
+
+  /**
+   * Whether clicking/tapping a non-link area of a Worlds card should focus
+   * that section. Defaults to true.
+   */
+  sectionClickFocusEnabled?: boolean;
 
   /**
    * Units for `defaultSectionWidth/defaultSectionHeight` and per-section

@@ -24,6 +24,16 @@ export const THEMES: Record<string, ThemeColors> = {
   },
 
   neotopia: {
+    bg:      0x090909FF,   // Dark gray
+    bgAlt:   0x09343AFF,   // Lighter teal
+    fg:      0xE0E0E0FF,   // Bright gray
+    fgAlt:   0x909090FF,   // Medium gray
+    accent1: 0x00D98EFF,   // Aquamarine
+    accent2: 0xFF0000FF,   // Bold red
+    accent3: 0xFF006EFF,   // Pink
+  },
+
+  aquatopia: {
     bg:      0x001111FF,   // Deep teal
     bgAlt:   0x09343AFF,   // Lighter teal
     fg:      0xE0E0E0FF,   // Bright gray

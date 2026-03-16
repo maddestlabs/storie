@@ -59,7 +59,7 @@ worlds.camera.moveTo(x, y, z);
 Configure 3D properties in section headings using JSON metadata:
 
 ```markdown
-# Section Title {"x": "100", "y": "50", "z": "-20", "rotate-x": "45", "rotate-y": "30", "rotate-z": "10", "scale": "1.5", "width": "80", "height": "30"}
+# Section Title {"x": "100", "y": "50", "z": "-20", "rotate-x": "45", "rotate-y": "30", "rotate-z": "10", "scale": "1.5", "opacity": "0.4", "width": "80", "height": "30", "interactive": "false"}
 ```
 
 ### Properties
@@ -73,10 +73,12 @@ Configure 3D properties in section headings using JSON metadata:
 | `rotate-y` | degrees | 0 | Rotation around Y axis (yaw) |
 | `rotate-z` | degrees | 0 | Rotation around Z axis (roll) |
 | `scale` | number | 1.0 | Uniform scale multiplier |
+| `opacity` | number | 1.0 | Card alpha multiplier (0..1) |
 | `width` | number | `defaultSectionWidth` (60) | Section width in characters |
 | `height` | number | `defaultSectionHeight` (20) | Section height in lines |
 | `hidden` | boolean | false | Hide from navigation |
 | `navigable` | boolean | true | Allow navigation to section |
+| `interactive` | boolean | true | Include card in picking/link interaction |
 
 ## API Reference
 
@@ -180,6 +182,7 @@ worlds.config.setDefaults({
   defaultDepth: 0,                // Default Z position
   defaultSectionWidth: 60,        // Default width
   defaultSectionHeight: 20,       // Default height
+  sectionClickFocusEnabled: true, // Non-link card clicks/taps focus the section
 
   // Auto-layout (applies when x/y aren’t specified in metadata)
   autoLayoutEnabled: true,
@@ -213,6 +216,15 @@ worlds.config.setDefaults({
 
 // Get current defaults
 const config = worlds.config.getDefaults();
+```
+
+If you want Worlds cards to behave more like passive surfaces, disable
+non-link click focus:
+
+```javascript
+worlds.config.setDefaults({
+  sectionClickFocusEnabled: false
+});
 ```
 
 ## Common Patterns

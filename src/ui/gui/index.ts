@@ -16,6 +16,20 @@ import { GUITextEditor, type GUITextEditorConfig } from './texteditor.js';
 import { GUIMarkdownView, type GUIMarkdownViewConfig } from './markdown-view.js';
 import { GUILayoutContainer, type GUILayoutContainerConfig } from './layout-container.js';
 import type { Draw2D, WidgetDrawInfo, WidgetDrawInfoCommon } from '../draw2d.js';
+import {
+  applyButtonTokens,
+  applyCheckboxTokens,
+  applyContainerTokens,
+  applyLabelTokens,
+  applySliderTokens,
+  applyTextEditorTokens,
+  applyTextFieldTokens,
+  createDefaultGUITokens,
+  cloneGUITokens,
+  mergeGUITokens,
+  type GUITokenPatch,
+  type GUITokens
+} from './tokens.js';
 
 /**
  * Main GUI system that manages graphical UI widgets
@@ -26,6 +40,7 @@ export class GUISystem {
   private lastMouseX: number = 0;
   private lastMouseY: number = 0;
   private lastMouseDown: boolean = false;
+  private tokens: GUITokens;
 
   // Optional draw override hook. If it returns true, default drawing is skipped.
   private widgetRenderer: ((widgetInfo: WidgetDrawInfo, ui: Draw2D) => boolean | void) | null = null;
@@ -33,6 +48,16 @@ export class GUISystem {
   constructor() {
     this.widgetManager = new WidgetManager();
     this.inputRouter = new InputRouter({ widgetManager: this.widgetManager });
+    this.tokens = createDefaultGUITokens();
+  }
+
+  getTokens(): GUITokens {
+    return cloneGUITokens(this.tokens);
+  }
+
+  setTokens(patch?: GUITokenPatch | null): GUITokens {
+    this.tokens = mergeGUITokens(this.tokens, patch);
+    return this.getTokens();
   }
 
   /**
@@ -84,7 +109,7 @@ export class GUISystem {
    * Create a button widget
    */
   createButton(config: GUIButtonConfig): GUIButton {
-    const button = new GUIButton(config);
+    const button = new GUIButton(applyButtonTokens(config, this.tokens));
     this.widgetManager.register(button);
     return button;
   }
@@ -93,7 +118,7 @@ export class GUISystem {
    * Create a label widget
    */
   createLabel(config: GUILabelConfig): GUILabel {
-    const label = new GUILabel(config);
+    const label = new GUILabel(applyLabelTokens(config, this.tokens));
     this.widgetManager.register(label);
     return label;
   }
@@ -102,7 +127,7 @@ export class GUISystem {
    * Create a checkbox widget
    */
   createCheckbox(config: GUICheckboxConfig): GUICheckbox {
-    const checkbox = new GUICheckbox(config);
+    const checkbox = new GUICheckbox(applyCheckboxTokens(config, this.tokens));
     this.widgetManager.register(checkbox);
     return checkbox;
   }
@@ -111,7 +136,7 @@ export class GUISystem {
    * Create a slider widget
    */
   createSlider(config: GUISliderConfig): GUISlider {
-    const slider = new GUISlider(config);
+    const slider = new GUISlider(applySliderTokens(config, this.tokens));
     this.widgetManager.register(slider);
     return slider;
   }
@@ -120,7 +145,7 @@ export class GUISystem {
    * Create a text field widget
    */
   createTextField(config: GUITextFieldConfig): GUITextField {
-    const tf = new GUITextField(config);
+    const tf = new GUITextField(applyTextFieldTokens(config, this.tokens));
     this.widgetManager.register(tf);
     return tf;
   }
@@ -129,7 +154,7 @@ export class GUISystem {
    * Create a text editor widget (multi-line)
    */
   createTextEditor(config: GUITextEditorConfig): GUITextEditor {
-    const editor = new GUITextEditor(config);
+    const editor = new GUITextEditor(applyTextEditorTokens(config, this.tokens));
     this.widgetManager.register(editor);
     return editor;
   }
@@ -148,7 +173,7 @@ export class GUISystem {
    * Note: this does not register with the widget manager; it only updates child widget bounds.
    */
   createContainer(config: GUILayoutContainerConfig): GUILayoutContainer {
-    return new GUILayoutContainer(config);
+    return new GUILayoutContainer(applyContainerTokens(config, this.tokens));
   }
   
   /**
@@ -258,11 +283,9 @@ export class GUISystem {
   render(uiAPI: Draw2D, charWidth: number, charHeight: number): void {
     if (!uiAPI) return;
     
-    const widgets = this.widgetManager.getAll();
+    const widgets = this.widgetManager.getVisible();
     
     for (const widget of widgets) {
-      if (!widget.state.visible) continue;
-
       if (this.widgetRenderer) {
         try {
           const info = this.buildWidgetInfo(widget, charWidth, charHeight);
@@ -277,7 +300,7 @@ export class GUISystem {
       }
       
       if (widget instanceof GUIButton) {
-        this.renderButton(widget, uiAPI);
+        this.renderButton(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUILabel) {
         this.renderLabel(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUICheckbox) {
@@ -296,14 +319,25 @@ export class GUISystem {
 
   private renderTextField(tf: GUITextField, ui: Draw2D, charW: number, charH: number): void {
     const { x, y, width, height } = tf.bounds;
-    const { fg, bg, borderColor, focusBorderColor, drawBackground, drawBorder } = tf.textFieldStyle;
+    const {
+      fg,
+      bg,
+      borderColor,
+      focusBorderColor,
+      drawBackground,
+      drawBorder,
+      paddingX,
+      paddingY,
+      borderWidth,
+      focusBorderWidth
+    } = tf.textFieldStyle;
 
     if (drawBackground) {
       ui.rect(x, y, width, height, bg);
     }
 
     if (drawBorder) {
-      const b = tf.state.focused ? 3 : 2;
+      const b = tf.state.focused ? focusBorderWidth : borderWidth;
       const bc = tf.state.focused ? focusBorderColor : borderColor;
       ui.rect(x, y, width, b, bc);
       ui.rect(x, y + height - b, width, b, bc);
@@ -311,9 +345,8 @@ export class GUISystem {
       ui.rect(x + width - b, y, b, height, bc);
     }
 
-    const padX = 8;
-    const innerX = x + padX;
-    const innerW = Math.max(0, width - padX * 2);
+    const innerX = x + paddingX;
+    const innerW = Math.max(0, width - paddingX * 2);
     const maxChars = Math.max(0, Math.floor(innerW / Math.max(1, charW)));
 
     const value = tf.getValue();
@@ -329,9 +362,8 @@ export class GUISystem {
     const visibleText = value.slice(scroll, scroll + maxChars);
     const textOffsetCols = tf.getAlignedColumnOffset(maxChars, visibleText.length);
     const textX = innerX + textOffsetCols * charW;
-    const clipPadY = 2;
-    const clipY = y + clipPadY;
-    const clipH = Math.max(0, height - clipPadY * 2);
+    const clipY = y + paddingY;
+    const clipH = Math.max(0, height - paddingY * 2);
     const textY = y + Math.max(0, Math.floor((height - charH) / 2));
 
     // Optional clip to inner region (if backend supports it)
@@ -364,14 +396,25 @@ export class GUISystem {
 
   private renderTextEditor(ed: GUITextEditor, ui: Draw2D, charW: number, charH: number): void {
     const { x, y, width, height } = ed.bounds;
-    const { fg, bg, borderColor, focusBorderColor, drawBackground, drawBorder } = ed.textEditorStyle;
+    const {
+      fg,
+      bg,
+      borderColor,
+      focusBorderColor,
+      drawBackground,
+      drawBorder,
+      paddingX,
+      paddingY,
+      borderWidth,
+      focusBorderWidth
+    } = ed.textEditorStyle;
 
     if (drawBackground) {
       ui.rect(x, y, width, height, bg);
     }
 
     if (drawBorder) {
-      const b = ed.state.focused ? 3 : 2;
+      const b = ed.state.focused ? focusBorderWidth : borderWidth;
       const bc = ed.state.focused ? focusBorderColor : borderColor;
       ui.rect(x, y, width, b, bc);
       ui.rect(x, y + height - b, width, b, bc);
@@ -379,12 +422,10 @@ export class GUISystem {
       ui.rect(x + width - b, y, b, height, bc);
     }
 
-    const padX = 8;
-    const padY = 8;
-    const innerX = x + padX;
-    const innerY = y + padY;
-    const innerW = Math.max(0, width - padX * 2);
-    const innerH = Math.max(0, height - padY * 2);
+    const innerX = x + paddingX;
+    const innerY = y + paddingY;
+    const innerW = Math.max(0, width - paddingX * 2);
+    const innerH = Math.max(0, height - paddingY * 2);
     const maxCols = Math.max(0, Math.floor(innerW / Math.max(1, charW)));
     const maxRows = Math.max(0, Math.floor(innerH / Math.max(1, charH)));
 
@@ -449,9 +490,9 @@ export class GUISystem {
     view.renderToUI(ui, charW, charH);
   }
   
-  private renderButton(button: GUIButton, ui: Draw2D): void {
+  private renderButton(button: GUIButton, ui: Draw2D, charW: number, charH: number): void {
     const { x, y, width, height } = button.bounds;
-    const { fg, bg, borderColor, hoverBg, activeBg } = button.buttonStyle;
+    const { fg, bg, borderColor, hoverBg, activeBg, borderWidth, focusBorderWidth } = button.buttonStyle;
     const label = String(button.label ?? '');
     
     // Background
@@ -460,21 +501,20 @@ export class GUISystem {
     ui.rect(x, y, width, height, bgColor);
     
     // Border
-    ui.rect(x, y, width, 2, borderColor); // Top
-    ui.rect(x, y + height - 2, width, 2, borderColor); // Bottom
-    ui.rect(x, y, 2, height, borderColor); // Left
-    ui.rect(x + width - 2, y, 2, height, borderColor); // Right
+    const border = button.state.focused ? focusBorderWidth : borderWidth;
+    ui.rect(x, y, width, border, borderColor);
+    ui.rect(x, y + height - border, width, border, borderColor);
+    ui.rect(x, y, border, height, borderColor);
+    ui.rect(x + width - border, y, border, height, borderColor);
     
-    // Centered label (estimate character width)
-    const charW = 10; // Fallback
     const labelWidth = label.length * charW;
     const labelX = x + (width - labelWidth) / 2;
-    const labelY = y + height / 2;
+    const labelY = y + Math.max(0, Math.floor((height - charH) / 2));
     
     ui.text(label, labelX, labelY, fg);
   }
   
-  private renderLabel(label: GUILabel, ui: Draw2D, charW: number, _charH: number): void {
+  private renderLabel(label: GUILabel, ui: Draw2D, charW: number, charH: number): void {
     const { x, y, width, height } = label.bounds;
     const { fg, bg } = label.labelStyle;
     const text = String(label.text ?? '');
@@ -495,73 +535,71 @@ export class GUISystem {
       textX = x + width - textWidth;
     }
     
-    ui.text(text, textX, y + height / 2, fg);
+    ui.text(text, textX, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
   }
   
   private renderCheckbox(checkbox: GUICheckbox, ui: Draw2D, charW: number, _charH: number): void {
     const { x, y, height } = checkbox.bounds;
-    const { fg, bg, checkColor, hoverBg } = checkbox.checkboxStyle;
+    const { fg, bg, checkColor, hoverBg, boxSize, labelGap, borderWidth } = checkbox.checkboxStyle;
     const label = String(checkbox.label ?? '');
     
-    const boxSize = Math.min(height, charW * 2);
-    const boxY = y + (height - boxSize) / 2;
+    const actualBoxSize = Math.min(height, Math.max(boxSize, charW));
+    const boxY = y + (height - actualBoxSize) / 2;
     
     // Checkbox box background
     const bgColor = checkbox.state.hovered ? hoverBg : bg;
-    ui.rect(x, boxY, boxSize, boxSize, bgColor);
+    ui.rect(x, boxY, actualBoxSize, actualBoxSize, bgColor);
     
     // Border
-    ui.rect(x, boxY, boxSize, 1, fg);
-    ui.rect(x, boxY + boxSize - 1, boxSize, 1, fg);
-    ui.rect(x, boxY, 1, boxSize, fg);
-    ui.rect(x + boxSize - 1, boxY, 1, boxSize, fg);
+    ui.rect(x, boxY, actualBoxSize, borderWidth, fg);
+    ui.rect(x, boxY + actualBoxSize - borderWidth, actualBoxSize, borderWidth, fg);
+    ui.rect(x, boxY, borderWidth, actualBoxSize, fg);
+    ui.rect(x + actualBoxSize - borderWidth, boxY, borderWidth, actualBoxSize, fg);
     
     // Check mark
     if (checkbox.checked) {
-      const checkPadding = boxSize * 0.25;
+      const checkPadding = actualBoxSize * 0.25;
       ui.rect(
         x + checkPadding,
         boxY + checkPadding,
-        boxSize - checkPadding * 2,
-        boxSize - checkPadding * 2,
+        actualBoxSize - checkPadding * 2,
+        actualBoxSize - checkPadding * 2,
         checkColor
       );
     }
     
     // Label
-    ui.text(label, x + boxSize + 8, y + height / 2, fg);
+    ui.text(label, x + actualBoxSize + labelGap, y + Math.max(0, Math.floor((height - charW) / 2)), fg);
   }
   
   private renderSlider(slider: GUISlider, ui: Draw2D, _charW: number, charH: number): void {
     const { x, y, width, height } = slider.bounds;
-    const { fg, trackColor, knobColor, knobHoverColor } = slider.sliderStyle;
+    const { fg, trackColor, knobColor, knobHoverColor, labelGap, trackHeight, knobWidth, knobHeight, valueGap } = slider.sliderStyle;
     
     // Label (if present)
     let trackY = y;
     if (slider.label) {
       ui.text(slider.label, x, y, fg);
-      trackY += charH;
+      trackY += charH + labelGap;
     }
     
     // Track
-    const trackHeight = 8;
     const trackYPos = trackY + (height - trackHeight) / 2;
     ui.rect(x, trackYPos, width, trackHeight, trackColor);
     
     // Knob
-    const knobWidth = 16;
-    const knobHeight = Math.min(height - (slider.label ? charH : 0), 24);
+    const actualKnobHeight = Math.min(height - (slider.label ? charH + labelGap : 0), knobHeight);
     const range = slider.max - slider.min;
     const ratio = range > 0 ? (slider.value - slider.min) / range : 0;
     const knobX = x + ratio * (width - knobWidth);
-    const knobY = trackY + (height - knobHeight) / 2;
+    const knobY = trackY + (height - actualKnobHeight) / 2;
     
     const knobCol = slider.state.hovered || slider.isDragging() ? knobHoverColor : knobColor;
-    ui.rect(knobX, knobY, knobWidth, knobHeight, knobCol);
+    ui.rect(knobX, knobY, knobWidth, actualKnobHeight, knobCol);
     
     // Value text
     const valueText = `${Math.round(slider.value)}`;
-    ui.text(valueText, x + width + 8, y + height / 2, fg);
+    ui.text(valueText, x + width + valueGap, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
   }
   
   /**

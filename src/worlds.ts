@@ -895,6 +895,10 @@ export function parseTransform3D(
   // Scale
   const scale = parseFloat(metaStr('scale', '1'));
 
+  // Visual alpha
+  const rawOpacity = parseFloat(metaStr('opacity', '1'));
+  const opacity = Number.isFinite(rawOpacity) ? Math.max(0, Math.min(1, rawOpacity)) : 1;
+
   // Dimensions
   const width = parseFloat(metaStr('width', String(config.defaultSectionWidth)));
   const height = parseFloat(metaStr('height', String(config.defaultSectionHeight)));
@@ -902,6 +906,7 @@ export function parseTransform3D(
   // Visibility
   const visible = !metaTruthy('hidden');
   const navigable = metaStr('navigable', 'true').trim().toLowerCase() !== 'false';
+  const interactive = metaStr('interactive', 'true').trim().toLowerCase() !== 'false';
 
   // For display/rendering: markdown parser already strips directive JSON from
   // the title when it stores it in `section.directive`. Keep a legacy fallback.
@@ -923,8 +928,10 @@ export function parseTransform3D(
     width,
     height,
     texture: null,
+    opacity,
     visible,
-    navigable
+    navigable,
+    interactive
   };
 }
 
@@ -985,6 +992,7 @@ export function getDefaultWorldsConfig(): WorldsConfig {
     defaultDepth: -100, // Sections start 100 units in front of camera (negative Z)
     defaultSectionWidth: 60,
     defaultSectionHeight: 20,
+    sectionClickFocusEnabled: true,
     sectionSizeUnits: 'text',
     sectionOverflow: 'clip',
     cameraFov: Math.PI / 4, // 45 degrees
