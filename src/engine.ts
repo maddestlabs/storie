@@ -235,6 +235,8 @@ export class StorieEngine {
   // Native browser APIs (shared instances)
   private audioContext: AudioContext;
   private audioGestureUnlocked: boolean = false;
+  private trustedAudioGestureDepth: number = 0;
+  private pendingGestureAudioStarts: Array<() => void> = [];
   private canvas2DContext: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null = null;
   private offscreenCanvas2D: HTMLCanvasElement | null = null;
   private webglContext: WebGLRenderingContext | null = null;
@@ -2782,6 +2784,14 @@ export class StorieEngine {
       audio: {
         // === SHARED INSTANCE (Full Web Audio API) ===
         get context() { return engine.audioContext; },
+        startOnGesture: (start: () => void): boolean => {
+          if (typeof start !== 'function') return false;
+          const startedNow = engine.runOrQueueGestureAudioStart(() => {
+            start();
+          });
+          if (!startedNow) engine.audioContext.resume().catch(() => {});
+          return startedNow;
+        },
         
         // === HELPERS (Use same AudioContext) ===
         playTone: (frequency: number, duration: number, volume: number = 0.5) => {
@@ -2793,9 +2803,25 @@ export class StorieEngine {
           
           osc.connect(gain);
           gain.connect(this.audioContext.destination);
-          
-          osc.start();
-          osc.stop(this.audioContext.currentTime + duration);
+
+          engine.runOrQueueGestureAudioStart(() => {
+            const now = engine.audioContext.currentTime;
+            try {
+              osc.start(now);
+            } catch {
+              osc.start();
+            }
+            try {
+              osc.stop(now + Math.max(0, duration));
+            } catch {
+              try {
+                osc.stop();
+              } catch {
+                // ignore
+              }
+            }
+          });
+          engine.audioContext.resume().catch(() => {});
           
           return { osc, gain }; // Return for user control
         },
@@ -2846,7 +2872,15 @@ export class StorieEngine {
           
           source.connect(gain);
           gain.connect(this.audioContext.destination);
-          source.start();
+          engine.runOrQueueGestureAudioStart(() => {
+            const when = engine.audioContext.currentTime;
+            try {
+              source.start(when);
+            } catch {
+              source.start();
+            }
+          });
+          engine.audioContext.resume().catch(() => {});
           
           return source; // User can stop/modify
         },
@@ -2890,14 +2924,17 @@ export class StorieEngine {
           gain.gain.value = options.volume !== undefined ? options.volume : 1.0;
           source.connect(gain);
           gain.connect(options.destination ?? engine.audioContext.destination);
-          const when = (typeof options.when === 'number' && Number.isFinite(options.when))
-            ? options.when
-            : engine.audioContext.currentTime;
-          try {
-            source.start(when);
-          } catch {
-            source.start();
-          }
+          engine.runOrQueueGestureAudioStart(() => {
+            const when = (typeof options.when === 'number' && Number.isFinite(options.when))
+              ? options.when
+              : engine.audioContext.currentTime;
+            try {
+              source.start(when);
+            } catch {
+              source.start();
+            }
+          });
+          engine.audioContext.resume().catch(() => {});
           return source;
         },
 
@@ -3045,15 +3082,18 @@ export class StorieEngine {
           source.connect(gain);
           gain.connect(options.destination ?? this.audioContext.destination);
 
-          const when = (typeof options.when === 'number' && Number.isFinite(options.when))
-            ? options.when
-            : this.audioContext.currentTime;
-          try {
-            source.start(when);
-          } catch {
-            // Fallback: start immediately.
-            source.start();
-          }
+          engine.runOrQueueGestureAudioStart(() => {
+            const when = (typeof options.when === 'number' && Number.isFinite(options.when))
+              ? options.when
+              : engine.audioContext.currentTime;
+            try {
+              source.start(when);
+            } catch {
+              // Fallback: start immediately.
+              source.start();
+            }
+          });
+          engine.audioContext.resume().catch(() => {});
           return source;
         },
         
@@ -7412,6 +7452,51 @@ ${exportVars}
   // Guard against iOS mouse-compat events firing after touch.
   private lastTouchEventAt: number = 0;
 
+  private beginTrustedAudioGesture(): void {
+    this.trustedAudioGestureDepth++;
+    this.ensureAudioGestureUnlock();
+    this.flushPendingGestureAudioStarts();
+  }
+
+  private endTrustedAudioGesture(): void {
+    this.trustedAudioGestureDepth = Math.max(0, this.trustedAudioGestureDepth - 1);
+  }
+
+  private runOrQueueGestureAudioStart(start: () => void): boolean {
+    const ctx = this.audioContext as AudioContext & { state?: AudioContextState };
+    if (
+      this.trustedAudioGestureDepth > 0 ||
+      this.audioGestureUnlocked ||
+      ctx.state === 'running'
+    ) {
+      try {
+        start();
+        return true;
+      } catch (error) {
+        console.warn('[audio] gesture-time start failed:', error);
+        return false;
+      }
+    }
+
+    if (this.pendingGestureAudioStarts.length >= 64) {
+      this.pendingGestureAudioStarts.shift();
+    }
+    this.pendingGestureAudioStarts.push(start);
+    return false;
+  }
+
+  private flushPendingGestureAudioStarts(): void {
+    while (this.pendingGestureAudioStarts.length > 0) {
+      const start = this.pendingGestureAudioStarts.shift();
+      if (!start) continue;
+      try {
+        start();
+      } catch (error) {
+        console.warn('[audio] queued gesture-time start failed:', error);
+      }
+    }
+  }
+
   private ensureAudioGestureUnlock(): void {
     if (this.audioGestureUnlocked) return;
 
@@ -7526,84 +7611,87 @@ ${exportVars}
       return;
     }
 
-    // iOS Safari is more reliable when a real node start happens in the same
-    // trusted gesture, not just a resume() call.
-    if (action === 'press') this.ensureAudioGestureUnlock();
+    const isGesturePress = action === 'press';
+    if (isGesturePress) this.beginTrustedAudioGesture();
 
-    const doc = this.getActiveDocument();
+    try {
+      const doc = this.getActiveDocument();
 
-    const t = (e.changedTouches && e.changedTouches.length)
-      ? e.changedTouches[0]
-      : ((e.touches && e.touches.length) ? e.touches[0] : null);
-    if (!t) {
-      e.preventDefault();
-      return;
-    }
+      const t = (e.changedTouches && e.changedTouches.length)
+        ? e.changedTouches[0]
+        : ((e.touches && e.touches.length) ? e.touches[0] : null);
+      if (!t) {
+        e.preventDefault();
+        return;
+      }
 
-    this.lastTouchEventAt = Date.now();
+      this.lastTouchEventAt = Date.now();
 
-    const { pixelX, pixelY } = this.touchToPixelXY(t);
-    this.input.updateMousePosition(pixelX, pixelY);
-    this.input.applySyntheticEvent({ type: 'mouse', action, button: 'left', x: pixelX, y: pixelY });
+      const { pixelX, pixelY } = this.touchToPixelXY(t);
+      this.input.updateMousePosition(pixelX, pixelY);
+      this.input.applySyntheticEvent({ type: 'mouse', action, button: 'left', x: pixelX, y: pixelY });
 
-    // Built-in 3D picking/navigation (touch behaves like left click).
-    let handledBy3D = false;
-    if (action === 'press') {
-      const picked = this.pick3DAt(pixelX, pixelY);
-      if (picked && this.camera3D) {
-        handledBy3D = true;
-        const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
-        if (linkHit) {
-          this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
-          this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
-        } else {
-          const style = this.lastApplied3DCameraFocus;
-          const fill = style?.kind === 'fit' ? style.fill : 0.9;
-          this.request3DCameraFocus({
-            kind: 'fit',
-            sectionIndex: picked.layout.sectionIndex,
-            fill,
-            ...(style?.keepRotation ? { keepRotation: true } : {}),
-            ...(style?.positionOffset ? { positionOffset: style.positionOffset } : {}),
-            ...(style?.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
-          });
+      // Built-in 3D picking/navigation (touch behaves like left click).
+      let handledBy3D = false;
+      if (action === 'press') {
+        const picked = this.pick3DAt(pixelX, pixelY);
+        if (picked && this.camera3D) {
+          handledBy3D = true;
+          const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
+          if (linkHit) {
+            this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
+            this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
+          } else {
+            const style = this.lastApplied3DCameraFocus;
+            const fill = style?.kind === 'fit' ? style.fill : 0.9;
+            this.request3DCameraFocus({
+              kind: 'fit',
+              sectionIndex: picked.layout.sectionIndex,
+              fill,
+              ...(style?.keepRotation ? { keepRotation: true } : {}),
+              ...(style?.positionOffset ? { positionOffset: style.positionOffset } : {}),
+              ...(style?.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
+            });
+          }
         }
       }
-    }
 
-    let dispatchedToDoc = false;
-    if (doc?.handlers?.input) {
-      const charWidth = this.canvas.width / this.width;
-      const charHeight = this.canvas.height / this.height;
-      const cellX = Math.floor(pixelX / charWidth);
-      const cellY = Math.floor(pixelY / charHeight);
+      let dispatchedToDoc = false;
+      if (doc?.handlers?.input) {
+        const charWidth = this.canvas.width / this.width;
+        const charHeight = this.canvas.height / this.height;
+        const cellX = Math.floor(pixelX / charWidth);
+        const cellY = Math.floor(pixelY / charHeight);
 
-      const event: InputEvent = {
-        type: 'mouse',
-        action,
-        button: 'left',
-        x: pixelX,
-        y: pixelY,
-        cellX,
-        cellY,
-        mods: []
-      };
+        const event: InputEvent = {
+          type: 'mouse',
+          action,
+          button: 'left',
+          x: pixelX,
+          y: pixelY,
+          cellX,
+          cellY,
+          mods: []
+        };
 
-      this.inputDispatchDepth++;
-      try {
-        const shouldContinue = doc.handlers.input(event);
-        if (shouldContinue === false) this.stop();
-      } catch (error) {
-        console.error('Error in input handler:', error);
-      } finally {
-        this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+        this.inputDispatchDepth++;
+        try {
+          const shouldContinue = doc.handlers.input(event);
+          if (shouldContinue === false) this.stop();
+        } catch (error) {
+          console.error('Error in input handler:', error);
+        } finally {
+          this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+        }
+
+        dispatchedToDoc = true;
       }
 
-      dispatchedToDoc = true;
+      // Match mouse handler: only prevent defaults when the engine/doc handled it.
+      if (handledBy3D || dispatchedToDoc || this.worldsEnabled) e.preventDefault();
+    } finally {
+      if (isGesturePress) this.endTrustedAudioGesture();
     }
-
-    // Match mouse handler: only prevent defaults when the engine/doc handled it.
-    if (handledBy3D || dispatchedToDoc || this.worldsEnabled) e.preventDefault();
   }
 
   private isTruthyDropTarget(value: any): boolean {
@@ -7770,66 +7858,70 @@ ${exportVars}
       return;
     }
 
-    // Unlock audio from a real DOM key gesture for iOS.
-    if (action === 'press') this.ensureAudioGestureUnlock();
+    const isGesturePress = action === 'press';
+    if (isGesturePress) this.beginTrustedAudioGesture();
 
-    const doc = this.getActiveDocument();
+    try {
+      const doc = this.getActiveDocument();
 
-    // Built-in 3D link navigation (canvas.nim parity)
-    let handledBy3D = false;
-    if (
-      action === 'press' &&
-      this.worldsEnabled &&
-      this.camera3D &&
-      this.worldsLinkKeyHandlingEnabled
-    ) {
-      if (e.key === 'Tab') {
-        this.move3DLinkFocus(e.shiftKey ? -1 : 1);
-        handledBy3D = true;
-      } else if (e.key === 'Enter') {
-        this.activateFocused3DLink();
-        handledBy3D = true;
-      } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
-        this.move3DLinkFocus(1);
-        handledBy3D = true;
-      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
-        this.move3DLinkFocus(-1);
-        handledBy3D = true;
-      }
-    }
-
-    if (doc?.handlers?.input) {
-      // Build modifiers array
-      const mods: string[] = [];
-      if (e.shiftKey) mods.push('shift');
-      if (e.ctrlKey) mods.push('ctrl');
-      if (e.altKey) mods.push('alt');
-      if (e.metaKey) mods.push('meta');
-
-      // Dispatch keydown/keyup events (TStorie convention)
-      const event: InputEvent = {
-        type: action === 'press' ? 'keydown' : 'keyup',
-        key: e.key,
-        keyCode: e.keyCode,
-        mods
-      };
-
-      this.inputDispatchDepth++;
-      try {
-        const shouldContinue = doc.handlers.input(event);
-        // Only stop if handler explicitly returns false (undefined = continue)
-        if (shouldContinue === false) {
-          this.stop();
+      // Built-in 3D link navigation (canvas.nim parity)
+      let handledBy3D = false;
+      if (
+        action === 'press' &&
+        this.worldsEnabled &&
+        this.camera3D &&
+        this.worldsLinkKeyHandlingEnabled
+      ) {
+        if (e.key === 'Tab') {
+          this.move3DLinkFocus(e.shiftKey ? -1 : 1);
+          handledBy3D = true;
+        } else if (e.key === 'Enter') {
+          this.activateFocused3DLink();
+          handledBy3D = true;
+        } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+          this.move3DLinkFocus(1);
+          handledBy3D = true;
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+          this.move3DLinkFocus(-1);
+          handledBy3D = true;
         }
-      } catch (error) {
-        console.error('Error in input handler:', error);
-      } finally {
-        this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
       }
-    }
 
-    if (handledBy3D || doc?.handlers?.input) {
-      e.preventDefault();
+      if (doc?.handlers?.input) {
+        // Build modifiers array
+        const mods: string[] = [];
+        if (e.shiftKey) mods.push('shift');
+        if (e.ctrlKey) mods.push('ctrl');
+        if (e.altKey) mods.push('alt');
+        if (e.metaKey) mods.push('meta');
+
+        // Dispatch keydown/keyup events (TStorie convention)
+        const event: InputEvent = {
+          type: action === 'press' ? 'keydown' : 'keyup',
+          key: e.key,
+          keyCode: e.keyCode,
+          mods
+        };
+
+        this.inputDispatchDepth++;
+        try {
+          const shouldContinue = doc.handlers.input(event);
+          // Only stop if handler explicitly returns false (undefined = continue)
+          if (shouldContinue === false) {
+            this.stop();
+          }
+        } catch (error) {
+          console.error('Error in input handler:', error);
+        } finally {
+          this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+        }
+      }
+
+      if (handledBy3D || doc?.handlers?.input) {
+        e.preventDefault();
+      }
+    } finally {
+      if (isGesturePress) this.endTrustedAudioGesture();
     }
   }
 
@@ -7849,87 +7941,90 @@ ${exportVars}
       return;
     }
 
-    // Unlock audio from a real DOM pointer gesture for iOS.
-    if (action === 'press') this.ensureAudioGestureUnlock();
-
-    const doc = this.getActiveDocument();
-
-    const rect = this.canvas.getBoundingClientRect();
-    
-    // Get CSS coordinates
-    const cssX = e.clientX - rect.left;
-    const cssY = e.clientY - rect.top;
-    
-    // Scale to canvas backing store coordinates (handles HiDPI/CSS scaling)
-    const pixelX = cssX * (this.canvas.width / rect.width);
-    const pixelY = cssY * (this.canvas.height / rect.height);
-    
-    // Update InputManager's mouse position so mouseX/mouseY globals reflect click position
-    this.input.updateMousePosition(pixelX, pixelY);
-
-    // Built-in 3D picking/navigation: click a section card to focus camera.
-    // This runs even if the document doesn't define an on:input handler.
-    if (action === 'press' && e.button === 0) {
-      const picked = this.pick3DAt(pixelX, pixelY);
-      if (picked && this.camera3D) {
-        const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
-        if (linkHit) {
-          this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
-          this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
-        } else {
-          // Preserve the caller's preferred focus style and zoom (fill).
-          // This makes demo-defined camera framing “sticky” across navigation.
-          const style = this.lastApplied3DCameraFocus;
-          const fill = style?.kind === 'fit' ? style.fill : 0.9;
-          this.request3DCameraFocus({
-            kind: 'fit',
-            sectionIndex: picked.layout.sectionIndex,
-            fill,
-            ...(style?.keepRotation ? { keepRotation: true } : {}),
-            ...(style?.positionOffset ? { positionOffset: style.positionOffset } : {}),
-            ...(style?.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
-          });
-        }
-      }
-    }
-    
-    // Calculate character size in backing store pixels (same coordinate system as pixelX/pixelY)
-    const charWidth = this.canvas.width / this.width;
-    const charHeight = this.canvas.height / this.height;
-    const cellX = Math.floor(pixelX / charWidth);
-    const cellY = Math.floor(pixelY / charHeight);
-
-    // Build modifiers array
-    const mods: string[] = [];
-    if (e.shiftKey) mods.push('shift');
-    if (e.ctrlKey) mods.push('ctrl');
-    if (e.altKey) mods.push('alt');
-    if (e.metaKey) mods.push('meta');
-
-    const button = e.button === 0 ? 'left' : e.button === 1 ? 'middle' : 'right';
-
-    const event: InputEvent = {
-      type: 'mouse',
-      action,
-      button,
-      x: pixelX,     // Pixel coordinates (primary)
-      y: pixelY,
-      cellX,         // Cell coordinates (for TUI)
-      cellY,
-      mods
-    };
+    const isGesturePress = action === 'press';
+    if (isGesturePress) this.beginTrustedAudioGesture();
 
     try {
-      if (doc?.handlers?.input) {
-        const shouldContinue = doc.handlers.input(event);
-        // Only stop if handler explicitly returns false (undefined = continue)
-        if (shouldContinue === false) {
-          this.stop();
+      const doc = this.getActiveDocument();
+      const rect = this.canvas.getBoundingClientRect();
+
+      // Get CSS coordinates
+      const cssX = e.clientX - rect.left;
+      const cssY = e.clientY - rect.top;
+
+      // Scale to canvas backing store coordinates (handles HiDPI/CSS scaling)
+      const pixelX = cssX * (this.canvas.width / rect.width);
+      const pixelY = cssY * (this.canvas.height / rect.height);
+
+      // Update InputManager's mouse position so mouseX/mouseY globals reflect click position
+      this.input.updateMousePosition(pixelX, pixelY);
+
+      // Built-in 3D picking/navigation: click a section card to focus camera.
+      // This runs even if the document doesn't define an on:input handler.
+      if (action === 'press' && e.button === 0) {
+        const picked = this.pick3DAt(pixelX, pixelY);
+        if (picked && this.camera3D) {
+          const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
+          if (linkHit) {
+            this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
+            this.activate3DLink(linkHit.region.url);
+          } else {
+            // Preserve the caller's preferred focus style and zoom (fill).
+            // This makes demo-defined camera framing “sticky” across navigation.
+            const style = this.lastApplied3DCameraFocus;
+            const fill = style?.kind === 'fit' ? style.fill : 0.9;
+            this.request3DCameraFocus({
+              kind: 'fit',
+              sectionIndex: picked.layout.sectionIndex,
+              fill,
+              ...(style?.keepRotation ? { keepRotation: true } : {}),
+              ...(style?.positionOffset ? { positionOffset: style.positionOffset } : {}),
+              ...(style?.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
+            });
+          }
         }
       }
+
+      // Keep InputManager button state in sync for mouse.down()/clicked().
+      this.input.applySyntheticEvent({
+        type: 'mouse',
+        action,
+        button: e.button === 1 ? 'middle' : e.button === 2 ? 'right' : 'left',
+        x: pixelX,
+        y: pixelY,
+      });
+
+      if (doc?.handlers?.input) {
+        const charWidth = this.canvas.width / this.width;
+        const charHeight = this.canvas.height / this.height;
+        const cellX = Math.floor(pixelX / charWidth);
+        const cellY = Math.floor(pixelY / charHeight);
+
+        const event: InputEvent = {
+          type: 'mouse',
+          action,
+          button: e.button === 1 ? 'middle' : e.button === 2 ? 'right' : 'left',
+          x: pixelX,
+          y: pixelY,
+          cellX,
+          cellY,
+          mods: []
+        };
+
+        this.inputDispatchDepth++;
+        try {
+          const shouldContinue = doc.handlers.input(event);
+          if (shouldContinue === false) this.stop();
+        } catch (error) {
+          console.error('Error in input handler:', error);
+        } finally {
+          this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+        }
+      }
+
       e.preventDefault();
-    } catch (error) {
-      console.error('Error in input handler:', error);
+    } finally {
+      if (isGesturePress) this.endTrustedAudioGesture();
     }
   }
 
@@ -7937,8 +8032,8 @@ ${exportVars}
     pixelX: number,
     pixelY: number
   ): { layout: Section3DLayout; u: number; v: number } | null {
-    if (!this.worldsEnabled || !this.camera3D) return null;
     if (!this.section3DLayouts || this.section3DLayouts.length === 0) return null;
+    if (!this.camera3D) return null;
 
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;

@@ -22117,6 +22117,8 @@ class StorieEngine {
     // Native browser APIs (shared instances)
     __publicField(this, "audioContext");
     __publicField(this, "audioGestureUnlocked", false);
+    __publicField(this, "trustedAudioGestureDepth", 0);
+    __publicField(this, "pendingGestureAudioStarts", []);
     __publicField(this, "canvas2DContext", null);
     __publicField(this, "offscreenCanvas2D", null);
     __publicField(this, "webglContext", null);
@@ -24280,6 +24282,15 @@ class StorieEngine {
         get context() {
           return engine.audioContext;
         },
+        startOnGesture: (start) => {
+          if (typeof start !== "function") return false;
+          const startedNow = engine.runOrQueueGestureAudioStart(() => {
+            start();
+          });
+          if (!startedNow) engine.audioContext.resume().catch(() => {
+          });
+          return startedNow;
+        },
         // === HELPERS (Use same AudioContext) ===
         playTone: (frequency, duration, volume = 0.5) => {
           const osc = this.audioContext.createOscillator();
@@ -24288,8 +24299,24 @@ class StorieEngine {
           gain.gain.value = volume;
           osc.connect(gain);
           gain.connect(this.audioContext.destination);
-          osc.start();
-          osc.stop(this.audioContext.currentTime + duration);
+          engine.runOrQueueGestureAudioStart(() => {
+            const now = engine.audioContext.currentTime;
+            try {
+              osc.start(now);
+            } catch {
+              osc.start();
+            }
+            try {
+              osc.stop(now + Math.max(0, duration));
+            } catch {
+              try {
+                osc.stop();
+              } catch {
+              }
+            }
+          });
+          engine.audioContext.resume().catch(() => {
+          });
           return { osc, gain };
         },
         /**
@@ -24328,7 +24355,16 @@ class StorieEngine {
           gain.gain.value = options.volume !== void 0 ? options.volume : 1;
           source.connect(gain);
           gain.connect(this.audioContext.destination);
-          source.start();
+          engine.runOrQueueGestureAudioStart(() => {
+            const when = engine.audioContext.currentTime;
+            try {
+              source.start(when);
+            } catch {
+              source.start();
+            }
+          });
+          engine.audioContext.resume().catch(() => {
+          });
           return source;
         },
         /**
@@ -24360,12 +24396,16 @@ class StorieEngine {
           gain.gain.value = options.volume !== void 0 ? options.volume : 1;
           source.connect(gain);
           gain.connect(options.destination ?? engine.audioContext.destination);
-          const when = typeof options.when === "number" && Number.isFinite(options.when) ? options.when : engine.audioContext.currentTime;
-          try {
-            source.start(when);
-          } catch {
-            source.start();
-          }
+          engine.runOrQueueGestureAudioStart(() => {
+            const when = typeof options.when === "number" && Number.isFinite(options.when) ? options.when : engine.audioContext.currentTime;
+            try {
+              source.start(when);
+            } catch {
+              source.start();
+            }
+          });
+          engine.audioContext.resume().catch(() => {
+          });
           return source;
         },
         /**
@@ -24494,12 +24534,16 @@ class StorieEngine {
           gain.gain.value = options.volume !== void 0 ? options.volume : 1;
           source.connect(gain);
           gain.connect(options.destination ?? this.audioContext.destination);
-          const when = typeof options.when === "number" && Number.isFinite(options.when) ? options.when : this.audioContext.currentTime;
-          try {
-            source.start(when);
-          } catch {
-            source.start();
-          }
+          engine.runOrQueueGestureAudioStart(() => {
+            const when = typeof options.when === "number" && Number.isFinite(options.when) ? options.when : engine.audioContext.currentTime;
+            try {
+              source.start(when);
+            } catch {
+              source.start();
+            }
+          });
+          engine.audioContext.resume().catch(() => {
+          });
           return source;
         },
         // === RAW API SHORTCUTS (Use same AudioContext) ===
@@ -27903,6 +27947,42 @@ ${content}`.trim();
     this.canvas.tabIndex = 0;
     this.canvas.focus();
   }
+  beginTrustedAudioGesture() {
+    this.trustedAudioGestureDepth++;
+    this.ensureAudioGestureUnlock();
+    this.flushPendingGestureAudioStarts();
+  }
+  endTrustedAudioGesture() {
+    this.trustedAudioGestureDepth = Math.max(0, this.trustedAudioGestureDepth - 1);
+  }
+  runOrQueueGestureAudioStart(start) {
+    const ctx = this.audioContext;
+    if (this.trustedAudioGestureDepth > 0 || this.audioGestureUnlocked || ctx.state === "running") {
+      try {
+        start();
+        return true;
+      } catch (error) {
+        console.warn("[audio] gesture-time start failed:", error);
+        return false;
+      }
+    }
+    if (this.pendingGestureAudioStarts.length >= 64) {
+      this.pendingGestureAudioStarts.shift();
+    }
+    this.pendingGestureAudioStarts.push(start);
+    return false;
+  }
+  flushPendingGestureAudioStarts() {
+    while (this.pendingGestureAudioStarts.length > 0) {
+      const start = this.pendingGestureAudioStarts.shift();
+      if (!start) continue;
+      try {
+        start();
+      } catch (error) {
+        console.warn("[audio] queued gesture-time start failed:", error);
+      }
+    }
+  }
   ensureAudioGestureUnlock() {
     if (this.audioGestureUnlocked) return;
     const ctx = this.audioContext;
@@ -27996,68 +28076,73 @@ ${content}`.trim();
       e.preventDefault();
       return;
     }
-    if (action === "press") this.ensureAudioGestureUnlock();
-    const doc = this.getActiveDocument();
-    const t = e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : e.touches && e.touches.length ? e.touches[0] : null;
-    if (!t) {
-      e.preventDefault();
-      return;
-    }
-    this.lastTouchEventAt = Date.now();
-    const { pixelX, pixelY } = this.touchToPixelXY(t);
-    this.input.updateMousePosition(pixelX, pixelY);
-    this.input.applySyntheticEvent({ type: "mouse", action, button: "left", x: pixelX, y: pixelY });
-    let handledBy3D = false;
-    if (action === "press") {
-      const picked = this.pick3DAt(pixelX, pixelY);
-      if (picked && this.camera3D) {
-        handledBy3D = true;
-        const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
-        if (linkHit) {
-          this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
-          this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
-        } else {
-          const style = this.lastApplied3DCameraFocus;
-          const fill = (style == null ? void 0 : style.kind) === "fit" ? style.fill : 0.9;
-          this.request3DCameraFocus({
-            kind: "fit",
-            sectionIndex: picked.layout.sectionIndex,
-            fill,
-            ...(style == null ? void 0 : style.keepRotation) ? { keepRotation: true } : {},
-            ...(style == null ? void 0 : style.positionOffset) ? { positionOffset: style.positionOffset } : {},
-            ...(style == null ? void 0 : style.rotationOffset) ? { rotationOffset: style.rotationOffset } : {}
-          });
+    const isGesturePress = action === "press";
+    if (isGesturePress) this.beginTrustedAudioGesture();
+    try {
+      const doc = this.getActiveDocument();
+      const t = e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : e.touches && e.touches.length ? e.touches[0] : null;
+      if (!t) {
+        e.preventDefault();
+        return;
+      }
+      this.lastTouchEventAt = Date.now();
+      const { pixelX, pixelY } = this.touchToPixelXY(t);
+      this.input.updateMousePosition(pixelX, pixelY);
+      this.input.applySyntheticEvent({ type: "mouse", action, button: "left", x: pixelX, y: pixelY });
+      let handledBy3D = false;
+      if (action === "press") {
+        const picked = this.pick3DAt(pixelX, pixelY);
+        if (picked && this.camera3D) {
+          handledBy3D = true;
+          const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
+          if (linkHit) {
+            this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
+            this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
+          } else {
+            const style = this.lastApplied3DCameraFocus;
+            const fill = (style == null ? void 0 : style.kind) === "fit" ? style.fill : 0.9;
+            this.request3DCameraFocus({
+              kind: "fit",
+              sectionIndex: picked.layout.sectionIndex,
+              fill,
+              ...(style == null ? void 0 : style.keepRotation) ? { keepRotation: true } : {},
+              ...(style == null ? void 0 : style.positionOffset) ? { positionOffset: style.positionOffset } : {},
+              ...(style == null ? void 0 : style.rotationOffset) ? { rotationOffset: style.rotationOffset } : {}
+            });
+          }
         }
       }
-    }
-    let dispatchedToDoc = false;
-    if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input) {
-      const charWidth = this.canvas.width / this.width;
-      const charHeight = this.canvas.height / this.height;
-      const cellX = Math.floor(pixelX / charWidth);
-      const cellY = Math.floor(pixelY / charHeight);
-      const event = {
-        type: "mouse",
-        action,
-        button: "left",
-        x: pixelX,
-        y: pixelY,
-        cellX,
-        cellY,
-        mods: []
-      };
-      this.inputDispatchDepth++;
-      try {
-        const shouldContinue = doc.handlers.input(event);
-        if (shouldContinue === false) this.stop();
-      } catch (error) {
-        console.error("Error in input handler:", error);
-      } finally {
-        this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+      let dispatchedToDoc = false;
+      if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input) {
+        const charWidth = this.canvas.width / this.width;
+        const charHeight = this.canvas.height / this.height;
+        const cellX = Math.floor(pixelX / charWidth);
+        const cellY = Math.floor(pixelY / charHeight);
+        const event = {
+          type: "mouse",
+          action,
+          button: "left",
+          x: pixelX,
+          y: pixelY,
+          cellX,
+          cellY,
+          mods: []
+        };
+        this.inputDispatchDepth++;
+        try {
+          const shouldContinue = doc.handlers.input(event);
+          if (shouldContinue === false) this.stop();
+        } catch (error) {
+          console.error("Error in input handler:", error);
+        } finally {
+          this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+        }
+        dispatchedToDoc = true;
       }
-      dispatchedToDoc = true;
+      if (handledBy3D || dispatchedToDoc || this.worldsEnabled) e.preventDefault();
+    } finally {
+      if (isGesturePress) this.endTrustedAudioGesture();
     }
-    if (handledBy3D || dispatchedToDoc || this.worldsEnabled) e.preventDefault();
   }
   isTruthyDropTarget(value) {
     if (value === true) return true;
@@ -28185,50 +28270,55 @@ ${content}`.trim();
       }
       return;
     }
-    if (action === "press") this.ensureAudioGestureUnlock();
-    const doc = this.getActiveDocument();
-    let handledBy3D = false;
-    if (action === "press" && this.worldsEnabled && this.camera3D && this.worldsLinkKeyHandlingEnabled) {
-      if (e.key === "Tab") {
-        this.move3DLinkFocus(e.shiftKey ? -1 : 1);
-        handledBy3D = true;
-      } else if (e.key === "Enter") {
-        this.activateFocused3DLink();
-        handledBy3D = true;
-      } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
-        this.move3DLinkFocus(1);
-        handledBy3D = true;
-      } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
-        this.move3DLinkFocus(-1);
-        handledBy3D = true;
-      }
-    }
-    if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input) {
-      const mods = [];
-      if (e.shiftKey) mods.push("shift");
-      if (e.ctrlKey) mods.push("ctrl");
-      if (e.altKey) mods.push("alt");
-      if (e.metaKey) mods.push("meta");
-      const event = {
-        type: action === "press" ? "keydown" : "keyup",
-        key: e.key,
-        keyCode: e.keyCode,
-        mods
-      };
-      this.inputDispatchDepth++;
-      try {
-        const shouldContinue = doc.handlers.input(event);
-        if (shouldContinue === false) {
-          this.stop();
+    const isGesturePress = action === "press";
+    if (isGesturePress) this.beginTrustedAudioGesture();
+    try {
+      const doc = this.getActiveDocument();
+      let handledBy3D = false;
+      if (action === "press" && this.worldsEnabled && this.camera3D && this.worldsLinkKeyHandlingEnabled) {
+        if (e.key === "Tab") {
+          this.move3DLinkFocus(e.shiftKey ? -1 : 1);
+          handledBy3D = true;
+        } else if (e.key === "Enter") {
+          this.activateFocused3DLink();
+          handledBy3D = true;
+        } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+          this.move3DLinkFocus(1);
+          handledBy3D = true;
+        } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+          this.move3DLinkFocus(-1);
+          handledBy3D = true;
         }
-      } catch (error) {
-        console.error("Error in input handler:", error);
-      } finally {
-        this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
       }
-    }
-    if (handledBy3D || ((_b = doc == null ? void 0 : doc.handlers) == null ? void 0 : _b.input)) {
-      e.preventDefault();
+      if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input) {
+        const mods = [];
+        if (e.shiftKey) mods.push("shift");
+        if (e.ctrlKey) mods.push("ctrl");
+        if (e.altKey) mods.push("alt");
+        if (e.metaKey) mods.push("meta");
+        const event = {
+          type: action === "press" ? "keydown" : "keyup",
+          key: e.key,
+          keyCode: e.keyCode,
+          mods
+        };
+        this.inputDispatchDepth++;
+        try {
+          const shouldContinue = doc.handlers.input(event);
+          if (shouldContinue === false) {
+            this.stop();
+          }
+        } catch (error) {
+          console.error("Error in input handler:", error);
+        } finally {
+          this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+        }
+      }
+      if (handledBy3D || ((_b = doc == null ? void 0 : doc.handlers) == null ? void 0 : _b.input)) {
+        e.preventDefault();
+      }
+    } finally {
+      if (isGesturePress) this.endTrustedAudioGesture();
     }
   }
   /**
@@ -28244,72 +28334,77 @@ ${content}`.trim();
       e.preventDefault();
       return;
     }
-    if (action === "press") this.ensureAudioGestureUnlock();
-    const doc = this.getActiveDocument();
-    const rect = this.canvas.getBoundingClientRect();
-    const cssX = e.clientX - rect.left;
-    const cssY = e.clientY - rect.top;
-    const pixelX = cssX * (this.canvas.width / rect.width);
-    const pixelY = cssY * (this.canvas.height / rect.height);
-    this.input.updateMousePosition(pixelX, pixelY);
-    if (action === "press" && e.button === 0) {
-      const picked = this.pick3DAt(pixelX, pixelY);
-      if (picked && this.camera3D) {
-        const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
-        if (linkHit) {
-          this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
-          this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
-        } else {
-          const style = this.lastApplied3DCameraFocus;
-          const fill = (style == null ? void 0 : style.kind) === "fit" ? style.fill : 0.9;
-          this.request3DCameraFocus({
-            kind: "fit",
-            sectionIndex: picked.layout.sectionIndex,
-            fill,
-            ...(style == null ? void 0 : style.keepRotation) ? { keepRotation: true } : {},
-            ...(style == null ? void 0 : style.positionOffset) ? { positionOffset: style.positionOffset } : {},
-            ...(style == null ? void 0 : style.rotationOffset) ? { rotationOffset: style.rotationOffset } : {}
-          });
+    const isGesturePress = action === "press";
+    if (isGesturePress) this.beginTrustedAudioGesture();
+    try {
+      const doc = this.getActiveDocument();
+      const rect = this.canvas.getBoundingClientRect();
+      const cssX = e.clientX - rect.left;
+      const cssY = e.clientY - rect.top;
+      const pixelX = cssX * (this.canvas.width / rect.width);
+      const pixelY = cssY * (this.canvas.height / rect.height);
+      this.input.updateMousePosition(pixelX, pixelY);
+      if (action === "press" && e.button === 0) {
+        const picked = this.pick3DAt(pixelX, pixelY);
+        if (picked && this.camera3D) {
+          const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
+          if (linkHit) {
+            this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
+            this.activate3DLink(linkHit.region.url);
+          } else {
+            const style = this.lastApplied3DCameraFocus;
+            const fill = (style == null ? void 0 : style.kind) === "fit" ? style.fill : 0.9;
+            this.request3DCameraFocus({
+              kind: "fit",
+              sectionIndex: picked.layout.sectionIndex,
+              fill,
+              ...(style == null ? void 0 : style.keepRotation) ? { keepRotation: true } : {},
+              ...(style == null ? void 0 : style.positionOffset) ? { positionOffset: style.positionOffset } : {},
+              ...(style == null ? void 0 : style.rotationOffset) ? { rotationOffset: style.rotationOffset } : {}
+            });
+          }
         }
       }
-    }
-    const charWidth = this.canvas.width / this.width;
-    const charHeight = this.canvas.height / this.height;
-    const cellX = Math.floor(pixelX / charWidth);
-    const cellY = Math.floor(pixelY / charHeight);
-    const mods = [];
-    if (e.shiftKey) mods.push("shift");
-    if (e.ctrlKey) mods.push("ctrl");
-    if (e.altKey) mods.push("alt");
-    if (e.metaKey) mods.push("meta");
-    const button = e.button === 0 ? "left" : e.button === 1 ? "middle" : "right";
-    const event = {
-      type: "mouse",
-      action,
-      button,
-      x: pixelX,
-      // Pixel coordinates (primary)
-      y: pixelY,
-      cellX,
-      // Cell coordinates (for TUI)
-      cellY,
-      mods
-    };
-    try {
+      this.input.applySyntheticEvent({
+        type: "mouse",
+        action,
+        button: e.button === 1 ? "middle" : e.button === 2 ? "right" : "left",
+        x: pixelX,
+        y: pixelY
+      });
       if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input) {
-        const shouldContinue = doc.handlers.input(event);
-        if (shouldContinue === false) {
-          this.stop();
+        const charWidth = this.canvas.width / this.width;
+        const charHeight = this.canvas.height / this.height;
+        const cellX = Math.floor(pixelX / charWidth);
+        const cellY = Math.floor(pixelY / charHeight);
+        const event = {
+          type: "mouse",
+          action,
+          button: e.button === 1 ? "middle" : e.button === 2 ? "right" : "left",
+          x: pixelX,
+          y: pixelY,
+          cellX,
+          cellY,
+          mods: []
+        };
+        this.inputDispatchDepth++;
+        try {
+          const shouldContinue = doc.handlers.input(event);
+          if (shouldContinue === false) this.stop();
+        } catch (error) {
+          console.error("Error in input handler:", error);
+        } finally {
+          this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
         }
       }
       e.preventDefault();
-    } catch (error) {
-      console.error("Error in input handler:", error);
+    } finally {
+      if (isGesturePress) this.endTrustedAudioGesture();
     }
   }
   pick3DAt(pixelX, pixelY) {
-    if (!this.worldsEnabled || !this.camera3D) return null;
     if (!this.section3DLayouts || this.section3DLayouts.length === 0) return null;
+    if (!this.camera3D) return null;
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
     if (canvasW <= 0 || canvasH <= 0) return null;

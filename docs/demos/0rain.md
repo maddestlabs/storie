@@ -1233,15 +1233,25 @@ function startRainAudio() {
     return true;
   }
 
+  audio.startOnGesture(beginPlayback);
+
+  if (rain.started) {
+    audio.context.resume().catch(function () {
+      return false;
+    });
+    return Promise.resolve(true);
+  }
+
   if (audio.context.state === 'running') {
     return Promise.resolve(beginPlayback());
   }
 
   return audio.context.resume().then(function () {
+    if (rain.started) return true;
     if (audio.context.state !== 'running') return false;
     return beginPlayback();
   }).catch(function () {
-    return false;
+    return rain.started;
   });
 }
 

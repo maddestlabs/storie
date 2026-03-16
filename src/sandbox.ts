@@ -325,6 +325,7 @@ export interface SandboxAPI {
   audio: {
     // Shared AudioContext instance
     context: AudioContext;
+    startOnGesture: (start: () => void) => boolean;
     // Helpers
     playTone: (frequency: number, duration: number, volume?: number) => { osc: OscillatorNode; gain: GainNode };
     loadSoundFromDrop: () => Promise<AudioBuffer | null>;
