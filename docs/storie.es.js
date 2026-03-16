@@ -22119,6 +22119,7 @@ class StorieEngine {
     __publicField(this, "audioGestureUnlocked", false);
     __publicField(this, "trustedAudioGestureDepth", 0);
     __publicField(this, "pendingGestureAudioStarts", []);
+    __publicField(this, "lastTouchEventAt", 0);
     __publicField(this, "canvas2DContext", null);
     __publicField(this, "offscreenCanvas2D", null);
     __publicField(this, "webglContext", null);
@@ -26793,6 +26794,16 @@ ${exportVars}
   getAudioSampleRate() {
     return this.audioContext.sampleRate;
   }
+  unlockAudioFromHostGesture() {
+    this.beginTrustedAudioGesture();
+    this.endTrustedAudioGesture();
+    try {
+      this.canvas.focus();
+    } catch {
+    }
+    const ctx = this.audioContext;
+    return this.audioGestureUnlocked || ctx.state === "running";
+  }
   get isExporting() {
     return this._isExporting;
   }
@@ -27928,12 +27939,20 @@ ${content}`.trim();
    * Set up input event listeners for on:input handlers
    */
   setupEventListeners() {
+    try {
+      this.canvas.style.touchAction = "none";
+    } catch {
+    }
     this.canvas.addEventListener("keydown", (e) => this.handleKeyEvent(e, "press"));
     this.canvas.addEventListener("keyup", (e) => this.handleKeyEvent(e, "release"));
     this.canvas.addEventListener("mousedown", (e) => this.handleMouseEvent(e, "press"));
     this.canvas.addEventListener("mouseup", (e) => this.handleMouseEvent(e, "release"));
     this.canvas.addEventListener("mousemove", (e) => this.handleMouseMoveEvent(e));
     this.canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    this.canvas.addEventListener("touchstart", (e) => this.handleTouchEvent(e, "press"), { passive: false });
+    this.canvas.addEventListener("touchmove", (e) => this.handleTouchMoveEvent(e), { passive: false });
+    this.canvas.addEventListener("touchend", (e) => this.handleTouchEvent(e, "release"), { passive: false });
+    this.canvas.addEventListener("touchcancel", (e) => this.handleTouchEvent(e, "release"), { passive: false });
     this.canvas.tabIndex = 0;
     this.canvas.focus();
   }
@@ -28008,6 +28027,131 @@ ${content}`.trim();
       if (ctx.state === "running") this.audioGestureUnlocked = true;
     }).catch(() => {
     });
+  }
+  touchToPixelXY(t) {
+    const rect = this.canvas.getBoundingClientRect();
+    const cssX = t.clientX - rect.left;
+    const cssY = t.clientY - rect.top;
+    const pixelX = cssX * (this.canvas.width / rect.width);
+    const pixelY = cssY * (this.canvas.height / rect.height);
+    return { pixelX, pixelY };
+  }
+  handleTouchMoveEvent(e) {
+    var _a;
+    if (this.hostAudienceView) {
+      e.preventDefault();
+      return;
+    }
+    const doc = this.getActiveDocument();
+    const t = e.touches && e.touches.length ? e.touches[0] : e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : null;
+    if (!t) {
+      e.preventDefault();
+      return;
+    }
+    this.lastTouchEventAt = Date.now();
+    const { pixelX, pixelY } = this.touchToPixelXY(t);
+    this.input.updateMousePosition(pixelX, pixelY);
+    this.input.applySyntheticEvent({ type: "mouse_move", x: pixelX, y: pixelY });
+    let dispatchedToDoc = false;
+    if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input) {
+      const charWidth = this.canvas.width / this.width;
+      const charHeight = this.canvas.height / this.height;
+      const cellX = Math.floor(pixelX / charWidth);
+      const cellY = Math.floor(pixelY / charHeight);
+      const event = {
+        type: "mouse_move",
+        x: pixelX,
+        y: pixelY,
+        cellX,
+        cellY,
+        mods: []
+      };
+      this.inputDispatchDepth++;
+      try {
+        const shouldContinue = doc.handlers.input(event);
+        if (shouldContinue === false) this.stop();
+      } catch (error) {
+        console.error("Error in input handler:", error);
+      } finally {
+        this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+      }
+      dispatchedToDoc = true;
+    }
+    if (this.worldsEnabled || dispatchedToDoc) e.preventDefault();
+  }
+  handleTouchEvent(e, action) {
+    var _a;
+    if (this.hostAudienceView) {
+      e.preventDefault();
+      return;
+    }
+    const isGesturePress = action === "press";
+    if (isGesturePress) this.beginTrustedAudioGesture();
+    try {
+      const doc = this.getActiveDocument();
+      const t = e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : e.touches && e.touches.length ? e.touches[0] : null;
+      if (!t) {
+        e.preventDefault();
+        return;
+      }
+      this.lastTouchEventAt = Date.now();
+      const { pixelX, pixelY } = this.touchToPixelXY(t);
+      this.input.updateMousePosition(pixelX, pixelY);
+      this.input.applySyntheticEvent({ type: "mouse", action, button: "left", x: pixelX, y: pixelY });
+      let handledBy3D = false;
+      if (action === "press") {
+        const picked = this.pick3DAt(pixelX, pixelY);
+        if (picked && this.camera3D) {
+          handledBy3D = true;
+          const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
+          if (linkHit) {
+            this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
+            this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
+          } else {
+            const style = this.lastApplied3DCameraFocus;
+            const fill = (style == null ? void 0 : style.kind) === "fit" ? style.fill : 0.9;
+            this.request3DCameraFocus({
+              kind: "fit",
+              sectionIndex: picked.layout.sectionIndex,
+              fill,
+              ...(style == null ? void 0 : style.keepRotation) ? { keepRotation: true } : {},
+              ...(style == null ? void 0 : style.positionOffset) ? { positionOffset: style.positionOffset } : {},
+              ...(style == null ? void 0 : style.rotationOffset) ? { rotationOffset: style.rotationOffset } : {}
+            });
+          }
+        }
+      }
+      let dispatchedToDoc = false;
+      if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input) {
+        const charWidth = this.canvas.width / this.width;
+        const charHeight = this.canvas.height / this.height;
+        const cellX = Math.floor(pixelX / charWidth);
+        const cellY = Math.floor(pixelY / charHeight);
+        const event = {
+          type: "mouse",
+          action,
+          button: "left",
+          x: pixelX,
+          y: pixelY,
+          cellX,
+          cellY,
+          mods: []
+        };
+        this.inputDispatchDepth++;
+        try {
+          const shouldContinue = doc.handlers.input(event);
+          if (shouldContinue === false) this.stop();
+        } catch (error) {
+          console.error("Error in input handler:", error);
+        } finally {
+          this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
+        }
+        dispatchedToDoc = true;
+      }
+      if (handledBy3D || dispatchedToDoc || this.worldsEnabled) e.preventDefault();
+    } finally {
+      if (isGesturePress) this.endTrustedAudioGesture();
+    }
   }
   isTruthyDropTarget(value) {
     if (value === true) return true;
@@ -28191,6 +28335,10 @@ ${content}`.trim();
    */
   handleMouseEvent(e, action) {
     var _a;
+    if (Date.now() - this.lastTouchEventAt < 750) {
+      e.preventDefault();
+      return;
+    }
     if (this.hostAudienceView) {
       e.preventDefault();
       return;
@@ -28863,6 +29011,10 @@ ${content}`.trim();
    */
   handleMouseMoveEvent(e) {
     var _a;
+    if (Date.now() - this.lastTouchEventAt < 750) {
+      e.preventDefault();
+      return;
+    }
     if (this.hostAudienceView) return;
     const doc = this.getActiveDocument();
     if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) return;

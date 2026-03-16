@@ -14,11 +14,40 @@
   <title>S|torie ꭼꮑᏽꮖꮑꭼ</title>
   <link rel="stylesheet" href="./style.css">
   <style>
+    #audio-gate {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.06);
+      backdrop-filter: blur(1px);
+      -webkit-backdrop-filter: blur(1px);
+      touch-action: manipulation;
+    }
+
+    #audio-gate.visible {
+      display: flex;
+    }
+
+    #audio-gate-card {
+      border: 1px solid rgba(255, 255, 255, 0.32);
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      font: 12px/1.35 monospace;
+      padding: 10px 12px;
+      border-radius: 6px;
+      text-align: center;
+      max-width: 220px;
+      pointer-events: none;
+    }
+
     #audio-test-btn {
       position: fixed;
       top: 12px;
       right: 12px;
-      z-index: 10000;
+      z-index: 10001;
       border: 1px solid rgba(255, 255, 255, 0.45);
       background: rgba(0, 0, 0, 0.72);
       color: #fff;
@@ -36,6 +65,9 @@
   </style>
 </head>
 <body>
+  <div id="audio-gate" aria-hidden="true">
+    <div id="audio-gate-card">Tap once to enable audio</div>
+  </div>
   <button id="audio-test-btn" type="button">SFX</button>
   <div id="container">
     <div id="loading">
@@ -219,11 +251,24 @@ This demo showcases:
     // Cache-bust the module URL so WebView2 doesn't reuse an older bundle across runs.
     // Cache-buster is replaced during `npm run build` so WebViews don't keep
     // serving a stale storie.es.js across rebuilds.
-    import { StorieEngine } from './storie.es.js?v=2026-03-16T03:07:15.232Z';
+    import { StorieEngine } from './storie.es.js?v=2026-03-16T03:41:22.920Z';
 
+    const audioGate = document.getElementById('audio-gate');
     const audioTestButton = document.getElementById('audio-test-btn');
     const hostAudioTest = new Audio('./demos/fx-huh.ogg');
     hostAudioTest.preload = 'auto';
+
+    const shouldUseAudioGate = (() => {
+      try {
+        return !!(
+          navigator.maxTouchPoints > 0 ||
+          'ontouchstart' in window ||
+          (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)
+        );
+      } catch {
+        return false;
+      }
+    })();
 
     if (audioTestButton) {
       audioTestButton.addEventListener('click', async () => {
@@ -950,6 +995,37 @@ This demo showcases:
             allowModuleResolverFromSandbox: false,
           }
         });
+
+        const dismissAudioGate = () => {
+          if (!audioGate) return;
+          audioGate.classList.remove('visible');
+          audioGate.setAttribute('aria-hidden', 'true');
+        };
+
+        if (audioGate && shouldUseAudioGate) {
+          audioGate.classList.add('visible');
+          audioGate.setAttribute('aria-hidden', 'false');
+
+          let audioGateHandled = false;
+          const unlockFromGate = (event) => {
+            if (audioGateHandled) return;
+            audioGateHandled = true;
+            if (event && typeof event.preventDefault === 'function') event.preventDefault();
+            try {
+              const unlocked = engine.unlockAudioFromHostGesture();
+              console.log(`[host-audio-gate] audio unlock ${unlocked ? 'succeeded' : 'attempted'}`);
+            } catch (error) {
+              console.error('[host-audio-gate] audio unlock failed:', error);
+            }
+            dismissAudioGate();
+          };
+
+          audioGate.addEventListener('pointerdown', unlockFromGate, { passive: false, once: true });
+          audioGate.addEventListener('touchend', unlockFromGate, { passive: false, once: true });
+          window.addEventListener('keydown', unlockFromGate, { once: true });
+        } else {
+          dismissAudioGate();
+        }
 
         // Enable drag-and-drop behavior:
         // - default: dropped markdown loads as a new story  
