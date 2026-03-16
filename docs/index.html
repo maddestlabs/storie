@@ -251,7 +251,7 @@ This demo showcases:
     // Cache-bust the module URL so WebView2 doesn't reuse an older bundle across runs.
     // Cache-buster is replaced during `npm run build` so WebViews don't keep
     // serving a stale storie.es.js across rebuilds.
-    import { StorieEngine } from './storie.es.js?v=2026-03-16T04:02:25.217Z';
+    import { StorieEngine } from './storie.es.js?v=2026-03-16T04:16:37.286Z';
 
     const audioGate = document.getElementById('audio-gate');
     const audioTestButton = document.getElementById('audio-test-btn');
@@ -290,6 +290,49 @@ This demo showcases:
     const hostUnlockAudioUrl = makeSilentWavUrl();
     const hostUnlockAudio = new Audio(hostUnlockAudioUrl);
     hostUnlockAudio.preload = 'auto';
+    let activeEngine = null;
+
+    const dismissAudioGate = () => {
+      if (!audioGate) return;
+      audioGate.classList.remove('visible');
+      audioGate.setAttribute('aria-hidden', 'true');
+    };
+
+    const getClientPoint = (event) => {
+      if (!event || typeof event !== 'object') return null;
+      if (typeof event.clientX === 'number' && typeof event.clientY === 'number') {
+        return { clientX: event.clientX, clientY: event.clientY };
+      }
+      const touch = event.changedTouches && event.changedTouches[0]
+        ? event.changedTouches[0]
+        : (event.touches && event.touches[0] ? event.touches[0] : null);
+      if (touch && typeof touch.clientX === 'number' && typeof touch.clientY === 'number') {
+        return { clientX: touch.clientX, clientY: touch.clientY };
+      }
+      return null;
+    };
+
+    const replayTapIntoEngine = (point) => {
+      if (!activeEngine || !point) return;
+      const canvas = activeEngine.getCanvas();
+      if (!canvas) return;
+
+      const eventInit = {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        clientX: point.clientX,
+        clientY: point.clientY,
+        button: 0,
+      };
+
+      try {
+        canvas.dispatchEvent(new MouseEvent('mousedown', eventInit));
+        canvas.dispatchEvent(new MouseEvent('mouseup', eventInit));
+      } catch (error) {
+        console.error('[host-audio-gate] failed to replay tap into engine:', error);
+      }
+    };
 
     const shouldUseAudioGate = (() => {
       try {
@@ -309,6 +352,14 @@ This demo showcases:
           hostAudioTest.pause();
           hostAudioTest.currentTime = 0;
           await hostAudioTest.play();
+          if (activeEngine) {
+            try {
+              activeEngine.unlockAudioFromHostGesture();
+            } catch {
+              // ignore
+            }
+          }
+          dismissAudioGate();
           console.log('[host-audio-test] fx-huh.ogg played');
         } catch (error) {
           console.error('[host-audio-test] failed to play fx-huh.ogg:', error);
@@ -1028,12 +1079,7 @@ This demo showcases:
             allowModuleResolverFromSandbox: false,
           }
         });
-
-        const dismissAudioGate = () => {
-          if (!audioGate) return;
-          audioGate.classList.remove('visible');
-          audioGate.setAttribute('aria-hidden', 'true');
-        };
+        activeEngine = engine;
 
         if (audioGate && shouldUseAudioGate) {
           audioGate.classList.add('visible');
@@ -1043,6 +1089,7 @@ This demo showcases:
           const unlockFromGate = async (event) => {
             if (audioGateHandled) return;
             if (event && typeof event.preventDefault === 'function') event.preventDefault();
+            const point = getClientPoint(event);
             try {
               hostUnlockAudio.pause();
               hostUnlockAudio.currentTime = 0;
@@ -1051,6 +1098,9 @@ This demo showcases:
               audioGateHandled = true;
               console.log(`[host-audio-gate] audio unlock ${unlocked ? 'succeeded' : 'attempted'}`);
               dismissAudioGate();
+              if (point) {
+                requestAnimationFrame(() => replayTapIntoEngine(point));
+              }
             } catch (error) {
               console.error('[host-audio-gate] audio unlock failed:', error);
             }
