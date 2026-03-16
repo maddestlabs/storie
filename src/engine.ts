@@ -234,6 +234,7 @@ export class StorieEngine {
   
   // Native browser APIs (shared instances)
   private audioContext: AudioContext;
+  private audioGestureUnlocked: boolean = false;
   private canvas2DContext: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null = null;
   private offscreenCanvas2D: HTMLCanvasElement | null = null;
   private webglContext: WebGLRenderingContext | null = null;
@@ -7411,6 +7412,53 @@ ${exportVars}
   // Guard against iOS mouse-compat events firing after touch.
   private lastTouchEventAt: number = 0;
 
+  private ensureAudioGestureUnlock(): void {
+    if (this.audioGestureUnlocked) return;
+
+    const ctx = this.audioContext as AudioContext & { state?: AudioContextState };
+    if (ctx.state === 'running') {
+      this.audioGestureUnlocked = true;
+      return;
+    }
+
+    try {
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      gain.connect(ctx.destination);
+
+      const buffer = ctx.createBuffer(1, 1, Math.max(3000, Math.floor(ctx.sampleRate || 44100)));
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(gain);
+
+      const now = Number.isFinite(ctx.currentTime) ? ctx.currentTime : 0;
+      try {
+        source.start(now);
+      } catch {
+        source.start();
+      }
+      try {
+        source.stop(now + 0.001);
+      } catch {
+        try {
+          source.stop();
+        } catch {
+          // ignore
+        }
+      }
+    } catch {
+      // Some environments may reject node creation before unlock. Resume below still helps.
+    }
+
+    ctx.resume()
+      .then(() => {
+        if (ctx.state === 'running') this.audioGestureUnlocked = true;
+      })
+      .catch(() => {
+        // Keep retrying on future gestures until iOS accepts the unlock.
+      });
+  }
+
   private touchToPixelXY(t: Touch): { pixelX: number; pixelY: number } {
     const rect = this.canvas.getBoundingClientRect();
     const cssX = t.clientX - rect.left;
@@ -7478,8 +7526,9 @@ ${exportVars}
       return;
     }
 
-    // Resume AudioContext on any touch press (autoplay policy).
-    if (action === 'press') this.audioContext.resume().catch(() => {});
+    // iOS Safari is more reliable when a real node start happens in the same
+    // trusted gesture, not just a resume() call.
+    if (action === 'press') this.ensureAudioGestureUnlock();
 
     const doc = this.getActiveDocument();
 
@@ -7721,8 +7770,8 @@ ${exportVars}
       return;
     }
 
-    // Resume AudioContext on any key press (satisfies browser autoplay policy).
-    if (action === 'press') this.audioContext.resume().catch(() => {});
+    // Unlock audio from a real DOM key gesture for iOS.
+    if (action === 'press') this.ensureAudioGestureUnlock();
 
     const doc = this.getActiveDocument();
 
@@ -7800,8 +7849,8 @@ ${exportVars}
       return;
     }
 
-    // Resume AudioContext on any mouse press (satisfies browser autoplay policy).
-    if (action === 'press') this.audioContext.resume().catch(() => {});
+    // Unlock audio from a real DOM pointer gesture for iOS.
+    if (action === 'press') this.ensureAudioGestureUnlock();
 
     const doc = this.getActiveDocument();
 

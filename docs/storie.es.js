@@ -22116,6 +22116,7 @@ class StorieEngine {
     __publicField(this, "worldsCardFontStack", null);
     // Native browser APIs (shared instances)
     __publicField(this, "audioContext");
+    __publicField(this, "audioGestureUnlocked", false);
     __publicField(this, "canvas2DContext", null);
     __publicField(this, "offscreenCanvas2D", null);
     __publicField(this, "webglContext", null);
@@ -27902,6 +27903,42 @@ ${content}`.trim();
     this.canvas.tabIndex = 0;
     this.canvas.focus();
   }
+  ensureAudioGestureUnlock() {
+    if (this.audioGestureUnlocked) return;
+    const ctx = this.audioContext;
+    if (ctx.state === "running") {
+      this.audioGestureUnlocked = true;
+      return;
+    }
+    try {
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
+      gain.connect(ctx.destination);
+      const buffer = ctx.createBuffer(1, 1, Math.max(3e3, Math.floor(ctx.sampleRate || 44100)));
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(gain);
+      const now = Number.isFinite(ctx.currentTime) ? ctx.currentTime : 0;
+      try {
+        source.start(now);
+      } catch {
+        source.start();
+      }
+      try {
+        source.stop(now + 1e-3);
+      } catch {
+        try {
+          source.stop();
+        } catch {
+        }
+      }
+    } catch {
+    }
+    ctx.resume().then(() => {
+      if (ctx.state === "running") this.audioGestureUnlocked = true;
+    }).catch(() => {
+    });
+  }
   touchToPixelXY(t) {
     const rect = this.canvas.getBoundingClientRect();
     const cssX = t.clientX - rect.left;
@@ -27959,8 +27996,7 @@ ${content}`.trim();
       e.preventDefault();
       return;
     }
-    if (action === "press") this.audioContext.resume().catch(() => {
-    });
+    if (action === "press") this.ensureAudioGestureUnlock();
     const doc = this.getActiveDocument();
     const t = e.changedTouches && e.changedTouches.length ? e.changedTouches[0] : e.touches && e.touches.length ? e.touches[0] : null;
     if (!t) {
@@ -28149,8 +28185,7 @@ ${content}`.trim();
       }
       return;
     }
-    if (action === "press") this.audioContext.resume().catch(() => {
-    });
+    if (action === "press") this.ensureAudioGestureUnlock();
     const doc = this.getActiveDocument();
     let handledBy3D = false;
     if (action === "press" && this.worldsEnabled && this.camera3D && this.worldsLinkKeyHandlingEnabled) {
@@ -28209,8 +28244,7 @@ ${content}`.trim();
       e.preventDefault();
       return;
     }
-    if (action === "press") this.audioContext.resume().catch(() => {
-    });
+    if (action === "press") this.ensureAudioGestureUnlock();
     const doc = this.getActiveDocument();
     const rect = this.canvas.getBoundingClientRect();
     const cssX = e.clientX - rect.left;
