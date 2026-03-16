@@ -651,7 +651,13 @@ export class StorieEngine {
     this.styleSheet = applyTheme(this.currentTheme);
     
     // Initialize native browser APIs (shared instances)
-    this.audioContext = new AudioContext();
+    const AudioContextCtor = (globalThis.AudioContext || (globalThis as any).webkitAudioContext) as
+      | (new () => AudioContext)
+      | undefined;
+    if (!AudioContextCtor) {
+      throw new Error('Web Audio API is not supported in this environment');
+    }
+    this.audioContext = new AudioContextCtor();
     // Canvas2D is created lazily on first use (see ensureCanvas2D())
     
     // Initialize systems

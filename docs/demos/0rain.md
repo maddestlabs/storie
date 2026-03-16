@@ -596,6 +596,7 @@ var g = {
   nextDropSfxGap: 0.11,
   audioEnabled: true,
   audioUnlocked: false,
+  audioUnlockPending: false,
   guiMouseDown: false,
   titleSectionIndex: null,
   playSectionIndex: null,
@@ -734,10 +735,16 @@ function syncPlaySectionVisibility() {
 }
 
 function unlockExperienceAudio() {
-  if (g.audioUnlocked || !g.audioEnabled) return;
-  g.audioUnlocked = true;
-  startRainAudio();
-  setRainLevel(g.gameMode === 'play' ? RAIN_PLAY_GAIN : RAIN_IDLE_GAIN, 0.35);
+  if (g.audioUnlocked || g.audioUnlockPending || !g.audioEnabled) return;
+  g.audioUnlockPending = true;
+  startRainAudio().then(function (started) {
+    g.audioUnlockPending = false;
+    if (!started || !g.audioEnabled || audio.context.state !== 'running') return;
+    g.audioUnlocked = true;
+    setRainLevel(g.gameMode === 'play' ? RAIN_PLAY_GAIN : RAIN_IDLE_GAIN, 0.35);
+  }).catch(function () {
+    g.audioUnlockPending = false;
+  });
 }
 
 function initOverlayGui() {
@@ -749,7 +756,7 @@ function initOverlayGui() {
       focusable: false,
       align: 'right',
       bounds: { x: 0, y: 0, width: 120, height: 20 },
-      text: 'ˢᴱᴱᴰ',
+      text: 'SEED',
       labelStyle: {
         fg: ui.colors.rgba(255, 255, 255, 255)
       }
@@ -1211,10 +1218,11 @@ function setRainLevel(level, rampSeconds) {
 }
 
 function startRainAudio() {
-  if (!g.audioEnabled) return;
+  if (!g.audioEnabled) return Promise.resolve(false);
   var rain = ensureRainAudio();
-  audio.context.resume().catch(function () {});
-  if (!rain.started) {
+
+  function beginPlayback() {
+    if (rain.started) return true;
     for (var i = 0; i < rain.sources.length; i++) {
       var layer = rain.sources[i];
       layer.route(layer.source);
@@ -1222,7 +1230,19 @@ function startRainAudio() {
     }
     rain.lfo.start();
     rain.started = true;
+    return true;
   }
+
+  if (audio.context.state === 'running') {
+    return Promise.resolve(beginPlayback());
+  }
+
+  return audio.context.resume().then(function () {
+    if (audio.context.state !== 'running') return false;
+    return beginPlayback();
+  }).catch(function () {
+    return false;
+  });
 }
 
 // ── Input ─────────────────────────────────────────────────────────────────
@@ -1380,6 +1400,11 @@ worlds.camera.focusOnSectionFit('0RAIN', WORLDS_SECTION_FIT, { keepRotation: tru
 if (!event) return;
 
 if (isSeedInputFocused()) {
+  if (event.type === 'keydown' && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    clearSeedInputFocus();
+    return;
+  }
+
   if (event.type === 'keydown' && !shouldKeepSeedFocusOnKey(event.key)) {
     clearSeedInputFocus();
   }

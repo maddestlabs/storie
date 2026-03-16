@@ -22231,7 +22231,11 @@ class StorieEngine {
     this.themeOverrideFromUrl = this.readThemeOverrideFromUrl();
     this.currentTheme = ((_a = this.themeOverrideFromUrl) == null ? void 0 : _a.theme) ?? getTheme("neotopia");
     this.styleSheet = applyTheme(this.currentTheme);
-    this.audioContext = new AudioContext();
+    const AudioContextCtor = globalThis.AudioContext || globalThis.webkitAudioContext;
+    if (!AudioContextCtor) {
+      throw new Error("Web Audio API is not supported in this environment");
+    }
+    this.audioContext = new AudioContextCtor();
     this.layers = new LayerStack(this.width, this.height);
     this.layers.clearAll(this.currentTheme.bg);
     this.input = new InputManager(canvas);
