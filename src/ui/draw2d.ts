@@ -26,6 +26,7 @@ export interface Draw2D {
     tint?: Color;
     uv?: { u: number; v: number; w: number; h: number };
   }): void;
+  getImageSize?(imageId: string): { width: number; height: number } | null;
 
   // Optional helpers (only available on certain renderers/backends).
   clear?(color: Color): void;

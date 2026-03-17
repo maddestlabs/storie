@@ -35,10 +35,10 @@ export class GUISlider extends BaseWidget {
   public step: number;
   private dragging: boolean = false;
   public sliderStyle: {
-    fg: Color;
-    trackColor: Color;
-    knobColor: Color;
-    knobHoverColor: Color;
+    fg?: Color;
+    trackColor?: Color;
+    knobColor?: Color;
+    knobHoverColor?: Color;
     labelGap: number;
     trackHeight: number;
     knobWidth: number;
@@ -58,10 +58,10 @@ export class GUISlider extends BaseWidget {
     this.step = config.step ?? 1;
     
     this.sliderStyle = {
-      fg: (config.sliderStyle?.fg ?? { r: 220, g: 220, b: 220 }) as Color,
-      trackColor: (config.sliderStyle?.trackColor ?? { r: 60, g: 60, b: 60 }) as Color,
-      knobColor: (config.sliderStyle?.knobColor ?? { r: 100, g: 150, b: 200 }) as Color,
-      knobHoverColor: (config.sliderStyle?.knobHoverColor ?? { r: 120, g: 170, b: 220 }) as Color,
+      fg: config.sliderStyle?.fg,
+      trackColor: config.sliderStyle?.trackColor,
+      knobColor: config.sliderStyle?.knobColor,
+      knobHoverColor: config.sliderStyle?.knobHoverColor,
       labelGap: config.sliderStyle?.labelGap ?? defaultTokens.controls.slider.labelGap,
       trackHeight: config.sliderStyle?.trackHeight ?? defaultTokens.controls.slider.trackHeight,
       knobWidth: config.sliderStyle?.knobWidth ?? defaultTokens.controls.slider.knobWidth,
@@ -71,23 +71,27 @@ export class GUISlider extends BaseWidget {
     };
   }
   
-  handleDrag(mouseX: number, mouseY: number, mouseDown: boolean, charHeight: number = 0): void {
+  handleDrag(mouseX: number, mouseY: number, mouseDown: boolean, charHeight: number = 0, renderScale: number = 1): void {
     if (!this.state.visible) return;
     
     const { x, y, width, height } = this.bounds;
 
     // Match GUISystem.renderSlider layout: label consumes one charHeight row.
-    const labelH = this.label ? charHeight + this.sliderStyle.labelGap : 0;
+    const scale = Number.isFinite(renderScale) && renderScale > 0 ? renderScale : 1;
+    const scaledLabelGap = this.sliderStyle.labelGap * scale;
+    const scaledKnobWidth = this.sliderStyle.knobWidth * scale;
+    const scaledKnobHeight = this.sliderStyle.knobHeight * scale;
+    const labelH = this.label ? charHeight + scaledLabelGap : 0;
     const trackTopY = y + labelH;
     const trackAreaH = Math.max(0, height - labelH);
     
     // Calculate knob position and size
-    const knobWidth = this.sliderStyle.knobWidth;
+    const knobWidth = scaledKnobWidth;
     const range = this.max - this.min;
     const ratio = range > 0 ? (this.value - this.min) / range : 0;
     const knobX = x + ratio * (width - knobWidth);
     const knobY = trackTopY;
-    const knobHeight = Math.min(trackAreaH, this.sliderStyle.knobHeight);
+    const knobHeight = Math.min(trackAreaH, scaledKnobHeight);
     
     // Check if mouse is over the knob specifically
     const overKnob = mouseX >= knobX && mouseX < knobX + knobWidth &&

@@ -25,10 +25,12 @@ import { getTheme, applyTheme, THEMES } from './themes.js';
 import { ModuleLoader } from './modules/loader.js';
 import { createTUIAPI } from './tui-api.js';
 import { createGUIAPI } from './gui-api.js';
+import { setTUIThemeFromStyles } from './ui/tui/theme.js';
 import { WebGPUUIRenderer } from './ui/webgpu-ui-renderer.js';
 import { parseMarkdownLite } from './ui/document/markdown-lite.js';
 import { layoutMarkdownDocument } from './ui/document/layout.js';
-import type { LinkRegion, MarkdownStyle } from './ui/document/types.js';
+import type { LinkRegion, MarkdownStyle, WidgetPlacement, LayoutOptions } from './ui/document/types.js';
+import type { Draw2D } from './ui/draw2d.js';
 import { ShaderManager } from './shader-manager.js';
 import { ShaderChainManager } from './shader-chain.js';
 import { WorldsRenderer } from './worlds-renderer.js';
@@ -208,6 +210,25 @@ export interface OutlineNode {
 
 type Renderer = Canvas2DRenderer | WebGPURenderer;
 
+type BlobStoreEntry = {
+  name: string;
+  mime: string;
+  encoding: 'base64' | 'hex';
+  data: string;
+  bytes?: Uint8Array;
+};
+
+type RenderableImageSource = ImageBitmap | HTMLImageElement;
+
+type MarkdownImageCacheEntry = {
+  image: RenderableImageSource | null;
+  width: number;
+  height: number;
+  failed: boolean;
+  inFlight: Promise<void> | null;
+  rendererImageId: string | null;
+};
+
 export class StorieEngine {
   // Core systems
   private layers: LayerStack;
@@ -348,6 +369,24 @@ export class StorieEngine {
   // 3D section texture rasterization cache
   private sectionTextureCache: Map<number, { width: number; height: number; activeLinkIndex: number | null }> = new Map();
   private sectionLinkRegionsCache: Map<number, LinkRegion[]> = new Map();
+  private sectionWidgetPlacementsCache: Map<number, WidgetPlacement[]> = new Map();
+  private worldsInlineWidgetInstances: Array<{
+    engineId: string;
+    sectionIndex: number;
+    widgetId: string;
+    kind: 'button' | 'slider' | 'checkbox' | 'label';
+    widget: any;
+    lastValue?: number | boolean | string;
+  }> = [];
+  private worldsInlineWidgetEventsQueue: Array<{
+    id: string;
+    kind: 'button' | 'slider' | 'checkbox' | 'label';
+    sectionIndex: number;
+    action: 'click' | 'change' | 'toggle';
+    value?: number | boolean | string;
+  }> = [];
+  private worldsInlineWidgetValueState: Map<string, number | boolean | string> = new Map();
+  private nextMarkdownImageId: number = 1;
 
   // Host sync (engine-level, transport pluggable)
   private hostSync: HostSync | null = null;
@@ -365,6 +404,7 @@ export class StorieEngine {
   // Theme system
   private currentTheme: ThemeColors;
   private styleSheet: ThemeStyleSheet;
+  private currentThemeLabel: string = 'neotopia';
   private themeOverrideFromUrl: ThemeOverride | null = null;
   
   // Timing
@@ -419,14 +459,42 @@ export class StorieEngine {
   // Canvas reference for event listeners
   private canvas: HTMLCanvasElement;
 
-  private applyThemeColors(theme: ThemeColors, label: string, source: 'url' | 'frontmatter' | 'default'): void {
-    this.currentTheme = theme;
+  private applyThemeColors(theme: ThemeColors, label: string, source: 'url' | 'frontmatter' | 'default' | 'runtime'): void {
+    const nextTheme = { ...theme } as ThemeColors;
+
+    try {
+      if (this.api && (this.api as any).theme && typeof (this.api as any).theme === 'object') {
+        const liveTheme = (this.api as any).theme as Record<string, unknown>;
+        for (const key of Object.keys(liveTheme)) {
+          if (!Object.prototype.hasOwnProperty.call(nextTheme, key)) {
+            delete liveTheme[key];
+          }
+        }
+        Object.assign(liveTheme, nextTheme);
+        this.currentTheme = liveTheme as unknown as ThemeColors;
+      } else {
+        this.currentTheme = nextTheme;
+      }
+    } catch {
+      this.currentTheme = nextTheme;
+    }
+
+    this.currentThemeLabel = label;
     this.styleSheet = applyTheme(this.currentTheme);
+
+    try {
+      setTUIThemeFromStyles((name: string) => this.getStyle(name));
+    } catch {
+      // ignore
+    }
 
     // Keep the sandbox API in sync (it’s created once in the constructor).
     try {
       if (this.api) {
         (this.api as any).theme = this.currentTheme;
+        (this.api as any).themes?.getName && ((this.api as any).themes.getName = () => this.currentThemeLabel);
+        (this.api as any).tui?.syncTheme?.();
+        (this.api as any).gui?.syncTheme?.();
       }
     } catch {
       // ignore
@@ -435,10 +503,16 @@ export class StorieEngine {
     // Retint terminal buffers so the background matches the new theme.
     this.layers.clearAll(this.currentTheme.bg);
 
+    if (this.worldsEnabled) {
+      this.clear3DSectionTextures();
+    }
+
     if (source === 'url') {
       console.log(`  Theme: ${label} (url override)`);
     } else if (source === 'frontmatter') {
       console.log(`  Theme: ${label}`);
+    } else if (source === 'runtime') {
+      console.log(`  Theme: ${label} (runtime)`);
     }
   }
 
@@ -962,6 +1036,235 @@ export class StorieEngine {
     console.log('✓ Canvas 2D offscreen canvas created (800x600)');
     return ctx;
   }
+
+  private getDocumentBlobStore(documentId?: string): Map<string, BlobStoreEntry> | null {
+    const docId = documentId ?? this.activeDocumentId;
+    if (!docId) return null;
+    const doc = this.documents.get(docId) as any;
+    return (doc && doc._blobStore) ? (doc._blobStore as Map<string, BlobStoreEntry>) : null;
+  }
+
+  private getDocumentMarkdownImageCache(documentId?: string): Map<string, MarkdownImageCacheEntry> | null {
+    const docId = documentId ?? this.activeDocumentId;
+    if (!docId) return null;
+    const doc = this.documents.get(docId) as any;
+    if (!doc) return null;
+    if (!doc._markdownImageCache) {
+      doc._markdownImageCache = new Map<string, MarkdownImageCacheEntry>();
+    }
+    return doc._markdownImageCache as Map<string, MarkdownImageCacheEntry>;
+  }
+
+  private decodeMarkdownBase64ToBytes(b64: string): Uint8Array | null {
+    const clean = String(b64 ?? '').replace(/\s+/g, '');
+    const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
+    const estimatedBytes = Math.max(0, Math.floor((clean.length * 3) / 4) - padding);
+    if (estimatedBytes > 8 * 1024 * 1024) return null;
+    try {
+      const bin = atob(clean);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 0xFF;
+      return out;
+    } catch {
+      return null;
+    }
+  }
+
+  private decodeMarkdownHexToBytes(hex: string): Uint8Array | null {
+    const clean = String(hex ?? '')
+      .replace(/0x/gi, '')
+      .replace(/[^0-9a-f]/gi, '')
+      .trim();
+    if (clean.length === 0) return new Uint8Array(0);
+    if (clean.length % 2 !== 0) return null;
+    const estimatedBytes = Math.floor(clean.length / 2);
+    if (estimatedBytes > 8 * 1024 * 1024) return null;
+    const out = new Uint8Array(estimatedBytes);
+    for (let i = 0; i < estimatedBytes; i++) {
+      const value = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+      if (!Number.isFinite(value) || Number.isNaN(value)) return null;
+      out[i] = value & 0xFF;
+    }
+    return out;
+  }
+
+  private decodeMarkdownBlobEntryToBytes(entry: Pick<BlobStoreEntry, 'encoding' | 'data'>): Uint8Array | null {
+    return entry.encoding === 'hex'
+      ? this.decodeMarkdownHexToBytes(entry.data)
+      : this.decodeMarkdownBase64ToBytes(entry.data);
+  }
+
+  private async decodeRenderableImageFromBytes(bytes: Uint8Array, mime: string): Promise<RenderableImageSource | null> {
+    const blob = new Blob([new Uint8Array(bytes)], { type: mime || 'application/octet-stream' });
+
+    if (typeof createImageBitmap === 'function') {
+      try {
+        const bitmap = await createImageBitmap(blob);
+        return bitmap as RenderableImageSource;
+      } catch {
+        // Fall through to HTMLImageElement decoding for environments where
+        // createImageBitmap rejects otherwise valid image blobs.
+      }
+    }
+
+    if (typeof Image === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+      return null;
+    }
+
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => {
+          try {
+            URL.revokeObjectURL(objectUrl);
+          } catch {
+            // Ignore URL cleanup failures.
+          }
+          reject(new Error('Image element failed to decode'));
+        };
+        element.src = objectUrl;
+      });
+      // Keep the object URL alive for the lifetime of the cached image. Canvas2D
+      // and WebGPU uploads may happen after onload returns, and revoking here can
+      // leave a fully measured image that no longer draws any pixels.
+      return image as RenderableImageSource;
+    } catch (error) {
+      try {
+        URL.revokeObjectURL(objectUrl);
+      } catch {
+        // Ignore URL cleanup failures.
+      }
+      throw error;
+    }
+  }
+
+  private ensureMarkdownBlobImageLoaded(source: string, documentId?: string): MarkdownImageCacheEntry | null {
+    const docId = documentId ?? this.activeDocumentId;
+    const key = String(source ?? '').trim();
+    if (!docId || !key) return null;
+
+    const cache = this.getDocumentMarkdownImageCache(docId);
+    if (!cache) return null;
+
+    let cached = cache.get(key) ?? null;
+    if (!cached) {
+      cached = {
+        image: null,
+        width: 0,
+        height: 0,
+        failed: false,
+        inFlight: null,
+        rendererImageId: null,
+      };
+      cache.set(key, cached);
+    }
+
+    if (cached.image) return cached;
+    if (cached.failed) return null;
+
+    if (!cached.inFlight) {
+      const store = this.getDocumentBlobStore(docId);
+      const blobEntry = store?.get(key) ?? null;
+      const mime = String(blobEntry?.mime ?? '');
+      if (!blobEntry || !mime.startsWith('image/')) {
+        cached.failed = true;
+        return null;
+      }
+
+      cached.inFlight = (async () => {
+        if (!blobEntry.bytes) {
+          const decoded = this.decodeMarkdownBlobEntryToBytes(blobEntry);
+          if (!decoded) {
+            cached!.failed = true;
+            cached!.inFlight = null;
+            return;
+          }
+          blobEntry.bytes = decoded;
+        }
+
+        const bytes = new Uint8Array(blobEntry.bytes);
+        try {
+          const image = await this.decodeRenderableImageFromBytes(bytes, mime);
+          if (!image) {
+            cached!.failed = true;
+            return;
+          }
+          cached!.image = image;
+          cached!.width = image.width;
+          cached!.height = image.height;
+          cached!.failed = false;
+          if (this.worldsEnabled && this.section3DLayouts.length > 0) {
+            this.clear3DSectionTextures();
+          }
+        } catch (error) {
+          cached!.failed = true;
+          console.warn(`[markdown-image] Failed to decode image "${key}":`, error);
+        } finally {
+          cached!.inFlight = null;
+        }
+      })();
+    }
+
+    return cached.image ? cached : null;
+  }
+
+  private getMarkdownImageSize(source: string, documentId?: string): { width: number; height: number } | null {
+    const cached = this.ensureMarkdownBlobImageLoaded(source, documentId);
+    if (!cached || !cached.image || cached.width <= 0 || cached.height <= 0) return null;
+    return { width: cached.width, height: cached.height };
+  }
+
+  private getMarkdownImageSource(source: string, documentId?: string): RenderableImageSource | null {
+    return this.ensureMarkdownBlobImageLoaded(source, documentId)?.image ?? null;
+  }
+
+  private ensureMarkdownImageRegisteredWithRenderer(
+    source: string,
+    renderer: WebGPUUIRenderer,
+    documentId?: string
+  ): { imageId: string; width: number; height: number } | null {
+    const cached = this.ensureMarkdownBlobImageLoaded(source, documentId);
+    if (!cached || !cached.image) return null;
+
+    const imageId = cached.rendererImageId ?? `mdimg_${this.nextMarkdownImageId++}`;
+    cached.rendererImageId = imageId;
+
+    if (!renderer.getImageSize(imageId)) {
+      renderer.registerImage(imageId, cached.image);
+    }
+
+    return { imageId, width: cached.width, height: cached.height };
+  }
+
+  private createMarkdownAwareDraw2D(renderer: WebGPUUIRenderer, documentId?: string): Draw2D {
+    return {
+      rect: renderer.rect.bind(renderer),
+      text: renderer.text.bind(renderer),
+      image: (imageId, x, y, w, h, options) => {
+        const registered = this.ensureMarkdownImageRegisteredWithRenderer(imageId, renderer, documentId);
+        if (registered) {
+          renderer.image(registered.imageId, x, y, w, h, options);
+          return;
+        }
+        renderer.image(imageId, x, y, w, h, options);
+      },
+      getImageSize: (imageId) => {
+        const registered = this.ensureMarkdownImageRegisteredWithRenderer(imageId, renderer, documentId);
+        if (registered) {
+          return { width: registered.width, height: registered.height };
+        }
+        return renderer.getImageSize(imageId);
+      },
+      pushClipRect: renderer.pushClipRect ? renderer.pushClipRect.bind(renderer) : undefined,
+      popClipRect: renderer.popClipRect ? renderer.popClipRect.bind(renderer) : undefined,
+      pushMaskRect: renderer.pushMaskRect ? renderer.pushMaskRect.bind(renderer) : undefined,
+      pushMaskRoundedRect: renderer.pushMaskRoundedRect ? renderer.pushMaskRoundedRect.bind(renderer) : undefined,
+      pushMaskPolygon: renderer.pushMaskPolygon ? renderer.pushMaskPolygon.bind(renderer) : undefined,
+      popMask: renderer.popMask ? renderer.popMask.bind(renderer) : undefined,
+    };
+  }
   
   /**
    * Initialize Compositor (WebGPU only)
@@ -1414,19 +1717,15 @@ export class StorieEngine {
       if (!entry.bytes) return null;
 
       const mime = entry.mime || 'application/octet-stream';
-      const bytes = new Uint8Array(entry.bytes);
-      const blob = new Blob([bytes], { type: mime });
-      let bitmap: ImageBitmap | null = null;
       try {
-        bitmap = await createImageBitmap(blob);
+        const image = await engine.decodeRenderableImageFromBytes(entry.bytes, mime);
+        if (!image) return null;
         const id = `img_${nextUIImageId++}`;
-        ui.registerImage(id, bitmap);
+        ui.registerImage(id, image);
         return id;
       } catch (e) {
         console.warn(`[ui.loadImageFromBlob] Failed to decode image "${String(name)}":`, e);
         return null;
-      } finally {
-        try { bitmap?.close(); } catch { /* ignore */ }
       }
     };
     
@@ -1717,6 +2016,7 @@ export class StorieEngine {
             charHeight: atlas?.getCharHeight() ?? 16
           };
         },
+        (name: string) => this.getStyle(name),
         () => this.inputDispatchDepth > 0,
         () => {
           try {
@@ -1736,12 +2036,29 @@ export class StorieEngine {
           return { scaleX: v, scaleY: v };
         },
         () => this.getCanvasViewportRectCss(),
-        () => this.getSafeAreaInsetsCss()
+        () => this.getSafeAreaInsetsCss(),
+        () => this.current3DSectionIndex,
+        (selector: number | string) => this.resolve3DSectionIndex(selector)
       ),
       
       // Theme API
       getStyle: (name: string) => this.getStyle(name),
       theme: this.currentTheme,
+      themes: {
+        list: () => Object.keys(THEMES),
+        getName: () => this.currentThemeLabel,
+        get: (name: string) => {
+          const key = String(name ?? '').trim().toLowerCase();
+          if (!key || !Object.prototype.hasOwnProperty.call(THEMES, key)) return null;
+          return THEMES[key];
+        },
+        set: (name: string) => {
+          const key = String(name ?? '').trim().toLowerCase();
+          if (!key || !Object.prototype.hasOwnProperty.call(THEMES, key)) return false;
+          this.applyThemeColors(getTheme(key), key, 'runtime');
+          return true;
+        }
+      },
       
       // Module API
       modules: {
@@ -3953,6 +4270,40 @@ export class StorieEngine {
           }
         },
 
+        widgets: {
+          popEvent: () => {
+            return engine.worldsInlineWidgetEventsQueue.shift() ?? null;
+          },
+          getValue: (id: string, section?: number | string) => {
+            const resolved = section === undefined || section === null || section === 'current'
+              ? engine.current3DSectionIndex
+              : engine.resolve3DSectionIndex(section as any);
+            if (!(typeof resolved === 'number' && Number.isFinite(resolved))) return null;
+            return engine.worldsInlineWidgetValueState.get(engine.getWorldsInlineWidgetStateKey(resolved, String(id))) ?? null;
+          },
+          setValue: (id: string, value: number | boolean | string, section?: number | string) => {
+            const resolved = section === undefined || section === null || section === 'current'
+              ? engine.current3DSectionIndex
+              : engine.resolve3DSectionIndex(section as any);
+            if (!(typeof resolved === 'number' && Number.isFinite(resolved))) return false;
+            const key = engine.getWorldsInlineWidgetStateKey(resolved, String(id));
+            engine.worldsInlineWidgetValueState.set(key, value);
+            const live = engine.worldsInlineWidgetInstances.find((entry) => entry.sectionIndex === resolved && entry.widgetId === id);
+            if (live) {
+              if (live.kind === 'slider' && typeof live.widget.setValue === 'function' && typeof value === 'number') {
+                live.widget.setValue(value);
+                live.lastValue = live.widget.getValue();
+              } else if (live.kind === 'checkbox' && typeof live.widget.setChecked === 'function' && typeof value === 'boolean') {
+                live.widget.setChecked(value);
+                live.lastValue = value;
+              } else if (live.kind === 'label' && typeof live.widget.setText === 'function') {
+                live.widget.setText(String(value));
+              }
+            }
+            return true;
+          }
+        },
+
         // Outline-based navigation helpers.
         // Provides flexible “next/prev” semantics (global, subtree, siblings, level filters).
         nav: (() => {
@@ -4747,6 +5098,325 @@ export class StorieEngine {
       w: region.w * scale,
       h: region.h * scale,
     }));
+  }
+
+  private scaleWidgetPlacements(placements: WidgetPlacement[], scale: number): WidgetPlacement[] {
+    if (!(scale > 0) || Math.abs(scale - 1) < 1e-6) {
+      return placements.map((placement) => ({ ...placement, widget: { ...placement.widget } }));
+    }
+
+    return placements.map((placement) => ({
+      ...placement,
+      x: placement.x * scale,
+      y: placement.y * scale,
+      w: placement.w * scale,
+      h: placement.h * scale,
+      widget: { ...placement.widget },
+    }));
+  }
+
+  private translateWidgetPlacements(placements: WidgetPlacement[], dx: number, dy: number): void {
+    if (dx === 0 && dy === 0) return;
+    for (const placement of placements) {
+      placement.x += dx;
+      placement.y += dy;
+    }
+  }
+
+  private getWorldsInlineWidgetStateKey(sectionIndex: number, widgetId: string): string {
+    return `${sectionIndex}:${widgetId}`;
+  }
+
+  private getGUIPixelMetrics(): { charWidth: number; charHeight: number } {
+    const atlas = (this.renderer instanceof WebGPURenderer) ? this.renderer.getAtlas() : null;
+    return {
+      charWidth: atlas?.getCharWidth() ?? 10,
+      charHeight: atlas?.getCharHeight() ?? 16,
+    };
+  }
+
+  private clearWorldsInlineWidgets(): void {
+    const guiAPI = this.api?.gui as any;
+    const system = guiAPI?.getSystem?.();
+    if (system && typeof system.getWidgetManager === 'function') {
+      const manager = system.getWidgetManager();
+      const focused = manager.getFocused();
+      if (focused && this.worldsInlineWidgetInstances.some((entry) => entry.widget.id === focused.id)) {
+        manager.focus(null);
+      }
+      for (const entry of this.worldsInlineWidgetInstances) {
+        manager.unregister(entry.widget.id);
+      }
+    }
+    this.worldsInlineWidgetInstances = [];
+  }
+
+  private getActiveWorldsInlineWidgetPlacements(): { layout: Section3DLayout; placements: WidgetPlacement[] } | null {
+    if (!(typeof this.current3DSectionIndex === 'number')) return null;
+    const layout = this.section3DLayouts.find((item) => item.sectionIndex === this.current3DSectionIndex);
+    if (!layout || !layout.texture || !layout.visible || layout.interactive === false) return null;
+    const placements = this.sectionWidgetPlacementsCache.get(layout.sectionIndex);
+    if (!placements || placements.length === 0) return null;
+    return { layout, placements };
+  }
+
+  private project3DTextureRectToScreen(layout: Section3DLayout, rect: { x: number; y: number; w: number; h: number }): { x: number; y: number; width: number; height: number } | null {
+    if (!this.camera3D) return null;
+
+    const dims = this.sectionTextureCache.get(layout.sectionIndex);
+    if (!dims || dims.width <= 0 || dims.height <= 0) return null;
+
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    if (canvasW <= 0 || canvasH <= 0) return null;
+
+    const aspect = canvasW / canvasH;
+    const view = getCameraViewMatrix(this.camera3D);
+    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+    const viewProj = mat4Multiply(proj, view);
+    const model = this.get3DCardModelMatrix(layout);
+    const corners = [
+      { x: rect.x, y: rect.y },
+      { x: rect.x + rect.w, y: rect.y },
+      { x: rect.x + rect.w, y: rect.y + rect.h },
+      { x: rect.x, y: rect.y + rect.h },
+    ];
+
+    const screenPoints: Array<{ x: number; y: number }> = [];
+    for (const corner of corners) {
+      const u = corner.x / dims.width;
+      const v = corner.y / dims.height;
+      const world = mat4TransformPoint(model, { x: u - 0.5, y: 0.5 - v, z: 0 });
+      const clip = mat4TransformVec4(viewProj, world.x, world.y, world.z, 1);
+      if (clip.w <= 1e-6) return null;
+      const ndcX = clip.x / clip.w;
+      const ndcY = clip.y / clip.w;
+      screenPoints.push({
+        x: (ndcX * 0.5 + 0.5) * canvasW,
+        y: (1 - (ndcY * 0.5 + 0.5)) * canvasH,
+      });
+    }
+
+    const xs = screenPoints.map((point) => point.x);
+    const ys = screenPoints.map((point) => point.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    if (![minX, maxX, minY, maxY].every(Number.isFinite)) return null;
+
+    return {
+      x: minX,
+      y: minY,
+      width: Math.max(1, maxX - minX),
+      height: Math.max(1, maxY - minY),
+    };
+  }
+
+  private getWorldsInlineWidgetRenderScale(
+    placement: WidgetPlacement,
+    projected: { width: number; height: number }
+  ): number {
+    const sx = placement.w > 0 ? projected.width / placement.w : 1;
+    const sy = placement.h > 0 ? projected.height / placement.h : 1;
+    const scale = Math.min(sx, sy);
+    if (!Number.isFinite(scale) || scale <= 0) return 1;
+    return Math.max(0.35, Math.min(6, scale));
+  }
+
+  private syncWorldsInlineWidgets(): void {
+    const guiAPI = this.api?.gui as any;
+    let system = guiAPI?.getSystem?.();
+    if (!system && typeof guiAPI?.init === 'function') {
+      try {
+        guiAPI.init({ boundsSpace: 'device' });
+        system = guiAPI.getSystem?.();
+      } catch {
+        system = null;
+      }
+    }
+    if (!system) {
+      this.clearWorldsInlineWidgets();
+      return;
+    }
+
+    const active = this.getActiveWorldsInlineWidgetPlacements();
+    if (!active) {
+      this.clearWorldsInlineWidgets();
+      return;
+    }
+
+    const nextKeys = new Set(active.placements.map((placement) => this.getWorldsInlineWidgetStateKey(active.layout.sectionIndex, placement.widget.id)));
+    const manager = system.getWidgetManager();
+
+    for (let i = this.worldsInlineWidgetInstances.length - 1; i >= 0; i--) {
+      const entry = this.worldsInlineWidgetInstances[i];
+      const key = this.getWorldsInlineWidgetStateKey(entry.sectionIndex, entry.widgetId);
+      if (entry.sectionIndex !== active.layout.sectionIndex || !nextKeys.has(key)) {
+        manager.unregister(entry.widget.id);
+        this.worldsInlineWidgetInstances.splice(i, 1);
+      }
+    }
+
+    for (const placement of active.placements) {
+      const projected = this.project3DTextureRectToScreen(active.layout, placement);
+      const widgetKey = this.getWorldsInlineWidgetStateKey(active.layout.sectionIndex, placement.widget.id);
+      if (!projected) continue;
+      const renderScale = placement.widget.scale === 'worlds'
+        ? this.getWorldsInlineWidgetRenderScale(placement, projected)
+        : 1;
+
+      let entry = this.worldsInlineWidgetInstances.find((item) => item.sectionIndex === active.layout.sectionIndex && item.widgetId === placement.widget.id);
+      if (!entry) {
+        const persisted = this.worldsInlineWidgetValueState.get(widgetKey);
+        const bounds = { x: projected.x, y: projected.y, width: projected.width, height: projected.height };
+        let widget: any;
+        if (placement.widget.type === 'button') {
+          widget = system.createButton({
+            id: `worlds-inline-${widgetKey}`,
+            group: '__worlds-inline-widgets',
+            bounds,
+            label: String(placement.widget.label || placement.widget.id),
+          });
+          widget.on('click', () => {
+            this.worldsInlineWidgetEventsQueue.push({
+              id: placement.widget.id,
+              kind: 'button',
+              sectionIndex: active.layout.sectionIndex,
+              action: 'click',
+            });
+          });
+        } else if (placement.widget.type === 'slider') {
+          widget = system.createSlider({
+            id: `worlds-inline-${widgetKey}`,
+            group: '__worlds-inline-widgets',
+            bounds,
+            label: String(placement.widget.label || placement.widget.id),
+            min: Number.isFinite(placement.widget.min) ? Number(placement.widget.min) : 0,
+            max: Number.isFinite(placement.widget.max) ? Number(placement.widget.max) : 100,
+            value: typeof persisted === 'number'
+              ? persisted
+              : (Number.isFinite(placement.widget.value) ? Number(placement.widget.value) : 0),
+            step: Number.isFinite(placement.widget.step) ? Number(placement.widget.step) : 1,
+          });
+        } else if (placement.widget.type === 'checkbox') {
+          widget = system.createCheckbox({
+            id: `worlds-inline-${widgetKey}`,
+            group: '__worlds-inline-widgets',
+            bounds,
+            label: String(placement.widget.label || placement.widget.id),
+            checked: typeof persisted === 'boolean'
+              ? persisted
+              : !!placement.widget.checked,
+          });
+          widget.on('click', () => {
+            const checked = !!widget.isChecked();
+            this.worldsInlineWidgetValueState.set(widgetKey, checked);
+            this.worldsInlineWidgetEventsQueue.push({
+              id: placement.widget.id,
+              kind: 'checkbox',
+              sectionIndex: active.layout.sectionIndex,
+              action: 'toggle',
+              value: checked,
+            });
+          });
+        } else {
+          widget = system.createLabel({
+            id: `worlds-inline-${widgetKey}`,
+            group: '__worlds-inline-widgets',
+            bounds,
+            align: placement.widget.align || 'left',
+            focusable: false,
+            text: String(placement.widget.text || placement.widget.label || placement.widget.id),
+          });
+        }
+
+        entry = {
+          engineId: widgetKey,
+          sectionIndex: active.layout.sectionIndex,
+          widgetId: placement.widget.id,
+          kind: placement.widget.type,
+          widget,
+          lastValue: placement.widget.type === 'slider'
+            ? widget.getValue()
+            : placement.widget.type === 'checkbox'
+              ? !!widget.isChecked()
+              : undefined,
+        };
+        if (entry.lastValue !== undefined) {
+          this.worldsInlineWidgetValueState.set(widgetKey, entry.lastValue);
+        }
+        this.worldsInlineWidgetInstances.push(entry);
+      }
+
+      entry.widget.setVisible(true);
+      entry.widget.setEnabled(true);
+      if (typeof entry.widget.setRenderScale === 'function') {
+        entry.widget.setRenderScale(renderScale);
+      }
+      entry.widget.setBounds({
+        x: projected.x,
+        y: projected.y,
+        width: projected.width,
+        height: projected.height,
+      });
+
+      if (entry.kind === 'slider') {
+        const currentValue = entry.widget.getValue();
+        if (entry.lastValue !== currentValue) {
+          entry.lastValue = currentValue;
+          this.worldsInlineWidgetValueState.set(widgetKey, currentValue);
+          this.worldsInlineWidgetEventsQueue.push({
+            id: placement.widget.id,
+            kind: 'slider',
+            sectionIndex: active.layout.sectionIndex,
+            action: 'change',
+            value: currentValue,
+          });
+        }
+      } else if (entry.kind === 'checkbox') {
+        const checked = !!entry.widget.isChecked();
+        entry.lastValue = checked;
+        this.worldsInlineWidgetValueState.set(widgetKey, checked);
+      }
+    }
+  }
+
+  private handleWorldsInlineWidgetMouse(pixelX: number, pixelY: number, mouseDown: boolean): boolean {
+    if (this.worldsInlineWidgetInstances.length === 0) return false;
+    const guiAPI = this.api?.gui as any;
+    const system = guiAPI?.getSystem?.();
+    if (!system) return false;
+
+    const { charWidth, charHeight } = this.getGUIPixelMetrics();
+    const hitBefore = this.worldsInlineWidgetInstances.some((entry) => entry.widget.containsPoint({ x: pixelX, y: pixelY }));
+    const draggingBefore = this.worldsInlineWidgetInstances.some((entry) => entry.kind === 'slider' && typeof entry.widget.isDragging === 'function' && entry.widget.isDragging());
+
+    system.handleMouse(pixelX, pixelY, mouseDown, charWidth, charHeight);
+    this.syncWorldsInlineWidgets();
+
+    return hitBefore || draggingBefore;
+  }
+
+  private handleWorldsInlineWidgetKey(key: string, modifiers?: { shift?: boolean; ctrl?: boolean; alt?: boolean }): boolean {
+    const active = this.getActiveWorldsInlineWidgetPlacements();
+    if (!active || active.placements.length === 0) return false;
+    const guiAPI = this.api?.gui as any;
+    const system = guiAPI?.getSystem?.();
+    if (!system) return false;
+
+    const focused = system.getFocusedWidget?.();
+    const focusedIsInline = !!focused && this.worldsInlineWidgetInstances.some((entry) => entry.widget.id === focused.id);
+    const navigatesInline = key === 'Tab' || key === 'ArrowDown' || key === 'ArrowUp' || key === 'ArrowLeft' || key === 'ArrowRight';
+    const activatesInline = key === 'Enter' || key === ' ';
+    if (!focusedIsInline && !navigatesInline) return false;
+
+    if (navigatesInline || (activatesInline && focusedIsInline)) {
+      system.handleKey(key, modifiers);
+      return true;
+    }
+
+    return false;
   }
 
   async loadMarkdown(documentId: string, markdown: string): Promise<boolean> {
@@ -5887,10 +6557,18 @@ ${exportVars}
 
         // Render GPU UI into its own texture (if created)
         if (this.webgpuUIRenderer) {
+          this.syncWorldsInlineWidgets();
+
+          const inlineGui = this.worldsInlineWidgetInstances.length > 0 ? (this.api?.gui as any)?.getSystem?.() : null;
+          if (inlineGui) {
+            const { charWidth, charHeight } = this.getGUIPixelMetrics();
+            inlineGui.update(this.input.getMouseX(), this.input.getMouseY(), this.input.isMouseDown(0), charWidth, charHeight);
+          }
+
           // Render retained-mode GUI widgets
           const guiAPI = this.api?.gui;
           if (guiAPI && guiAPI.getSystem && guiAPI.getSystem()) {
-            guiAPI.render(this.api.ui);
+            guiAPI.render(this.createMarkdownAwareDraw2D(this.webgpuUIRenderer, this.activeDocumentId ?? undefined));
           }
           
           this.webgpuUIRenderer.flush();
@@ -6301,32 +6979,13 @@ ${exportVars}
       // - expand/expand-y: only grow
       // - fit/fit-y: shrink or grow
       if (overflowMode === 'expand' || overflowMode === 'expand-y' || overflowMode === 'fit' || overflowMode === 'fit-y') {
-        const base = this.getStyle('default');
-        const dim = this.getStyle('dim');
-        const accent1 = this.getStyle('accent1');
-        const heading = this.getStyle('heading');
-        const code = this.getStyle('code');
         const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
         const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
         const shaderBg = !!this.parseWorldsSectionBackgroundShader();
         const surfaceBg = this.resolveWorldsSectionBackground();
 
         const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
-        const mdStyle: MarkdownStyle = {
-          fg: base.fg,
-          mutedFg: dim.fg,
-          headingFg: heading.fg,
-          listMarker: this.getWorldsListMarker(),
-          listMarkerGapPx: this.getWorldsListMarkerGapPx(),
-          listHangIndentPx: this.getWorldsListHangIndentPx(),
-          linkFg: base.fg,
-          activeLinkFg: accent1.fg,
-          activeLinkIndex,
-          linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
-          codeFg: code.fg,
-          codeBg: code.bg,
-          bg: mdBg,
-        };
+        const mdStyle = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
 
         const measureTextWidth = this.worldsCardFontStack && measureCtx
           ? (text: string) => measureCtx.measureText(text).width
@@ -6336,7 +6995,12 @@ ${exportVars}
         const probe = layoutMarkdownDocument(
           nodes,
           { x: 0, y: 0, width: probeWidthPx, height: heightPx },
-          { charW: measuredCharW, charH: measuredCharH, measureTextWidth },
+          {
+            charW: measuredCharW,
+            charH: measuredCharH,
+            measureTextWidth,
+            getImageSize: (source: string) => this.getMarkdownImageSize(source, this.activeDocumentId ?? undefined),
+          },
           mdStyle,
           0,
           texturePadding,
@@ -6419,11 +7083,6 @@ ${exportVars}
       const charW = measuredCharW;
       const charH = measuredCharH;
 
-      const base = this.getStyle('default');
-      const dim = this.getStyle('dim');
-      const accent1 = this.getStyle('accent1');
-      const heading = this.getStyle('heading');
-      const code = this.getStyle('code');
       const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
       const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
       const shaderBg = !!this.parseWorldsSectionBackgroundShader();
@@ -6434,21 +7093,7 @@ ${exportVars}
       // keep the section texture background transparent so paper shows through.
       const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
 
-      const mdStyle: MarkdownStyle = {
-        fg: base.fg,
-        mutedFg: dim.fg,
-        headingFg: heading.fg,
-        listMarker: this.getWorldsListMarker(),
-        listMarkerGapPx: this.getWorldsListMarkerGapPx(),
-        listHangIndentPx: this.getWorldsListHangIndentPx(),
-        linkFg: base.fg,
-        activeLinkFg: accent1.fg,
-        activeLinkIndex,
-        linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
-        codeFg: code.fg,
-        codeBg: code.bg,
-        bg: mdBg,
-      };
+      const mdStyle = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
       const result = layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: widthPx, height: heightPx },
@@ -6458,11 +7103,12 @@ ${exportVars}
           // If a proportional font is being used for Worlds cards, advance and
           // wrap using actual pixel widths to avoid visible spacing artifacts.
           measureTextWidth: this.worldsCardFontStack ? (text: string) => ctx.measureText(text).width : undefined,
+          getImageSize: (source: string) => this.getMarkdownImageSize(source, this.activeDocumentId ?? undefined),
         },
         mdStyle,
         0,
         texturePadding,
-        { overflow: layoutOverflow }
+        this.getWorldsWidgetLayoutOptions(layout.sectionIndex, layoutOverflow)
       );
 
       // Optional: center the *content block* within the card.
@@ -6486,22 +7132,29 @@ ${exportVars}
             r.x += dx;
             r.y += dy;
           }
+          this.translateWidgetPlacements(result.widgetPlacements, dx, dy);
         }
       }
 
       const scaledLinkRegions = this.scaleLinkRegions(result.linkRegions, textureScale);
+      const scaledWidgetPlacements = this.scaleWidgetPlacements(result.widgetPlacements, textureScale);
 
       // Draw ops into the Canvas2D surface
       ctx.clearRect(0, 0, widthPx, heightPx);
       if (bakedRuledPaper) {
         // Use a subtle line color derived from the theme.
-        const ruledLine = this.withAlpha(dim.fg, 0x40);
+        const ruledLine = this.withAlpha(mdStyle.mutedFg, 0x40);
         this.drawRuledLines2D(ctx, widthPx, heightPx, surfaceBg, ruledLine, baseLineHeight, texturePadding);
       }
       for (const op of result.ops) {
         if (op.kind === 'rect') {
           ctx.fillStyle = ColorUtils.toCss(op.color as any);
           ctx.fillRect(op.x, op.y, op.w, op.h);
+        } else if (op.kind === 'image') {
+          const image = this.getMarkdownImageSource(op.source, this.activeDocumentId ?? undefined);
+          if (image) {
+            ctx.drawImage(image, op.x, op.y, op.w, op.h);
+          }
         } else {
           ctx.fillStyle = ColorUtils.toCss(op.color as any);
           ctx.fillText(op.text, op.x, op.y);
@@ -6590,6 +7243,7 @@ ${exportVars}
       layout.texture = texture;
         this.sectionTextureCache.set(layout.sectionIndex, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
         this.sectionLinkRegionsCache.set(layout.sectionIndex, scaledLinkRegions);
+        this.sectionWidgetPlacementsCache.set(layout.sectionIndex, scaledWidgetPlacements);
 
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }
@@ -6615,9 +7269,38 @@ ${exportVars}
     }
     this.sectionTextureCache.clear();
     this.sectionLinkRegionsCache.clear();
+    this.sectionWidgetPlacementsCache.clear();
+    this.clearWorldsInlineWidgets();
     this.hovered3DLink = null;
     this.focused3DLink = null;
     this.worldsAutoLayoutCache = null;
+  }
+
+  private invalidate3DSectionTexture(sectionIndex: number): void {
+    const layout = this.section3DLayouts.find((item) => item.sectionIndex === sectionIndex);
+    if (!layout) return;
+
+    if (layout.texture) {
+      try {
+        layout.texture.destroy();
+      } catch {
+        // ignore
+      }
+      layout.texture = null;
+    }
+
+    layout.highlightUvRect = undefined;
+    this.sectionTextureCache.delete(sectionIndex);
+    this.sectionLinkRegionsCache.delete(sectionIndex);
+    this.sectionWidgetPlacementsCache.delete(sectionIndex);
+    this.worldsAutoLayoutCache = null;
+  }
+
+  private getWorldsWidgetLayoutOptions(sectionIndex: number, overflow: 'clip' | 'expand'): LayoutOptions {
+    return {
+      overflow,
+      widgetPlaceholderMode: this.current3DSectionIndex === sectionIndex ? 'none' : 'full',
+    };
   }
 
   private set3DLayoutWorldSizeFromPixels(
@@ -6927,6 +7610,46 @@ ${exportVars}
     return ColorUtils.from(v);
   }
 
+  private createWorldsMarkdownStyle(options?: {
+    activeLinkIndex?: number | null;
+    background?: Color;
+  }): MarkdownStyle {
+    const base = this.getStyle('default');
+    const dim = this.getStyle('dim');
+    const border = this.getStyle('border');
+    const surface = this.getStyle('surface');
+    const heading = this.getStyle('heading');
+    const link = this.getStyle('link');
+    const active = this.getStyle('active');
+    const info = this.getStyle('info');
+    const success = this.getStyle('success');
+    const warning = this.getStyle('warning');
+    const error = this.getStyle('error');
+    const code = this.getStyle('code');
+
+    return {
+      fg: base.fg,
+      mutedFg: dim.fg,
+      borderFg: border.fg,
+      surfaceBg: surface.bg,
+      headingFg: heading.fg,
+      listMarker: this.getWorldsListMarker(),
+      listMarkerGapPx: this.getWorldsListMarkerGapPx(),
+      listHangIndentPx: this.getWorldsListHangIndentPx(),
+      linkFg: link.fg,
+      activeLinkFg: active.fg,
+      activeLinkIndex: options?.activeLinkIndex ?? null,
+      linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
+      infoFg: info.fg,
+      successFg: success.fg,
+      warningFg: warning.fg,
+      errorFg: error.fg,
+      codeFg: code.fg,
+      codeBg: code.bg,
+      bg: options?.background ?? surface.bg,
+    };
+  }
+
   private ensure3DSectionTexturesWebGPUUI(device: GPUDevice): void {
     if (!(this.renderer instanceof WebGPURenderer)) return;
     if (!this.worldsEnabled || !this.camera3D) return;
@@ -6963,11 +7686,6 @@ ${exportVars}
 
     // Derive markdown styling from the active theme stylesheet.
     // (Theme colors are packed 0xRRGGBBAA, compatible with UI renderer.)
-    const base = this.getStyle('default');
-    const dim = this.getStyle('dim');
-    const accent1 = this.getStyle('accent1');
-    const heading = this.getStyle('heading');
-    const code = this.getStyle('code');
     const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
     const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
     const shaderBg = !!this.parseWorldsSectionBackgroundShader();
@@ -7012,29 +7730,18 @@ ${exportVars}
       const content = (layout.content || '').trim();
       const markdown = `# ${title}\n\n${content}`.trim();
       const nodes = parseMarkdownLite(markdown);
-      const style: MarkdownStyle = {
-        fg: base.fg,
-        mutedFg: dim.fg,
-        headingFg: heading.fg,
-        listMarker: this.getWorldsListMarker(),
-        listMarkerGapPx: this.getWorldsListMarkerGapPx(),
-        listHangIndentPx: this.getWorldsListHangIndentPx(),
-        linkFg: base.fg,
-        activeLinkFg: accent1.fg,
-        activeLinkIndex,
-        linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
-        codeFg: code.fg,
-        codeBg: code.bg,
-        // Give 3D cards a panel-like background; matches theme elevated surfaces.
-        bg: mdBg,
-      };
+      const style = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
 
       if (overflowMode === 'expand' || overflowMode === 'expand-y' || overflowMode === 'fit' || overflowMode === 'fit-y') {
         const probeWidthPx = overflowMode === 'fit' ? maxW : widthPx;
         const probe = layoutMarkdownDocument(
           nodes,
           { x: 0, y: 0, width: probeWidthPx, height: heightPx },
-          { charW, charH },
+          {
+            charW,
+            charH,
+            getImageSize: (source: string) => this.getMarkdownImageSize(source, this.activeDocumentId ?? undefined),
+          },
           style,
           0,
           texturePadding,
@@ -7078,33 +7785,34 @@ ${exportVars}
         layout.texture
       ) {
         // Texture already matches current size; ensure link regions are present.
-        if (!this.sectionLinkRegionsCache.has(layout.sectionIndex)) {
-          const style: MarkdownStyle = {
-            fg: base.fg,
-            mutedFg: dim.fg,
-            headingFg: heading.fg,
-            listMarker: this.getWorldsListMarker(),
-            listMarkerGapPx: this.getWorldsListMarkerGapPx(),
-            listHangIndentPx: this.getWorldsListHangIndentPx(),
-            linkFg: base.fg,
-            activeLinkFg: accent1.fg,
-            activeLinkIndex,
-            linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
-            codeFg: code.fg,
-            codeBg: code.bg,
-            // Give 3D cards a panel-like background; matches theme elevated surfaces.
-            bg: mdBg,
-          };
+        if (!this.sectionLinkRegionsCache.has(layout.sectionIndex) || !this.sectionWidgetPlacementsCache.has(layout.sectionIndex)) {
+          const style = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
           const result = layoutMarkdownDocument(
             nodes,
             { x: 0, y: 0, width: widthPx, height: heightPx },
-            { charW, charH },
+            {
+              charW,
+              charH,
+              getImageSize: (source: string) => this.getMarkdownImageSize(source, this.activeDocumentId ?? undefined),
+            },
             style,
             0,
             texturePadding,
-            { overflow: layoutOverflow }
+            this.getWorldsWidgetLayoutOptions(layout.sectionIndex, layoutOverflow)
           );
+          if (((this.worldsConfig as any).sectionContentAlign ?? 'start') === 'center') {
+            const innerW = Math.max(1, widthPx - texturePadding * 2);
+            const innerH = Math.max(1, heightPx - texturePadding * 2);
+            const dx = Math.max(0, Math.round((innerW - result.contentWidth) / 2));
+            const dy = Math.max(0, Math.round((innerH - result.contentHeight) / 2));
+            for (const region of result.linkRegions) {
+              region.x += dx;
+              region.y += dy;
+            }
+            this.translateWidgetPlacements(result.widgetPlacements, dx, dy);
+          }
           this.sectionLinkRegionsCache.set(layout.sectionIndex, this.scaleLinkRegions(result.linkRegions, textureScale));
+          this.sectionWidgetPlacementsCache.set(layout.sectionIndex, this.scaleWidgetPlacements(result.widgetPlacements, textureScale));
         }
         continue;
       }
@@ -7128,11 +7836,15 @@ ${exportVars}
       const result = layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: widthPx, height: heightPx },
-        { charW, charH },
+        {
+          charW,
+          charH,
+          getImageSize: (source: string) => this.getMarkdownImageSize(source, this.activeDocumentId ?? undefined),
+        },
         style,
         0,
         texturePadding,
-        { overflow: layoutOverflow }
+        this.getWorldsWidgetLayoutOptions(layout.sectionIndex, layoutOverflow)
       );
 
       // Optional: center the content block within the card.
@@ -7155,16 +7867,18 @@ ${exportVars}
             r.x += dx;
             r.y += dy;
           }
+          this.translateWidgetPlacements(result.widgetPlacements, dx, dy);
         }
       }
 
       this.sectionLinkRegionsCache.set(layout.sectionIndex, this.scaleLinkRegions(result.linkRegions, textureScale));
+      this.sectionWidgetPlacementsCache.set(layout.sectionIndex, this.scaleWidgetPlacements(result.widgetPlacements, textureScale));
 
       // Replay ops into UI renderer and render into this section texture.
       ui.clearCommands();
 
       if (bakedRuledPaper) {
-        const ruledLine = this.withAlpha(dim.fg, 0x40) as any;
+        const ruledLine = this.withAlpha(style.mutedFg, 0x40) as any;
         ui.rect(0, 0, textureWidthPx, textureHeightPx, surfaceBg as any);
 
         const spacing = Math.max(1, Math.round(baseLineHeight * textureScale));
@@ -7177,6 +7891,11 @@ ${exportVars}
       for (const op of result.ops) {
         if (op.kind === 'rect') {
           ui.rect(op.x * textureScale, op.y * textureScale, op.w * textureScale, op.h * textureScale, op.color as any);
+        } else if (op.kind === 'image') {
+          const registered = this.ensureMarkdownImageRegisteredWithRenderer(op.source, ui, this.activeDocumentId ?? undefined);
+          if (registered) {
+            ui.image(registered.imageId, op.x * textureScale, op.y * textureScale, op.w * textureScale, op.h * textureScale);
+          }
         } else {
           ui.text(op.text, op.x * textureScale, op.y * textureScale, op.color as any);
         }
@@ -7932,9 +8651,18 @@ ${exportVars}
     try {
       const doc = this.getActiveDocument();
 
+      const inlineWidgetHandled = action === 'press'
+        ? this.handleWorldsInlineWidgetKey(e.key, {
+            shift: e.shiftKey,
+            ctrl: e.ctrlKey,
+            alt: e.altKey,
+          })
+        : false;
+
       // Built-in 3D link navigation (canvas.nim parity)
       let handledBy3D = false;
       if (
+        !inlineWidgetHandled &&
         action === 'press' &&
         this.worldsEnabled &&
         this.camera3D &&
@@ -7985,7 +8713,7 @@ ${exportVars}
         }
       }
 
-      if (handledBy3D || doc?.handlers?.input) {
+      if (handledBy3D || inlineWidgetHandled || doc?.handlers?.input) {
         e.preventDefault();
       }
     } finally {
@@ -8026,9 +8754,13 @@ ${exportVars}
       // Update InputManager's mouse position so mouseX/mouseY globals reflect click position
       this.input.updateMousePosition(pixelX, pixelY);
 
+      const inlineWidgetConsumed = e.button === 0
+        ? this.handleWorldsInlineWidgetMouse(pixelX, pixelY, action === 'press')
+        : false;
+
       // Built-in 3D picking/navigation: click a section card to focus camera.
       // This runs even if the document doesn't define an on:input handler.
-      if (action === 'press' && e.button === 0) {
+      if (!inlineWidgetConsumed && action === 'press' && e.button === 0) {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
@@ -8468,28 +9200,12 @@ ${exportVars}
     const maxH = Math.max(minH, Math.floor(maxTextureH / textureScale));
 
     // Theme-derived style (colors don't affect layout, but keep it consistent).
-    const base = this.getStyle('default');
-    const dim = this.getStyle('dim');
-    const heading = this.getStyle('heading');
-    const code = this.getStyle('code');
     const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
     const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
     const shaderBg = !!this.parseWorldsSectionBackgroundShader();
     const surfaceBg = this.resolveWorldsSectionBackground();
     const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
-    const mdStyle: MarkdownStyle = {
-      fg: base.fg,
-      mutedFg: dim.fg,
-      headingFg: heading.fg,
-      listMarker: this.getWorldsListMarker(),
-      listMarkerGapPx: this.getWorldsListMarkerGapPx(),
-      listHangIndentPx: this.getWorldsListHangIndentPx(),
-      linkFg: base.fg,
-      linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
-      codeFg: code.fg,
-      codeBg: code.bg,
-      bg: mdBg,
-    };
+    const mdStyle = this.createWorldsMarkdownStyle({ background: mdBg });
 
     // Measure in logical CSS pixels; the runtime render path applies DPR only
     // when rasterizing the final card texture.
@@ -8555,7 +9271,12 @@ ${exportVars}
       const probe = layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: probeWidthPx, height: heightPx },
-        { charW: measuredCharW, charH: measuredCharH, measureTextWidth },
+        {
+          charW: measuredCharW,
+          charH: measuredCharH,
+          measureTextWidth,
+          getImageSize: (source: string) => this.getMarkdownImageSize(source, this.activeDocumentId ?? undefined),
+        },
         mdStyle,
         0,
         texturePadding,
@@ -8643,7 +9364,19 @@ ${exportVars}
 
   private setCurrent3DSection(sectionIndex: number): void {
     if (this.current3DSectionIndex === sectionIndex) return;
+    const previousSectionIndex = this.current3DSectionIndex;
+    this.clearWorldsInlineWidgets();
     this.current3DSectionIndex = sectionIndex;
+
+    if (typeof previousSectionIndex === 'number' && Number.isFinite(previousSectionIndex)) {
+      this.invalidate3DSectionTexture(previousSectionIndex);
+    }
+    this.invalidate3DSectionTexture(sectionIndex);
+
+    const guiAPI = this.api?.gui as any;
+    if (guiAPI && typeof guiAPI.syncSectionBindings === 'function') {
+      guiAPI.syncSectionBindings(sectionIndex);
+    }
 
     // Shared scene state: new section => reset reveal step.
     this.sceneState.sectionIndex = sectionIndex;
@@ -8659,6 +9392,12 @@ ${exportVars}
     }
 
     this.runSectionEnterHandlers(sectionIndex);
+
+    if (guiAPI && typeof guiAPI.syncSectionBindings === 'function') {
+      guiAPI.syncSectionBindings(sectionIndex);
+    }
+
+    this.syncWorldsInlineWidgets();
   }
 
   private runSectionEnterHandlers(sectionIndex: number): void {
@@ -8942,9 +9681,6 @@ ${exportVars}
 
     if (this.hostAudienceView) return;
 
-    const doc = this.getActiveDocument();
-    if (!doc?.handlers?.input) return;
-
     const rect = this.canvas.getBoundingClientRect();
     
     // Get CSS coordinates
@@ -8957,6 +9693,13 @@ ${exportVars}
     
     // Update InputManager's mouse position for mouseX/mouseY globals
     this.input.updateMousePosition(pixelX, pixelY);
+
+    if (this.worldsInlineWidgetInstances.length > 0) {
+      this.handleWorldsInlineWidgetMouse(pixelX, pixelY, this.input.isMouseDown(0));
+    }
+
+    const doc = this.getActiveDocument();
+    if (!doc?.handlers?.input) return;
     
     // Calculate character size in backing store pixels (same coordinate system as pixelX/pixelY)
     const charWidth = this.canvas.width / this.width;

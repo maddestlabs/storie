@@ -29,6 +29,16 @@ export class GUIMarkdownView extends BaseWidget {
 
   private mdStyle: MarkdownStyle;
 
+  private collectImageSources(nodes: DocNode[], into: Set<string>): void {
+    for (const node of nodes) {
+      if (node.kind === 'image') {
+        into.add(node.source);
+      } else if (node.kind === 'blockquote' || node.kind === 'callout') {
+        this.collectImageSources(node.nodes, into);
+      }
+    }
+  }
+
   constructor(config: GUIMarkdownViewConfig) {
     super({ ...config, focusable: config.focusable ?? true });
     this.markdown = config.markdown ?? '';
@@ -39,8 +49,14 @@ export class GUIMarkdownView extends BaseWidget {
     const defaultStyle: MarkdownStyle = {
       fg: ({ r: 230, g: 230, b: 230 } as unknown) as Color,
       mutedFg: ({ r: 160, g: 160, b: 160 } as unknown) as Color,
+      borderFg: ({ r: 110, g: 110, b: 110 } as unknown) as Color,
+      surfaceBg: ({ r: 24, g: 24, b: 24, a: 0.92 } as unknown) as Color,
       headingFg: ({ r: 255, g: 255, b: 255 } as unknown) as Color,
       linkFg: ({ r: 80, g: 180, b: 255 } as unknown) as Color,
+      infoFg: ({ r: 80, g: 180, b: 255 } as unknown) as Color,
+      successFg: ({ r: 64, g: 210, b: 140 } as unknown) as Color,
+      warningFg: ({ r: 255, g: 205, b: 96 } as unknown) as Color,
+      errorFg: ({ r: 255, g: 110, b: 120 } as unknown) as Color,
       codeFg: ({ r: 240, g: 240, b: 240 } as unknown) as Color,
       codeBg: ({ r: 35, g: 35, b: 35, a: 0.9 } as unknown) as Color,
       bg: ({ r: 0, g: 0, b: 0, a: 0 } as unknown) as Color,
@@ -85,8 +101,8 @@ export class GUIMarkdownView extends BaseWidget {
     return v;
   }
 
-  private computeLayout(metrics: TextMetrics): LayoutResult {
-    const key = `${this.bounds.x},${this.bounds.y},${this.bounds.width},${this.bounds.height}|${metrics.charW},${metrics.charH}|${this.scrollY}|${this.markdown.length}`;
+  private computeLayout(metrics: TextMetrics, imageSignature: string): LayoutResult {
+    const key = `${this.bounds.x},${this.bounds.y},${this.bounds.width},${this.bounds.height}|${metrics.charW},${metrics.charH}|${this.scrollY}|${this.markdown.length}|${imageSignature}`;
     if (this.cachedLayout && this.cachedKey === key) return this.cachedLayout;
 
     const layout = layoutMarkdownDocument(
@@ -121,8 +137,21 @@ export class GUIMarkdownView extends BaseWidget {
   renderToUI(ui: Draw2D, charW: number, charH: number): void {
     if (!this.state.visible) return;
 
-    const metrics: TextMetrics = { charW, charH };
-    let layout = this.computeLayout(metrics);
+    const sources = new Set<string>();
+    this.collectImageSources(this.nodes, sources);
+    const imageSize = typeof ui.getImageSize === 'function'
+      ? (source: string) => ui.getImageSize!(source)
+      : undefined;
+    const imageSignature = Array.from(sources)
+      .sort()
+      .map((source) => {
+        const dims = imageSize ? imageSize(source) : null;
+        return dims ? `${source}:${dims.width}x${dims.height}` : `${source}:pending`;
+      })
+      .join('|');
+
+    const metrics: TextMetrics = { charW, charH, ...(imageSize ? { getImageSize: imageSize } : {}) };
+    let layout = this.computeLayout(metrics, imageSignature);
 
     // Clamp scroll to content bounds (prevents infinite empty scrolling).
     const innerH = Math.max(0, this.bounds.height - this.padding * 2);
@@ -131,7 +160,7 @@ export class GUIMarkdownView extends BaseWidget {
     if (this.scrollY > maxScroll) {
       this.scrollY = maxScroll;
       this.cachedLayout = null;
-      layout = this.computeLayout(metrics);
+      layout = this.computeLayout(metrics, imageSignature);
     }
 
     const pushClip = ui.pushClipRect;
@@ -144,6 +173,10 @@ export class GUIMarkdownView extends BaseWidget {
     for (const op of layout.ops) {
       if (op.kind === 'rect') {
         ui.rect(op.x, op.y, op.w, op.h, op.color);
+      } else if (op.kind === 'image') {
+        if (typeof ui.image === 'function') {
+          ui.image(op.source, op.x, op.y, op.w, op.h);
+        }
       } else {
         ui.text(op.text, op.x, op.y, op.color);
       }

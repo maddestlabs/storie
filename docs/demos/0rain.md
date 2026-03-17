@@ -552,6 +552,7 @@ Pressing 0|1 or tapping LEFT|RIGHT
 if (typeof worlds.currentSection === 'number') {
   g.settingsSectionIndex = worlds.currentSection;
 }
+ensureSettingsSectionGui();
 setRainLevel(RAIN_IDLE_GAIN, 0.35);
 ```
 
@@ -596,6 +597,10 @@ var g = {
   titleSectionIndex: null,
   playSectionIndex: null,
   settingsSectionIndex: null,
+  settingsGui: null,
+  themeNames: [],
+  themeIndex: 0,
+  themeName: 'zerorain',
   playSectionHidden: false
   };
 
@@ -807,6 +812,113 @@ function syncPlaySectionVisibility() {
   g.playSectionHidden = shouldHide;
 }
 
+function ensureSettingsSectionGui() {
+  if (g.settingsGui || typeof gui === 'undefined' || typeof gui.section !== 'function') return g.settingsGui;
+
+  var settingsSection = gui.section('current');
+  g.settingsGui = {
+    section: settingsSection,
+    themeCaptionLabel: settingsSection.createLabel({
+      focusable: false,
+      align: 'left',
+      bounds: { x: 0, y: 0, width: 320, height: 32 },
+      text: 'Theme'
+    }),
+    themeValueLabel: settingsSection.createLabel({
+      focusable: false,
+      align: 'center',
+      bounds: { x: 0, y: 0, width: 320, height: 40 },
+      text: ''
+    }),
+    themePrevButton: settingsSection.createButton({
+      bounds: { x: 0, y: 0, width: 80, height: 40 },
+      label: '←'
+    }),
+    themeNextButton: settingsSection.createButton({
+      bounds: { x: 0, y: 0, width: 80, height: 40 },
+      label: '→'
+    }),
+    audioStateLabel: settingsSection.createLabel({
+      focusable: false,
+      align: 'left',
+      bounds: { x: 0, y: 0, width: 280, height: 40 },
+      text: ''
+    })
+  };
+
+  g.settingsGui.themePrevButton.on('click', function () {
+    cycleThemeIndex(-1);
+  });
+  g.settingsGui.themeNextButton.on('click', function () {
+    cycleThemeIndex(1);
+  });
+
+  return g.settingsGui;
+}
+
+function ensureThemeSelectorState() {
+  var names = [];
+  if (typeof themes !== 'undefined' && themes && typeof themes.list === 'function') {
+    names = themes.list() || [];
+  }
+
+  if (!Array.isArray(names) || names.length === 0) {
+    names = ['zerorain'];
+  }
+
+  g.themeNames = names.slice();
+
+  var currentName = g.themeName;
+  if (typeof themes !== 'undefined' && themes && typeof themes.getName === 'function') {
+    currentName = themes.getName() || currentName;
+  }
+
+  var index = g.themeNames.indexOf(currentName);
+  if (index < 0) index = 0;
+
+  g.themeIndex = index;
+  g.themeName = g.themeNames[index];
+
+  if (g.settingsGui && g.settingsGui.themeValueLabel) {
+    g.settingsGui.themeValueLabel.setText(g.themeName);
+  }
+
+  if (g.settingsGui && g.settingsGui.themePrevButton && g.settingsGui.themeNextButton) {
+    var canCycle = g.themeNames.length > 1;
+    g.settingsGui.themePrevButton.setEnabled(canCycle);
+    g.settingsGui.themeNextButton.setEnabled(canCycle);
+  }
+}
+
+function cycleThemeIndex(delta) {
+  ensureThemeSelectorState();
+  if (!g.themeNames || g.themeNames.length === 0) return;
+
+  var dir = delta < 0 ? -1 : 1;
+  var count = g.themeNames.length;
+  var nextIndex = (g.themeIndex + dir + count) % count;
+  applyThemeIndex(nextIndex);
+}
+
+function applyThemeIndex(index) {
+  ensureThemeSelectorState();
+  if (!g.themeNames || g.themeNames.length === 0) return;
+
+  var nextIndex = Math.max(0, Math.min(g.themeNames.length - 1, Math.round(index)));
+  var nextName = g.themeNames[nextIndex];
+
+  if (typeof themes !== 'undefined' && themes && typeof themes.set === 'function') {
+    if (!themes.set(nextName)) return;
+  }
+
+  g.themeIndex = nextIndex;
+  g.themeName = nextName;
+
+  if (g.settingsGui && g.settingsGui.themeValueLabel) {
+    g.settingsGui.themeValueLabel.setText(nextName);
+  }
+}
+
 function unlockExperienceAudio() {
   if (g.audioUnlocked || g.audioUnlockPending || !g.audioEnabled) return;
   g.audioUnlockPending = true;
@@ -870,13 +982,6 @@ function initOverlayGui() {
       bounds: { x: 0, y: 0, width: 280, height: 40 },
       text: ''
     }),
-    audioStateLabel: gui.createLabel({
-      group: GUI_GROUP_HUD,
-      focusable: false,
-      align: 'left',
-      bounds: { x: 0, y: 0, width: 280, height: 40 },
-      text: ''
-    }),
     keypadButtons: []
   };
 
@@ -932,18 +1037,66 @@ function layoutOverlayGui() {
     width: hudWidth,
     height: hudHeight
   });
-  guiWidgets.audioStateLabel.setBounds({
-    x: inset,
-    y: height - inset - hudHeight,
-    width: hudWidth,
-    height: hudHeight
-  });
   guiWidgets.scoreLabel.setBounds({
     x: width - inset - hudWidth,
     y: height - inset - hudHeight,
     width: hudWidth,
     height: hudHeight
   });
+
+  if (g.settingsGui && g.settingsGui.audioStateLabel) {
+    var settingsBaseX = inset;
+    var audioY = height - inset - hudHeight;
+    var themeRowY = audioY - hudHeight - 10;
+    var themeCaptionY = themeRowY - hudHeight + 4;
+    var themeButtonGap = Math.max(8, Math.floor(hudHeight * 0.18));
+    var themeButtonWidth = Math.max(52, Math.floor(hudHeight * 1.25));
+    var themeValueWidth = Math.max(120, hudWidth - themeButtonWidth * 2 - themeButtonGap * 2);
+    var themeValueX = settingsBaseX + Math.max(0, Math.floor((hudWidth - themeValueWidth) / 2));
+
+    if (g.settingsGui.themeCaptionLabel) {
+      g.settingsGui.themeCaptionLabel.setBounds({
+        x: settingsBaseX,
+        y: themeCaptionY,
+        width: hudWidth,
+        height: hudHeight
+      });
+    }
+
+    if (g.settingsGui.themePrevButton) {
+      g.settingsGui.themePrevButton.setBounds({
+        x: settingsBaseX,
+        y: themeRowY,
+        width: themeButtonWidth,
+        height: hudHeight
+      });
+    }
+
+    if (g.settingsGui.themeNextButton) {
+      g.settingsGui.themeNextButton.setBounds({
+        x: settingsBaseX + hudWidth - themeButtonWidth,
+        y: themeRowY,
+        width: themeButtonWidth,
+        height: hudHeight
+      });
+    }
+
+    if (g.settingsGui.themeValueLabel) {
+      g.settingsGui.themeValueLabel.setBounds({
+        x: themeValueX,
+        y: themeRowY,
+        width: themeValueWidth,
+        height: hudHeight
+      });
+    }
+
+    g.settingsGui.audioStateLabel.setBounds({
+      x: settingsBaseX,
+      y: audioY,
+      width: hudWidth,
+      height: hudHeight
+    });
+  }
 
   for (var i = 0; i < guiWidgets.keypadButtons.length; i++) {
     var keypad = guiWidgets.keypadButtons[i];
@@ -990,8 +1143,11 @@ function updateOverlayHud() {
 
   guiWidgets.scoreLabel.setText(g.gameMode === 'start' ? '' : String(g.score));
 
-  var showAudioState = typeof g.settingsSectionIndex === 'number' && worlds.currentSection === g.settingsSectionIndex;
-  guiWidgets.audioStateLabel.setText(showAudioState ? ('Audio: ' + (g.audioEnabled ? 'On' : 'Off')) : '');
+  ensureThemeSelectorState();
+
+  if (g.settingsGui && g.settingsGui.audioStateLabel) {
+    g.settingsGui.audioStateLabel.setText('Audio: ' + (g.audioEnabled ? 'On' : 'Off'));
+  }
 }
 
 function getDigitColor(s, i, alpha) {

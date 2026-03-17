@@ -84,13 +84,257 @@ function _parseTimedMs(v: any): number | undefined {
   return undefined;
 }
 
+function _tryParseJsonObject(raw: string): Record<string, any> | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, any>;
+    }
+  } catch {
+    // Fall through to relaxed parsing.
+  }
+  return null;
+}
+
+function _splitTopLevel(input: string): string[] | null {
+  const parts: string[] = [];
+  let start = 0;
+  let quote: '"' | "'" | null = null;
+  let escape = false;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]!;
+
+    if (quote) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escape = true;
+        continue;
+      }
+      if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === '{') {
+      braceDepth++;
+      continue;
+    }
+    if (ch === '}') {
+      if (braceDepth === 0) return null;
+      braceDepth--;
+      continue;
+    }
+    if (ch === '[') {
+      bracketDepth++;
+      continue;
+    }
+    if (ch === ']') {
+      if (bracketDepth === 0) return null;
+      bracketDepth--;
+      continue;
+    }
+
+    if (ch === ',' && braceDepth === 0 && bracketDepth === 0) {
+      parts.push(input.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+
+  if (quote || escape || braceDepth !== 0 || bracketDepth !== 0) return null;
+
+  const tail = input.slice(start).trim();
+  if (tail.length > 0) parts.push(tail);
+
+  while (parts.length > 0 && parts[parts.length - 1] === '') {
+    parts.pop();
+  }
+
+  return parts.some((part) => part.length === 0) ? null : parts;
+}
+
+function _findTopLevelColon(input: string): number {
+  let quote: '"' | "'" | null = null;
+  let escape = false;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]!;
+
+    if (quote) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escape = true;
+        continue;
+      }
+      if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === '{') {
+      braceDepth++;
+      continue;
+    }
+    if (ch === '}') {
+      if (braceDepth > 0) braceDepth--;
+      continue;
+    }
+    if (ch === '[') {
+      bracketDepth++;
+      continue;
+    }
+    if (ch === ']') {
+      if (bracketDepth > 0) bracketDepth--;
+      continue;
+    }
+
+    if (ch === ':' && braceDepth === 0 && bracketDepth === 0) {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+function _parseSingleQuotedString(raw: string): string | null {
+  if (raw.length < 2 || raw[0] !== "'" || raw[raw.length - 1] !== "'") return null;
+  let out = '';
+  for (let i = 1; i < raw.length - 1; i++) {
+    const ch = raw[i]!;
+    if (ch !== '\\') {
+      out += ch;
+      continue;
+    }
+    i++;
+    if (i >= raw.length - 1) return null;
+    const esc = raw[i]!;
+    switch (esc) {
+      case '\\': out += '\\'; break;
+      case "'": out += "'"; break;
+      case '"': out += '"'; break;
+      case 'n': out += '\n'; break;
+      case 'r': out += '\r'; break;
+      case 't': out += '\t'; break;
+      default: out += esc; break;
+    }
+  }
+  return out;
+}
+
+function _parseLooseDirectiveKey(raw: string): string | null {
+  const key = raw.trim();
+  if (!key) return null;
+
+  if (key.startsWith('"')) {
+    try {
+      const parsed = JSON.parse(key);
+      return typeof parsed === 'string' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  if (key.startsWith("'")) return _parseSingleQuotedString(key);
+
+  return /^[A-Za-z0-9_.-]+$/.test(key) ? key : null;
+}
+
+function _parseLooseDirectiveValue(raw: string): any {
+  const value = raw.trim();
+  if (!value) return null;
+
+  if (value.startsWith('{') && value.endsWith('}')) {
+    const jsonObject = _tryParseJsonObject(value);
+    if (jsonObject) return jsonObject;
+    return _parseLooseDirectiveObject(value);
+  }
+
+  if (value.startsWith('[') && value.endsWith(']')) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+
+  if (value.startsWith('"')) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+
+  if (value.startsWith("'")) {
+    const parsed = _parseSingleQuotedString(value);
+    return parsed ?? value;
+  }
+
+  if (/^(?:true|false)$/i.test(value)) return value.toLowerCase() === 'true';
+  if (/^null$/i.test(value)) return null;
+  if (/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) return Number(value);
+
+  return value;
+}
+
+function _parseLooseDirectiveObject(raw: string): Record<string, any> | null {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+
+  const body = trimmed.slice(1, -1).trim();
+  if (!body) return {};
+
+  const parts = _splitTopLevel(body);
+  if (!parts) return null;
+
+  const out: Record<string, any> = {};
+  for (const part of parts) {
+    const colon = _findTopLevelColon(part);
+    if (colon <= 0) return null;
+
+    const key = _parseLooseDirectiveKey(part.slice(0, colon));
+    if (!key) return null;
+
+    out[key] = _parseLooseDirectiveValue(part.slice(colon + 1));
+  }
+
+  return out;
+}
+
+export function parseHeadingDirectiveObject(raw: string): Record<string, any> | null {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+  return _tryParseJsonObject(trimmed) ?? _parseLooseDirectiveObject(trimmed);
+}
+
 /**
- * Look for a trailing JSON object at the end of a heading title, e.g.
+ * Look for a trailing directive object at the end of a heading title, e.g.
+ *   `# First Verse {timed: 4000ms, x: 400}`
  *   `# First Verse {"timed": "4000ms", "x": "400"}`
  *
  * Returns the display title (text before the `{`), the parsed directive
  * object, and the extracted `timedMs` in milliseconds.
- * If no valid JSON object suffix is found, returns the original title
+ * If no valid object suffix is found, returns the original title
  * with null directive and undefined timedMs.
  */
 function _parseHeadingDirective(rawTitle: string): {
@@ -100,16 +344,12 @@ function _parseHeadingDirective(rawTitle: string): {
 } {
   const lastBrace = rawTitle.lastIndexOf('{');
   if (lastBrace >= 0) {
-    try {
-      const jsonPart = rawTitle.slice(lastBrace);
-      const obj = JSON.parse(jsonPart);
-      if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-        const displayTitle = rawTitle.slice(0, lastBrace).trim();
-        const timedMs = _parseTimedMs(obj['timed']);
-        return { displayTitle, directive: obj, timedMs };
-      }
-    } catch {
-      // Not a directive — treat the whole string as the title.
+    const directivePart = rawTitle.slice(lastBrace);
+    const obj = parseHeadingDirectiveObject(directivePart);
+    if (obj) {
+      const displayTitle = rawTitle.slice(0, lastBrace).trim();
+      const timedMs = _parseTimedMs(obj['timed']);
+      return { displayTitle, directive: obj, timedMs };
     }
   }
   return { displayTitle: rawTitle, directive: null, timedMs: undefined };

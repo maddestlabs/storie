@@ -5,6 +5,7 @@
  * Sections are rendered as textured quads in 3D space using WebGPU.
  */
 
+import { parseHeadingDirectiveObject } from './markdown.js';
 import type { Section } from './types.js';
 import type {
   Vec3,
@@ -936,27 +937,25 @@ export function parseTransform3D(
 }
 
 /**
- * Parse JSON metadata from section title
- * Format: # Title {"key": "value", "another": true}
+ * Parse section metadata from a trailing heading directive.
+ * Supports both strict JSON and a relaxed flat-object form.
  */
 export function parseSectionMetadata(title: string): Record<string, string> {
-  const match = title.match(/\{[^}]+\}/);
+  const match = title.match(/\{[\s\S]*\}\s*$/);
   if (!match) return {};
 
-  try {
-    const jsonStr = match[0];
-    const parsed = JSON.parse(jsonStr);
-
-    // Convert all values to strings for consistent parsing
-    const result: Record<string, string> = {};
-    for (const key in parsed) {
-      result[key] = String((parsed as any)[key]);
-    }
-    return result;
-  } catch (e) {
+  const parsed = parseHeadingDirectiveObject(match[0]);
+  if (!parsed) {
     console.warn('Failed to parse section metadata:', title);
     return {};
   }
+
+  // Convert all values to strings for consistent parsing.
+  const result: Record<string, string> = {};
+  for (const key in parsed) {
+    result[key] = String((parsed as any)[key]);
+  }
+  return result;
 }
 
 /**

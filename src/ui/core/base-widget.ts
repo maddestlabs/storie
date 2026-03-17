@@ -16,7 +16,8 @@ import type {
   InputCoordinate,
   WidgetLayoutHints,
   WidgetLayoutSize,
-  WidgetSizePolicy
+  WidgetSizePolicy,
+  WidgetRenderContext
 } from './types.js';
 
 export interface WidgetConfig {
@@ -45,6 +46,7 @@ export abstract class BaseWidget {
   public state: WidgetState;
   public focusable: boolean;
   public layout: WidgetLayoutHints;
+  protected renderScale: number;
   
   protected eventListeners: Map<string, ((event: WidgetEvent) => void)[]>;
   
@@ -56,6 +58,7 @@ export abstract class BaseWidget {
     this.group = config.group || 0;
     this.focusable = config.focusable ?? true;
     this.layout = { ...(config.layout || {}) };
+    this.renderScale = 1;
     
     this.state = {
       visible: config.visible ?? true,
@@ -179,6 +182,27 @@ export abstract class BaseWidget {
    */
   setBounds(bounds: Partial<Bounds>): void {
     this.bounds = { ...this.bounds, ...bounds };
+  }
+
+  setRenderScale(scale: number): void {
+    this.renderScale = Number.isFinite(scale) && scale > 0 ? Number(scale) : 1;
+  }
+
+  getRenderScale(): number {
+    return this.renderScale;
+  }
+
+  resolveRenderContext(charWidth: number, charHeight: number): WidgetRenderContext {
+    const scale = this.getRenderScale();
+    return {
+      scale,
+      charWidth: Math.max(1, charWidth * scale),
+      charHeight: Math.max(1, charHeight * scale)
+    };
+  }
+
+  getRenderPixels(value: number, min: number = 1): number {
+    return Math.max(min, value * this.getRenderScale());
   }
 
   getLayoutSize(): WidgetLayoutSize {

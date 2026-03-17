@@ -443,6 +443,8 @@ ui.clear([0, 0, 0, 0]);  // Clear with transparent background
 
 **Demo:** [gui_immediate_basic.md](docs/demos/gui_immediate_basic.md)
 
+The retained `gui.createMarkdownView()` widget uses the same lightweight renderer as Worlds cards. That means standalone blob-backed markdown images, callouts such as `> [!TIP]`, blockquotes, lists, and horizontal rules all render consistently across both surfaces.
+
 ## Images (WebGPU UI)
 
 The immediate-mode `ui` renderer supports drawing images via GPU textures. Images are identified by opaque string ids.

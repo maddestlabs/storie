@@ -40,10 +40,10 @@ export class GUITextEditor extends BaseWidget {
   public placeholder: string;
   public align: GUITextAlign;
   public textEditorStyle: {
-    fg: Color;
-    bg: Color;
-    borderColor: Color;
-    focusBorderColor: Color;
+    fg?: Color;
+    bg?: Color;
+    borderColor?: Color;
+    focusBorderColor?: Color;
     drawBackground: boolean;
     drawBorder: boolean;
     paddingX: number;
@@ -77,10 +77,10 @@ export class GUITextEditor extends BaseWidget {
     this.placeholder = config.placeholder ?? '';
     this.align = config.align ?? 'left';
     this.textEditorStyle = {
-      fg: (config.textEditorStyle?.fg ?? { r: 240, g: 240, b: 240 }) as Color,
-      bg: (config.textEditorStyle?.bg ?? { r: 30, g: 30, b: 30, a: 0.95 }) as Color,
-      borderColor: (config.textEditorStyle?.borderColor ?? { r: 90, g: 90, b: 90 }) as Color,
-      focusBorderColor: (config.textEditorStyle?.focusBorderColor ?? { r: 120, g: 170, b: 220 }) as Color,
+      fg: config.textEditorStyle?.fg,
+      bg: config.textEditorStyle?.bg,
+      borderColor: config.textEditorStyle?.borderColor,
+      focusBorderColor: config.textEditorStyle?.focusBorderColor,
       drawBackground: config.textEditorStyle?.drawBackground ?? true,
       drawBorder: config.textEditorStyle?.drawBorder ?? true,
       paddingX: config.textEditorStyle?.paddingX ?? defaultTokens.controls.input.paddingX,

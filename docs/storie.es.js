@@ -9680,6 +9680,7 @@ class ScriptSandbox {
         // Theme API
         getStyle: this.api.getStyle,
         theme: this.api.theme,
+        themes: this.api.themes,
         // Module API
         modules: this.api.modules,
         // Native Browser APIs
@@ -10789,18 +10790,235 @@ function _parseTimedMs(v2) {
   if (Number.isFinite(n)) return Math.max(0, n);
   return void 0;
 }
+function _tryParseJsonObject(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {
+  }
+  return null;
+}
+function _splitTopLevel(input) {
+  const parts = [];
+  let start = 0;
+  let quote2 = null;
+  let escape = false;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (quote2) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escape = true;
+        continue;
+      }
+      if (ch === quote2) {
+        quote2 = null;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote2 = ch;
+      continue;
+    }
+    if (ch === "{") {
+      braceDepth++;
+      continue;
+    }
+    if (ch === "}") {
+      if (braceDepth === 0) return null;
+      braceDepth--;
+      continue;
+    }
+    if (ch === "[") {
+      bracketDepth++;
+      continue;
+    }
+    if (ch === "]") {
+      if (bracketDepth === 0) return null;
+      bracketDepth--;
+      continue;
+    }
+    if (ch === "," && braceDepth === 0 && bracketDepth === 0) {
+      parts.push(input.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  if (quote2 || escape || braceDepth !== 0 || bracketDepth !== 0) return null;
+  const tail = input.slice(start).trim();
+  if (tail.length > 0) parts.push(tail);
+  while (parts.length > 0 && parts[parts.length - 1] === "") {
+    parts.pop();
+  }
+  return parts.some((part) => part.length === 0) ? null : parts;
+}
+function _findTopLevelColon(input) {
+  let quote2 = null;
+  let escape = false;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (quote2) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escape = true;
+        continue;
+      }
+      if (ch === quote2) {
+        quote2 = null;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote2 = ch;
+      continue;
+    }
+    if (ch === "{") {
+      braceDepth++;
+      continue;
+    }
+    if (ch === "}") {
+      if (braceDepth > 0) braceDepth--;
+      continue;
+    }
+    if (ch === "[") {
+      bracketDepth++;
+      continue;
+    }
+    if (ch === "]") {
+      if (bracketDepth > 0) bracketDepth--;
+      continue;
+    }
+    if (ch === ":" && braceDepth === 0 && bracketDepth === 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+function _parseSingleQuotedString(raw) {
+  if (raw.length < 2 || raw[0] !== "'" || raw[raw.length - 1] !== "'") return null;
+  let out = "";
+  for (let i = 1; i < raw.length - 1; i++) {
+    const ch = raw[i];
+    if (ch !== "\\") {
+      out += ch;
+      continue;
+    }
+    i++;
+    if (i >= raw.length - 1) return null;
+    const esc = raw[i];
+    switch (esc) {
+      case "\\":
+        out += "\\";
+        break;
+      case "'":
+        out += "'";
+        break;
+      case '"':
+        out += '"';
+        break;
+      case "n":
+        out += "\n";
+        break;
+      case "r":
+        out += "\r";
+        break;
+      case "t":
+        out += "	";
+        break;
+      default:
+        out += esc;
+        break;
+    }
+  }
+  return out;
+}
+function _parseLooseDirectiveKey(raw) {
+  const key = raw.trim();
+  if (!key) return null;
+  if (key.startsWith('"')) {
+    try {
+      const parsed = JSON.parse(key);
+      return typeof parsed === "string" ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  if (key.startsWith("'")) return _parseSingleQuotedString(key);
+  return /^[A-Za-z0-9_.-]+$/.test(key) ? key : null;
+}
+function _parseLooseDirectiveValue(raw) {
+  const value = raw.trim();
+  if (!value) return null;
+  if (value.startsWith("{") && value.endsWith("}")) {
+    const jsonObject = _tryParseJsonObject(value);
+    if (jsonObject) return jsonObject;
+    return _parseLooseDirectiveObject(value);
+  }
+  if (value.startsWith("[") && value.endsWith("]")) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+  if (value.startsWith('"')) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+  if (value.startsWith("'")) {
+    const parsed = _parseSingleQuotedString(value);
+    return parsed ?? value;
+  }
+  if (/^(?:true|false)$/i.test(value)) return value.toLowerCase() === "true";
+  if (/^null$/i.test(value)) return null;
+  if (/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) return Number(value);
+  return value;
+}
+function _parseLooseDirectiveObject(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  const body = trimmed.slice(1, -1).trim();
+  if (!body) return {};
+  const parts = _splitTopLevel(body);
+  if (!parts) return null;
+  const out = {};
+  for (const part of parts) {
+    const colon = _findTopLevelColon(part);
+    if (colon <= 0) return null;
+    const key = _parseLooseDirectiveKey(part.slice(0, colon));
+    if (!key) return null;
+    out[key] = _parseLooseDirectiveValue(part.slice(colon + 1));
+  }
+  return out;
+}
+function parseHeadingDirectiveObject(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  return _tryParseJsonObject(trimmed) ?? _parseLooseDirectiveObject(trimmed);
+}
 function _parseHeadingDirective(rawTitle) {
   const lastBrace = rawTitle.lastIndexOf("{");
   if (lastBrace >= 0) {
-    try {
-      const jsonPart = rawTitle.slice(lastBrace);
-      const obj = JSON.parse(jsonPart);
-      if (obj && typeof obj === "object" && !Array.isArray(obj)) {
-        const displayTitle = rawTitle.slice(0, lastBrace).trim();
-        const timedMs = _parseTimedMs(obj["timed"]);
-        return { displayTitle, directive: obj, timedMs };
-      }
-    } catch {
+    const directivePart = rawTitle.slice(lastBrace);
+    const obj = parseHeadingDirectiveObject(directivePart);
+    if (obj) {
+      const displayTitle = rawTitle.slice(0, lastBrace).trim();
+      const timedMs = _parseTimedMs(obj["timed"]);
+      return { displayTitle, directive: obj, timedMs };
     }
   }
   return { displayTitle: rawTitle, directive: null, timedMs: void 0 };
@@ -11330,6 +11548,23 @@ function impulsesBetween(compiled, prevTimeSec, nowTimeSec) {
   }
   return out;
 }
+function mixColors(from, to, ratio) {
+  const t = Math.max(0, Math.min(1, Number(ratio) || 0));
+  const inv = 1 - t;
+  const r2 = Math.round(ColorUtils.r(from) * inv + ColorUtils.r(to) * t);
+  const g = Math.round(ColorUtils.g(from) * inv + ColorUtils.g(to) * t);
+  const b = Math.round(ColorUtils.b(from) * inv + ColorUtils.b(to) * t);
+  const a = Math.round(ColorUtils.a(from) * inv + ColorUtils.a(to) * t);
+  return ColorUtils.rgba(r2, g, b, a);
+}
+function withAlpha(color, alpha) {
+  return ColorUtils.rgba(
+    ColorUtils.r(color),
+    ColorUtils.g(color),
+    ColorUtils.b(color),
+    Math.max(0, Math.min(255, Math.round(alpha)))
+  );
+}
 const THEMES = {
   saintbilly: {
     // Old-western, light theme: parchment-ish gray with a subtle red-brown tint
@@ -11542,6 +11777,12 @@ const THEMES = {
   }
 };
 function applyTheme(theme) {
+  const errorFg = mixColors(theme.accent1, 4283256831, 0.55);
+  const successFg = mixColors(theme.accent3, 583360255, 0.45);
+  const infoFg = mixColors(theme.accent2, theme.fg, 0.1);
+  const hoverBg = mixColors(theme.bgAlt, theme.accent2, 0.16);
+  const focusBg = mixColors(theme.bgAlt, theme.accent2, 0.24);
+  const activeBg = mixColors(theme.bgAlt, theme.accent1, 0.3);
   return {
     // Default body text
     default: {
@@ -11588,6 +11829,39 @@ function applyTheme(theme) {
     dim: {
       fg: theme.fgAlt,
       bg: theme.bg
+    },
+    hover: {
+      fg: theme.fg,
+      bg: hoverBg
+    },
+    focus: {
+      fg: theme.fg,
+      bg: focusBg,
+      underline: true
+    },
+    active: {
+      fg: theme.fg,
+      bg: activeBg,
+      bold: true
+    },
+    info: {
+      fg: infoFg,
+      bg: theme.bg,
+      bold: true
+    },
+    success: {
+      fg: successFg,
+      bg: theme.bg,
+      bold: true
+    },
+    error: {
+      fg: errorFg,
+      bg: theme.bg,
+      bold: true
+    },
+    disabled: {
+      fg: mixColors(theme.fgAlt, theme.bgAlt, 0.25),
+      bg: withAlpha(theme.bgAlt, Math.max(136, ColorUtils.a(theme.bgAlt)))
     },
     // Primary heading (h1)
     heading: {
@@ -12265,6 +12539,7 @@ class BaseWidget {
     __publicField(this, "state");
     __publicField(this, "focusable");
     __publicField(this, "layout");
+    __publicField(this, "renderScale");
     __publicField(this, "eventListeners");
     this.id = config.id ?? `widget_${nextAutoId++}`;
     this.bounds = { ...config.bounds };
@@ -12272,6 +12547,7 @@ class BaseWidget {
     this.group = config.group || 0;
     this.focusable = config.focusable ?? true;
     this.layout = { ...config.layout || {} };
+    this.renderScale = 1;
     this.state = {
       visible: config.visible ?? true,
       enabled: config.enabled ?? true,
@@ -12368,6 +12644,23 @@ class BaseWidget {
   setBounds(bounds) {
     this.bounds = { ...this.bounds, ...bounds };
   }
+  setRenderScale(scale) {
+    this.renderScale = Number.isFinite(scale) && scale > 0 ? Number(scale) : 1;
+  }
+  getRenderScale() {
+    return this.renderScale;
+  }
+  resolveRenderContext(charWidth, charHeight) {
+    const scale = this.getRenderScale();
+    return {
+      scale,
+      charWidth: Math.max(1, charWidth * scale),
+      charHeight: Math.max(1, charHeight * scale)
+    };
+  }
+  getRenderPixels(value, min = 1) {
+    return Math.max(min, value * this.getRenderScale());
+  }
   getLayoutSize() {
     const preferred = this.getPreferredSize();
     const min = this.getMinSize(preferred);
@@ -12400,7 +12693,7 @@ class BaseWidget {
     };
   }
 }
-const FALLBACKS = {
+const FALLBACKS$1 = {
   label: {
     fg: ColorUtils.rgb(200, 200, 200),
     bg: ColorUtils.rgb(0, 0, 0)
@@ -12427,7 +12720,7 @@ const FALLBACKS = {
     cursor: ColorUtils.rgb(100, 200, 255)
   }
 };
-let defaults = { ...FALLBACKS };
+let defaults = { ...FALLBACKS$1 };
 function getTUIThemeDefaults() {
   return defaults;
 }
@@ -12450,29 +12743,29 @@ function setTUIThemeFromStyles(getStyle) {
   const border = getStyle("border") ?? base;
   setTUIThemeDefaults({
     label: {
-      fg: base.fg ?? FALLBACKS.label.fg,
-      bg: base.bg ?? FALLBACKS.label.bg
+      fg: base.fg ?? FALLBACKS$1.label.fg,
+      bg: base.bg ?? FALLBACKS$1.label.bg
     },
     checkbox: {
-      fg: base.fg ?? FALLBACKS.checkbox.fg,
-      bg: base.bg ?? FALLBACKS.checkbox.bg
+      fg: base.fg ?? FALLBACKS$1.checkbox.fg,
+      bg: base.bg ?? FALLBACKS$1.checkbox.bg
     },
     button: {
-      fg: button.fg ?? FALLBACKS.button.fg,
-      bg: button.bg ?? FALLBACKS.button.bg,
-      borderFg: border.fg ?? (button.fg ?? FALLBACKS.button.borderFg)
+      fg: button.fg ?? FALLBACKS$1.button.fg,
+      bg: button.bg ?? FALLBACKS$1.button.bg,
+      borderFg: border.fg ?? (button.fg ?? FALLBACKS$1.button.borderFg)
     },
     slider: {
-      fg: dim.fg ?? FALLBACKS.slider.fg,
-      bg: base.bg ?? FALLBACKS.slider.bg,
-      accent: accent.fg ?? FALLBACKS.slider.accent,
-      dragAccent: warning.fg ?? FALLBACKS.slider.dragAccent
+      fg: dim.fg ?? FALLBACKS$1.slider.fg,
+      bg: base.bg ?? FALLBACKS$1.slider.bg,
+      accent: accent.fg ?? FALLBACKS$1.slider.accent,
+      dragAccent: warning.fg ?? FALLBACKS$1.slider.dragAccent
     },
     textfield: {
-      fg: base.fg ?? FALLBACKS.textfield.fg,
-      bg: surface.bg ?? base.bg ?? FALLBACKS.textfield.bg,
-      borderFg: border.fg ?? (base.fg ?? FALLBACKS.textfield.borderFg),
-      cursor: accent.fg ?? FALLBACKS.textfield.cursor
+      fg: base.fg ?? FALLBACKS$1.textfield.fg,
+      bg: surface.bg ?? base.bg ?? FALLBACKS$1.textfield.bg,
+      borderFg: border.fg ?? (base.fg ?? FALLBACKS$1.textfield.borderFg),
+      cursor: accent.fg ?? FALLBACKS$1.textfield.cursor
     }
   });
 }
@@ -13385,6 +13678,15 @@ function createTUIAPI(renderer, getCellBuffer, getStyle, isTrustedUserInput) {
     getSystem() {
       return tuiSystem;
     },
+    syncTheme() {
+      if (!getStyle) return null;
+      try {
+        setTUIThemeFromStyles(getStyle);
+        return true;
+      } catch {
+        return null;
+      }
+    },
     /**
      * Create a button widget
      * 
@@ -13848,11 +14150,11 @@ class GUIButton extends BaseWidget {
     __publicField(this, "clickedThisFrame", false);
     this.label = String(config.label ?? "");
     this.buttonStyle = {
-      fg: ((_a = config.buttonStyle) == null ? void 0 : _a.fg) ?? { r: 240, g: 240, b: 240 },
-      bg: ((_b = config.buttonStyle) == null ? void 0 : _b.bg) ?? { r: 60, g: 60, b: 60 },
-      borderColor: ((_c = config.buttonStyle) == null ? void 0 : _c.borderColor) ?? { r: 100, g: 100, b: 100 },
-      hoverBg: ((_d = config.buttonStyle) == null ? void 0 : _d.hoverBg) ?? { r: 80, g: 80, b: 80 },
-      activeBg: ((_e = config.buttonStyle) == null ? void 0 : _e.activeBg) ?? { r: 40, g: 120, b: 180 },
+      fg: (_a = config.buttonStyle) == null ? void 0 : _a.fg,
+      bg: (_b = config.buttonStyle) == null ? void 0 : _b.bg,
+      borderColor: (_c = config.buttonStyle) == null ? void 0 : _c.borderColor,
+      hoverBg: (_d = config.buttonStyle) == null ? void 0 : _d.hoverBg,
+      activeBg: (_e = config.buttonStyle) == null ? void 0 : _e.activeBg,
       paddingX: ((_f = config.buttonStyle) == null ? void 0 : _f.paddingX) ?? defaultTokens$5.controls.button.paddingX,
       paddingY: ((_g = config.buttonStyle) == null ? void 0 : _g.paddingY) ?? defaultTokens$5.controls.button.paddingY,
       borderWidth: ((_h = config.buttonStyle) == null ? void 0 : _h.borderWidth) ?? defaultTokens$5.controls.button.borderWidth,
@@ -13900,8 +14202,8 @@ class GUILabel extends BaseWidget {
     this.text = String(config.text ?? "");
     this.align = config.align ?? "left";
     this.labelStyle = {
-      fg: ((_a = config.labelStyle) == null ? void 0 : _a.fg) ?? { r: 220, g: 220, b: 220 },
-      bg: ((_b = config.labelStyle) == null ? void 0 : _b.bg) ?? { r: 0, g: 0, b: 0, a: 0 },
+      fg: (_a = config.labelStyle) == null ? void 0 : _a.fg,
+      bg: (_b = config.labelStyle) == null ? void 0 : _b.bg,
       typographyRole: ((_c = config.labelStyle) == null ? void 0 : _c.typographyRole) ?? defaultTokens$4.typography.body.role
     };
   }
@@ -13933,10 +14235,10 @@ class GUICheckbox extends BaseWidget {
     this.label = String(config.label ?? "");
     this.checked = config.checked ?? false;
     this.checkboxStyle = {
-      fg: ((_a = config.checkboxStyle) == null ? void 0 : _a.fg) ?? { r: 220, g: 220, b: 220 },
-      bg: ((_b = config.checkboxStyle) == null ? void 0 : _b.bg) ?? { r: 40, g: 40, b: 40 },
-      checkColor: ((_c = config.checkboxStyle) == null ? void 0 : _c.checkColor) ?? { r: 0, g: 200, b: 100 },
-      hoverBg: ((_d = config.checkboxStyle) == null ? void 0 : _d.hoverBg) ?? { r: 60, g: 60, b: 60 },
+      fg: (_a = config.checkboxStyle) == null ? void 0 : _a.fg,
+      bg: (_b = config.checkboxStyle) == null ? void 0 : _b.bg,
+      checkColor: (_c = config.checkboxStyle) == null ? void 0 : _c.checkColor,
+      hoverBg: (_d = config.checkboxStyle) == null ? void 0 : _d.hoverBg,
       boxSize: ((_e = config.checkboxStyle) == null ? void 0 : _e.boxSize) ?? defaultTokens$3.controls.checkbox.boxSize,
       labelGap: ((_f = config.checkboxStyle) == null ? void 0 : _f.labelGap) ?? defaultTokens$3.controls.checkbox.labelGap,
       borderWidth: ((_g = config.checkboxStyle) == null ? void 0 : _g.borderWidth) ?? defaultTokens$3.controls.checkbox.borderWidth,
@@ -13991,10 +14293,10 @@ class GUISlider extends BaseWidget {
     this.value = config.value ?? 50;
     this.step = config.step ?? 1;
     this.sliderStyle = {
-      fg: ((_a = config.sliderStyle) == null ? void 0 : _a.fg) ?? { r: 220, g: 220, b: 220 },
-      trackColor: ((_b = config.sliderStyle) == null ? void 0 : _b.trackColor) ?? { r: 60, g: 60, b: 60 },
-      knobColor: ((_c = config.sliderStyle) == null ? void 0 : _c.knobColor) ?? { r: 100, g: 150, b: 200 },
-      knobHoverColor: ((_d = config.sliderStyle) == null ? void 0 : _d.knobHoverColor) ?? { r: 120, g: 170, b: 220 },
+      fg: (_a = config.sliderStyle) == null ? void 0 : _a.fg,
+      trackColor: (_b = config.sliderStyle) == null ? void 0 : _b.trackColor,
+      knobColor: (_c = config.sliderStyle) == null ? void 0 : _c.knobColor,
+      knobHoverColor: (_d = config.sliderStyle) == null ? void 0 : _d.knobHoverColor,
       labelGap: ((_e = config.sliderStyle) == null ? void 0 : _e.labelGap) ?? defaultTokens$2.controls.slider.labelGap,
       trackHeight: ((_f = config.sliderStyle) == null ? void 0 : _f.trackHeight) ?? defaultTokens$2.controls.slider.trackHeight,
       knobWidth: ((_g = config.sliderStyle) == null ? void 0 : _g.knobWidth) ?? defaultTokens$2.controls.slider.knobWidth,
@@ -14003,18 +14305,22 @@ class GUISlider extends BaseWidget {
       typographyRole: ((_j = config.sliderStyle) == null ? void 0 : _j.typographyRole) ?? "body"
     };
   }
-  handleDrag(mouseX, mouseY, mouseDown, charHeight = 0) {
+  handleDrag(mouseX, mouseY, mouseDown, charHeight = 0, renderScale = 1) {
     if (!this.state.visible) return;
     const { x, y, width, height } = this.bounds;
-    const labelH = this.label ? charHeight + this.sliderStyle.labelGap : 0;
+    const scale = Number.isFinite(renderScale) && renderScale > 0 ? renderScale : 1;
+    const scaledLabelGap = this.sliderStyle.labelGap * scale;
+    const scaledKnobWidth = this.sliderStyle.knobWidth * scale;
+    const scaledKnobHeight = this.sliderStyle.knobHeight * scale;
+    const labelH = this.label ? charHeight + scaledLabelGap : 0;
     const trackTopY = y + labelH;
     const trackAreaH = Math.max(0, height - labelH);
-    const knobWidth = this.sliderStyle.knobWidth;
+    const knobWidth = scaledKnobWidth;
     const range = this.max - this.min;
     const ratio = range > 0 ? (this.value - this.min) / range : 0;
     const knobX = x + ratio * (width - knobWidth);
     const knobY = trackTopY;
-    const knobHeight = Math.min(trackAreaH, this.sliderStyle.knobHeight);
+    const knobHeight = Math.min(trackAreaH, scaledKnobHeight);
     const overKnob = mouseX >= knobX && mouseX < knobX + knobWidth && mouseY >= knobY && mouseY < knobY + knobHeight;
     const overTrack = mouseX >= x && mouseX < x + width && mouseY >= trackTopY && mouseY < trackTopY + trackAreaH;
     if (mouseDown && (overKnob || overTrack) && !this.dragging) {
@@ -14079,10 +14385,10 @@ class GUITextField extends BaseWidget {
     this.placeholder = config.placeholder ?? "";
     this.align = config.align ?? "left";
     this.textFieldStyle = {
-      fg: ((_a = config.textFieldStyle) == null ? void 0 : _a.fg) ?? { r: 240, g: 240, b: 240 },
-      bg: ((_b = config.textFieldStyle) == null ? void 0 : _b.bg) ?? { r: 30, g: 30, b: 30, a: 0.95 },
-      borderColor: ((_c = config.textFieldStyle) == null ? void 0 : _c.borderColor) ?? { r: 90, g: 90, b: 90 },
-      focusBorderColor: ((_d = config.textFieldStyle) == null ? void 0 : _d.focusBorderColor) ?? { r: 120, g: 170, b: 220 },
+      fg: (_a = config.textFieldStyle) == null ? void 0 : _a.fg,
+      bg: (_b = config.textFieldStyle) == null ? void 0 : _b.bg,
+      borderColor: (_c = config.textFieldStyle) == null ? void 0 : _c.borderColor,
+      focusBorderColor: (_d = config.textFieldStyle) == null ? void 0 : _d.focusBorderColor,
       drawBackground: ((_e = config.textFieldStyle) == null ? void 0 : _e.drawBackground) ?? true,
       drawBorder: ((_f = config.textFieldStyle) == null ? void 0 : _f.drawBorder) ?? true,
       paddingX: ((_g = config.textFieldStyle) == null ? void 0 : _g.paddingX) ?? defaultTokens$1.controls.input.paddingX,
@@ -14247,10 +14553,10 @@ class GUITextEditor extends BaseWidget {
     this.placeholder = config.placeholder ?? "";
     this.align = config.align ?? "left";
     this.textEditorStyle = {
-      fg: ((_a = config.textEditorStyle) == null ? void 0 : _a.fg) ?? { r: 240, g: 240, b: 240 },
-      bg: ((_b = config.textEditorStyle) == null ? void 0 : _b.bg) ?? { r: 30, g: 30, b: 30, a: 0.95 },
-      borderColor: ((_c = config.textEditorStyle) == null ? void 0 : _c.borderColor) ?? { r: 90, g: 90, b: 90 },
-      focusBorderColor: ((_d = config.textEditorStyle) == null ? void 0 : _d.focusBorderColor) ?? { r: 120, g: 170, b: 220 },
+      fg: (_a = config.textEditorStyle) == null ? void 0 : _a.fg,
+      bg: (_b = config.textEditorStyle) == null ? void 0 : _b.bg,
+      borderColor: (_c = config.textEditorStyle) == null ? void 0 : _c.borderColor,
+      focusBorderColor: (_d = config.textEditorStyle) == null ? void 0 : _d.focusBorderColor,
       drawBackground: ((_e = config.textEditorStyle) == null ? void 0 : _e.drawBackground) ?? true,
       drawBorder: ((_f = config.textEditorStyle) == null ? void 0 : _f.drawBorder) ?? true,
       paddingX: ((_g = config.textEditorStyle) == null ? void 0 : _g.paddingX) ?? defaultTokens.controls.input.paddingX,
@@ -14520,23 +14826,194 @@ class GUITextEditor extends BaseWidget {
     };
   }
 }
+function parseImageMetadata(title) {
+  const raw = String(title ?? "").trim();
+  if (!raw) return {};
+  if (!/(^|\s)(align|width)\s*:/i.test(raw)) {
+    return { title: raw };
+  }
+  let align;
+  let width;
+  const remainder = raw.replace(/\b(align|width)\s*:\s*([^\s]+)/gi, (_match, key, value) => {
+    const k = String(key).toLowerCase();
+    const v2 = String(value).trim();
+    if (k === "align") {
+      if (v2 === "left" || v2 === "center" || v2 === "right") align = v2;
+    } else if (k === "width" && /^\d+(?:\.\d+)?(?:px|%)$/i.test(v2)) {
+      width = v2.toLowerCase();
+    }
+    return " ";
+  }).trim();
+  return {
+    ...remainder ? { title: remainder } : {},
+    ...align ? { align } : {},
+    ...width ? { width } : {}
+  };
+}
+function parseCalloutBlock(lines, options) {
+  let firstContentIndex = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (String(lines[i] ?? "").trim().length > 0) {
+      firstContentIndex = i;
+      break;
+    }
+  }
+  if (firstContentIndex < 0) return null;
+  const firstLine = String(lines[firstContentIndex] ?? "").trim();
+  const match = firstLine.match(/^\[!(NOTE|INFO|TIP|WARNING|IMPORTANT|CAUTION)\](?:\s+(.*))?$/i);
+  if (!match) return null;
+  const tone = String(match[1] ?? "").toLowerCase();
+  const title = String(match[2] ?? "").trim();
+  const bodyLines = lines.slice(firstContentIndex + 1);
+  const nodes = parseMarkdownLite(bodyLines.join("\n"), options);
+  return {
+    kind: "callout",
+    tone,
+    ...title ? { title } : {},
+    nodes
+  };
+}
 function isBrailleBlankLine(text) {
   const t = (text ?? "").trim();
   return t.length > 0 && /^[\u2800]+$/.test(t);
 }
-function parseInlines(text) {
+function parseInlineDirectiveValues(raw) {
+  const values2 = {};
+  let i = 0;
+  while (i < raw.length) {
+    while (i < raw.length && (raw[i] === "," || /\s/.test(raw[i] || ""))) i++;
+    if (i >= raw.length) break;
+    const keyStart = i;
+    while (i < raw.length && /[A-Za-z0-9_-]/.test(raw[i] || "")) i++;
+    const key = raw.slice(keyStart, i).trim().toLowerCase();
+    if (!key) break;
+    while (i < raw.length && /\s/.test(raw[i] || "")) i++;
+    const separator = raw[i];
+    if (separator !== ":" && separator !== "=") break;
+    i++;
+    while (i < raw.length && /\s/.test(raw[i] || "")) i++;
+    if (i >= raw.length) {
+      values2[key] = "";
+      break;
+    }
+    let value = "";
+    const quote2 = raw[i];
+    if (quote2 === '"' || quote2 === "'") {
+      i++;
+      while (i < raw.length) {
+        const ch = raw[i] || "";
+        if (ch === "\\" && i + 1 < raw.length) {
+          value += raw[i + 1] || "";
+          i += 2;
+          continue;
+        }
+        if (ch === quote2) {
+          i++;
+          break;
+        }
+        value += ch;
+        i++;
+      }
+    } else {
+      const valueStart = i;
+      while (i < raw.length && raw[i] !== ",") i++;
+      value = raw.slice(valueStart, i).trim();
+    }
+    values2[key] = value;
+    while (i < raw.length && (raw[i] === "," || /\s/.test(raw[i] || ""))) i++;
+  }
+  return values2;
+}
+function parseWidgetSpec(values2, createWidgetId) {
+  const normalized = {};
+  for (const [key, value] of Object.entries(values2)) {
+    normalized[String(key).toLowerCase()] = String(value);
+  }
+  const typeRaw = String(normalized.type || normalized.widget || "").trim().toLowerCase();
+  if (typeRaw !== "button" && typeRaw !== "slider" && typeRaw !== "checkbox" && typeRaw !== "label") {
+    return null;
+  }
+  const id = String(normalized.id || normalized.name || "").trim() || (createWidgetId ? createWidgetId(typeRaw) : `widget-${typeRaw}`);
+  const alignRaw = String(normalized.align || "").trim().toLowerCase();
+  const align = alignRaw === "left" || alignRaw === "center" || alignRaw === "right" ? alignRaw : void 0;
+  const scaleRaw = String(normalized.scale || normalized.sizing || "").trim().toLowerCase();
+  const scale = scaleRaw === "gui" || scaleRaw === "worlds" ? scaleRaw : void 0;
+  const widthRaw = String(normalized.width || "").trim().toLowerCase();
+  const width = /^\d+(?:\.\d+)?(?:px|%)$/i.test(widthRaw) ? widthRaw : void 0;
+  const parseNumber = (key) => {
+    const raw = String(normalized[key] || "").trim();
+    if (!raw) return void 0;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : void 0;
+  };
+  const parseBoolean = (key) => {
+    const raw = String(normalized[key] || "").trim().toLowerCase();
+    if (!raw) return void 0;
+    if (raw === "true" || raw === "yes" || raw === "on" || raw === "1") return true;
+    if (raw === "false" || raw === "no" || raw === "off" || raw === "0") return false;
+    return void 0;
+  };
+  return {
+    type: typeRaw,
+    id,
+    ...normalized.label ? { label: String(normalized.label) } : {},
+    ...normalized.text ? { text: String(normalized.text) } : {},
+    ...parseNumber("min") !== void 0 ? { min: parseNumber("min") } : {},
+    ...parseNumber("max") !== void 0 ? { max: parseNumber("max") } : {},
+    ...parseNumber("value") !== void 0 ? { value: parseNumber("value") } : {},
+    ...parseNumber("step") !== void 0 ? { step: parseNumber("step") } : {},
+    ...parseBoolean("checked") !== void 0 ? { checked: parseBoolean("checked") } : {},
+    ...align ? { align } : {},
+    ...width ? { width } : {},
+    ...scale ? { scale } : {}
+  };
+}
+function findInlineDirectiveEnd(text, start) {
+  let i = start;
+  let quote2 = null;
+  while (i < text.length) {
+    const ch = text[i] || "";
+    if (quote2) {
+      if (ch === "\\") {
+        i += 2;
+        continue;
+      }
+      if (ch === quote2) quote2 = null;
+      i++;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote2 = ch;
+      i++;
+      continue;
+    }
+    if (ch === "}") return i;
+    i++;
+  }
+  return -1;
+}
+function parseInlines(text, options) {
   const inlines = [];
   let i = 0;
-  const pushText = (t) => {
-    if (!t) return;
-    inlines.push({ kind: "text", text: t });
+  let buffer = "";
+  const flushText = () => {
+    if (!buffer) return;
+    inlines.push({ kind: "text", text: buffer });
+    buffer = "";
   };
   while (i < text.length) {
-    const ch = text[i];
-    if (ch === "`") {
-      const end = text.indexOf("`", i + 1);
+    const ch = text[i] || "";
+    if (text.startsWith(":gui{", i)) {
+      const end = findInlineDirectiveEnd(text, i + 5);
       if (end !== -1) {
-        text.slice(0, i);
+        const raw = text.slice(i + 5, end);
+        const widget = parseWidgetSpec(parseInlineDirectiveValues(raw), options == null ? void 0 : options.createWidgetId);
+        if (widget) {
+          flushText();
+          inlines.push({ kind: "widget", widget });
+          i = end + 1;
+          continue;
+        }
       }
     }
     if (ch === "[") {
@@ -14546,6 +15023,7 @@ function parseInlines(text) {
       if (closeBracket !== -1 && openParen === closeBracket + 1 && closeParen !== -1) {
         const label = text.slice(i + 1, closeBracket);
         const url = text.slice(openParen + 1, closeParen);
+        flushText();
         if (label) inlines.push({ kind: "link", text: label, url });
         i = closeParen + 1;
         continue;
@@ -14555,22 +15033,36 @@ function parseInlines(text) {
       const end = text.indexOf("`", i + 1);
       if (end !== -1) {
         const code = text.slice(i + 1, end);
+        flushText();
         inlines.push({ kind: "code", text: code });
         i = end + 1;
         continue;
       }
     }
-    let next = text.length;
-    const nextLink = text.indexOf("[", i + 1);
-    const nextCode = text.indexOf("`", i + 1);
-    if (nextLink !== -1) next = Math.min(next, nextLink);
-    if (nextCode !== -1) next = Math.min(next, nextCode);
-    pushText(text.slice(i, next));
-    i = next;
+    buffer += ch;
+    i++;
   }
+  flushText();
   return inlines;
 }
-function parseMarkdownLite(source) {
+function parseWidgetFence(code, metadata, options) {
+  const values2 = {};
+  if (metadata) {
+    for (const [key, value] of Object.entries(metadata)) {
+      values2[String(key).toLowerCase()] = String(value);
+    }
+  }
+  const lines = String(code || "").replace(/\r\n/g, "\n").split("\n");
+  for (const rawLine of lines) {
+    const line = String(rawLine ?? "").trim();
+    if (!line || line.startsWith("#") || line.startsWith("//")) continue;
+    const match = line.match(/^([A-Za-z0-9_-]+)\s*:\s*(.+)$/);
+    if (!match) continue;
+    values2[String(match[1]).toLowerCase()] = String(match[2]).trim();
+  }
+  return parseWidgetSpec(values2, options == null ? void 0 : options.createWidgetId);
+}
+function parseMarkdownLite(source, options) {
   const lines = (source || "").replace(/\r\n/g, "\n").split("\n");
   const nodes = [];
   let i = 0;
@@ -14586,7 +15078,7 @@ function parseMarkdownLite(source) {
       if (!isBrailleBlankLine(rawLine)) {
         const trimmed = rawLine.trim();
         if (trimmed.length > 0) {
-          inlines.push(...parseInlines(trimmed));
+          inlines.push(...parseInlines(trimmed, options));
         }
       }
       if (li < paraLines.length - 1) {
@@ -14623,10 +15115,19 @@ function parseMarkdownLite(source) {
         }
       } else {
         inFence = false;
-        const node = { kind: "codeblock", code: fenceLines.join("\n") };
-        if (fenceLang) node.lang = fenceLang;
-        if (fenceMetadata) node.metadata = fenceMetadata;
-        nodes.push(node);
+        const fenceCode = fenceLines.join("\n");
+        const fenceLangKey = String(fenceLang || "").trim().toLowerCase();
+        if (fenceLangKey === "gui") {
+          const widget = parseWidgetFence(fenceCode, fenceMetadata, options);
+          if (widget) {
+            nodes.push({ kind: "widget", widget });
+          }
+        } else {
+          const node = { kind: "codeblock", code: fenceCode };
+          if (fenceLang) node.lang = fenceLang;
+          if (fenceMetadata) node.metadata = fenceMetadata;
+          nodes.push(node);
+        }
         fenceLines = [];
         fenceLang = void 0;
         fenceMetadata = void 0;
@@ -14643,9 +15144,37 @@ function parseMarkdownLite(source) {
       i++;
       continue;
     }
+    if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      nodes.push({ kind: "hr" });
+      i++;
+      continue;
+    }
     const h = line.match(/^(#{1,6})\s+(.+)$/);
     if (h) {
-      nodes.push({ kind: "heading", level: h[1].length, inlines: parseInlines(h[2].trim()) });
+      nodes.push({ kind: "heading", level: h[1].length, inlines: parseInlines(h[2].trim(), options) });
+      i++;
+      continue;
+    }
+    if (/^\s*>/.test(line)) {
+      const quoteLines = [];
+      while (i < lines.length && /^\s*>/.test(lines[i] ?? "")) {
+        const rawQuoted = lines[i] ?? "";
+        quoteLines.push(rawQuoted.replace(/^\s*>\s?/, ""));
+        i++;
+      }
+      const callout = parseCalloutBlock(quoteLines, options);
+      if (callout) {
+        nodes.push(callout);
+      } else {
+        nodes.push({ kind: "blockquote", nodes: parseMarkdownLite(quoteLines.join("\n"), options) });
+      }
+      continue;
+    }
+    const imageMatch = line.match(/^\s*!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)\s*$/);
+    if (imageMatch) {
+      const [, alt = "", source2 = "", title] = imageMatch;
+      const imageMeta = parseImageMetadata(title);
+      nodes.push({ kind: "image", alt, source: source2, ...imageMeta });
       i++;
       continue;
     }
@@ -14653,7 +15182,7 @@ function parseMarkdownLite(source) {
       const items = [];
       while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
         const itemText = lines[i].replace(/^\s*[-*]\s+/, "").trimEnd();
-        items.push(parseInlines(itemText));
+        items.push(parseInlines(itemText, options));
         i++;
       }
       nodes.push({ kind: "list", items, ordered: false });
@@ -14670,7 +15199,7 @@ function parseMarkdownLite(source) {
           start = Number.isFinite(parsed) ? parsed : 1;
         }
         const itemText = match[2].trimEnd();
-        items.push(parseInlines(itemText));
+        items.push(parseInlines(itemText, options));
         i++;
       }
       nodes.push({ kind: "list", items, ordered: true, start: start ?? 1 });
@@ -14690,10 +15219,19 @@ function parseMarkdownLite(source) {
     flushParagraph(para);
   }
   if (inFence && fenceLines.length > 0) {
-    const node = { kind: "codeblock", code: fenceLines.join("\n") };
-    if (fenceLang) node.lang = fenceLang;
-    if (fenceMetadata) node.metadata = fenceMetadata;
-    nodes.push(node);
+    const fenceCode = fenceLines.join("\n");
+    const fenceLangKey = String(fenceLang || "").trim().toLowerCase();
+    if (fenceLangKey === "gui") {
+      const widget = parseWidgetFence(fenceCode, fenceMetadata, options);
+      if (widget) {
+        nodes.push({ kind: "widget", widget });
+      }
+    } else {
+      const node = { kind: "codeblock", code: fenceCode };
+      if (fenceLang) node.lang = fenceLang;
+      if (fenceMetadata) node.metadata = fenceMetadata;
+      nodes.push(node);
+    }
   }
   return nodes;
 }
@@ -14708,6 +15246,8 @@ function tokenizeInlines(inlines) {
       }
     } else if (inline.kind === "newline") {
       runs.push({ kind: "newline" });
+    } else if (inline.kind === "widget") {
+      runs.push({ kind: "widget", widget: inline.widget });
     } else if (inline.kind === "link") {
       runs.push({ kind: "link", text: inline.text, url: inline.url });
     } else {
@@ -14716,29 +15256,81 @@ function tokenizeInlines(inlines) {
   }
   return runs;
 }
-function wrapRuns(runs, maxChars) {
+function isWhitespaceRun(run) {
+  return !!run && run.kind !== "newline" && run.kind !== "widget" && /^\s+$/.test(run.text);
+}
+function resolveSizedWidth(width, maxWidth, fallbackWidth) {
+  if (!width) return Math.max(1, Math.min(maxWidth, Math.round(fallbackWidth)));
+  const raw = String(width).trim().toLowerCase();
+  if (raw.endsWith("%")) {
+    const pct = Number.parseFloat(raw.slice(0, -1));
+    if (Number.isFinite(pct) && pct > 0) {
+      return Math.max(1, Math.min(maxWidth, Math.round(maxWidth * (pct / 100))));
+    }
+  }
+  if (raw.endsWith("px")) {
+    const px = Number.parseFloat(raw.slice(0, -2));
+    if (Number.isFinite(px) && px > 0) {
+      return Math.max(1, Math.min(maxWidth, Math.round(px)));
+    }
+  }
+  return Math.max(1, Math.min(maxWidth, Math.round(fallbackWidth)));
+}
+function resolveInlineWidgetHeight(widget, charH) {
+  if (widget.type === "slider") return Math.max(Math.round(charH * 1.9), 30);
+  if (widget.type === "button") return Math.max(Math.round(charH * 1.65), 28);
+  if (widget.type === "checkbox") return Math.max(Math.round(charH * 1.4), 24);
+  return Math.max(charH, Math.round(charH * 1.1));
+}
+function resolveInlineWidgetWidth(widget, charW, charH, maxWidth, measure) {
+  const label = String(widget.label || widget.text || widget.id || "").trim();
+  const labelWidth = label ? measure ? measure(label) : label.length * charW : 0;
+  const checkboxBox = Math.max(14, Math.round(charH * 0.95));
+  if (widget.type === "button") {
+    return resolveSizedWidth(widget.width, maxWidth, labelWidth + charW * 4.5);
+  }
+  if (widget.type === "slider") {
+    return resolveSizedWidth(widget.width, maxWidth, Math.max(charW * 16, labelWidth + charW * 11));
+  }
+  if (widget.type === "checkbox") {
+    return resolveSizedWidth(widget.width, maxWidth, checkboxBox + labelWidth + charW * 4);
+  }
+  return resolveSizedWidth(widget.width, maxWidth, Math.max(charW * 4, labelWidth + charW * 2));
+}
+function getRunWidth(run, maxWidthPx, measure, charW, charH) {
+  if (run.kind === "newline") return 0;
+  if (run.kind === "widget") return resolveInlineWidgetWidth(run.widget, charW, charH, maxWidthPx, measure);
+  return measure ? measure(run.text) : run.text.length * charW;
+}
+function getRunHeight(run, charH) {
+  if (run.kind === "widget") return resolveInlineWidgetHeight(run.widget, charH);
+  return charH;
+}
+function wrapRuns(runs, maxChars, charW, charH) {
   const lines = [];
   let current = [];
   let used = 0;
+  let currentHeight = charH;
   const pushLine = () => {
-    while (current.length > 0 && current[0].kind !== "newline" && /^\s+$/.test(current[0].text)) current.shift();
-    while (current.length > 0 && current[current.length - 1].kind !== "newline" && /^\s+$/.test(current[current.length - 1].text)) current.pop();
-    lines.push(current);
+    while (isWhitespaceRun(current[0])) current.shift();
+    while (isWhitespaceRun(current[current.length - 1])) current.pop();
+    lines.push({ runs: current, height: Math.max(charH, currentHeight) });
     current = [];
     used = 0;
+    currentHeight = charH;
   };
   for (const run of runs) {
     if (run.kind === "newline") {
       pushLine();
       continue;
     }
-    const len = run.text.length;
-    if (len > maxChars && !/^\s+$/.test(run.text)) {
+    const len = run.kind === "widget" ? Math.max(1, Math.ceil(resolveInlineWidgetWidth(run.widget, charW, charH, maxChars * charW, null) / charW)) : run.text.length;
+    if (run.kind !== "widget" && len > maxChars && !/^\s+$/.test(run.text)) {
       if (current.length > 0) pushLine();
       let start = 0;
       while (start < run.text.length) {
         const chunk = run.text.slice(start, start + maxChars);
-        lines.push([{ ...run, text: chunk }]);
+        lines.push({ runs: [{ ...run, text: chunk }], height: charH });
         start += maxChars;
       }
       continue;
@@ -14746,14 +15338,15 @@ function wrapRuns(runs, maxChars) {
     if (used + len > maxChars && current.length > 0) {
       pushLine();
     }
-    if (current.length === 0 && /^\s+$/.test(run.text)) {
+    if (current.length === 0 && isWhitespaceRun(run)) {
       continue;
     }
     current.push(run);
     used += len;
+    currentHeight = Math.max(currentHeight, getRunHeight(run, charH));
   }
   if (current.length > 0) pushLine();
-  if (lines.length === 0) lines.push([]);
+  if (lines.length === 0) lines.push({ runs: [], height: charH });
   return lines;
 }
 function hardBreakByWidth(text, maxWidthPx, measure) {
@@ -14771,33 +15364,33 @@ function hardBreakByWidth(text, maxWidthPx, measure) {
   if (current.length > 0) out.push(current);
   return out.length > 0 ? out : [""];
 }
-function wrapRunsByWidth(runs, maxWidthPx, measure) {
+function wrapRunsByWidth(runs, maxWidthPx, measure, charW, charH) {
   const lines = [];
   let current = [];
   let usedPx = 0;
+  let currentHeight = charH;
   const pushLine = () => {
-    while (current.length > 0 && current[0].kind !== "newline" && /^\s+$/.test(current[0].text)) current.shift();
-    while (current.length > 0 && current[current.length - 1].kind !== "newline" && /^\s+$/.test(current[current.length - 1].text)) {
-      current.pop();
-    }
-    lines.push(current);
+    while (isWhitespaceRun(current[0])) current.shift();
+    while (isWhitespaceRun(current[current.length - 1])) current.pop();
+    lines.push({ runs: current, height: Math.max(charH, currentHeight) });
     current = [];
     usedPx = 0;
+    currentHeight = charH;
   };
   for (const run of runs) {
     if (run.kind === "newline") {
       pushLine();
       continue;
     }
-    if (current.length === 0 && /^\s+$/.test(run.text)) {
+    if (current.length === 0 && isWhitespaceRun(run)) {
       continue;
     }
-    const runW = measure(run.text);
-    if (runW > maxWidthPx && !/^\s+$/.test(run.text)) {
+    const runW = getRunWidth(run, maxWidthPx, measure, charW, charH);
+    if (run.kind !== "widget" && runW > maxWidthPx && !/^\s+$/.test(run.text)) {
       if (current.length > 0) pushLine();
       const chunks = hardBreakByWidth(run.text, maxWidthPx, measure);
       for (const chunk of chunks) {
-        lines.push([{ ...run, text: chunk }]);
+        lines.push({ runs: [{ ...run, text: chunk }], height: charH });
       }
       continue;
     }
@@ -14806,26 +15399,126 @@ function wrapRunsByWidth(runs, maxWidthPx, measure) {
     }
     current.push(run);
     usedPx += runW;
+    currentHeight = Math.max(currentHeight, getRunHeight(run, charH));
   }
   if (current.length > 0) pushLine();
-  if (lines.length === 0) lines.push([]);
+  if (lines.length === 0) lines.push({ runs: [], height: charH });
   return lines;
+}
+function resolveAlignedX(baseX, availableWidth, contentWidth, align) {
+  if (align === "center") return baseX + Math.max(0, Math.round((availableWidth - contentWidth) / 2));
+  if (align === "right") return baseX + Math.max(0, availableWidth - contentWidth);
+  return baseX;
+}
+function getCalloutToneColor(tone, style) {
+  if (tone === "note" || tone === "info") return style.infoFg;
+  if (tone === "tip" || tone === "important") return style.successFg;
+  if (tone === "warning") return style.warningFg;
+  if (tone === "caution") return style.errorFg;
+  return style.infoFg;
+}
+function defaultCalloutTitle(tone) {
+  return tone.charAt(0).toUpperCase() + tone.slice(1);
+}
+function resolveWidgetHeight(widget, charH) {
+  if (widget.type === "slider") return Math.max(Math.round(charH * 3.4), 56);
+  if (widget.type === "button") return Math.max(Math.round(charH * 2.3), 38);
+  if (widget.type === "checkbox") return Math.max(Math.round(charH * 2), 32);
+  return Math.max(Math.round(charH * 1.7), 28);
+}
+function emitWidgetPlaceholder(ops, placement, style, charW, charH, measure, bumpMax, mode) {
+  const { x, y, w, h, widget } = placement;
+  if (mode === "none") {
+    bumpMax(x, y, w, h);
+    return;
+  }
+  const border = style.borderFg;
+  const bg = style.surfaceBg;
+  const inset = Math.max(1, Math.round(charH * 0.18));
+  const innerX = x + inset;
+  const innerY = y + inset;
+  const innerW = Math.max(1, w - inset * 2);
+  const innerH = Math.max(1, h - inset * 2);
+  ops.push({ kind: "rect", x, y, w, h, color: border });
+  ops.push({ kind: "rect", x: innerX, y: innerY, w: innerW, h: innerH, color: bg });
+  bumpMax(x, y, w, h);
+  if (mode === "frame") {
+    return;
+  }
+  const label = String(widget.label || widget.text || widget.id || "").trim();
+  const labelWidth = label ? measure ? measure(label) : label.length * charW : 0;
+  if (widget.type === "button") {
+    if (label) {
+      const textX = x + Math.max(inset * 2, Math.round((w - labelWidth) / 2));
+      const textY = y + Math.max(inset, Math.round((h - charH) / 2));
+      ops.push({ kind: "text", text: label, x: textX, y: textY, color: style.fg });
+      bumpMax(textX, textY, labelWidth, charH);
+    }
+    return;
+  }
+  if (widget.type === "slider") {
+    const titleY = y + inset + 2;
+    if (label) {
+      ops.push({ kind: "text", text: label, x: innerX + charW, y: titleY, color: style.fg });
+      bumpMax(innerX + charW, titleY, labelWidth, charH);
+    }
+    const min = Number.isFinite(widget.min) ? Number(widget.min) : 0;
+    const max = Number.isFinite(widget.max) ? Number(widget.max) : 100;
+    const value = Number.isFinite(widget.value) ? Number(widget.value) : min;
+    const range = Math.max(1e-6, max - min);
+    const ratio = Math.max(0, Math.min(1, (value - min) / range));
+    const trackY = y + h - inset - Math.max(6, Math.round(charH * 0.35));
+    const trackX = innerX + charW;
+    const trackW = Math.max(charW * 4, innerW - charW * 2);
+    const trackH = Math.max(4, Math.round(charH * 0.2));
+    const knobW = Math.max(10, Math.round(charW * 1.25));
+    const knobH = Math.max(14, Math.round(charH * 0.9));
+    const knobX = trackX + Math.round((trackW - knobW) * ratio);
+    const knobY = trackY - Math.round((knobH - trackH) / 2);
+    ops.push({ kind: "rect", x: trackX, y: trackY, w: trackW, h: trackH, color: style.mutedFg });
+    ops.push({ kind: "rect", x: knobX, y: knobY, w: knobW, h: knobH, color: style.linkFg });
+    bumpMax(trackX, knobY, trackW, knobH);
+    return;
+  }
+  if (widget.type === "checkbox") {
+    const boxSize = Math.max(14, Math.round(charH * 0.95));
+    const boxX = innerX + charW;
+    const boxY = y + Math.max(inset, Math.round((h - boxSize) / 2));
+    ops.push({ kind: "rect", x: boxX, y: boxY, w: boxSize, h: boxSize, color: border });
+    ops.push({ kind: "rect", x: boxX + 2, y: boxY + 2, w: Math.max(1, boxSize - 4), h: Math.max(1, boxSize - 4), color: widget.checked ? style.successFg : bg });
+    bumpMax(boxX, boxY, boxSize, boxSize);
+    if (label) {
+      const textX = boxX + boxSize + charW;
+      const textY = y + Math.max(inset, Math.round((h - charH) / 2));
+      ops.push({ kind: "text", text: label, x: textX, y: textY, color: style.fg });
+      bumpMax(textX, textY, labelWidth, charH);
+    }
+    return;
+  }
+  if (label) {
+    const textX = widget.align === "center" ? x + Math.max(inset, Math.round((w - labelWidth) / 2)) : widget.align === "right" ? x + Math.max(inset, w - inset - labelWidth) : innerX + charW;
+    const textY = y + Math.max(inset, Math.round((h - charH) / 2));
+    ops.push({ kind: "text", text: label, x: textX, y: textY, color: style.fg });
+    bumpMax(textX, textY, labelWidth, charH);
+  }
 }
 function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding = 10, options) {
   const ops = [];
   const linkRegions = [];
+  const widgetPlacements = [];
   let linkIndex = 0;
   const linkUnderline = style.linkUnderline ?? true;
   const charW = Math.max(1, metrics.charW);
   const charH = Math.max(1, metrics.charH);
   const measure = typeof metrics.measureTextWidth === "function" ? metrics.measureTextWidth : null;
+  const getImageSize = typeof metrics.getImageSize === "function" ? metrics.getImageSize : null;
   const x0 = box.x;
   const y0 = box.y;
   const innerW = Math.max(1, box.width - padding * 2);
-  const maxChars = Math.max(1, Math.floor(innerW / charW));
   const baseLineHeight = Math.round(charH * 1.25);
   const paragraphGap = Math.round(charH * 0.75);
   const overflow = (options == null ? void 0 : options.overflow) === "expand" ? "expand" : "clip";
+  const widgetPlaceholderMode = (options == null ? void 0 : options.widgetPlaceholderMode) ?? "full";
   ops.push({ kind: "rect", x: x0, y: y0, w: box.width, h: box.height, color: style.bg });
   let cursorY = y0 + padding - scrollY;
   const contentStartX = x0 + padding;
@@ -14833,118 +15526,246 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
   const bumpMax = (x, y, w, h) => {
     if (w > 0) contentMaxX = Math.max(contentMaxX, x + w);
   };
-  const emitTextLine = (line, lineX, lineY, fgOverride) => {
+  const emitTextLine = (line, lineX, textY, fgOverride, containerWidth, lineTop, lineHeight) => {
     let cx = lineX;
     for (const run of line) {
       if (run.kind === "newline") continue;
+      if (run.kind === "widget") {
+        const widgetW = resolveInlineWidgetWidth(run.widget, charW, charH, containerWidth, measure);
+        const widgetH = resolveInlineWidgetHeight(run.widget, charH);
+        const placement = {
+          x: cx,
+          y: lineTop + Math.max(0, Math.round((lineHeight - widgetH) / 2)),
+          w: widgetW,
+          h: widgetH,
+          widget: run.widget
+        };
+        widgetPlacements.push(placement);
+        emitWidgetPlaceholder(ops, placement, style, charW, charH, measure, bumpMax, widgetPlaceholderMode);
+        cx += widgetW;
+        continue;
+      }
       const isActiveLink = run.kind === "link" && style.activeLinkIndex === linkIndex;
       const color = fgOverride ?? (run.kind === "link" ? isActiveLink ? style.activeLinkFg ?? style.linkFg : style.linkFg : run.kind === "code" ? style.codeFg : style.fg);
       if (run.kind === "code" && run.text.trim().length > 0) {
         const w = measure ? measure(run.text) : run.text.length * charW;
-        ops.push({ kind: "rect", x: cx, y: lineY - Math.round(charH * 0.15), w, h: Math.round(charH * 1.15), color: style.codeBg });
-        bumpMax(cx, lineY - Math.round(charH * 0.15), w);
+        ops.push({ kind: "rect", x: cx, y: textY - Math.round(charH * 0.15), w, h: Math.round(charH * 1.15), color: style.codeBg });
+        bumpMax(cx, textY - Math.round(charH * 0.15), w);
       }
-      ops.push({ kind: "text", text: run.text, x: cx, y: lineY, color });
+      ops.push({ kind: "text", text: run.text, x: cx, y: textY, color });
       {
         const w = measure ? measure(run.text) : run.text.length * charW;
-        bumpMax(cx, lineY, w);
+        bumpMax(cx, textY, w);
       }
       if (run.kind === "link" && run.url && run.text.trim().length > 0) {
         const w = measure ? measure(run.text) : run.text.length * charW;
-        linkRegions.push({ x: cx, y: lineY, w, h: charH, url: run.url, text: run.text });
+        linkRegions.push({ x: cx, y: textY, w, h: charH, url: run.url, text: run.text });
         if (linkUnderline) {
-          ops.push({ kind: "rect", x: cx, y: lineY + charH - 2, w, h: 2, color });
-          bumpMax(cx, lineY + charH - 2, w);
+          ops.push({ kind: "rect", x: cx, y: textY + charH - 2, w, h: 2, color });
+          bumpMax(cx, textY + charH - 2, w);
         }
         linkIndex++;
       }
       cx += measure ? measure(run.text) : run.text.length * charW;
     }
   };
-  for (const node of nodes) {
-    if (node.kind === "codeblock") {
-      const lang = node.lang;
-      const meta = node.metadata;
-      const isRawAscii = typeof lang === "string" && lang === "ascii" && !String((meta == null ? void 0 : meta.name) ?? "").trim();
-      if (!isRawAscii) {
+  const renderNodes = (nodeList, contentX, contentWidth2) => {
+    const localInnerW = Math.max(1, contentWidth2);
+    const localMaxChars = Math.max(1, Math.floor(localInnerW / charW));
+    for (const node of nodeList) {
+      if (node.kind === "codeblock") {
+        const lang = node.lang;
+        const meta = node.metadata;
+        const isRawAscii = typeof lang === "string" && lang === "ascii" && !String((meta == null ? void 0 : meta.name) ?? "").trim();
+        if (!isRawAscii) {
+          continue;
+        }
+        cursorY += Math.round(charH * 0.15);
+        const fg = style.codeFg;
+        const codeLines = (node.code || "").replace(/\r\n/g, "\n").split("\n");
+        for (const rawLine of codeLines) {
+          if (overflow === "clip" && cursorY > y0 + box.height) break;
+          const line = (rawLine ?? "").trimEnd();
+          if (!(overflow === "clip" && cursorY > y0 + box.height)) {
+            ops.push({ kind: "text", text: line, x: contentX, y: cursorY, color: fg });
+          }
+          const w = measure ? measure(line) : line.length * charW;
+          bumpMax(contentX, cursorY, w);
+          cursorY += baseLineHeight;
+        }
+        cursorY += paragraphGap;
         continue;
       }
-      cursorY += Math.round(charH * 0.15);
-      const fg = style.codeFg;
-      const codeLines = (node.code || "").replace(/\r\n/g, "\n").split("\n");
-      for (const rawLine of codeLines) {
-        if (overflow === "clip" && cursorY > y0 + box.height) break;
-        const line = (rawLine ?? "").trimEnd();
-        if (!(overflow === "clip" && cursorY > y0 + box.height)) {
-          ops.push({ kind: "text", text: line, x: x0 + padding, y: cursorY, color: fg });
-        }
-        {
-          const w = measure ? measure(line) : line.length * charW;
-          bumpMax(x0 + padding, cursorY, w);
-        }
-        cursorY += baseLineHeight;
-      }
-      cursorY += paragraphGap;
-      continue;
-    }
-    if (node.kind === "heading") {
-      cursorY += Math.round(charH * 0.25);
-      const runs = tokenizeInlines(node.inlines);
-      const lines = measure ? wrapRunsByWidth(runs, innerW, measure) : wrapRuns(runs, maxChars);
-      const fg = style.headingFg;
-      for (const ln of lines) {
-        emitTextLine(ln, x0 + padding, cursorY, fg);
-        cursorY += baseLineHeight;
-      }
-      cursorY += Math.round(charH * 0.2);
-      continue;
-    }
-    if (node.kind === "paragraph") {
-      const runs = tokenizeInlines(node.inlines);
-      const lines = measure ? wrapRunsByWidth(runs, innerW, measure) : wrapRuns(runs, maxChars);
-      for (const ln of lines) {
-        emitTextLine(ln, x0 + padding, cursorY);
-        cursorY += baseLineHeight;
-      }
-      cursorY += paragraphGap;
-      continue;
-    }
-    if (node.kind === "list") {
-      const customMarkerText = style.listMarker === void 0 ? "- " : String(style.listMarker ?? "");
-      const gapPx = Number.isFinite(style.listMarkerGapPx) ? Math.max(0, style.listMarkerGapPx) : void 0;
-      const markerColor = style.listMarkerFg ?? style.fg;
-      for (let itemIndex = 0; itemIndex < node.items.length; itemIndex++) {
-        const item = node.items[itemIndex];
-        const markerText = node.ordered ? `${(node.start ?? 1) + itemIndex}.` : customMarkerText;
-        const markerWidth = markerText.length > 0 ? measure ? measure(markerText) : markerText.length * charW : 0;
-        const defaultGapPx = markerText.length > 0 && !/\s$/.test(markerText) ? charW : 0;
-        const resolvedGapPx = gapPx ?? defaultGapPx;
-        const markerAdvance = markerText.length > 0 ? markerWidth + resolvedGapPx : 0;
-        const hangIndentPx = Number.isFinite(style.listHangIndentPx) ? Math.max(0, style.listHangIndentPx) : markerAdvance;
-        const wrapIndentPx = Math.max(markerAdvance, hangIndentPx);
-        const listInnerWidth = Math.max(1, innerW - wrapIndentPx);
-        const listMaxChars = Math.max(1, Math.floor(listInnerWidth / charW));
-        const itemRuns = tokenizeInlines(item);
-        const lines = measure ? wrapRunsByWidth(itemRuns, listInnerWidth, measure) : wrapRuns(itemRuns, listMaxChars);
-        let first = true;
+      if (node.kind === "heading") {
+        cursorY += Math.round(charH * 0.25);
+        const runs = tokenizeInlines(node.inlines);
+        const lines = measure ? wrapRunsByWidth(runs, localInnerW, measure, charW, charH) : wrapRuns(runs, localMaxChars, charW, charH);
+        const fg = style.headingFg;
         for (const ln of lines) {
-          if (first && markerText.length > 0) {
-            ops.push({ kind: "text", text: markerText, x: x0 + padding, y: cursorY, color: markerColor });
-            bumpMax(x0 + padding, cursorY, markerWidth);
-          }
-          const x = x0 + padding + (first ? markerAdvance : hangIndentPx);
-          emitTextLine(ln, x, cursorY);
-          cursorY += baseLineHeight;
-          first = false;
+          const textY = cursorY + (ln.height > charH ? Math.round((ln.height - charH) / 2) : 0);
+          emitTextLine(ln.runs, contentX, textY, fg, localInnerW, cursorY, ln.height);
+          cursorY += Math.max(baseLineHeight, ln.height);
         }
+        cursorY += Math.round(charH * 0.2);
+        continue;
       }
-      cursorY += paragraphGap;
-      continue;
+      if (node.kind === "paragraph") {
+        const runs = tokenizeInlines(node.inlines);
+        const lines = measure ? wrapRunsByWidth(runs, localInnerW, measure, charW, charH) : wrapRuns(runs, localMaxChars, charW, charH);
+        for (const ln of lines) {
+          const textY = cursorY + (ln.height > charH ? Math.round((ln.height - charH) / 2) : 0);
+          emitTextLine(ln.runs, contentX, textY, void 0, localInnerW, cursorY, ln.height);
+          cursorY += Math.max(baseLineHeight, ln.height);
+        }
+        cursorY += paragraphGap;
+        continue;
+      }
+      if (node.kind === "list") {
+        const customMarkerText = style.listMarker === void 0 ? "- " : String(style.listMarker ?? "");
+        const gapPx = Number.isFinite(style.listMarkerGapPx) ? Math.max(0, style.listMarkerGapPx) : void 0;
+        const markerColor = style.listMarkerFg ?? style.fg;
+        for (let itemIndex = 0; itemIndex < node.items.length; itemIndex++) {
+          const item = node.items[itemIndex];
+          const markerText = node.ordered ? `${(node.start ?? 1) + itemIndex}.` : customMarkerText;
+          const markerWidth = markerText.length > 0 ? measure ? measure(markerText) : markerText.length * charW : 0;
+          const defaultGapPx = markerText.length > 0 && !/\s$/.test(markerText) ? charW : 0;
+          const resolvedGapPx = gapPx ?? defaultGapPx;
+          const markerAdvance = markerText.length > 0 ? markerWidth + resolvedGapPx : 0;
+          const hangIndentPx = Number.isFinite(style.listHangIndentPx) ? Math.max(0, style.listHangIndentPx) : markerAdvance;
+          const wrapIndentPx = Math.max(markerAdvance, hangIndentPx);
+          const listInnerWidth = Math.max(1, localInnerW - wrapIndentPx);
+          const listMaxChars = Math.max(1, Math.floor(listInnerWidth / charW));
+          const itemRuns = tokenizeInlines(item);
+          const lines = measure ? wrapRunsByWidth(itemRuns, listInnerWidth, measure, charW, charH) : wrapRuns(itemRuns, listMaxChars, charW, charH);
+          let first = true;
+          for (const ln of lines) {
+            if (first && markerText.length > 0) {
+              ops.push({ kind: "text", text: markerText, x: contentX, y: cursorY, color: markerColor });
+              bumpMax(contentX, cursorY, markerWidth);
+            }
+            const x = contentX + (first ? markerAdvance : hangIndentPx);
+            const textY = cursorY + (ln.height > charH ? Math.round((ln.height - charH) / 2) : 0);
+            emitTextLine(ln.runs, x, textY, void 0, listInnerWidth, cursorY, ln.height);
+            cursorY += Math.max(baseLineHeight, ln.height);
+            first = false;
+          }
+        }
+        cursorY += paragraphGap;
+        continue;
+      }
+      if (node.kind === "image") {
+        const imageInfo = getImageSize ? getImageSize(node.source) : null;
+        const aspect = imageInfo && imageInfo.width > 0 && imageInfo.height > 0 ? imageInfo.height / imageInfo.width : 9 / 16;
+        const imageW = resolveSizedWidth(node.width, localInnerW, localInnerW);
+        const imageH = Math.max(
+          charH * 6,
+          Math.min(Math.round(imageW * 1.25), Math.round(imageW * aspect))
+        );
+        const outerX = resolveAlignedX(contentX, localInnerW, imageW, node.align);
+        const outerY = cursorY;
+        const outerW = imageW;
+        const outerH = imageH;
+        const innerInset = Math.max(1, Math.round(charH * 0.18));
+        const innerX = outerX + innerInset;
+        const innerY = outerY + innerInset;
+        const innerW2 = Math.max(1, outerW - innerInset * 2);
+        const innerH2 = Math.max(1, outerH - innerInset * 2);
+        ops.push({ kind: "rect", x: outerX, y: outerY, w: outerW, h: outerH, color: style.borderFg });
+        ops.push({ kind: "rect", x: innerX, y: innerY, w: innerW2, h: innerH2, color: style.codeBg });
+        ops.push({ kind: "image", source: node.source, x: innerX, y: innerY, w: innerW2, h: innerH2, ...node.alt ? { alt: node.alt } : {} });
+        bumpMax(outerX, outerY, outerW);
+        if (!imageInfo) {
+          const label = String(node.alt || node.title || node.source || "image").trim();
+          if (label.length > 0) {
+            const labelRuns = label.split(/(\s+)/).filter(Boolean).map((text) => ({ kind: "text", text }));
+            const labelMaxW = Math.max(1, innerW2 - charW * 2);
+            const labelLines = measure ? wrapRunsByWidth(labelRuns, labelMaxW, measure, charW, charH) : wrapRuns(labelRuns, Math.max(1, Math.floor(labelMaxW / charW)), charW, charH);
+            const maxLines = Math.max(1, Math.floor((innerH2 - charH * 2) / baseLineHeight));
+            const shown = labelLines.slice(0, maxLines);
+            const textStartY = innerY + Math.max(charH, Math.round((innerH2 - shown.length * baseLineHeight) / 2));
+            for (let li = 0; li < shown.length; li++) {
+              emitTextLine(shown[li].runs, innerX + charW, textStartY + li * baseLineHeight, style.fg, labelMaxW, textStartY + li * baseLineHeight, shown[li].height);
+            }
+          }
+        }
+        cursorY += imageH + paragraphGap;
+        continue;
+      }
+      if (node.kind === "widget") {
+        const widgetW = resolveSizedWidth(node.widget.width, localInnerW, localInnerW);
+        const widgetH = resolveWidgetHeight(node.widget, charH);
+        const widgetX = resolveAlignedX(contentX, localInnerW, widgetW, node.widget.align);
+        const placement = {
+          x: widgetX,
+          y: cursorY,
+          w: widgetW,
+          h: widgetH,
+          widget: node.widget
+        };
+        widgetPlacements.push(placement);
+        emitWidgetPlaceholder(ops, placement, style, charW, charH, measure, bumpMax, widgetPlaceholderMode);
+        cursorY += widgetH + paragraphGap;
+        continue;
+      }
+      if (node.kind === "callout") {
+        const accent = getCalloutToneColor(node.tone, style);
+        const insertIndex = ops.length;
+        const calloutX = contentX;
+        const calloutY = cursorY;
+        const calloutW = localInnerW;
+        const barW = Math.max(4, Math.round(charW * 0.45));
+        const insetX = Math.max(10, Math.round(charW * 1.1));
+        const insetY = Math.max(8, Math.round(charH * 0.55));
+        const titleText = String(node.title || defaultCalloutTitle(node.tone));
+        const titleY = cursorY + insetY;
+        const titleX = contentX + barW + insetX;
+        cursorY = titleY;
+        emitTextLine([{ kind: "text", text: titleText }], titleX, cursorY, accent, Math.max(1, localInnerW - barW - insetX * 2), cursorY, charH);
+        cursorY += baseLineHeight;
+        cursorY += Math.max(4, Math.round(charH * 0.15));
+        const bodyX = contentX + barW + insetX;
+        const bodyW = Math.max(1, localInnerW - barW - insetX * 2);
+        renderNodes(node.nodes, bodyX, bodyW);
+        const calloutBottom = Math.max(calloutY + baseLineHeight + insetY * 2, cursorY - paragraphGap + insetY);
+        const calloutH = Math.max(1, calloutBottom - calloutY);
+        const backgroundColor = style.surfaceBg;
+        ops.splice(
+          insertIndex,
+          0,
+          { kind: "rect", x: calloutX, y: calloutY, w: calloutW, h: calloutH, color: backgroundColor },
+          { kind: "rect", x: calloutX, y: calloutY, w: barW, h: calloutH, color: accent }
+        );
+        bumpMax(calloutX, calloutY, calloutW);
+        cursorY = calloutBottom + paragraphGap;
+        continue;
+      }
+      if (node.kind === "blockquote") {
+        const quoteBarWidth = Math.max(2, Math.round(charW * 0.35));
+        const quoteGap = Math.max(8, Math.round(charW * 0.9));
+        const quoteTop = cursorY;
+        const quoteContentX = contentX + quoteBarWidth + quoteGap;
+        const quoteContentWidth = Math.max(1, localInnerW - quoteBarWidth - quoteGap);
+        renderNodes(node.nodes, quoteContentX, quoteContentWidth);
+        const quoteBottom = Math.max(quoteTop + charH, cursorY - paragraphGap);
+        const quoteHeight = Math.max(1, quoteBottom - quoteTop);
+        const quoteBarY = quoteTop + Math.round(charH * 0.1);
+        ops.push({ kind: "rect", x: contentX, y: quoteBarY, w: quoteBarWidth, h: quoteHeight, color: style.borderFg });
+        bumpMax(contentX, quoteBarY, quoteBarWidth);
+        continue;
+      }
+      if (node.kind === "hr") {
+        const ruleThickness = Math.max(1, Math.round(charH * 0.12));
+        const ruleY = cursorY + Math.round(baseLineHeight * 0.55);
+        ops.push({ kind: "rect", x: contentX, y: ruleY, w: localInnerW, h: ruleThickness, color: style.borderFg });
+        bumpMax(contentX, ruleY, localInnerW);
+        cursorY += baseLineHeight;
+      }
     }
-  }
+  };
+  renderNodes(nodes, x0 + padding, innerW);
   const contentHeight = Math.max(0, cursorY - (y0 + padding - scrollY));
   const contentWidth = Math.max(0, contentMaxX - (x0 + padding));
-  return { ops, linkRegions, contentWidth, contentHeight };
+  return { ops, linkRegions, widgetPlacements, contentWidth, contentHeight };
 }
 class GUIMarkdownView extends BaseWidget {
   constructor(config) {
@@ -14967,8 +15788,14 @@ class GUIMarkdownView extends BaseWidget {
     const defaultStyle = {
       fg: { r: 230, g: 230, b: 230 },
       mutedFg: { r: 160, g: 160, b: 160 },
+      borderFg: { r: 110, g: 110, b: 110 },
+      surfaceBg: { r: 24, g: 24, b: 24, a: 0.92 },
       headingFg: { r: 255, g: 255, b: 255 },
       linkFg: { r: 80, g: 180, b: 255 },
+      infoFg: { r: 80, g: 180, b: 255 },
+      successFg: { r: 64, g: 210, b: 140 },
+      warningFg: { r: 255, g: 205, b: 96 },
+      errorFg: { r: 255, g: 110, b: 120 },
       codeFg: { r: 240, g: 240, b: 240 },
       codeBg: { r: 35, g: 35, b: 35, a: 0.9 },
       bg: { r: 0, g: 0, b: 0, a: 0 }
@@ -14982,6 +15809,15 @@ class GUIMarkdownView extends BaseWidget {
       const url = this.hitTestLink(x, y);
       if (url) this.clickedLink = url;
     });
+  }
+  collectImageSources(nodes, into) {
+    for (const node of nodes) {
+      if (node.kind === "image") {
+        into.add(node.source);
+      } else if (node.kind === "blockquote" || node.kind === "callout") {
+        this.collectImageSources(node.nodes, into);
+      }
+    }
   }
   setMarkdown(markdown) {
     this.markdown = markdown ?? "";
@@ -15005,8 +15841,8 @@ class GUIMarkdownView extends BaseWidget {
     this.clickedLink = null;
     return v2;
   }
-  computeLayout(metrics) {
-    const key = `${this.bounds.x},${this.bounds.y},${this.bounds.width},${this.bounds.height}|${metrics.charW},${metrics.charH}|${this.scrollY}|${this.markdown.length}`;
+  computeLayout(metrics, imageSignature) {
+    const key = `${this.bounds.x},${this.bounds.y},${this.bounds.width},${this.bounds.height}|${metrics.charW},${metrics.charH}|${this.scrollY}|${this.markdown.length}|${imageSignature}`;
     if (this.cachedLayout && this.cachedKey === key) return this.cachedLayout;
     const layout = layoutMarkdownDocument(
       this.nodes,
@@ -15036,15 +15872,22 @@ class GUIMarkdownView extends BaseWidget {
   }
   renderToUI(ui, charW, charH) {
     if (!this.state.visible) return;
-    const metrics = { charW, charH };
-    let layout = this.computeLayout(metrics);
+    const sources = /* @__PURE__ */ new Set();
+    this.collectImageSources(this.nodes, sources);
+    const imageSize = typeof ui.getImageSize === "function" ? (source) => ui.getImageSize(source) : void 0;
+    const imageSignature = Array.from(sources).sort().map((source) => {
+      const dims = imageSize ? imageSize(source) : null;
+      return dims ? `${source}:${dims.width}x${dims.height}` : `${source}:pending`;
+    }).join("|");
+    const metrics = { charW, charH, ...imageSize ? { getImageSize: imageSize } : {} };
+    let layout = this.computeLayout(metrics, imageSignature);
     const innerH = Math.max(0, this.bounds.height - this.padding * 2);
     const maxScroll = Math.max(0, layout.contentHeight - innerH);
     this.lastMaxScrollY = maxScroll;
     if (this.scrollY > maxScroll) {
       this.scrollY = maxScroll;
       this.cachedLayout = null;
-      layout = this.computeLayout(metrics);
+      layout = this.computeLayout(metrics, imageSignature);
     }
     const pushClip = ui.pushClipRect;
     const popClip = ui.popClipRect;
@@ -15055,6 +15898,10 @@ class GUIMarkdownView extends BaseWidget {
     for (const op of layout.ops) {
       if (op.kind === "rect") {
         ui.rect(op.x, op.y, op.w, op.h, op.color);
+      } else if (op.kind === "image") {
+        if (typeof ui.image === "function") {
+          ui.image(op.source, op.x, op.y, op.w, op.h);
+        }
       } else {
         ui.text(op.text, op.x, op.y, op.color);
       }
@@ -15388,6 +16235,159 @@ class GUILayoutContainer {
     this.layoutStack(children, inner);
   }
 }
+const TRANSPARENT = ColorUtils.rgba(0, 0, 0, 0);
+const FALLBACKS = {
+  label: {
+    fg: ColorUtils.rgb(224, 224, 224),
+    bg: TRANSPARENT
+  },
+  button: {
+    fg: ColorUtils.rgb(240, 240, 240),
+    bg: ColorUtils.rgb(60, 60, 60),
+    border: ColorUtils.rgb(100, 100, 100),
+    hoverBg: ColorUtils.rgb(80, 80, 80),
+    activeBg: ColorUtils.rgb(40, 120, 180),
+    focusBorder: ColorUtils.rgb(120, 170, 220)
+  },
+  checkbox: {
+    fg: ColorUtils.rgb(220, 220, 220),
+    bg: ColorUtils.rgb(40, 40, 40),
+    border: ColorUtils.rgb(220, 220, 220),
+    check: ColorUtils.rgb(0, 200, 100),
+    hoverBg: ColorUtils.rgb(60, 60, 60),
+    focusBorder: ColorUtils.rgb(120, 170, 220)
+  },
+  slider: {
+    fg: ColorUtils.rgb(220, 220, 220),
+    track: ColorUtils.rgb(60, 60, 60),
+    knob: ColorUtils.rgb(100, 150, 200),
+    knobHover: ColorUtils.rgb(120, 170, 220),
+    knobActive: ColorUtils.rgb(255, 200, 0)
+  },
+  input: {
+    fg: ColorUtils.rgb(240, 240, 240),
+    bg: ColorUtils.rgba(30, 30, 30, 242),
+    border: ColorUtils.rgb(90, 90, 90),
+    hoverBorder: ColorUtils.rgb(130, 130, 130),
+    focusBorder: ColorUtils.rgb(120, 170, 220),
+    cursor: ColorUtils.rgb(120, 170, 220)
+  }
+};
+const MARKDOWN_FALLBACKS = {
+  fg: ColorUtils.rgb(230, 230, 230),
+  mutedFg: ColorUtils.rgb(160, 160, 160),
+  borderFg: ColorUtils.rgb(110, 110, 110),
+  surfaceBg: ColorUtils.rgba(24, 24, 24, 235),
+  headingFg: ColorUtils.rgb(255, 255, 255),
+  linkFg: ColorUtils.rgb(80, 180, 255),
+  infoFg: ColorUtils.rgb(80, 180, 255),
+  successFg: ColorUtils.rgb(64, 210, 140),
+  warningFg: ColorUtils.rgb(255, 205, 96),
+  errorFg: ColorUtils.rgb(255, 110, 120),
+  codeFg: ColorUtils.rgb(240, 240, 240),
+  codeBg: ColorUtils.rgba(35, 35, 35, 230),
+  bg: TRANSPARENT
+};
+function styleOrFallback(style, fallback) {
+  return style ?? fallback ?? {};
+}
+function pickFg(style, fallback) {
+  return (style == null ? void 0 : style.fg) ?? fallback;
+}
+function pickBg(style, fallback) {
+  return (style == null ? void 0 : style.bg) ?? fallback;
+}
+function createGUIThemeDefaultsFromStyles(getStyle) {
+  const base = styleOrFallback(getStyle("default"), FALLBACKS.label);
+  const surface = styleOrFallback(getStyle("surface"), base);
+  const button = styleOrFallback(getStyle("button"), surface);
+  const border = styleOrFallback(getStyle("border"), button);
+  const hover = styleOrFallback(getStyle("hover"), button);
+  const focus = styleOrFallback(getStyle("focus"), hover);
+  const active = styleOrFallback(getStyle("active"), hover);
+  const info = styleOrFallback(getStyle("info"), getStyle("accent2"));
+  const success = styleOrFallback(getStyle("success"), getStyle("accent1"));
+  const error = styleOrFallback(getStyle("error"), getStyle("warning"));
+  return {
+    label: {
+      fg: pickFg(base, FALLBACKS.label.fg),
+      bg: TRANSPARENT
+    },
+    button: {
+      fg: pickFg(button, FALLBACKS.button.fg),
+      bg: pickBg(button, FALLBACKS.button.bg),
+      border: pickFg(border, FALLBACKS.button.border),
+      hoverBg: pickBg(hover, pickBg(button, FALLBACKS.button.hoverBg)),
+      activeBg: pickBg(active, pickBg(hover, FALLBACKS.button.activeBg)),
+      focusBorder: pickFg(focus, pickFg(border, FALLBACKS.button.focusBorder))
+    },
+    checkbox: {
+      fg: pickFg(base, FALLBACKS.checkbox.fg),
+      bg: pickBg(surface, FALLBACKS.checkbox.bg),
+      border: pickFg(border, FALLBACKS.checkbox.border),
+      check: pickFg(success, FALLBACKS.checkbox.check),
+      hoverBg: pickBg(hover, FALLBACKS.checkbox.hoverBg),
+      focusBorder: pickFg(focus, FALLBACKS.checkbox.focusBorder)
+    },
+    slider: {
+      fg: pickFg(base, FALLBACKS.slider.fg),
+      track: pickBg(surface, FALLBACKS.slider.track),
+      knob: pickFg(info, FALLBACKS.slider.knob),
+      knobHover: pickFg(focus, FALLBACKS.slider.knobHover),
+      knobActive: pickFg(active, pickFg(error, FALLBACKS.slider.knobActive))
+    },
+    input: {
+      fg: pickFg(base, FALLBACKS.input.fg),
+      bg: pickBg(surface, FALLBACKS.input.bg),
+      border: pickFg(border, FALLBACKS.input.border),
+      hoverBorder: pickFg(hover, FALLBACKS.input.hoverBorder),
+      focusBorder: pickFg(focus, FALLBACKS.input.focusBorder),
+      cursor: pickFg(info, FALLBACKS.input.cursor)
+    }
+  };
+}
+function createGUIMarkdownThemeDefaultsFromStyles(getStyle) {
+  const base = styleOrFallback(getStyle("default"), MARKDOWN_FALLBACKS);
+  const dim = styleOrFallback(getStyle("dim"), base);
+  const border = styleOrFallback(getStyle("border"), dim);
+  const surface = styleOrFallback(getStyle("surface"), getStyle("code"));
+  const heading = styleOrFallback(getStyle("heading"), base);
+  const link2 = styleOrFallback(getStyle("link"), getStyle("active"));
+  const active = styleOrFallback(getStyle("active"), link2);
+  const info = styleOrFallback(getStyle("info"), getStyle("accent2"));
+  const success = styleOrFallback(getStyle("success"), getStyle("accent1"));
+  const warning = styleOrFallback(getStyle("warning"), getStyle("accent3"));
+  const error = styleOrFallback(getStyle("error"), warning);
+  const code = styleOrFallback(getStyle("code"), surface);
+  return {
+    fg: pickFg(base, MARKDOWN_FALLBACKS.fg),
+    mutedFg: pickFg(dim, MARKDOWN_FALLBACKS.mutedFg),
+    borderFg: pickFg(border, MARKDOWN_FALLBACKS.borderFg),
+    surfaceBg: pickBg(surface, MARKDOWN_FALLBACKS.surfaceBg),
+    headingFg: pickFg(heading, MARKDOWN_FALLBACKS.headingFg),
+    linkFg: pickFg(link2, MARKDOWN_FALLBACKS.linkFg),
+    activeLinkFg: pickFg(active, pickFg(link2, MARKDOWN_FALLBACKS.linkFg)),
+    infoFg: pickFg(info, MARKDOWN_FALLBACKS.infoFg),
+    successFg: pickFg(success, MARKDOWN_FALLBACKS.successFg),
+    warningFg: pickFg(warning, MARKDOWN_FALLBACKS.warningFg),
+    errorFg: pickFg(error, MARKDOWN_FALLBACKS.errorFg),
+    codeFg: pickFg(code, MARKDOWN_FALLBACKS.codeFg),
+    codeBg: pickBg(code, MARKDOWN_FALLBACKS.codeBg),
+    bg: TRANSPARENT
+  };
+}
+function createDefaultGUIThemeDefaults() {
+  return {
+    label: { ...FALLBACKS.label },
+    button: { ...FALLBACKS.button },
+    checkbox: { ...FALLBACKS.checkbox },
+    slider: { ...FALLBACKS.slider },
+    input: { ...FALLBACKS.input }
+  };
+}
+function createDefaultGUIMarkdownThemeDefaults() {
+  return { ...MARKDOWN_FALLBACKS };
+}
 class GUISystem {
   constructor() {
     __publicField(this, "widgetManager");
@@ -15396,11 +16396,33 @@ class GUISystem {
     __publicField(this, "lastMouseY", 0);
     __publicField(this, "lastMouseDown", false);
     __publicField(this, "tokens");
+    __publicField(this, "themeDefaults");
+    __publicField(this, "markdownThemeDefaults");
     // Optional draw override hook. If it returns true, default drawing is skipped.
     __publicField(this, "widgetRenderer", null);
     this.widgetManager = new WidgetManager();
     this.inputRouter = new InputRouter({ widgetManager: this.widgetManager });
     this.tokens = createDefaultGUITokens();
+    this.themeDefaults = createDefaultGUIThemeDefaults();
+    this.markdownThemeDefaults = createDefaultGUIMarkdownThemeDefaults();
+  }
+  setThemeDefaults(defaults2) {
+    this.themeDefaults = {
+      label: { ...defaults2.label },
+      button: { ...defaults2.button },
+      checkbox: { ...defaults2.checkbox },
+      slider: { ...defaults2.slider },
+      input: { ...defaults2.input }
+    };
+    return this.themeDefaults;
+  }
+  setMarkdownThemeDefaults(defaults2) {
+    this.markdownThemeDefaults = { ...defaults2 };
+    return { ...this.markdownThemeDefaults };
+  }
+  setThemeFromStyles(getStyle) {
+    this.setMarkdownThemeDefaults(createGUIMarkdownThemeDefaultsFromStyles(getStyle));
+    return this.setThemeDefaults(createGUIThemeDefaultsFromStyles(getStyle));
   }
   getTokens() {
     return cloneGUITokens(this.tokens);
@@ -15418,12 +16440,13 @@ class GUISystem {
     this.widgetRenderer = renderer;
   }
   buildWidgetInfo(widget, charWidth, charHeight) {
+    const renderContext = typeof widget.resolveRenderContext === "function" ? widget.resolveRenderContext(charWidth, charHeight) : { charWidth, charHeight };
     const base = {
       id: String(widget.id),
       bounds: { ...widget.bounds },
       state: { ...widget.state },
       group: widget.group,
-      metrics: { charWidth, charHeight }
+      metrics: { charWidth: renderContext.charWidth, charHeight: renderContext.charHeight }
     };
     if (widget instanceof GUIButton) {
       return { ...base, kind: "button", label: widget.label };
@@ -15500,7 +16523,13 @@ class GUISystem {
    * Create a markdown view widget (flow layout inside bounds)
    */
   createMarkdownView(config) {
-    const view = new GUIMarkdownView(config);
+    const view = new GUIMarkdownView({
+      ...config,
+      style: {
+        ...this.markdownThemeDefaults,
+        ...config.style ?? {}
+      }
+    });
     this.widgetManager.register(view);
     return view;
   }
@@ -15530,15 +16559,18 @@ class GUISystem {
     this.inputRouter.update(inputCoord, mouseDown);
     const sliders = this.widgetManager.getAll().filter((w) => w instanceof GUISlider);
     for (const slider of sliders) {
-      slider.handleDrag(mouseX, mouseY, mouseDown, charHeight);
+      const metrics = slider.resolveRenderContext(charWidth, charHeight);
+      slider.handleDrag(mouseX, mouseY, mouseDown, metrics.charHeight, metrics.scale);
     }
     const textFields = this.widgetManager.getAll().filter((w) => w instanceof GUITextField);
     for (const tf of textFields) {
-      tf.updateMetrics(charWidth, charHeight);
+      const metrics = tf.resolveRenderContext(charWidth, charHeight);
+      tf.updateMetrics(metrics.charWidth, metrics.charHeight);
     }
     const textEditors = this.widgetManager.getAll().filter((w) => w instanceof GUITextEditor);
     for (const ed of textEditors) {
-      ed.updateMetrics(charWidth, charHeight);
+      const metrics = ed.resolveRenderContext(charWidth, charHeight);
+      ed.updateMetrics(metrics.charWidth, metrics.charHeight);
     }
   }
   /**
@@ -15625,6 +16657,9 @@ class GUISystem {
     }
   }
   renderTextField(tf, ui, charW, charH) {
+    const metrics = tf.resolveRenderContext(charW, charH);
+    charW = metrics.charWidth;
+    charH = metrics.charHeight;
     const { x, y, width, height } = tf.bounds;
     const {
       fg,
@@ -15637,7 +16672,7 @@ class GUISystem {
       paddingY,
       borderWidth,
       focusBorderWidth
-    } = tf.textFieldStyle;
+    } = this.resolveTextFieldStyle(tf);
     if (drawBackground) {
       ui.rect(x, y, width, height, bg);
     }
@@ -15687,6 +16722,9 @@ class GUISystem {
     if (ui.popClipRect) ui.popClipRect();
   }
   renderTextEditor(ed, ui, charW, charH) {
+    const metrics = ed.resolveRenderContext(charW, charH);
+    charW = metrics.charWidth;
+    charH = metrics.charHeight;
     const { x, y, width, height } = ed.bounds;
     const {
       fg,
@@ -15699,7 +16737,7 @@ class GUISystem {
       paddingY,
       borderWidth,
       focusBorderWidth
-    } = ed.textEditorStyle;
+    } = this.resolveTextEditorStyle(ed);
     if (drawBackground) {
       ui.rect(x, y, width, height, bg);
     }
@@ -15763,15 +16801,21 @@ class GUISystem {
     if (ui.popClipRect) ui.popClipRect();
   }
   renderMarkdownView(view, ui, charW, charH) {
+    const metrics = view.resolveRenderContext(charW, charH);
+    charW = metrics.charWidth;
+    charH = metrics.charHeight;
     view.renderToUI(ui, charW, charH);
   }
   renderButton(button, ui, charW, charH) {
+    const metrics = button.resolveRenderContext(charW, charH);
+    charW = metrics.charWidth;
+    charH = metrics.charHeight;
     const { x, y, width, height } = button.bounds;
-    const { fg, bg, borderColor, hoverBg, activeBg, borderWidth, focusBorderWidth } = button.buttonStyle;
+    const { fg, bg, borderColor, hoverBg, activeBg, borderWidth, focusBorderWidth } = this.resolveButtonStyle(button);
     const label = String(button.label ?? "");
     const bgColor = button.state.pressed ? activeBg : button.state.hovered ? hoverBg : bg;
     ui.rect(x, y, width, height, bgColor);
-    const border = button.state.focused ? focusBorderWidth : borderWidth;
+    const border = button.getRenderPixels(button.state.focused ? focusBorderWidth : borderWidth);
     ui.rect(x, y, width, border, borderColor);
     ui.rect(x, y + height - border, width, border, borderColor);
     ui.rect(x, y, border, height, borderColor);
@@ -15782,11 +16826,13 @@ class GUISystem {
     ui.text(label, labelX, labelY, fg);
   }
   renderLabel(label, ui, charW, charH) {
+    const metrics = label.resolveRenderContext(charW, charH);
+    charW = metrics.charWidth;
+    charH = metrics.charHeight;
     const { x, y, width, height } = label.bounds;
-    const { fg, bg } = label.labelStyle;
+    const { fg, bg } = this.resolveLabelStyle(label);
     const text = String(label.text ?? "");
-    const bgColor = bg;
-    if (bgColor.a !== void 0 && bgColor.a !== 0) {
+    if (ColorUtils.a(bg) !== 0) {
       ui.rect(x, y, width, height, bg);
     }
     let textX = x;
@@ -15800,17 +16846,23 @@ class GUISystem {
     ui.text(text, textX, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
   }
   renderCheckbox(checkbox, ui, charW, _charH) {
+    const metrics = checkbox.resolveRenderContext(charW, _charH);
+    charW = metrics.charWidth;
+    const charH = metrics.charHeight;
     const { x, y, height } = checkbox.bounds;
-    const { fg, bg, checkColor, hoverBg, boxSize, labelGap, borderWidth } = checkbox.checkboxStyle;
+    const { fg, bg, borderColor, checkColor, hoverBg, boxSize, labelGap, borderWidth } = this.resolveCheckboxStyle(checkbox);
     const label = String(checkbox.label ?? "");
-    const actualBoxSize = Math.min(height, Math.max(boxSize, charW));
+    const scaledBoxSize = checkbox.getRenderPixels(boxSize);
+    const scaledLabelGap = checkbox.getRenderPixels(labelGap);
+    const scaledBorderWidth = checkbox.getRenderPixels(borderWidth);
+    const actualBoxSize = Math.min(height, Math.max(scaledBoxSize, charW));
     const boxY = y + (height - actualBoxSize) / 2;
     const bgColor = checkbox.state.hovered ? hoverBg : bg;
     ui.rect(x, boxY, actualBoxSize, actualBoxSize, bgColor);
-    ui.rect(x, boxY, actualBoxSize, borderWidth, fg);
-    ui.rect(x, boxY + actualBoxSize - borderWidth, actualBoxSize, borderWidth, fg);
-    ui.rect(x, boxY, borderWidth, actualBoxSize, fg);
-    ui.rect(x + actualBoxSize - borderWidth, boxY, borderWidth, actualBoxSize, fg);
+    ui.rect(x, boxY, actualBoxSize, scaledBorderWidth, borderColor);
+    ui.rect(x, boxY + actualBoxSize - scaledBorderWidth, actualBoxSize, scaledBorderWidth, borderColor);
+    ui.rect(x, boxY, scaledBorderWidth, actualBoxSize, borderColor);
+    ui.rect(x + actualBoxSize - scaledBorderWidth, boxY, scaledBorderWidth, actualBoxSize, borderColor);
     if (checkbox.checked) {
       const checkPadding = actualBoxSize * 0.25;
       ui.rect(
@@ -15821,27 +16873,45 @@ class GUISystem {
         checkColor
       );
     }
-    ui.text(label, x + actualBoxSize + labelGap, y + Math.max(0, Math.floor((height - charW) / 2)), fg);
+    ui.text(label, x + actualBoxSize + scaledLabelGap, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
   }
   renderSlider(slider, ui, _charW, charH) {
+    const metrics = slider.resolveRenderContext(_charW, charH);
+    charH = metrics.charHeight;
     const { x, y, width, height } = slider.bounds;
-    const { fg, trackColor, knobColor, knobHoverColor, labelGap, trackHeight, knobWidth, knobHeight, valueGap } = slider.sliderStyle;
+    const {
+      fg,
+      trackColor,
+      knobColor,
+      knobHoverColor,
+      knobActiveColor,
+      labelGap,
+      trackHeight,
+      knobWidth,
+      knobHeight,
+      valueGap
+    } = this.resolveSliderStyle(slider);
+    const scaledLabelGap = slider.getRenderPixels(labelGap);
+    const scaledTrackHeight = slider.getRenderPixels(trackHeight);
+    const scaledKnobWidth = slider.getRenderPixels(knobWidth);
+    const scaledKnobHeight = slider.getRenderPixels(knobHeight);
+    const scaledValueGap = slider.getRenderPixels(valueGap);
     let trackY = y;
     if (slider.label) {
       ui.text(slider.label, x, y, fg);
-      trackY += charH + labelGap;
+      trackY += charH + scaledLabelGap;
     }
-    const trackYPos = trackY + (height - trackHeight) / 2;
-    ui.rect(x, trackYPos, width, trackHeight, trackColor);
-    const actualKnobHeight = Math.min(height - (slider.label ? charH + labelGap : 0), knobHeight);
+    const trackYPos = trackY + (height - scaledTrackHeight) / 2;
+    ui.rect(x, trackYPos, width, scaledTrackHeight, trackColor);
+    const actualKnobHeight = Math.min(height - (slider.label ? charH + scaledLabelGap : 0), scaledKnobHeight);
     const range = slider.max - slider.min;
     const ratio = range > 0 ? (slider.value - slider.min) / range : 0;
-    const knobX = x + ratio * (width - knobWidth);
+    const knobX = x + ratio * (width - scaledKnobWidth);
     const knobY = trackY + (height - actualKnobHeight) / 2;
-    const knobCol = slider.state.hovered || slider.isDragging() ? knobHoverColor : knobColor;
-    ui.rect(knobX, knobY, knobWidth, actualKnobHeight, knobCol);
+    const knobCol = slider.isDragging() ? knobActiveColor : slider.state.hovered ? knobHoverColor : knobColor;
+    ui.rect(knobX, knobY, scaledKnobWidth, actualKnobHeight, knobCol);
     const valueText = `${Math.round(slider.value)}`;
-    ui.text(valueText, x + width + valueGap, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
+    ui.text(valueText, x + width + scaledValueGap, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
   }
   /**
    * Set visibility for all widgets in a group
@@ -15861,8 +16931,79 @@ class GUISystem {
   getWidgetManager() {
     return this.widgetManager;
   }
+  resolveLabelStyle(widget) {
+    return {
+      fg: widget.labelStyle.fg ?? this.themeDefaults.label.fg,
+      bg: widget.labelStyle.bg ?? this.themeDefaults.label.bg
+    };
+  }
+  resolveButtonStyle(widget) {
+    return {
+      fg: widget.buttonStyle.fg ?? this.themeDefaults.button.fg,
+      bg: widget.buttonStyle.bg ?? this.themeDefaults.button.bg,
+      borderColor: widget.state.focused ? this.themeDefaults.button.focusBorder : widget.buttonStyle.borderColor ?? this.themeDefaults.button.border,
+      hoverBg: widget.buttonStyle.hoverBg ?? this.themeDefaults.button.hoverBg,
+      activeBg: widget.buttonStyle.activeBg ?? this.themeDefaults.button.activeBg,
+      borderWidth: widget.buttonStyle.borderWidth,
+      focusBorderWidth: widget.buttonStyle.focusBorderWidth
+    };
+  }
+  resolveCheckboxStyle(widget) {
+    return {
+      fg: widget.checkboxStyle.fg ?? this.themeDefaults.checkbox.fg,
+      bg: widget.checkboxStyle.bg ?? this.themeDefaults.checkbox.bg,
+      borderColor: widget.state.focused ? this.themeDefaults.checkbox.focusBorder : this.themeDefaults.checkbox.border,
+      checkColor: widget.checkboxStyle.checkColor ?? this.themeDefaults.checkbox.check,
+      hoverBg: widget.checkboxStyle.hoverBg ?? this.themeDefaults.checkbox.hoverBg,
+      boxSize: widget.checkboxStyle.boxSize,
+      labelGap: widget.checkboxStyle.labelGap,
+      borderWidth: widget.checkboxStyle.borderWidth
+    };
+  }
+  resolveSliderStyle(widget) {
+    return {
+      fg: widget.sliderStyle.fg ?? this.themeDefaults.slider.fg,
+      trackColor: widget.sliderStyle.trackColor ?? this.themeDefaults.slider.track,
+      knobColor: widget.sliderStyle.knobColor ?? this.themeDefaults.slider.knob,
+      knobHoverColor: widget.sliderStyle.knobHoverColor ?? this.themeDefaults.slider.knobHover,
+      knobActiveColor: this.themeDefaults.slider.knobActive,
+      labelGap: widget.sliderStyle.labelGap,
+      trackHeight: widget.sliderStyle.trackHeight,
+      knobWidth: widget.sliderStyle.knobWidth,
+      knobHeight: widget.sliderStyle.knobHeight,
+      valueGap: widget.sliderStyle.valueGap
+    };
+  }
+  resolveTextFieldStyle(widget) {
+    return {
+      fg: widget.textFieldStyle.fg ?? this.themeDefaults.input.fg,
+      bg: widget.textFieldStyle.bg ?? this.themeDefaults.input.bg,
+      borderColor: widget.state.hovered ? this.themeDefaults.input.hoverBorder : widget.textFieldStyle.borderColor ?? this.themeDefaults.input.border,
+      focusBorderColor: widget.textFieldStyle.focusBorderColor ?? this.themeDefaults.input.focusBorder,
+      drawBackground: widget.textFieldStyle.drawBackground,
+      drawBorder: widget.textFieldStyle.drawBorder,
+      paddingX: widget.textFieldStyle.paddingX,
+      paddingY: widget.textFieldStyle.paddingY,
+      borderWidth: widget.textFieldStyle.borderWidth,
+      focusBorderWidth: widget.textFieldStyle.focusBorderWidth
+    };
+  }
+  resolveTextEditorStyle(widget) {
+    return {
+      fg: widget.textEditorStyle.fg ?? this.themeDefaults.input.fg,
+      bg: widget.textEditorStyle.bg ?? this.themeDefaults.input.bg,
+      borderColor: widget.state.hovered ? this.themeDefaults.input.hoverBorder : widget.textEditorStyle.borderColor ?? this.themeDefaults.input.border,
+      focusBorderColor: widget.textEditorStyle.focusBorderColor ?? this.themeDefaults.input.focusBorder,
+      drawBackground: widget.textEditorStyle.drawBackground,
+      drawBorder: widget.textEditorStyle.drawBorder,
+      paddingX: widget.textEditorStyle.paddingX,
+      paddingY: widget.textEditorStyle.paddingY,
+      borderWidth: widget.textEditorStyle.borderWidth,
+      focusBorderWidth: widget.textEditorStyle.focusBorderWidth
+    };
+  }
 }
-function createGUIAPI(getMetrics, isTrustedUserInput, getPixelScale, getViewportRect, getSafeAreaInsets) {
+function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, getViewportRect, getSafeAreaInsets, getCurrentWorldSection, resolveWorldSectionSelector) {
   const defaultBreakpointThresholds = {
     sm: 480,
     md: 768,
@@ -16140,9 +17281,54 @@ function createGUIAPI(getMetrics, isTrustedUserInput, getPixelScale, getViewport
     if (width < t.xl) return "lg";
     return "xl";
   };
+  const safeGetCurrentWorldSection = () => {
+    try {
+      const section = typeof getCurrentWorldSection === "function" ? getCurrentWorldSection() : null;
+      return typeof section === "number" && Number.isFinite(section) ? section : null;
+    } catch {
+      return null;
+    }
+  };
+  const safeResolveWorldSection = (selector) => {
+    if (selector === "current") {
+      return safeGetCurrentWorldSection();
+    }
+    if (typeof selector === "number" && Number.isFinite(selector)) {
+      return Math.trunc(selector);
+    }
+    if (typeof selector !== "string") {
+      return null;
+    }
+    const raw = selector.trim();
+    if (!raw) return null;
+    if (/^-?\d+$/.test(raw)) {
+      return Number(raw);
+    }
+    try {
+      if (typeof resolveWorldSectionSelector === "function") {
+        const resolved = resolveWorldSectionSelector(raw);
+        return typeof resolved === "number" && Number.isFinite(resolved) ? resolved : null;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  };
+  const normalizeSectionList = (selector) => {
+    const values2 = Array.isArray(selector) ? selector : [selector];
+    const resolved = [];
+    for (const value of values2) {
+      const section = safeResolveWorldSection(value);
+      if (section === null || resolved.includes(section)) continue;
+      resolved.push(section);
+    }
+    return resolved;
+  };
   const api = {
     _system: null,
     _boundsSpace: "css",
+    _nextSectionGroupId: 1,
+    _sectionBindings: [],
     /**
      * Initialize GUI system
      * Call this in on:init
@@ -16150,11 +17336,103 @@ function createGUIAPI(getMetrics, isTrustedUserInput, getPixelScale, getViewport
     init(options) {
       this._boundsSpace = options && options.boundsSpace === "device" ? "device" : "css";
       this._system = new GUISystem();
+      this._nextSectionGroupId = 1;
+      this._sectionBindings = [];
+      if (getStyle) {
+        try {
+          this._system.setThemeFromStyles(getStyle);
+        } catch {
+        }
+      }
       if (this._boundsSpace === "css") {
         const currentTokens = this._system.getTokens();
         this._system.setTokens(scaleTokenPatch(currentTokens));
       }
       return this._system;
+    },
+    _allocateSectionGroup() {
+      const group = `__storie_gui_section_${this._nextSectionGroupId++}`;
+      return group;
+    },
+    _findSectionBinding(group) {
+      return this._sectionBindings.find((binding) => binding.group === group) ?? null;
+    },
+    _applySectionBinding(binding, currentSection) {
+      if (!this._system) return false;
+      const activeSection = typeof currentSection === "number" && Number.isFinite(currentSection) ? currentSection : safeGetCurrentWorldSection();
+      const visible = activeSection !== null && binding.sections.includes(activeSection);
+      if (!visible && binding.clearFocusOnHide) {
+        const focused = this._system.getFocusedWidget();
+        if (focused && focused.group === binding.group) {
+          this._system.clearFocus();
+        }
+      }
+      this._system.setGroupVisible(binding.group, visible);
+      return visible;
+    },
+    syncSectionBindings(currentSection) {
+      if (!this._system) return;
+      const activeSection = typeof currentSection === "number" && Number.isFinite(currentSection) ? currentSection : safeGetCurrentWorldSection();
+      for (const binding of this._sectionBindings) {
+        this._applySectionBinding(binding, activeSection);
+      }
+    },
+    bindGroupToSections(group, sections, options) {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      const resolvedSections = normalizeSectionList(sections);
+      if (resolvedSections.length === 0) {
+        throw new Error("gui.bindGroupToSections(group, sections): could not resolve any section selectors");
+      }
+      const clearFocusOnHide = (options == null ? void 0 : options.clearFocusOnHide) !== false;
+      const existing = this._findSectionBinding(group);
+      if (existing) {
+        existing.sections = resolvedSections;
+        existing.clearFocusOnHide = clearFocusOnHide;
+        this._applySectionBinding(existing);
+        return group;
+      }
+      const binding = {
+        group,
+        sections: resolvedSections,
+        clearFocusOnHide
+      };
+      this._sectionBindings.push(binding);
+      this._applySectionBinding(binding);
+      return group;
+    },
+    bindGroupToSection(group, section, options) {
+      return this.bindGroupToSections(group, [section], options);
+    },
+    section(section = "current", options) {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      const group = (options == null ? void 0 : options.group) ?? this._allocateSectionGroup();
+      this.bindGroupToSections(group, section, options);
+      const withGroup = (config) => ({ ...config || {}, group });
+      const sectionAPI = {
+        group,
+        bind: (nextSections, nextOptions) => {
+          api.bindGroupToSections(group, nextSections, nextOptions ?? options);
+          return sectionAPI;
+        },
+        createButton: (config) => api.createButton(withGroup(config)),
+        createLabel: (config) => api.createLabel(withGroup(config)),
+        createCheckbox: (config) => api.createCheckbox(withGroup(config)),
+        createSlider: (config) => api.createSlider(withGroup(config)),
+        createTextField: (config) => api.createTextField(withGroup(config)),
+        createTextEditor: (config) => api.createTextEditor(withGroup(config)),
+        createMarkdownView: (config) => api.createMarkdownView(withGroup(config)),
+        createContainer: (config) => api.createContainer(withGroup(config)),
+        createResponsivePanel: (config) => api.createResponsivePanel(withGroup(config)),
+        setVisible: (visible) => {
+          api.setGroupVisible(group, visible);
+          return sectionAPI;
+        }
+      };
+      return sectionAPI;
     },
     _normalizeConfig(config) {
       if (!config || typeof config !== "object") return config;
@@ -16177,6 +17455,16 @@ function createGUIAPI(getMetrics, isTrustedUserInput, getPixelScale, getViewport
      */
     getSystem() {
       return this._system;
+    },
+    syncTheme() {
+      if (!this._system || !getStyle) {
+        return null;
+      }
+      try {
+        return this._system.setThemeFromStyles(getStyle);
+      } catch {
+        return null;
+      }
     },
     getTokens() {
       if (!this._system) {
@@ -17072,12 +18360,12 @@ class WebGPUUIRenderer {
   }
   /**
    * Register an image under an id for subsequent image() draws.
-   * Caller owns the ImageBitmap lifetime; this method copies it to GPU.
+   * Caller owns the source lifetime; this method copies it to GPU.
    */
-  registerImage(imageId, bitmap) {
-    if (!imageId || !bitmap) return null;
-    const width = Math.max(1, bitmap.width | 0);
-    const height = Math.max(1, bitmap.height | 0);
+  registerImage(imageId, image) {
+    if (!imageId || !image) return null;
+    const width = Math.max(1, image.width | 0);
+    const height = Math.max(1, image.height | 0);
     const texture = this.device.createTexture({
       size: { width, height },
       format: "rgba8unorm",
@@ -17085,7 +18373,7 @@ class WebGPUUIRenderer {
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
     });
     this.device.queue.copyExternalImageToTexture(
-      { source: bitmap },
+      { source: image },
       { texture },
       { width, height }
     );
@@ -19329,20 +20617,18 @@ function parseTransform3D(section, sectionIndex, config) {
   };
 }
 function parseSectionMetadata(title) {
-  const match = title.match(/\{[^}]+\}/);
+  const match = title.match(/\{[\s\S]*\}\s*$/);
   if (!match) return {};
-  try {
-    const jsonStr = match[0];
-    const parsed = JSON.parse(jsonStr);
-    const result = {};
-    for (const key in parsed) {
-      result[key] = String(parsed[key]);
-    }
-    return result;
-  } catch (e) {
+  const parsed = parseHeadingDirectiveObject(match[0]);
+  if (!parsed) {
     console.warn("Failed to parse section metadata:", title);
     return {};
   }
+  const result = {};
+  for (const key in parsed) {
+    result[key] = String(parsed[key]);
+  }
+  return result;
 }
 function createSection3DLayouts(sections, config) {
   const layouts = [];
@@ -23165,6 +24451,11 @@ class StorieEngine {
     // 3D section texture rasterization cache
     __publicField(this, "sectionTextureCache", /* @__PURE__ */ new Map());
     __publicField(this, "sectionLinkRegionsCache", /* @__PURE__ */ new Map());
+    __publicField(this, "sectionWidgetPlacementsCache", /* @__PURE__ */ new Map());
+    __publicField(this, "worldsInlineWidgetInstances", []);
+    __publicField(this, "worldsInlineWidgetEventsQueue", []);
+    __publicField(this, "worldsInlineWidgetValueState", /* @__PURE__ */ new Map());
+    __publicField(this, "nextMarkdownImageId", 1);
     // Host sync (engine-level, transport pluggable)
     __publicField(this, "hostSync", null);
     // When host sync role is `client`, treat this window as display-only.
@@ -23178,6 +24469,7 @@ class StorieEngine {
     // Theme system
     __publicField(this, "currentTheme");
     __publicField(this, "styleSheet");
+    __publicField(this, "currentThemeLabel", "neotopia");
     __publicField(this, "themeOverrideFromUrl", null);
     // Timing
     __publicField(this, "frameCount", 0);
@@ -23282,19 +24574,49 @@ class StorieEngine {
     console.log("  Canvas2D: lazy (created on first use)");
   }
   applyThemeColors(theme, label, source) {
-    this.currentTheme = theme;
+    var _a, _b, _c, _d, _e;
+    const nextTheme = { ...theme };
+    try {
+      if (this.api && this.api.theme && typeof this.api.theme === "object") {
+        const liveTheme = this.api.theme;
+        for (const key of Object.keys(liveTheme)) {
+          if (!Object.prototype.hasOwnProperty.call(nextTheme, key)) {
+            delete liveTheme[key];
+          }
+        }
+        Object.assign(liveTheme, nextTheme);
+        this.currentTheme = liveTheme;
+      } else {
+        this.currentTheme = nextTheme;
+      }
+    } catch {
+      this.currentTheme = nextTheme;
+    }
+    this.currentThemeLabel = label;
     this.styleSheet = applyTheme(this.currentTheme);
+    try {
+      setTUIThemeFromStyles((name) => this.getStyle(name));
+    } catch {
+    }
     try {
       if (this.api) {
         this.api.theme = this.currentTheme;
+        ((_a = this.api.themes) == null ? void 0 : _a.getName) && (this.api.themes.getName = () => this.currentThemeLabel);
+        (_c = (_b = this.api.tui) == null ? void 0 : _b.syncTheme) == null ? void 0 : _c.call(_b);
+        (_e = (_d = this.api.gui) == null ? void 0 : _d.syncTheme) == null ? void 0 : _e.call(_d);
       }
     } catch {
     }
     this.layers.clearAll(this.currentTheme.bg);
+    if (this.worldsEnabled) {
+      this.clear3DSectionTextures();
+    }
     if (source === "url") {
       console.log(`  Theme: ${label} (url override)`);
     } else if (source === "frontmatter") {
       console.log(`  Theme: ${label}`);
+    } else if (source === "runtime") {
+      console.log(`  Theme: ${label} (runtime)`);
     }
   }
   readThemeOverrideFromUrl() {
@@ -23634,6 +24956,196 @@ class StorieEngine {
     }
     console.log("✓ Canvas 2D offscreen canvas created (800x600)");
     return ctx;
+  }
+  getDocumentBlobStore(documentId) {
+    const docId = documentId ?? this.activeDocumentId;
+    if (!docId) return null;
+    const doc = this.documents.get(docId);
+    return doc && doc._blobStore ? doc._blobStore : null;
+  }
+  getDocumentMarkdownImageCache(documentId) {
+    const docId = documentId ?? this.activeDocumentId;
+    if (!docId) return null;
+    const doc = this.documents.get(docId);
+    if (!doc) return null;
+    if (!doc._markdownImageCache) {
+      doc._markdownImageCache = /* @__PURE__ */ new Map();
+    }
+    return doc._markdownImageCache;
+  }
+  decodeMarkdownBase64ToBytes(b64) {
+    const clean = String(b64 ?? "").replace(/\s+/g, "");
+    const padding = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0;
+    const estimatedBytes = Math.max(0, Math.floor(clean.length * 3 / 4) - padding);
+    if (estimatedBytes > 8 * 1024 * 1024) return null;
+    try {
+      const bin = atob(clean);
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 255;
+      return out;
+    } catch {
+      return null;
+    }
+  }
+  decodeMarkdownHexToBytes(hex) {
+    const clean = String(hex ?? "").replace(/0x/gi, "").replace(/[^0-9a-f]/gi, "").trim();
+    if (clean.length === 0) return new Uint8Array(0);
+    if (clean.length % 2 !== 0) return null;
+    const estimatedBytes = Math.floor(clean.length / 2);
+    if (estimatedBytes > 8 * 1024 * 1024) return null;
+    const out = new Uint8Array(estimatedBytes);
+    for (let i = 0; i < estimatedBytes; i++) {
+      const value = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+      if (!Number.isFinite(value) || Number.isNaN(value)) return null;
+      out[i] = value & 255;
+    }
+    return out;
+  }
+  decodeMarkdownBlobEntryToBytes(entry) {
+    return entry.encoding === "hex" ? this.decodeMarkdownHexToBytes(entry.data) : this.decodeMarkdownBase64ToBytes(entry.data);
+  }
+  async decodeRenderableImageFromBytes(bytes, mime) {
+    const blob = new Blob([new Uint8Array(bytes)], { type: mime || "application/octet-stream" });
+    if (typeof createImageBitmap === "function") {
+      try {
+        const bitmap = await createImageBitmap(blob);
+        return bitmap;
+      } catch {
+      }
+    }
+    if (typeof Image === "undefined" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
+      return null;
+    }
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const image = await new Promise((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => {
+          try {
+            URL.revokeObjectURL(objectUrl);
+          } catch {
+          }
+          reject(new Error("Image element failed to decode"));
+        };
+        element.src = objectUrl;
+      });
+      return image;
+    } catch (error) {
+      try {
+        URL.revokeObjectURL(objectUrl);
+      } catch {
+      }
+      throw error;
+    }
+  }
+  ensureMarkdownBlobImageLoaded(source, documentId) {
+    const docId = documentId ?? this.activeDocumentId;
+    const key = String(source ?? "").trim();
+    if (!docId || !key) return null;
+    const cache = this.getDocumentMarkdownImageCache(docId);
+    if (!cache) return null;
+    let cached = cache.get(key) ?? null;
+    if (!cached) {
+      cached = {
+        image: null,
+        width: 0,
+        height: 0,
+        failed: false,
+        inFlight: null,
+        rendererImageId: null
+      };
+      cache.set(key, cached);
+    }
+    if (cached.image) return cached;
+    if (cached.failed) return null;
+    if (!cached.inFlight) {
+      const store = this.getDocumentBlobStore(docId);
+      const blobEntry = (store == null ? void 0 : store.get(key)) ?? null;
+      const mime = String((blobEntry == null ? void 0 : blobEntry.mime) ?? "");
+      if (!blobEntry || !mime.startsWith("image/")) {
+        cached.failed = true;
+        return null;
+      }
+      cached.inFlight = (async () => {
+        if (!blobEntry.bytes) {
+          const decoded = this.decodeMarkdownBlobEntryToBytes(blobEntry);
+          if (!decoded) {
+            cached.failed = true;
+            cached.inFlight = null;
+            return;
+          }
+          blobEntry.bytes = decoded;
+        }
+        const bytes = new Uint8Array(blobEntry.bytes);
+        try {
+          const image = await this.decodeRenderableImageFromBytes(bytes, mime);
+          if (!image) {
+            cached.failed = true;
+            return;
+          }
+          cached.image = image;
+          cached.width = image.width;
+          cached.height = image.height;
+          cached.failed = false;
+          if (this.worldsEnabled && this.section3DLayouts.length > 0) {
+            this.clear3DSectionTextures();
+          }
+        } catch (error) {
+          cached.failed = true;
+          console.warn(`[markdown-image] Failed to decode image "${key}":`, error);
+        } finally {
+          cached.inFlight = null;
+        }
+      })();
+    }
+    return cached.image ? cached : null;
+  }
+  getMarkdownImageSize(source, documentId) {
+    const cached = this.ensureMarkdownBlobImageLoaded(source, documentId);
+    if (!cached || !cached.image || cached.width <= 0 || cached.height <= 0) return null;
+    return { width: cached.width, height: cached.height };
+  }
+  getMarkdownImageSource(source, documentId) {
+    var _a;
+    return ((_a = this.ensureMarkdownBlobImageLoaded(source, documentId)) == null ? void 0 : _a.image) ?? null;
+  }
+  ensureMarkdownImageRegisteredWithRenderer(source, renderer, documentId) {
+    const cached = this.ensureMarkdownBlobImageLoaded(source, documentId);
+    if (!cached || !cached.image) return null;
+    const imageId = cached.rendererImageId ?? `mdimg_${this.nextMarkdownImageId++}`;
+    cached.rendererImageId = imageId;
+    if (!renderer.getImageSize(imageId)) {
+      renderer.registerImage(imageId, cached.image);
+    }
+    return { imageId, width: cached.width, height: cached.height };
+  }
+  createMarkdownAwareDraw2D(renderer, documentId) {
+    return {
+      rect: renderer.rect.bind(renderer),
+      text: renderer.text.bind(renderer),
+      image: (imageId, x, y, w, h, options) => {
+        const registered = this.ensureMarkdownImageRegisteredWithRenderer(imageId, renderer, documentId);
+        if (registered) {
+          renderer.image(registered.imageId, x, y, w, h, options);
+          return;
+        }
+        renderer.image(imageId, x, y, w, h, options);
+      },
+      getImageSize: (imageId) => {
+        const registered = this.ensureMarkdownImageRegisteredWithRenderer(imageId, renderer, documentId);
+        if (registered) {
+          return { width: registered.width, height: registered.height };
+        }
+        return renderer.getImageSize(imageId);
+      },
+      pushClipRect: renderer.pushClipRect ? renderer.pushClipRect.bind(renderer) : void 0,
+      popClipRect: renderer.popClipRect ? renderer.popClipRect.bind(renderer) : void 0,
+      pushMaskRect: renderer.pushMaskRect ? renderer.pushMaskRect.bind(renderer) : void 0,
+      pushMaskRoundedRect: renderer.pushMaskRoundedRect ? renderer.pushMaskRoundedRect.bind(renderer) : void 0,
+      pushMaskPolygon: renderer.pushMaskPolygon ? renderer.pushMaskPolygon.bind(renderer) : void 0,
+      popMask: renderer.popMask ? renderer.popMask.bind(renderer) : void 0
+    };
   }
   /**
    * Initialize Compositor (WebGPU only)
@@ -23981,22 +25493,15 @@ class StorieEngine {
       }
       if (!entry.bytes) return null;
       const mime = entry.mime || "application/octet-stream";
-      const bytes = new Uint8Array(entry.bytes);
-      const blob = new Blob([bytes], { type: mime });
-      let bitmap = null;
       try {
-        bitmap = await createImageBitmap(blob);
+        const image = await engine.decodeRenderableImageFromBytes(entry.bytes, mime);
+        if (!image) return null;
         const id = `img_${nextUIImageId++}`;
-        ui.registerImage(id, bitmap);
+        ui.registerImage(id, image);
         return id;
       } catch (e) {
         console.warn(`[ui.loadImageFromBlob] Failed to decode image "${String(name)}":`, e);
         return null;
-      } finally {
-        try {
-          bitmap == null ? void 0 : bitmap.close();
-        } catch {
-        }
       }
     };
     return {
@@ -24281,6 +25786,7 @@ class StorieEngine {
             charHeight: (atlas == null ? void 0 : atlas.getCharHeight()) ?? 16
           };
         },
+        (name) => this.getStyle(name),
         () => this.inputDispatchDepth > 0,
         () => {
           try {
@@ -24297,11 +25803,28 @@ class StorieEngine {
           return { scaleX: v2, scaleY: v2 };
         },
         () => this.getCanvasViewportRectCss(),
-        () => this.getSafeAreaInsetsCss()
+        () => this.getSafeAreaInsetsCss(),
+        () => this.current3DSectionIndex,
+        (selector) => this.resolve3DSectionIndex(selector)
       ),
       // Theme API
       getStyle: (name) => this.getStyle(name),
       theme: this.currentTheme,
+      themes: {
+        list: () => Object.keys(THEMES),
+        getName: () => this.currentThemeLabel,
+        get: (name) => {
+          const key = String(name ?? "").trim().toLowerCase();
+          if (!key || !Object.prototype.hasOwnProperty.call(THEMES, key)) return null;
+          return THEMES[key];
+        },
+        set: (name) => {
+          const key = String(name ?? "").trim().toLowerCase();
+          if (!key || !Object.prototype.hasOwnProperty.call(THEMES, key)) return false;
+          this.applyThemeColors(getTheme(key), key, "runtime");
+          return true;
+        }
+      },
       // Module API
       modules: {
         load: async (name, options) => {
@@ -26281,6 +27804,35 @@ class StorieEngine {
             return engine.activated3DLinksQueue.shift() ?? null;
           }
         },
+        widgets: {
+          popEvent: () => {
+            return engine.worldsInlineWidgetEventsQueue.shift() ?? null;
+          },
+          getValue: (id, section) => {
+            const resolved = section === void 0 || section === null || section === "current" ? engine.current3DSectionIndex : engine.resolve3DSectionIndex(section);
+            if (!(typeof resolved === "number" && Number.isFinite(resolved))) return null;
+            return engine.worldsInlineWidgetValueState.get(engine.getWorldsInlineWidgetStateKey(resolved, String(id))) ?? null;
+          },
+          setValue: (id, value, section) => {
+            const resolved = section === void 0 || section === null || section === "current" ? engine.current3DSectionIndex : engine.resolve3DSectionIndex(section);
+            if (!(typeof resolved === "number" && Number.isFinite(resolved))) return false;
+            const key = engine.getWorldsInlineWidgetStateKey(resolved, String(id));
+            engine.worldsInlineWidgetValueState.set(key, value);
+            const live = engine.worldsInlineWidgetInstances.find((entry) => entry.sectionIndex === resolved && entry.widgetId === id);
+            if (live) {
+              if (live.kind === "slider" && typeof live.widget.setValue === "function" && typeof value === "number") {
+                live.widget.setValue(value);
+                live.lastValue = live.widget.getValue();
+              } else if (live.kind === "checkbox" && typeof live.widget.setChecked === "function" && typeof value === "boolean") {
+                live.widget.setChecked(value);
+                live.lastValue = value;
+              } else if (live.kind === "label" && typeof live.widget.setText === "function") {
+                live.widget.setText(String(value));
+              }
+            }
+            return true;
+          }
+        },
         // Outline-based navigation helpers.
         // Provides flexible “next/prev” semantics (global, subtree, siblings, level filters).
         nav: /* @__PURE__ */ (() => {
@@ -26928,6 +28480,284 @@ class StorieEngine {
       w: region.w * scale,
       h: region.h * scale
     }));
+  }
+  scaleWidgetPlacements(placements, scale) {
+    if (!(scale > 0) || Math.abs(scale - 1) < 1e-6) {
+      return placements.map((placement) => ({ ...placement, widget: { ...placement.widget } }));
+    }
+    return placements.map((placement) => ({
+      ...placement,
+      x: placement.x * scale,
+      y: placement.y * scale,
+      w: placement.w * scale,
+      h: placement.h * scale,
+      widget: { ...placement.widget }
+    }));
+  }
+  translateWidgetPlacements(placements, dx, dy) {
+    if (dx === 0 && dy === 0) return;
+    for (const placement of placements) {
+      placement.x += dx;
+      placement.y += dy;
+    }
+  }
+  getWorldsInlineWidgetStateKey(sectionIndex, widgetId) {
+    return `${sectionIndex}:${widgetId}`;
+  }
+  getGUIPixelMetrics() {
+    const atlas = this.renderer instanceof WebGPURenderer ? this.renderer.getAtlas() : null;
+    return {
+      charWidth: (atlas == null ? void 0 : atlas.getCharWidth()) ?? 10,
+      charHeight: (atlas == null ? void 0 : atlas.getCharHeight()) ?? 16
+    };
+  }
+  clearWorldsInlineWidgets() {
+    var _a, _b;
+    const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
+    const system = (_b = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _b.call(guiAPI);
+    if (system && typeof system.getWidgetManager === "function") {
+      const manager = system.getWidgetManager();
+      const focused = manager.getFocused();
+      if (focused && this.worldsInlineWidgetInstances.some((entry) => entry.widget.id === focused.id)) {
+        manager.focus(null);
+      }
+      for (const entry of this.worldsInlineWidgetInstances) {
+        manager.unregister(entry.widget.id);
+      }
+    }
+    this.worldsInlineWidgetInstances = [];
+  }
+  getActiveWorldsInlineWidgetPlacements() {
+    if (!(typeof this.current3DSectionIndex === "number")) return null;
+    const layout = this.section3DLayouts.find((item) => item.sectionIndex === this.current3DSectionIndex);
+    if (!layout || !layout.texture || !layout.visible || layout.interactive === false) return null;
+    const placements = this.sectionWidgetPlacementsCache.get(layout.sectionIndex);
+    if (!placements || placements.length === 0) return null;
+    return { layout, placements };
+  }
+  project3DTextureRectToScreen(layout, rect) {
+    if (!this.camera3D) return null;
+    const dims = this.sectionTextureCache.get(layout.sectionIndex);
+    if (!dims || dims.width <= 0 || dims.height <= 0) return null;
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    if (canvasW <= 0 || canvasH <= 0) return null;
+    const aspect = canvasW / canvasH;
+    const view = getCameraViewMatrix(this.camera3D);
+    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+    const viewProj = mat4Multiply(proj, view);
+    const model = this.get3DCardModelMatrix(layout);
+    const corners = [
+      { x: rect.x, y: rect.y },
+      { x: rect.x + rect.w, y: rect.y },
+      { x: rect.x + rect.w, y: rect.y + rect.h },
+      { x: rect.x, y: rect.y + rect.h }
+    ];
+    const screenPoints = [];
+    for (const corner of corners) {
+      const u = corner.x / dims.width;
+      const v2 = corner.y / dims.height;
+      const world = mat4TransformPoint(model, { x: u - 0.5, y: 0.5 - v2, z: 0 });
+      const clip = mat4TransformVec4(viewProj, world.x, world.y, world.z, 1);
+      if (clip.w <= 1e-6) return null;
+      const ndcX = clip.x / clip.w;
+      const ndcY = clip.y / clip.w;
+      screenPoints.push({
+        x: (ndcX * 0.5 + 0.5) * canvasW,
+        y: (1 - (ndcY * 0.5 + 0.5)) * canvasH
+      });
+    }
+    const xs = screenPoints.map((point) => point.x);
+    const ys = screenPoints.map((point) => point.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    if (![minX, maxX, minY, maxY].every(Number.isFinite)) return null;
+    return {
+      x: minX,
+      y: minY,
+      width: Math.max(1, maxX - minX),
+      height: Math.max(1, maxY - minY)
+    };
+  }
+  getWorldsInlineWidgetRenderScale(placement, projected) {
+    const sx = placement.w > 0 ? projected.width / placement.w : 1;
+    const sy = placement.h > 0 ? projected.height / placement.h : 1;
+    const scale = Math.min(sx, sy);
+    if (!Number.isFinite(scale) || scale <= 0) return 1;
+    return Math.max(0.35, Math.min(6, scale));
+  }
+  syncWorldsInlineWidgets() {
+    var _a, _b, _c;
+    const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
+    let system = (_b = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _b.call(guiAPI);
+    if (!system && typeof (guiAPI == null ? void 0 : guiAPI.init) === "function") {
+      try {
+        guiAPI.init({ boundsSpace: "device" });
+        system = (_c = guiAPI.getSystem) == null ? void 0 : _c.call(guiAPI);
+      } catch {
+        system = null;
+      }
+    }
+    if (!system) {
+      this.clearWorldsInlineWidgets();
+      return;
+    }
+    const active = this.getActiveWorldsInlineWidgetPlacements();
+    if (!active) {
+      this.clearWorldsInlineWidgets();
+      return;
+    }
+    const nextKeys = new Set(active.placements.map((placement) => this.getWorldsInlineWidgetStateKey(active.layout.sectionIndex, placement.widget.id)));
+    const manager = system.getWidgetManager();
+    for (let i = this.worldsInlineWidgetInstances.length - 1; i >= 0; i--) {
+      const entry = this.worldsInlineWidgetInstances[i];
+      const key = this.getWorldsInlineWidgetStateKey(entry.sectionIndex, entry.widgetId);
+      if (entry.sectionIndex !== active.layout.sectionIndex || !nextKeys.has(key)) {
+        manager.unregister(entry.widget.id);
+        this.worldsInlineWidgetInstances.splice(i, 1);
+      }
+    }
+    for (const placement of active.placements) {
+      const projected = this.project3DTextureRectToScreen(active.layout, placement);
+      const widgetKey = this.getWorldsInlineWidgetStateKey(active.layout.sectionIndex, placement.widget.id);
+      if (!projected) continue;
+      const renderScale = placement.widget.scale === "worlds" ? this.getWorldsInlineWidgetRenderScale(placement, projected) : 1;
+      let entry = this.worldsInlineWidgetInstances.find((item) => item.sectionIndex === active.layout.sectionIndex && item.widgetId === placement.widget.id);
+      if (!entry) {
+        const persisted = this.worldsInlineWidgetValueState.get(widgetKey);
+        const bounds = { x: projected.x, y: projected.y, width: projected.width, height: projected.height };
+        let widget;
+        if (placement.widget.type === "button") {
+          widget = system.createButton({
+            id: `worlds-inline-${widgetKey}`,
+            group: "__worlds-inline-widgets",
+            bounds,
+            label: String(placement.widget.label || placement.widget.id)
+          });
+          widget.on("click", () => {
+            this.worldsInlineWidgetEventsQueue.push({
+              id: placement.widget.id,
+              kind: "button",
+              sectionIndex: active.layout.sectionIndex,
+              action: "click"
+            });
+          });
+        } else if (placement.widget.type === "slider") {
+          widget = system.createSlider({
+            id: `worlds-inline-${widgetKey}`,
+            group: "__worlds-inline-widgets",
+            bounds,
+            label: String(placement.widget.label || placement.widget.id),
+            min: Number.isFinite(placement.widget.min) ? Number(placement.widget.min) : 0,
+            max: Number.isFinite(placement.widget.max) ? Number(placement.widget.max) : 100,
+            value: typeof persisted === "number" ? persisted : Number.isFinite(placement.widget.value) ? Number(placement.widget.value) : 0,
+            step: Number.isFinite(placement.widget.step) ? Number(placement.widget.step) : 1
+          });
+        } else if (placement.widget.type === "checkbox") {
+          widget = system.createCheckbox({
+            id: `worlds-inline-${widgetKey}`,
+            group: "__worlds-inline-widgets",
+            bounds,
+            label: String(placement.widget.label || placement.widget.id),
+            checked: typeof persisted === "boolean" ? persisted : !!placement.widget.checked
+          });
+          widget.on("click", () => {
+            const checked = !!widget.isChecked();
+            this.worldsInlineWidgetValueState.set(widgetKey, checked);
+            this.worldsInlineWidgetEventsQueue.push({
+              id: placement.widget.id,
+              kind: "checkbox",
+              sectionIndex: active.layout.sectionIndex,
+              action: "toggle",
+              value: checked
+            });
+          });
+        } else {
+          widget = system.createLabel({
+            id: `worlds-inline-${widgetKey}`,
+            group: "__worlds-inline-widgets",
+            bounds,
+            align: placement.widget.align || "left",
+            focusable: false,
+            text: String(placement.widget.text || placement.widget.label || placement.widget.id)
+          });
+        }
+        entry = {
+          engineId: widgetKey,
+          sectionIndex: active.layout.sectionIndex,
+          widgetId: placement.widget.id,
+          kind: placement.widget.type,
+          widget,
+          lastValue: placement.widget.type === "slider" ? widget.getValue() : placement.widget.type === "checkbox" ? !!widget.isChecked() : void 0
+        };
+        if (entry.lastValue !== void 0) {
+          this.worldsInlineWidgetValueState.set(widgetKey, entry.lastValue);
+        }
+        this.worldsInlineWidgetInstances.push(entry);
+      }
+      entry.widget.setVisible(true);
+      entry.widget.setEnabled(true);
+      if (typeof entry.widget.setRenderScale === "function") {
+        entry.widget.setRenderScale(renderScale);
+      }
+      entry.widget.setBounds({
+        x: projected.x,
+        y: projected.y,
+        width: projected.width,
+        height: projected.height
+      });
+      if (entry.kind === "slider") {
+        const currentValue = entry.widget.getValue();
+        if (entry.lastValue !== currentValue) {
+          entry.lastValue = currentValue;
+          this.worldsInlineWidgetValueState.set(widgetKey, currentValue);
+          this.worldsInlineWidgetEventsQueue.push({
+            id: placement.widget.id,
+            kind: "slider",
+            sectionIndex: active.layout.sectionIndex,
+            action: "change",
+            value: currentValue
+          });
+        }
+      } else if (entry.kind === "checkbox") {
+        const checked = !!entry.widget.isChecked();
+        entry.lastValue = checked;
+        this.worldsInlineWidgetValueState.set(widgetKey, checked);
+      }
+    }
+  }
+  handleWorldsInlineWidgetMouse(pixelX, pixelY, mouseDown) {
+    var _a, _b;
+    if (this.worldsInlineWidgetInstances.length === 0) return false;
+    const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
+    const system = (_b = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _b.call(guiAPI);
+    if (!system) return false;
+    const { charWidth, charHeight } = this.getGUIPixelMetrics();
+    const hitBefore = this.worldsInlineWidgetInstances.some((entry) => entry.widget.containsPoint({ x: pixelX, y: pixelY }));
+    const draggingBefore = this.worldsInlineWidgetInstances.some((entry) => entry.kind === "slider" && typeof entry.widget.isDragging === "function" && entry.widget.isDragging());
+    system.handleMouse(pixelX, pixelY, mouseDown, charWidth, charHeight);
+    this.syncWorldsInlineWidgets();
+    return hitBefore || draggingBefore;
+  }
+  handleWorldsInlineWidgetKey(key, modifiers) {
+    var _a, _b, _c;
+    const active = this.getActiveWorldsInlineWidgetPlacements();
+    if (!active || active.placements.length === 0) return false;
+    const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
+    const system = (_b = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _b.call(guiAPI);
+    if (!system) return false;
+    const focused = (_c = system.getFocusedWidget) == null ? void 0 : _c.call(system);
+    const focusedIsInline = !!focused && this.worldsInlineWidgetInstances.some((entry) => entry.widget.id === focused.id);
+    const navigatesInline = key === "Tab" || key === "ArrowDown" || key === "ArrowUp" || key === "ArrowLeft" || key === "ArrowRight";
+    const activatesInline = key === "Enter" || key === " ";
+    if (!focusedIsInline && !navigatesInline) return false;
+    if (navigatesInline || activatesInline && focusedIsInline) {
+      system.handleKey(key, modifiers);
+      return true;
+    }
+    return false;
   }
   async loadMarkdown(documentId, markdown) {
     var _a, _b, _c, _d, _e, _f, _g, _h;
@@ -27647,7 +29477,7 @@ ${exportVars}
    * Shared by the live mainLoop and tickExportFrame.
    */
   runFrame() {
-    var _a, _b;
+    var _a, _b, _c, _d, _e;
     try {
       this.update();
       this.render();
@@ -27730,7 +29560,7 @@ ${exportVars}
             }
           }
           const paperPlaneZ = (() => {
-            var _a2, _b2, _c;
+            var _a2, _b2, _c2;
             if (!shaderInfo) return void 0;
             if (Number.isFinite(shaderInfo.paperPlaneZ)) {
               return shaderInfo.paperPlaneZ;
@@ -27739,7 +29569,7 @@ ${exportVars}
               const focusedIdx = (_a2 = this.lastApplied3DCameraFocus) == null ? void 0 : _a2.sectionIndex;
               if (!(typeof focusedIdx === "number" && Number.isFinite(focusedIdx))) return void 0;
               const focused = this.section3DLayouts.find((l) => l.sectionIndex === focusedIdx);
-              const z = (_c = (_b2 = focused == null ? void 0 : focused.transform) == null ? void 0 : _b2.position) == null ? void 0 : _c.z;
+              const z = (_c2 = (_b2 = focused == null ? void 0 : focused.transform) == null ? void 0 : _b2.position) == null ? void 0 : _c2.z;
               return Number.isFinite(z) ? z : void 0;
             }
             return void 0;
@@ -27760,9 +29590,15 @@ ${exportVars}
           this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig);
         }
         if (this.webgpuUIRenderer) {
-          const guiAPI = (_b = this.api) == null ? void 0 : _b.gui;
+          this.syncWorldsInlineWidgets();
+          const inlineGui = this.worldsInlineWidgetInstances.length > 0 ? (_d = (_c = (_b = this.api) == null ? void 0 : _b.gui) == null ? void 0 : _c.getSystem) == null ? void 0 : _d.call(_c) : null;
+          if (inlineGui) {
+            const { charWidth, charHeight } = this.getGUIPixelMetrics();
+            inlineGui.update(this.input.getMouseX(), this.input.getMouseY(), this.input.isMouseDown(0), charWidth, charHeight);
+          }
+          const guiAPI = (_e = this.api) == null ? void 0 : _e.gui;
           if (guiAPI && guiAPI.getSystem && guiAPI.getSystem()) {
-            guiAPI.render(this.api.ui);
+            guiAPI.render(this.createMarkdownAwareDraw2D(this.webgpuUIRenderer, this.activeDocumentId ?? void 0));
           }
           this.webgpuUIRenderer.flush();
         }
@@ -28068,37 +29904,23 @@ ${exportVars}
 ${content}`.trim();
       const nodes = parseMarkdownLite(markdown);
       if (overflowMode === "expand" || overflowMode === "expand-y" || overflowMode === "fit" || overflowMode === "fit-y") {
-        const base2 = this.getStyle("default");
-        const dim2 = this.getStyle("dim");
-        const accent12 = this.getStyle("accent1");
-        const heading2 = this.getStyle("heading");
-        const code2 = this.getStyle("code");
         const proceduralRuledPaper2 = this.isWorldsSectionBackgroundProceduralChainEnabled();
         const bakedRuledPaper2 = this.isWorldsSectionBackgroundBakedRuledLines();
         const shaderBg2 = !!this.parseWorldsSectionBackgroundShader();
         const surfaceBg2 = this.resolveWorldsSectionBackground();
         const mdBg2 = proceduralRuledPaper2 || bakedRuledPaper2 || shaderBg2 ? this.withAlpha(surfaceBg2, 0) : surfaceBg2;
-        const mdStyle2 = {
-          fg: base2.fg,
-          mutedFg: dim2.fg,
-          headingFg: heading2.fg,
-          listMarker: this.getWorldsListMarker(),
-          listMarkerGapPx: this.getWorldsListMarkerGapPx(),
-          listHangIndentPx: this.getWorldsListHangIndentPx(),
-          linkFg: base2.fg,
-          activeLinkFg: accent12.fg,
-          activeLinkIndex,
-          linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
-          codeFg: code2.fg,
-          codeBg: code2.bg,
-          bg: mdBg2
-        };
+        const mdStyle2 = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg2 });
         const measureTextWidth = this.worldsCardFontStack && measureCtx ? (text) => measureCtx.measureText(text).width : void 0;
         const probeWidthPx = overflowMode === "fit" ? maxW : widthPx;
         const probe = layoutMarkdownDocument(
           nodes,
           { x: 0, y: 0, width: probeWidthPx, height: heightPx },
-          { charW: measuredCharW, charH: measuredCharH, measureTextWidth },
+          {
+            charW: measuredCharW,
+            charH: measuredCharH,
+            measureTextWidth,
+            getImageSize: (source) => this.getMarkdownImageSize(source, this.activeDocumentId ?? void 0)
+          },
           mdStyle2,
           0,
           texturePadding,
@@ -28155,32 +29977,13 @@ ${content}`.trim();
       ctx.font = `${logicalFontSizePx}px ${fontStack}`;
       const charW = measuredCharW;
       const charH = measuredCharH;
-      const base = this.getStyle("default");
-      const dim = this.getStyle("dim");
-      const accent1 = this.getStyle("accent1");
-      const heading = this.getStyle("heading");
-      const code = this.getStyle("code");
       const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
       const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
       const shaderBg = !!this.parseWorldsSectionBackgroundShader();
       const surfaceBg = this.resolveWorldsSectionBackground();
       const borderStyle = this.getStyle("border");
       const mdBg = proceduralRuledPaper || bakedRuledPaper || shaderBg ? this.withAlpha(surfaceBg, 0) : surfaceBg;
-      const mdStyle = {
-        fg: base.fg,
-        mutedFg: dim.fg,
-        headingFg: heading.fg,
-        listMarker: this.getWorldsListMarker(),
-        listMarkerGapPx: this.getWorldsListMarkerGapPx(),
-        listHangIndentPx: this.getWorldsListHangIndentPx(),
-        linkFg: base.fg,
-        activeLinkFg: accent1.fg,
-        activeLinkIndex,
-        linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
-        codeFg: code.fg,
-        codeBg: code.bg,
-        bg: mdBg
-      };
+      const mdStyle = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
       const result = layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: widthPx, height: heightPx },
@@ -28189,12 +29992,13 @@ ${content}`.trim();
           charH,
           // If a proportional font is being used for Worlds cards, advance and
           // wrap using actual pixel widths to avoid visible spacing artifacts.
-          measureTextWidth: this.worldsCardFontStack ? (text) => ctx.measureText(text).width : void 0
+          measureTextWidth: this.worldsCardFontStack ? (text) => ctx.measureText(text).width : void 0,
+          getImageSize: (source) => this.getMarkdownImageSize(source, this.activeDocumentId ?? void 0)
         },
         mdStyle,
         0,
         texturePadding,
-        { overflow: layoutOverflow }
+        this.getWorldsWidgetLayoutOptions(layout.sectionIndex, layoutOverflow)
       );
       if ((this.worldsConfig.sectionContentAlign ?? "start") === "center") {
         const innerW = Math.max(1, widthPx - texturePadding * 2);
@@ -28215,18 +30019,25 @@ ${content}`.trim();
             r2.x += dx;
             r2.y += dy;
           }
+          this.translateWidgetPlacements(result.widgetPlacements, dx, dy);
         }
       }
       const scaledLinkRegions = this.scaleLinkRegions(result.linkRegions, textureScale);
+      const scaledWidgetPlacements = this.scaleWidgetPlacements(result.widgetPlacements, textureScale);
       ctx.clearRect(0, 0, widthPx, heightPx);
       if (bakedRuledPaper) {
-        const ruledLine = this.withAlpha(dim.fg, 64);
+        const ruledLine = this.withAlpha(mdStyle.mutedFg, 64);
         this.drawRuledLines2D(ctx, widthPx, heightPx, surfaceBg, ruledLine, baseLineHeight, texturePadding);
       }
       for (const op of result.ops) {
         if (op.kind === "rect") {
           ctx.fillStyle = ColorUtils.toCss(op.color);
           ctx.fillRect(op.x, op.y, op.w, op.h);
+        } else if (op.kind === "image") {
+          const image = this.getMarkdownImageSource(op.source, this.activeDocumentId ?? void 0);
+          if (image) {
+            ctx.drawImage(image, op.x, op.y, op.w, op.h);
+          }
         } else {
           ctx.fillStyle = ColorUtils.toCss(op.color);
           ctx.fillText(op.text, op.x, op.y);
@@ -28308,6 +30119,7 @@ ${content}`.trim();
       layout.texture = texture;
       this.sectionTextureCache.set(layout.sectionIndex, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
       this.sectionLinkRegionsCache.set(layout.sectionIndex, scaledLinkRegions);
+      this.sectionWidgetPlacementsCache.set(layout.sectionIndex, scaledWidgetPlacements);
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }
     if (worldSizeChanged) {
@@ -28329,9 +30141,33 @@ ${content}`.trim();
     }
     this.sectionTextureCache.clear();
     this.sectionLinkRegionsCache.clear();
+    this.sectionWidgetPlacementsCache.clear();
+    this.clearWorldsInlineWidgets();
     this.hovered3DLink = null;
     this.focused3DLink = null;
     this.worldsAutoLayoutCache = null;
+  }
+  invalidate3DSectionTexture(sectionIndex) {
+    const layout = this.section3DLayouts.find((item) => item.sectionIndex === sectionIndex);
+    if (!layout) return;
+    if (layout.texture) {
+      try {
+        layout.texture.destroy();
+      } catch {
+      }
+      layout.texture = null;
+    }
+    layout.highlightUvRect = void 0;
+    this.sectionTextureCache.delete(sectionIndex);
+    this.sectionLinkRegionsCache.delete(sectionIndex);
+    this.sectionWidgetPlacementsCache.delete(sectionIndex);
+    this.worldsAutoLayoutCache = null;
+  }
+  getWorldsWidgetLayoutOptions(sectionIndex, overflow) {
+    return {
+      overflow,
+      widgetPlaceholderMode: this.current3DSectionIndex === sectionIndex ? "none" : "full"
+    };
   }
   set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, pixelsPerWorldUnit) {
     const ppu = Number.isFinite(pixelsPerWorldUnit) && pixelsPerWorldUnit > 0 ? pixelsPerWorldUnit : 1;
@@ -28551,6 +30387,41 @@ ${content}`.trim();
     }
     return ColorUtils.from(v2);
   }
+  createWorldsMarkdownStyle(options) {
+    const base = this.getStyle("default");
+    const dim = this.getStyle("dim");
+    const border = this.getStyle("border");
+    const surface = this.getStyle("surface");
+    const heading = this.getStyle("heading");
+    const link2 = this.getStyle("link");
+    const active = this.getStyle("active");
+    const info = this.getStyle("info");
+    const success = this.getStyle("success");
+    const warning = this.getStyle("warning");
+    const error = this.getStyle("error");
+    const code = this.getStyle("code");
+    return {
+      fg: base.fg,
+      mutedFg: dim.fg,
+      borderFg: border.fg,
+      surfaceBg: surface.bg,
+      headingFg: heading.fg,
+      listMarker: this.getWorldsListMarker(),
+      listMarkerGapPx: this.getWorldsListMarkerGapPx(),
+      listHangIndentPx: this.getWorldsListHangIndentPx(),
+      linkFg: link2.fg,
+      activeLinkFg: active.fg,
+      activeLinkIndex: (options == null ? void 0 : options.activeLinkIndex) ?? null,
+      linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
+      infoFg: info.fg,
+      successFg: success.fg,
+      warningFg: warning.fg,
+      errorFg: error.fg,
+      codeFg: code.fg,
+      codeBg: code.bg,
+      bg: (options == null ? void 0 : options.background) ?? surface.bg
+    };
+  }
   ensure3DSectionTexturesWebGPUUI(device) {
     if (!(this.renderer instanceof WebGPURenderer)) return;
     if (!this.worldsEnabled || !this.camera3D) return;
@@ -28575,11 +30446,6 @@ ${content}`.trim();
     }
     const ui = this.sectionWebGPUUIRenderer;
     const format = ui.getTextureFormat();
-    const base = this.getStyle("default");
-    const dim = this.getStyle("dim");
-    const accent1 = this.getStyle("accent1");
-    const heading = this.getStyle("heading");
-    const code = this.getStyle("code");
     const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
     const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
     const shaderBg = !!this.parseWorldsSectionBackgroundShader();
@@ -28610,28 +30476,17 @@ ${content}`.trim();
 
 ${content}`.trim();
       const nodes = parseMarkdownLite(markdown);
-      const style = {
-        fg: base.fg,
-        mutedFg: dim.fg,
-        headingFg: heading.fg,
-        listMarker: this.getWorldsListMarker(),
-        listMarkerGapPx: this.getWorldsListMarkerGapPx(),
-        listHangIndentPx: this.getWorldsListHangIndentPx(),
-        linkFg: base.fg,
-        activeLinkFg: accent1.fg,
-        activeLinkIndex,
-        linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
-        codeFg: code.fg,
-        codeBg: code.bg,
-        // Give 3D cards a panel-like background; matches theme elevated surfaces.
-        bg: mdBg
-      };
+      const style = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
       if (overflowMode === "expand" || overflowMode === "expand-y" || overflowMode === "fit" || overflowMode === "fit-y") {
         const probeWidthPx = overflowMode === "fit" ? maxW : widthPx;
         const probe = layoutMarkdownDocument(
           nodes,
           { x: 0, y: 0, width: probeWidthPx, height: heightPx },
-          { charW, charH },
+          {
+            charW,
+            charH,
+            getImageSize: (source) => this.getMarkdownImageSize(source, this.activeDocumentId ?? void 0)
+          },
           style,
           0,
           texturePadding,
@@ -28663,33 +30518,34 @@ ${content}`.trim();
       const textureHeightPx = Math.max(1, Math.round(heightPx * textureScale));
       const existing = this.sectionTextureCache.get(layout.sectionIndex);
       if (existing && existing.width === textureWidthPx && existing.height === textureHeightPx && existing.activeLinkIndex === activeLinkIndex && layout.texture) {
-        if (!this.sectionLinkRegionsCache.has(layout.sectionIndex)) {
-          const style2 = {
-            fg: base.fg,
-            mutedFg: dim.fg,
-            headingFg: heading.fg,
-            listMarker: this.getWorldsListMarker(),
-            listMarkerGapPx: this.getWorldsListMarkerGapPx(),
-            listHangIndentPx: this.getWorldsListHangIndentPx(),
-            linkFg: base.fg,
-            activeLinkFg: accent1.fg,
-            activeLinkIndex,
-            linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
-            codeFg: code.fg,
-            codeBg: code.bg,
-            // Give 3D cards a panel-like background; matches theme elevated surfaces.
-            bg: mdBg
-          };
+        if (!this.sectionLinkRegionsCache.has(layout.sectionIndex) || !this.sectionWidgetPlacementsCache.has(layout.sectionIndex)) {
+          const style2 = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
           const result2 = layoutMarkdownDocument(
             nodes,
             { x: 0, y: 0, width: widthPx, height: heightPx },
-            { charW, charH },
+            {
+              charW,
+              charH,
+              getImageSize: (source) => this.getMarkdownImageSize(source, this.activeDocumentId ?? void 0)
+            },
             style2,
             0,
             texturePadding,
-            { overflow: layoutOverflow }
+            this.getWorldsWidgetLayoutOptions(layout.sectionIndex, layoutOverflow)
           );
+          if ((this.worldsConfig.sectionContentAlign ?? "start") === "center") {
+            const innerW = Math.max(1, widthPx - texturePadding * 2);
+            const innerH = Math.max(1, heightPx - texturePadding * 2);
+            const dx = Math.max(0, Math.round((innerW - result2.contentWidth) / 2));
+            const dy = Math.max(0, Math.round((innerH - result2.contentHeight) / 2));
+            for (const region of result2.linkRegions) {
+              region.x += dx;
+              region.y += dy;
+            }
+            this.translateWidgetPlacements(result2.widgetPlacements, dx, dy);
+          }
           this.sectionLinkRegionsCache.set(layout.sectionIndex, this.scaleLinkRegions(result2.linkRegions, textureScale));
+          this.sectionWidgetPlacementsCache.set(layout.sectionIndex, this.scaleWidgetPlacements(result2.widgetPlacements, textureScale));
         }
         continue;
       }
@@ -28708,11 +30564,15 @@ ${content}`.trim();
       const result = layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: widthPx, height: heightPx },
-        { charW, charH },
+        {
+          charW,
+          charH,
+          getImageSize: (source) => this.getMarkdownImageSize(source, this.activeDocumentId ?? void 0)
+        },
         style,
         0,
         texturePadding,
-        { overflow: layoutOverflow }
+        this.getWorldsWidgetLayoutOptions(layout.sectionIndex, layoutOverflow)
       );
       if ((this.worldsConfig.sectionContentAlign ?? "start") === "center") {
         const innerW = Math.max(1, widthPx - texturePadding * 2);
@@ -28733,12 +30593,14 @@ ${content}`.trim();
             r2.x += dx;
             r2.y += dy;
           }
+          this.translateWidgetPlacements(result.widgetPlacements, dx, dy);
         }
       }
       this.sectionLinkRegionsCache.set(layout.sectionIndex, this.scaleLinkRegions(result.linkRegions, textureScale));
+      this.sectionWidgetPlacementsCache.set(layout.sectionIndex, this.scaleWidgetPlacements(result.widgetPlacements, textureScale));
       ui.clearCommands();
       if (bakedRuledPaper) {
-        const ruledLine = this.withAlpha(dim.fg, 64);
+        const ruledLine = this.withAlpha(style.mutedFg, 64);
         ui.rect(0, 0, textureWidthPx, textureHeightPx, surfaceBg);
         const spacing = Math.max(1, Math.round(baseLineHeight * textureScale));
         const thickness = Math.max(1, Math.round(textureScale));
@@ -28750,6 +30612,11 @@ ${content}`.trim();
       for (const op of result.ops) {
         if (op.kind === "rect") {
           ui.rect(op.x * textureScale, op.y * textureScale, op.w * textureScale, op.h * textureScale, op.color);
+        } else if (op.kind === "image") {
+          const registered = this.ensureMarkdownImageRegisteredWithRenderer(op.source, ui, this.activeDocumentId ?? void 0);
+          if (registered) {
+            ui.image(registered.imageId, op.x * textureScale, op.y * textureScale, op.w * textureScale, op.h * textureScale);
+          }
         } else {
           ui.text(op.text, op.x * textureScale, op.y * textureScale, op.color);
         }
@@ -29345,8 +31212,13 @@ ${content}`.trim();
     if (isGesturePress) this.beginTrustedAudioGesture();
     try {
       const doc = this.getActiveDocument();
+      const inlineWidgetHandled = action === "press" ? this.handleWorldsInlineWidgetKey(e.key, {
+        shift: e.shiftKey,
+        ctrl: e.ctrlKey,
+        alt: e.altKey
+      }) : false;
       let handledBy3D = false;
-      if (action === "press" && this.worldsEnabled && this.camera3D && this.worldsLinkKeyHandlingEnabled) {
+      if (!inlineWidgetHandled && action === "press" && this.worldsEnabled && this.camera3D && this.worldsLinkKeyHandlingEnabled) {
         if (e.key === "Tab") {
           this.move3DLinkFocus(e.shiftKey ? -1 : 1);
           handledBy3D = true;
@@ -29385,7 +31257,7 @@ ${content}`.trim();
           this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
         }
       }
-      if (handledBy3D || ((_b = doc == null ? void 0 : doc.handlers) == null ? void 0 : _b.input)) {
+      if (handledBy3D || inlineWidgetHandled || ((_b = doc == null ? void 0 : doc.handlers) == null ? void 0 : _b.input)) {
         e.preventDefault();
       }
     } finally {
@@ -29415,7 +31287,8 @@ ${content}`.trim();
       const pixelX = cssX * (this.canvas.width / rect.width);
       const pixelY = cssY * (this.canvas.height / rect.height);
       this.input.updateMousePosition(pixelX, pixelY);
-      if (action === "press" && e.button === 0) {
+      const inlineWidgetConsumed = e.button === 0 ? this.handleWorldsInlineWidgetMouse(pixelX, pixelY, action === "press") : false;
+      if (!inlineWidgetConsumed && action === "press" && e.button === 0) {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
@@ -29728,28 +31601,12 @@ ${content}`.trim();
     const maxTextureH = textureMode === "webgpu-ui" ? 1024 : 2048;
     const maxW = Math.max(minW, Math.floor(maxTextureW / textureScale));
     const maxH = Math.max(minH, Math.floor(maxTextureH / textureScale));
-    const base = this.getStyle("default");
-    const dim = this.getStyle("dim");
-    const heading = this.getStyle("heading");
-    const code = this.getStyle("code");
     const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
     const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
     const shaderBg = !!this.parseWorldsSectionBackgroundShader();
     const surfaceBg = this.resolveWorldsSectionBackground();
     const mdBg = proceduralRuledPaper || bakedRuledPaper || shaderBg ? this.withAlpha(surfaceBg, 0) : surfaceBg;
-    const mdStyle = {
-      fg: base.fg,
-      mutedFg: dim.fg,
-      headingFg: heading.fg,
-      listMarker: this.getWorldsListMarker(),
-      listMarkerGapPx: this.getWorldsListMarkerGapPx(),
-      listHangIndentPx: this.getWorldsListHangIndentPx(),
-      linkFg: base.fg,
-      linkUnderline: this.worldsConfig.sectionLinkUnderline === true,
-      codeFg: code.fg,
-      codeBg: code.bg,
-      bg: mdBg
-    };
+    const mdStyle = this.createWorldsMarkdownStyle({ background: mdBg });
     const fontSizePx = Math.max(1, this.fontSize || 16);
     const fontStack = this.worldsCardFontStack || this.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
     const measured = this.measureFontMetrics(fontStack, fontSizePx);
@@ -29792,7 +31649,12 @@ ${content}`.trim();
       const probe = layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: probeWidthPx, height: heightPx },
-        { charW: measuredCharW, charH: measuredCharH, measureTextWidth },
+        {
+          charW: measuredCharW,
+          charH: measuredCharH,
+          measureTextWidth,
+          getImageSize: (source) => this.getMarkdownImageSize(source, this.activeDocumentId ?? void 0)
+        },
         mdStyle,
         0,
         texturePadding,
@@ -29863,18 +31725,32 @@ ${content}`.trim();
     this.request3DCameraFocus(req);
   }
   setCurrent3DSection(sectionIndex) {
-    var _a;
+    var _a, _b;
     if (this.current3DSectionIndex === sectionIndex) return;
+    const previousSectionIndex = this.current3DSectionIndex;
+    this.clearWorldsInlineWidgets();
     this.current3DSectionIndex = sectionIndex;
+    if (typeof previousSectionIndex === "number" && Number.isFinite(previousSectionIndex)) {
+      this.invalidate3DSectionTexture(previousSectionIndex);
+    }
+    this.invalidate3DSectionTexture(sectionIndex);
+    const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
+    if (guiAPI && typeof guiAPI.syncSectionBindings === "function") {
+      guiAPI.syncSectionBindings(sectionIndex);
+    }
     this.sceneState.sectionIndex = sectionIndex;
     this.sceneState.revealStep = 0;
     const h = this.hostSync;
     if (h && h.getSessionInfo().role === "host") {
-      const fill = ((_a = this.lastApplied3DCameraFocus) == null ? void 0 : _a.kind) === "fit" ? this.lastApplied3DCameraFocus.fill : 0.9;
+      const fill = ((_b = this.lastApplied3DCameraFocus) == null ? void 0 : _b.kind) === "fit" ? this.lastApplied3DCameraFocus.fill : 0.9;
       h.sendGotoSectionFit(sectionIndex, fill);
       h.sendSceneFit(sectionIndex, this.sceneState.revealStep, fill);
     }
     this.runSectionEnterHandlers(sectionIndex);
+    if (guiAPI && typeof guiAPI.syncSectionBindings === "function") {
+      guiAPI.syncSectionBindings(sectionIndex);
+    }
+    this.syncWorldsInlineWidgets();
   }
   runSectionEnterHandlers(sectionIndex) {
     var _a;
@@ -30082,14 +31958,17 @@ ${content}`.trim();
       return;
     }
     if (this.hostAudienceView) return;
-    const doc = this.getActiveDocument();
-    if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) return;
     const rect = this.canvas.getBoundingClientRect();
     const cssX = e.clientX - rect.left;
     const cssY = e.clientY - rect.top;
     const pixelX = cssX * (this.canvas.width / rect.width);
     const pixelY = cssY * (this.canvas.height / rect.height);
     this.input.updateMousePosition(pixelX, pixelY);
+    if (this.worldsInlineWidgetInstances.length > 0) {
+      this.handleWorldsInlineWidgetMouse(pixelX, pixelY, this.input.isMouseDown(0));
+    }
+    const doc = this.getActiveDocument();
+    if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) return;
     const charWidth = this.canvas.width / this.width;
     const charHeight = this.canvas.height / this.height;
     const cellX = Math.floor(pixelX / charWidth);

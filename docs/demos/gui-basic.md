@@ -1,6 +1,6 @@
 ---
 name: "Retained GUI Demo (Storie)"
-theme: "neonopia"
+theme: "outrun"
 shaders: "paper+invert"
 ---
 

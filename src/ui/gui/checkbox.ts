@@ -27,10 +27,10 @@ export class GUICheckbox extends BaseWidget {
   public checked: boolean;
   private wasToggledThisFrame: boolean = false;
   public checkboxStyle: {
-    fg: Color;
-    bg: Color;
-    checkColor: Color;
-    hoverBg: Color;
+    fg?: Color;
+    bg?: Color;
+    checkColor?: Color;
+    hoverBg?: Color;
     boxSize: number;
     labelGap: number;
     borderWidth: number;
@@ -43,10 +43,10 @@ export class GUICheckbox extends BaseWidget {
     this.checked = config.checked ?? false;
     
     this.checkboxStyle = {
-      fg: (config.checkboxStyle?.fg ?? { r: 220, g: 220, b: 220 }) as Color,
-      bg: (config.checkboxStyle?.bg ?? { r: 40, g: 40, b: 40 }) as Color,
-      checkColor: (config.checkboxStyle?.checkColor ?? { r: 0, g: 200, b: 100 }) as Color,
-      hoverBg: (config.checkboxStyle?.hoverBg ?? { r: 60, g: 60, b: 60 }) as Color,
+      fg: config.checkboxStyle?.fg,
+      bg: config.checkboxStyle?.bg,
+      checkColor: config.checkboxStyle?.checkColor,
+      hoverBg: config.checkboxStyle?.hoverBg,
       boxSize: config.checkboxStyle?.boxSize ?? defaultTokens.controls.checkbox.boxSize,
       labelGap: config.checkboxStyle?.labelGap ?? defaultTokens.controls.checkbox.labelGap,
       borderWidth: config.checkboxStyle?.borderWidth ?? defaultTokens.controls.checkbox.borderWidth,

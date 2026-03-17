@@ -123,3 +123,9 @@ export interface NavigationContext {
   focusableWidgets: WidgetId[];
   tabOrder: WidgetId[];
 }
+
+export interface WidgetRenderContext {
+  charWidth: number;
+  charHeight: number;
+  scale: number;
+}

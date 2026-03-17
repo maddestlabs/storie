@@ -16,6 +16,8 @@ import { GUITextEditor, type GUITextEditorConfig } from './texteditor.js';
 import { GUIMarkdownView, type GUIMarkdownViewConfig } from './markdown-view.js';
 import { GUILayoutContainer, type GUILayoutContainerConfig } from './layout-container.js';
 import type { Draw2D, WidgetDrawInfo, WidgetDrawInfoCommon } from '../draw2d.js';
+import type { MarkdownStyle } from '../document/types.js';
+import { ColorUtils, type Color } from '../../types.js';
 import {
   applyButtonTokens,
   applyCheckboxTokens,
@@ -30,6 +32,14 @@ import {
   type GUITokenPatch,
   type GUITokens
 } from './tokens.js';
+import {
+  createDefaultGUIMarkdownThemeDefaults,
+  createDefaultGUIThemeDefaults,
+  createGUIMarkdownThemeDefaultsFromStyles,
+  createGUIThemeDefaultsFromStyles,
+  type GUIMarkdownThemeDefaults,
+  type GUIThemeDefaults
+} from './theme.js';
 
 /**
  * Main GUI system that manages graphical UI widgets
@@ -41,6 +51,8 @@ export class GUISystem {
   private lastMouseY: number = 0;
   private lastMouseDown: boolean = false;
   private tokens: GUITokens;
+  private themeDefaults: GUIThemeDefaults;
+  private markdownThemeDefaults: GUIMarkdownThemeDefaults;
 
   // Optional draw override hook. If it returns true, default drawing is skipped.
   private widgetRenderer: ((widgetInfo: WidgetDrawInfo, ui: Draw2D) => boolean | void) | null = null;
@@ -49,6 +61,29 @@ export class GUISystem {
     this.widgetManager = new WidgetManager();
     this.inputRouter = new InputRouter({ widgetManager: this.widgetManager });
     this.tokens = createDefaultGUITokens();
+    this.themeDefaults = createDefaultGUIThemeDefaults();
+    this.markdownThemeDefaults = createDefaultGUIMarkdownThemeDefaults();
+  }
+
+  setThemeDefaults(defaults: GUIThemeDefaults): GUIThemeDefaults {
+    this.themeDefaults = {
+      label: { ...defaults.label },
+      button: { ...defaults.button },
+      checkbox: { ...defaults.checkbox },
+      slider: { ...defaults.slider },
+      input: { ...defaults.input }
+    };
+    return this.themeDefaults;
+  }
+
+  setMarkdownThemeDefaults(defaults: GUIMarkdownThemeDefaults): GUIMarkdownThemeDefaults {
+    this.markdownThemeDefaults = { ...defaults };
+    return { ...this.markdownThemeDefaults };
+  }
+
+  setThemeFromStyles(getStyle: (name: string) => any): GUIThemeDefaults {
+    this.setMarkdownThemeDefaults(createGUIMarkdownThemeDefaultsFromStyles(getStyle));
+    return this.setThemeDefaults(createGUIThemeDefaultsFromStyles(getStyle));
   }
 
   getTokens(): GUITokens {
@@ -70,12 +105,15 @@ export class GUISystem {
   }
 
   private buildWidgetInfo(widget: any, charWidth: number, charHeight: number): WidgetDrawInfo {
+    const renderContext = typeof widget.resolveRenderContext === 'function'
+      ? widget.resolveRenderContext(charWidth, charHeight)
+      : { charWidth, charHeight, scale: 1 };
     const base: WidgetDrawInfoCommon = {
       id: String(widget.id),
       bounds: { ...widget.bounds },
       state: { ...widget.state },
       group: widget.group,
-      metrics: { charWidth, charHeight }
+      metrics: { charWidth: renderContext.charWidth, charHeight: renderContext.charHeight }
     };
 
     if (widget instanceof GUIButton) {
@@ -163,7 +201,13 @@ export class GUISystem {
    * Create a markdown view widget (flow layout inside bounds)
    */
   createMarkdownView(config: GUIMarkdownViewConfig): GUIMarkdownView {
-    const view = new GUIMarkdownView(config);
+    const view = new GUIMarkdownView({
+      ...config,
+      style: {
+        ...(this.markdownThemeDefaults as Partial<MarkdownStyle>),
+        ...(config.style ?? {})
+      }
+    });
     this.widgetManager.register(view);
     return view;
   }
@@ -202,19 +246,22 @@ export class GUISystem {
     // Update sliders (for drag behavior)
     const sliders = this.widgetManager.getAll().filter(w => w instanceof GUISlider) as GUISlider[];
     for (const slider of sliders) {
-      slider.handleDrag(mouseX, mouseY, mouseDown, charHeight);
+      const metrics = slider.resolveRenderContext(charWidth, charHeight);
+      slider.handleDrag(mouseX, mouseY, mouseDown, metrics.charHeight, metrics.scale);
     }
 
     // Update text field metrics (for caret placement/scroll)
     const textFields = this.widgetManager.getAll().filter(w => w instanceof GUITextField) as GUITextField[];
     for (const tf of textFields) {
-      tf.updateMetrics(charWidth, charHeight);
+      const metrics = tf.resolveRenderContext(charWidth, charHeight);
+      tf.updateMetrics(metrics.charWidth, metrics.charHeight);
     }
 
     // Update text editor metrics
     const textEditors = this.widgetManager.getAll().filter(w => w instanceof GUITextEditor) as GUITextEditor[];
     for (const ed of textEditors) {
-      ed.updateMetrics(charWidth, charHeight);
+      const metrics = ed.resolveRenderContext(charWidth, charHeight);
+      ed.updateMetrics(metrics.charWidth, metrics.charHeight);
     }
   }
 
@@ -318,6 +365,9 @@ export class GUISystem {
   }
 
   private renderTextField(tf: GUITextField, ui: Draw2D, charW: number, charH: number): void {
+    const metrics = tf.resolveRenderContext(charW, charH);
+    charW = metrics.charWidth;
+    charH = metrics.charHeight;
     const { x, y, width, height } = tf.bounds;
     const {
       fg,
@@ -330,7 +380,7 @@ export class GUISystem {
       paddingY,
       borderWidth,
       focusBorderWidth
-    } = tf.textFieldStyle;
+    } = this.resolveTextFieldStyle(tf);
 
     if (drawBackground) {
       ui.rect(x, y, width, height, bg);
@@ -395,6 +445,9 @@ export class GUISystem {
   }
 
   private renderTextEditor(ed: GUITextEditor, ui: Draw2D, charW: number, charH: number): void {
+    const metrics = ed.resolveRenderContext(charW, charH);
+    charW = metrics.charWidth;
+    charH = metrics.charHeight;
     const { x, y, width, height } = ed.bounds;
     const {
       fg,
@@ -407,7 +460,7 @@ export class GUISystem {
       paddingY,
       borderWidth,
       focusBorderWidth
-    } = ed.textEditorStyle;
+    } = this.resolveTextEditorStyle(ed);
 
     if (drawBackground) {
       ui.rect(x, y, width, height, bg);
@@ -487,12 +540,18 @@ export class GUISystem {
   }
 
   private renderMarkdownView(view: GUIMarkdownView, ui: Draw2D, charW: number, charH: number): void {
+    const metrics = view.resolveRenderContext(charW, charH);
+    charW = metrics.charWidth;
+    charH = metrics.charHeight;
     view.renderToUI(ui, charW, charH);
   }
   
   private renderButton(button: GUIButton, ui: Draw2D, charW: number, charH: number): void {
+    const metrics = button.resolveRenderContext(charW, charH);
+    charW = metrics.charWidth;
+    charH = metrics.charHeight;
     const { x, y, width, height } = button.bounds;
-    const { fg, bg, borderColor, hoverBg, activeBg, borderWidth, focusBorderWidth } = button.buttonStyle;
+    const { fg, bg, borderColor, hoverBg, activeBg, borderWidth, focusBorderWidth } = this.resolveButtonStyle(button);
     const label = String(button.label ?? '');
     
     // Background
@@ -501,7 +560,7 @@ export class GUISystem {
     ui.rect(x, y, width, height, bgColor);
     
     // Border
-    const border = button.state.focused ? focusBorderWidth : borderWidth;
+    const border = button.getRenderPixels(button.state.focused ? focusBorderWidth : borderWidth);
     ui.rect(x, y, width, border, borderColor);
     ui.rect(x, y + height - border, width, border, borderColor);
     ui.rect(x, y, border, height, borderColor);
@@ -515,13 +574,15 @@ export class GUISystem {
   }
   
   private renderLabel(label: GUILabel, ui: Draw2D, charW: number, charH: number): void {
+    const metrics = label.resolveRenderContext(charW, charH);
+    charW = metrics.charWidth;
+    charH = metrics.charHeight;
     const { x, y, width, height } = label.bounds;
-    const { fg, bg } = label.labelStyle;
+    const { fg, bg } = this.resolveLabelStyle(label);
     const text = String(label.text ?? '');
     
     // Background (if not transparent)
-    const bgColor = bg as any;
-    if (bgColor.a !== undefined && bgColor.a !== 0) {
+    if (ColorUtils.a(bg) !== 0) {
       ui.rect(x, y, width, height, bg);
     }
     
@@ -539,11 +600,17 @@ export class GUISystem {
   }
   
   private renderCheckbox(checkbox: GUICheckbox, ui: Draw2D, charW: number, _charH: number): void {
+    const metrics = checkbox.resolveRenderContext(charW, _charH);
+    charW = metrics.charWidth;
+    const charH = metrics.charHeight;
     const { x, y, height } = checkbox.bounds;
-    const { fg, bg, checkColor, hoverBg, boxSize, labelGap, borderWidth } = checkbox.checkboxStyle;
+    const { fg, bg, borderColor, checkColor, hoverBg, boxSize, labelGap, borderWidth } = this.resolveCheckboxStyle(checkbox);
     const label = String(checkbox.label ?? '');
     
-    const actualBoxSize = Math.min(height, Math.max(boxSize, charW));
+    const scaledBoxSize = checkbox.getRenderPixels(boxSize);
+    const scaledLabelGap = checkbox.getRenderPixels(labelGap);
+    const scaledBorderWidth = checkbox.getRenderPixels(borderWidth);
+    const actualBoxSize = Math.min(height, Math.max(scaledBoxSize, charW));
     const boxY = y + (height - actualBoxSize) / 2;
     
     // Checkbox box background
@@ -551,10 +618,10 @@ export class GUISystem {
     ui.rect(x, boxY, actualBoxSize, actualBoxSize, bgColor);
     
     // Border
-    ui.rect(x, boxY, actualBoxSize, borderWidth, fg);
-    ui.rect(x, boxY + actualBoxSize - borderWidth, actualBoxSize, borderWidth, fg);
-    ui.rect(x, boxY, borderWidth, actualBoxSize, fg);
-    ui.rect(x + actualBoxSize - borderWidth, boxY, borderWidth, actualBoxSize, fg);
+    ui.rect(x, boxY, actualBoxSize, scaledBorderWidth, borderColor);
+    ui.rect(x, boxY + actualBoxSize - scaledBorderWidth, actualBoxSize, scaledBorderWidth, borderColor);
+    ui.rect(x, boxY, scaledBorderWidth, actualBoxSize, borderColor);
+    ui.rect(x + actualBoxSize - scaledBorderWidth, boxY, scaledBorderWidth, actualBoxSize, borderColor);
     
     // Check mark
     if (checkbox.checked) {
@@ -569,37 +636,56 @@ export class GUISystem {
     }
     
     // Label
-    ui.text(label, x + actualBoxSize + labelGap, y + Math.max(0, Math.floor((height - charW) / 2)), fg);
+    ui.text(label, x + actualBoxSize + scaledLabelGap, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
   }
   
   private renderSlider(slider: GUISlider, ui: Draw2D, _charW: number, charH: number): void {
+    const metrics = slider.resolveRenderContext(_charW, charH);
+    charH = metrics.charHeight;
     const { x, y, width, height } = slider.bounds;
-    const { fg, trackColor, knobColor, knobHoverColor, labelGap, trackHeight, knobWidth, knobHeight, valueGap } = slider.sliderStyle;
+    const {
+      fg,
+      trackColor,
+      knobColor,
+      knobHoverColor,
+      knobActiveColor,
+      labelGap,
+      trackHeight,
+      knobWidth,
+      knobHeight,
+      valueGap
+    } = this.resolveSliderStyle(slider);
     
     // Label (if present)
+    const scaledLabelGap = slider.getRenderPixels(labelGap);
+    const scaledTrackHeight = slider.getRenderPixels(trackHeight);
+    const scaledKnobWidth = slider.getRenderPixels(knobWidth);
+    const scaledKnobHeight = slider.getRenderPixels(knobHeight);
+    const scaledValueGap = slider.getRenderPixels(valueGap);
+
     let trackY = y;
     if (slider.label) {
       ui.text(slider.label, x, y, fg);
-      trackY += charH + labelGap;
+      trackY += charH + scaledLabelGap;
     }
     
     // Track
-    const trackYPos = trackY + (height - trackHeight) / 2;
-    ui.rect(x, trackYPos, width, trackHeight, trackColor);
+    const trackYPos = trackY + (height - scaledTrackHeight) / 2;
+    ui.rect(x, trackYPos, width, scaledTrackHeight, trackColor);
     
     // Knob
-    const actualKnobHeight = Math.min(height - (slider.label ? charH + labelGap : 0), knobHeight);
+    const actualKnobHeight = Math.min(height - (slider.label ? charH + scaledLabelGap : 0), scaledKnobHeight);
     const range = slider.max - slider.min;
     const ratio = range > 0 ? (slider.value - slider.min) / range : 0;
-    const knobX = x + ratio * (width - knobWidth);
+    const knobX = x + ratio * (width - scaledKnobWidth);
     const knobY = trackY + (height - actualKnobHeight) / 2;
     
-    const knobCol = slider.state.hovered || slider.isDragging() ? knobHoverColor : knobColor;
-    ui.rect(knobX, knobY, knobWidth, actualKnobHeight, knobCol);
+    const knobCol = slider.isDragging() ? knobActiveColor : (slider.state.hovered ? knobHoverColor : knobColor);
+    ui.rect(knobX, knobY, scaledKnobWidth, actualKnobHeight, knobCol);
     
     // Value text
     const valueText = `${Math.round(slider.value)}`;
-    ui.text(valueText, x + width + valueGap, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
+    ui.text(valueText, x + width + scaledValueGap, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
   }
   
   /**
@@ -621,6 +707,141 @@ export class GUISystem {
    */
   getWidgetManager(): WidgetManager {
     return this.widgetManager;
+  }
+
+  private resolveLabelStyle(widget: GUILabel): { fg: Color; bg: Color } {
+    return {
+      fg: widget.labelStyle.fg ?? this.themeDefaults.label.fg,
+      bg: widget.labelStyle.bg ?? this.themeDefaults.label.bg
+    };
+  }
+
+  private resolveButtonStyle(widget: GUIButton): {
+    fg: Color;
+    bg: Color;
+    borderColor: Color;
+    hoverBg: Color;
+    activeBg: Color;
+    borderWidth: number;
+    focusBorderWidth: number;
+  } {
+    return {
+      fg: widget.buttonStyle.fg ?? this.themeDefaults.button.fg,
+      bg: widget.buttonStyle.bg ?? this.themeDefaults.button.bg,
+      borderColor: widget.state.focused
+        ? this.themeDefaults.button.focusBorder
+        : (widget.buttonStyle.borderColor ?? this.themeDefaults.button.border),
+      hoverBg: widget.buttonStyle.hoverBg ?? this.themeDefaults.button.hoverBg,
+      activeBg: widget.buttonStyle.activeBg ?? this.themeDefaults.button.activeBg,
+      borderWidth: widget.buttonStyle.borderWidth,
+      focusBorderWidth: widget.buttonStyle.focusBorderWidth
+    };
+  }
+
+  private resolveCheckboxStyle(widget: GUICheckbox): {
+    fg: Color;
+    bg: Color;
+    borderColor: Color;
+    checkColor: Color;
+    hoverBg: Color;
+    boxSize: number;
+    labelGap: number;
+    borderWidth: number;
+  } {
+    return {
+      fg: widget.checkboxStyle.fg ?? this.themeDefaults.checkbox.fg,
+      bg: widget.checkboxStyle.bg ?? this.themeDefaults.checkbox.bg,
+      borderColor: widget.state.focused
+        ? this.themeDefaults.checkbox.focusBorder
+        : this.themeDefaults.checkbox.border,
+      checkColor: widget.checkboxStyle.checkColor ?? this.themeDefaults.checkbox.check,
+      hoverBg: widget.checkboxStyle.hoverBg ?? this.themeDefaults.checkbox.hoverBg,
+      boxSize: widget.checkboxStyle.boxSize,
+      labelGap: widget.checkboxStyle.labelGap,
+      borderWidth: widget.checkboxStyle.borderWidth
+    };
+  }
+
+  private resolveSliderStyle(widget: GUISlider): {
+    fg: Color;
+    trackColor: Color;
+    knobColor: Color;
+    knobHoverColor: Color;
+    knobActiveColor: Color;
+    labelGap: number;
+    trackHeight: number;
+    knobWidth: number;
+    knobHeight: number;
+    valueGap: number;
+  } {
+    return {
+      fg: widget.sliderStyle.fg ?? this.themeDefaults.slider.fg,
+      trackColor: widget.sliderStyle.trackColor ?? this.themeDefaults.slider.track,
+      knobColor: widget.sliderStyle.knobColor ?? this.themeDefaults.slider.knob,
+      knobHoverColor: widget.sliderStyle.knobHoverColor ?? this.themeDefaults.slider.knobHover,
+      knobActiveColor: this.themeDefaults.slider.knobActive,
+      labelGap: widget.sliderStyle.labelGap,
+      trackHeight: widget.sliderStyle.trackHeight,
+      knobWidth: widget.sliderStyle.knobWidth,
+      knobHeight: widget.sliderStyle.knobHeight,
+      valueGap: widget.sliderStyle.valueGap
+    };
+  }
+
+  private resolveTextFieldStyle(widget: GUITextField): {
+    fg: Color;
+    bg: Color;
+    borderColor: Color;
+    focusBorderColor: Color;
+    drawBackground: boolean;
+    drawBorder: boolean;
+    paddingX: number;
+    paddingY: number;
+    borderWidth: number;
+    focusBorderWidth: number;
+  } {
+    return {
+      fg: widget.textFieldStyle.fg ?? this.themeDefaults.input.fg,
+      bg: widget.textFieldStyle.bg ?? this.themeDefaults.input.bg,
+      borderColor: widget.state.hovered
+        ? this.themeDefaults.input.hoverBorder
+        : (widget.textFieldStyle.borderColor ?? this.themeDefaults.input.border),
+      focusBorderColor: widget.textFieldStyle.focusBorderColor ?? this.themeDefaults.input.focusBorder,
+      drawBackground: widget.textFieldStyle.drawBackground,
+      drawBorder: widget.textFieldStyle.drawBorder,
+      paddingX: widget.textFieldStyle.paddingX,
+      paddingY: widget.textFieldStyle.paddingY,
+      borderWidth: widget.textFieldStyle.borderWidth,
+      focusBorderWidth: widget.textFieldStyle.focusBorderWidth
+    };
+  }
+
+  private resolveTextEditorStyle(widget: GUITextEditor): {
+    fg: Color;
+    bg: Color;
+    borderColor: Color;
+    focusBorderColor: Color;
+    drawBackground: boolean;
+    drawBorder: boolean;
+    paddingX: number;
+    paddingY: number;
+    borderWidth: number;
+    focusBorderWidth: number;
+  } {
+    return {
+      fg: widget.textEditorStyle.fg ?? this.themeDefaults.input.fg,
+      bg: widget.textEditorStyle.bg ?? this.themeDefaults.input.bg,
+      borderColor: widget.state.hovered
+        ? this.themeDefaults.input.hoverBorder
+        : (widget.textEditorStyle.borderColor ?? this.themeDefaults.input.border),
+      focusBorderColor: widget.textEditorStyle.focusBorderColor ?? this.themeDefaults.input.focusBorder,
+      drawBackground: widget.textEditorStyle.drawBackground,
+      drawBorder: widget.textEditorStyle.drawBorder,
+      paddingX: widget.textEditorStyle.paddingX,
+      paddingY: widget.textEditorStyle.paddingY,
+      borderWidth: widget.textEditorStyle.borderWidth,
+      focusBorderWidth: widget.textEditorStyle.focusBorderWidth
+    };
   }
 }
 

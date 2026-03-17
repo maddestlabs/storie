@@ -21,8 +21,8 @@ export class GUILabel extends BaseWidget {
   public text: string;
   public align: 'left' | 'center' | 'right';
   public labelStyle: {
-    fg: Color;
-    bg: Color;
+    fg?: Color;
+    bg?: Color;
     typographyRole: GUITypographyRole;
   };
   
@@ -32,8 +32,8 @@ export class GUILabel extends BaseWidget {
     this.align = config.align ?? 'left';
     
     this.labelStyle = {
-      fg: (config.labelStyle?.fg ?? { r: 220, g: 220, b: 220 }) as Color,
-      bg: (config.labelStyle?.bg ?? { r: 0, g: 0, b: 0, a: 0 }) as Color,
+      fg: config.labelStyle?.fg,
+      bg: config.labelStyle?.bg,
       typographyRole: config.labelStyle?.typographyRole ?? defaultTokens.typography.body.role
     };
   }

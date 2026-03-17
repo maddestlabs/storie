@@ -1,4 +1,63 @@
-import type { DocNode, Inline } from './types.js';
+import type { DocNode, Inline, WidgetSpec } from './types.js';
+
+interface ParseMarkdownLiteOptions {
+  createWidgetId?: (type: WidgetSpec['type']) => string;
+}
+
+function parseImageMetadata(title?: string): { title?: string; align?: 'left' | 'center' | 'right'; width?: string } {
+  const raw = String(title ?? '').trim();
+  if (!raw) return {};
+
+  if (!/(^|\s)(align|width)\s*:/i.test(raw)) {
+    return { title: raw };
+  }
+
+  let align: 'left' | 'center' | 'right' | undefined;
+  let width: string | undefined;
+  const remainder = raw.replace(/\b(align|width)\s*:\s*([^\s]+)/gi, (_match, key: string, value: string) => {
+    const k = String(key).toLowerCase();
+    const v = String(value).trim();
+    if (k === 'align') {
+      if (v === 'left' || v === 'center' || v === 'right') align = v;
+    } else if (k === 'width' && /^\d+(?:\.\d+)?(?:px|%)$/i.test(v)) {
+      width = v.toLowerCase();
+    }
+    return ' ';
+  }).trim();
+
+  return {
+    ...(remainder ? { title: remainder } : {}),
+    ...(align ? { align } : {}),
+    ...(width ? { width } : {}),
+  };
+}
+
+function parseCalloutBlock(lines: string[], options?: ParseMarkdownLiteOptions): DocNode | null {
+  let firstContentIndex = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (String(lines[i] ?? '').trim().length > 0) {
+      firstContentIndex = i;
+      break;
+    }
+  }
+  if (firstContentIndex < 0) return null;
+
+  const firstLine = String(lines[firstContentIndex] ?? '').trim();
+  const match = firstLine.match(/^\[!(NOTE|INFO|TIP|WARNING|IMPORTANT|CAUTION)\](?:\s+(.*))?$/i);
+  if (!match) return null;
+
+  const tone = String(match[1] ?? '').toLowerCase() as 'note' | 'info' | 'tip' | 'warning' | 'important' | 'caution';
+  const title = String(match[2] ?? '').trim();
+  const bodyLines = lines.slice(firstContentIndex + 1);
+  const nodes = parseMarkdownLite(bodyLines.join('\n'), options);
+
+  return {
+    kind: 'callout',
+    tone,
+    ...(title ? { title } : {}),
+    nodes,
+  };
+}
 
 function isBrailleBlankLine(text: string): boolean {
   // Many docs/stories use U+2800 BRAILLE PATTERN BLANK to represent an
@@ -7,30 +66,164 @@ function isBrailleBlankLine(text: string): boolean {
   return t.length > 0 && /^[\u2800]+$/.test(t);
 }
 
-function parseInlines(text: string): Inline[] {
-  const inlines: Inline[] = [];
+function parseInlineDirectiveValues(raw: string): Record<string, string> {
+  const values: Record<string, string> = {};
   let i = 0;
 
-  const pushText = (t: string) => {
-    if (!t) return;
-    inlines.push({ kind: 'text', text: t });
+  while (i < raw.length) {
+    while (i < raw.length && (raw[i] === ',' || /\s/.test(raw[i] || ''))) i++;
+    if (i >= raw.length) break;
+
+    const keyStart = i;
+    while (i < raw.length && /[A-Za-z0-9_-]/.test(raw[i] || '')) i++;
+    const key = raw.slice(keyStart, i).trim().toLowerCase();
+    if (!key) break;
+
+    while (i < raw.length && /\s/.test(raw[i] || '')) i++;
+    const separator = raw[i];
+    if (separator !== ':' && separator !== '=') break;
+    i++;
+
+    while (i < raw.length && /\s/.test(raw[i] || '')) i++;
+    if (i >= raw.length) {
+      values[key] = '';
+      break;
+    }
+
+    let value = '';
+    const quote = raw[i];
+    if (quote === '"' || quote === "'") {
+      i++;
+      while (i < raw.length) {
+        const ch = raw[i] || '';
+        if (ch === '\\' && i + 1 < raw.length) {
+          value += raw[i + 1] || '';
+          i += 2;
+          continue;
+        }
+        if (ch === quote) {
+          i++;
+          break;
+        }
+        value += ch;
+        i++;
+      }
+    } else {
+      const valueStart = i;
+      while (i < raw.length && raw[i] !== ',') i++;
+      value = raw.slice(valueStart, i).trim();
+    }
+
+    values[key] = value;
+    while (i < raw.length && (raw[i] === ',' || /\s/.test(raw[i] || ''))) i++;
+  }
+
+  return values;
+}
+
+function parseWidgetSpec(values: Record<string, string>, createWidgetId?: (type: WidgetSpec['type']) => string): WidgetSpec | null {
+  const normalized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(values)) {
+    normalized[String(key).toLowerCase()] = String(value);
+  }
+
+  const typeRaw = String(normalized.type || normalized.widget || '').trim().toLowerCase();
+  if (typeRaw !== 'button' && typeRaw !== 'slider' && typeRaw !== 'checkbox' && typeRaw !== 'label') {
+    return null;
+  }
+
+  const id = String(normalized.id || normalized.name || '').trim() || (createWidgetId ? createWidgetId(typeRaw) : `widget-${typeRaw}`);
+  const alignRaw = String(normalized.align || '').trim().toLowerCase();
+  const align = alignRaw === 'left' || alignRaw === 'center' || alignRaw === 'right' ? alignRaw : undefined;
+  const scaleRaw = String(normalized.scale || normalized.sizing || '').trim().toLowerCase();
+  const scale = scaleRaw === 'gui' || scaleRaw === 'worlds' ? scaleRaw : undefined;
+  const widthRaw = String(normalized.width || '').trim().toLowerCase();
+  const width = /^\d+(?:\.\d+)?(?:px|%)$/i.test(widthRaw) ? widthRaw : undefined;
+  const parseNumber = (key: string): number | undefined => {
+    const raw = String(normalized[key] || '').trim();
+    if (!raw) return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const parseBoolean = (key: string): boolean | undefined => {
+    const raw = String(normalized[key] || '').trim().toLowerCase();
+    if (!raw) return undefined;
+    if (raw === 'true' || raw === 'yes' || raw === 'on' || raw === '1') return true;
+    if (raw === 'false' || raw === 'no' || raw === 'off' || raw === '0') return false;
+    return undefined;
+  };
+
+  return {
+    type: typeRaw,
+    id,
+    ...(normalized.label ? { label: String(normalized.label) } : {}),
+    ...(normalized.text ? { text: String(normalized.text) } : {}),
+    ...(parseNumber('min') !== undefined ? { min: parseNumber('min') } : {}),
+    ...(parseNumber('max') !== undefined ? { max: parseNumber('max') } : {}),
+    ...(parseNumber('value') !== undefined ? { value: parseNumber('value') } : {}),
+    ...(parseNumber('step') !== undefined ? { step: parseNumber('step') } : {}),
+    ...(parseBoolean('checked') !== undefined ? { checked: parseBoolean('checked') } : {}),
+    ...(align ? { align } : {}),
+    ...(width ? { width } : {}),
+    ...(scale ? { scale } : {}),
+  };
+}
+
+function findInlineDirectiveEnd(text: string, start: number): number {
+  let i = start;
+  let quote: '"' | "'" | null = null;
+
+  while (i < text.length) {
+    const ch = text[i] || '';
+    if (quote) {
+      if (ch === '\\') {
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      i++;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch as '"' | "'";
+      i++;
+      continue;
+    }
+    if (ch === '}') return i;
+    i++;
+  }
+
+  return -1;
+}
+
+function parseInlines(text: string, options?: ParseMarkdownLiteOptions): Inline[] {
+  const inlines: Inline[] = [];
+  let i = 0;
+  let buffer = '';
+
+  const flushText = () => {
+    if (!buffer) return;
+    inlines.push({ kind: 'text', text: buffer });
+    buffer = '';
   };
 
   while (i < text.length) {
-    const ch = text[i];
+    const ch = text[i] || '';
 
-    // Inline code: `code`
-    if (ch === '`') {
-      const end = text.indexOf('`', i + 1);
+    if (text.startsWith(':gui{', i)) {
+      const end = findInlineDirectiveEnd(text, i + 5);
       if (end !== -1) {
-        const before = text.slice(0, i);
-        if (before) {
-          // We'll handle before by slicing from last boundary; simpler approach below.
+        const raw = text.slice(i + 5, end);
+        const widget = parseWidgetSpec(parseInlineDirectiveValues(raw), options?.createWidgetId);
+        if (widget) {
+          flushText();
+          inlines.push({ kind: 'widget', widget });
+          i = end + 1;
+          continue;
         }
       }
     }
 
-    // Link: [label](url)
     if (ch === '[') {
       const closeBracket = text.indexOf(']', i + 1);
       const openParen = closeBracket !== -1 ? text.indexOf('(', closeBracket + 1) : -1;
@@ -38,38 +231,53 @@ function parseInlines(text: string): Inline[] {
       if (closeBracket !== -1 && openParen === closeBracket + 1 && closeParen !== -1) {
         const label = text.slice(i + 1, closeBracket);
         const url = text.slice(openParen + 1, closeParen);
+        flushText();
         if (label) inlines.push({ kind: 'link', text: label, url });
         i = closeParen + 1;
         continue;
       }
     }
 
-    // Inline code (second pass, after link so `[` doesn't confuse)
     if (ch === '`') {
       const end = text.indexOf('`', i + 1);
       if (end !== -1) {
         const code = text.slice(i + 1, end);
+        flushText();
         inlines.push({ kind: 'code', text: code });
         i = end + 1;
         continue;
       }
     }
 
-    // Plain text: consume until next special token
-    let next = text.length;
-    const nextLink = text.indexOf('[', i + 1);
-    const nextCode = text.indexOf('`', i + 1);
-    if (nextLink !== -1) next = Math.min(next, nextLink);
-    if (nextCode !== -1) next = Math.min(next, nextCode);
-
-    pushText(text.slice(i, next));
-    i = next;
+    buffer += ch;
+    i++;
   }
+
+  flushText();
 
   return inlines;
 }
 
-export function parseMarkdownLite(source: string): DocNode[] {
+function parseWidgetFence(code: string, metadata?: Record<string, string>, options?: ParseMarkdownLiteOptions): WidgetSpec | null {
+  const values: Record<string, string> = {};
+  if (metadata) {
+    for (const [key, value] of Object.entries(metadata)) {
+      values[String(key).toLowerCase()] = String(value);
+    }
+  }
+
+  const lines = String(code || '').replace(/\r\n/g, '\n').split('\n');
+  for (const rawLine of lines) {
+    const line = String(rawLine ?? '').trim();
+    if (!line || line.startsWith('#') || line.startsWith('//')) continue;
+    const match = line.match(/^([A-Za-z0-9_-]+)\s*:\s*(.+)$/);
+    if (!match) continue;
+    values[String(match[1]).toLowerCase()] = String(match[2]).trim();
+  }
+  return parseWidgetSpec(values, options?.createWidgetId);
+}
+
+export function parseMarkdownLite(source: string, options?: ParseMarkdownLiteOptions): DocNode[] {
   const lines = (source || '').replace(/\r\n/g, '\n').split('\n');
   const nodes: DocNode[] = [];
 
@@ -91,7 +299,7 @@ export function parseMarkdownLite(source: string): DocNode[] {
       if (!isBrailleBlankLine(rawLine)) {
         const trimmed = rawLine.trim();
         if (trimmed.length > 0) {
-          inlines.push(...parseInlines(trimmed));
+          inlines.push(...parseInlines(trimmed, options));
         }
       }
 
@@ -134,10 +342,19 @@ export function parseMarkdownLite(source: string): DocNode[] {
         }
       } else {
         inFence = false;
-        const node: DocNode = { kind: 'codeblock', code: fenceLines.join('\n') };
-        if (fenceLang) (node as any).lang = fenceLang;
-        if (fenceMetadata) (node as any).metadata = fenceMetadata;
-        nodes.push(node);
+        const fenceCode = fenceLines.join('\n');
+        const fenceLangKey = String(fenceLang || '').trim().toLowerCase();
+        if (fenceLangKey === 'gui') {
+          const widget = parseWidgetFence(fenceCode, fenceMetadata, options);
+          if (widget) {
+            nodes.push({ kind: 'widget', widget });
+          }
+        } else {
+          const node: DocNode = { kind: 'codeblock', code: fenceCode };
+          if (fenceLang) (node as any).lang = fenceLang;
+          if (fenceMetadata) (node as any).metadata = fenceMetadata;
+          nodes.push(node);
+        }
         fenceLines = [];
         fenceLang = undefined;
         fenceMetadata = undefined;
@@ -158,10 +375,44 @@ export function parseMarkdownLite(source: string): DocNode[] {
       continue;
     }
 
+    // Horizontal rule
+    if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      nodes.push({ kind: 'hr' });
+      i++;
+      continue;
+    }
+
     // Heading
     const h = line.match(/^(#{1,6})\s+(.+)$/);
     if (h) {
-      nodes.push({ kind: 'heading', level: h[1].length, inlines: parseInlines(h[2].trim()) });
+      nodes.push({ kind: 'heading', level: h[1].length, inlines: parseInlines(h[2].trim(), options) });
+      i++;
+      continue;
+    }
+
+    // Blockquote
+    if (/^\s*>/.test(line)) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && /^\s*>/.test(lines[i] ?? '')) {
+        const rawQuoted = lines[i] ?? '';
+        quoteLines.push(rawQuoted.replace(/^\s*>\s?/, ''));
+        i++;
+      }
+      const callout = parseCalloutBlock(quoteLines, options);
+      if (callout) {
+        nodes.push(callout);
+      } else {
+        nodes.push({ kind: 'blockquote', nodes: parseMarkdownLite(quoteLines.join('\n'), options) });
+      }
+      continue;
+    }
+
+    // Standalone image
+    const imageMatch = line.match(/^\s*!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)\s*$/);
+    if (imageMatch) {
+      const [, alt = '', source = '', title] = imageMatch;
+      const imageMeta = parseImageMetadata(title);
+      nodes.push({ kind: 'image', alt, source, ...imageMeta });
       i++;
       continue;
     }
@@ -171,7 +422,7 @@ export function parseMarkdownLite(source: string): DocNode[] {
       const items: Inline[][] = [];
       while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
         const itemText = lines[i].replace(/^\s*[-*]\s+/, '').trimEnd();
-        items.push(parseInlines(itemText));
+        items.push(parseInlines(itemText, options));
         i++;
       }
       nodes.push({ kind: 'list', items, ordered: false });
@@ -190,7 +441,7 @@ export function parseMarkdownLite(source: string): DocNode[] {
           start = Number.isFinite(parsed) ? parsed : 1;
         }
         const itemText = match[2].trimEnd();
-        items.push(parseInlines(itemText));
+        items.push(parseInlines(itemText, options));
         i++;
       }
       nodes.push({ kind: 'list', items, ordered: true, start: start ?? 1 });
@@ -214,10 +465,19 @@ export function parseMarkdownLite(source: string): DocNode[] {
 
   // Unclosed fence: treat as codeblock
   if (inFence && fenceLines.length > 0) {
-    const node: DocNode = { kind: 'codeblock', code: fenceLines.join('\n') };
-    if (fenceLang) (node as any).lang = fenceLang;
-    if (fenceMetadata) (node as any).metadata = fenceMetadata;
-    nodes.push(node);
+    const fenceCode = fenceLines.join('\n');
+    const fenceLangKey = String(fenceLang || '').trim().toLowerCase();
+    if (fenceLangKey === 'gui') {
+      const widget = parseWidgetFence(fenceCode, fenceMetadata, options);
+      if (widget) {
+        nodes.push({ kind: 'widget', widget });
+      }
+    } else {
+      const node: DocNode = { kind: 'codeblock', code: fenceCode };
+      if (fenceLang) (node as any).lang = fenceLang;
+      if (fenceMetadata) (node as any).metadata = fenceMetadata;
+      nodes.push(node);
+    }
   }
 
   return nodes;

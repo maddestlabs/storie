@@ -378,6 +378,13 @@ export interface ThemeStyleSheet {
   accent3: NamedStyle;
   inverted: NamedStyle;
   dim: NamedStyle;
+  hover: NamedStyle;
+  focus: NamedStyle;
+  active: NamedStyle;
+  info: NamedStyle;
+  success: NamedStyle;
+  error: NamedStyle;
+  disabled: NamedStyle;
   
   // UI element styles
   heading: NamedStyle;

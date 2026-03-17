@@ -670,12 +670,12 @@ export class WebGPUUIRenderer {
 
   /**
    * Register an image under an id for subsequent image() draws.
-   * Caller owns the ImageBitmap lifetime; this method copies it to GPU.
+   * Caller owns the source lifetime; this method copies it to GPU.
    */
-  registerImage(imageId: string, bitmap: ImageBitmap): { width: number; height: number } | null {
-    if (!imageId || !bitmap) return null;
-    const width = Math.max(1, bitmap.width | 0);
-    const height = Math.max(1, bitmap.height | 0);
+  registerImage(imageId: string, image: ImageBitmap | HTMLImageElement): { width: number; height: number } | null {
+    if (!imageId || !image) return null;
+    const width = Math.max(1, image.width | 0);
+    const height = Math.max(1, image.height | 0);
 
     const texture = this.device.createTexture({
       size: { width, height },
@@ -685,7 +685,7 @@ export class WebGPUUIRenderer {
     });
 
     this.device.queue.copyExternalImageToTexture(
-      { source: bitmap },
+      { source: image },
       { texture },
       { width, height }
     );

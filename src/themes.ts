@@ -4,7 +4,26 @@
  * Colors are stored as packed 32-bit integers (0xRRGGBBAA) for optimal WASM performance
  */
 
-import type { ThemeColors, ThemeStyleSheet } from './types.js';
+import { ColorUtils, type ThemeColors, type ThemeStyleSheet } from './types.js';
+
+function mixColors(from: number, to: number, ratio: number): number {
+  const t = Math.max(0, Math.min(1, Number(ratio) || 0));
+  const inv = 1 - t;
+  const r = Math.round(ColorUtils.r(from) * inv + ColorUtils.r(to) * t);
+  const g = Math.round(ColorUtils.g(from) * inv + ColorUtils.g(to) * t);
+  const b = Math.round(ColorUtils.b(from) * inv + ColorUtils.b(to) * t);
+  const a = Math.round(ColorUtils.a(from) * inv + ColorUtils.a(to) * t);
+  return ColorUtils.rgba(r, g, b, a);
+}
+
+function withAlpha(color: number, alpha: number): number {
+  return ColorUtils.rgba(
+    ColorUtils.r(color),
+    ColorUtils.g(color),
+    ColorUtils.b(color),
+    Math.max(0, Math.min(255, Math.round(alpha)))
+  );
+}
 
 /**
  * Built-in theme registry
@@ -168,6 +187,13 @@ export const THEMES: Record<string, ThemeColors> = {
  * Apply a theme to generate a complete style sheet with semantic styles
  */
 export function applyTheme(theme: ThemeColors): ThemeStyleSheet {
+  const errorFg = mixColors(theme.accent1, 0xFF4D4FFF, 0.55);
+  const successFg = mixColors(theme.accent3, 0x22C55EFF, 0.45);
+  const infoFg = mixColors(theme.accent2, theme.fg, 0.1);
+  const hoverBg = mixColors(theme.bgAlt, theme.accent2, 0.16);
+  const focusBg = mixColors(theme.bgAlt, theme.accent2, 0.24);
+  const activeBg = mixColors(theme.bgAlt, theme.accent1, 0.3);
+
   return {
     // Default body text
     default: {
@@ -223,6 +249,46 @@ export function applyTheme(theme: ThemeColors): ThemeStyleSheet {
     dim: {
       fg: theme.fgAlt,
       bg: theme.bg
+    },
+
+    hover: {
+      fg: theme.fg,
+      bg: hoverBg
+    },
+
+    focus: {
+      fg: theme.fg,
+      bg: focusBg,
+      underline: true
+    },
+
+    active: {
+      fg: theme.fg,
+      bg: activeBg,
+      bold: true
+    },
+
+    info: {
+      fg: infoFg,
+      bg: theme.bg,
+      bold: true
+    },
+
+    success: {
+      fg: successFg,
+      bg: theme.bg,
+      bold: true
+    },
+
+    error: {
+      fg: errorFg,
+      bg: theme.bg,
+      bold: true
+    },
+
+    disabled: {
+      fg: mixColors(theme.fgAlt, theme.bgAlt, 0.25),
+      bg: withAlpha(theme.bgAlt, Math.max(0x88, ColorUtils.a(theme.bgAlt)))
     },
     
     // Primary heading (h1)

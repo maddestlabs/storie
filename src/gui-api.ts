@@ -15,10 +15,13 @@ import type { SafeAreaInsets } from './types.js';
  */
 export function createGUIAPI(
   getMetrics: () => { charWidth: number; charHeight: number },
+  getStyle?: (name: string) => any,
   isTrustedUserInput?: () => boolean,
   getPixelScale?: () => { scaleX: number; scaleY: number },
   getViewportRect?: () => { x: number; y: number; width: number; height: number },
-  getSafeAreaInsets?: () => SafeAreaInsets
+  getSafeAreaInsets?: () => SafeAreaInsets,
+  getCurrentWorldSection?: () => number | null,
+  resolveWorldSectionSelector?: (selector: number | string) => number | null
 ) {
   const defaultBreakpointThresholds = {
     sm: 480,
@@ -331,10 +334,68 @@ export function createGUIAPI(
     return 'xl';
   };
 
+  const safeGetCurrentWorldSection = (): number | null => {
+    try {
+      const section = typeof getCurrentWorldSection === 'function' ? getCurrentWorldSection() : null;
+      return typeof section === 'number' && Number.isFinite(section) ? section : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const safeResolveWorldSection = (selector: any): number | null => {
+    if (selector === 'current') {
+      return safeGetCurrentWorldSection();
+    }
+
+    if (typeof selector === 'number' && Number.isFinite(selector)) {
+      return Math.trunc(selector);
+    }
+
+    if (typeof selector !== 'string') {
+      return null;
+    }
+
+    const raw = selector.trim();
+    if (!raw) return null;
+
+    if (/^-?\d+$/.test(raw)) {
+      return Number(raw);
+    }
+
+    try {
+      if (typeof resolveWorldSectionSelector === 'function') {
+        const resolved = resolveWorldSectionSelector(raw);
+        return typeof resolved === 'number' && Number.isFinite(resolved) ? resolved : null;
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  };
+
+  const normalizeSectionList = (selector: any): number[] => {
+    const values = Array.isArray(selector) ? selector : [selector];
+    const resolved: number[] = [];
+    for (const value of values) {
+      const section = safeResolveWorldSection(value);
+      if (section === null || resolved.includes(section)) continue;
+      resolved.push(section);
+    }
+    return resolved;
+  };
+
   // Store GUI system in the API object itself to avoid closure issues with SES
   const api: any = {
     _system: null as GUISystem | null,
     _boundsSpace: 'css' as 'css' | 'device',
+    _nextSectionGroupId: 1,
+    _sectionBindings: [] as Array<{
+      group: string | number;
+      sections: number[];
+      clearFocusOnHide: boolean;
+    }>,
     
     /**
      * Initialize GUI system
@@ -343,11 +404,124 @@ export function createGUIAPI(
     init(options?: { boundsSpace?: 'css' | 'device' }) {
       this._boundsSpace = (options && (options as any).boundsSpace === 'device') ? 'device' : 'css';
       this._system = new GUISystem();
+      this._nextSectionGroupId = 1;
+      this._sectionBindings = [];
+      if (getStyle) {
+        try {
+          this._system.setThemeFromStyles(getStyle);
+        } catch {
+          // Ignore theme failures; GUI widgets will use built-in defaults.
+        }
+      }
       if (this._boundsSpace === 'css') {
         const currentTokens = this._system.getTokens();
         this._system.setTokens(scaleTokenPatch(currentTokens));
       }
       return this._system;
+    },
+
+    _allocateSectionGroup() {
+      const group = `__storie_gui_section_${this._nextSectionGroupId++}`;
+      return group;
+    },
+
+    _findSectionBinding(group: string | number) {
+      return this._sectionBindings.find((binding: any) => binding.group === group) ?? null;
+    },
+
+    _applySectionBinding(binding: { group: string | number; sections: number[]; clearFocusOnHide: boolean }, currentSection?: number | null) {
+      if (!this._system) return false;
+      const activeSection = typeof currentSection === 'number' && Number.isFinite(currentSection)
+        ? currentSection
+        : safeGetCurrentWorldSection();
+      const visible = activeSection !== null && binding.sections.includes(activeSection);
+
+      if (!visible && binding.clearFocusOnHide) {
+        const focused = this._system.getFocusedWidget();
+        if (focused && focused.group === binding.group) {
+          this._system.clearFocus();
+        }
+      }
+
+      this._system.setGroupVisible(binding.group, visible);
+      return visible;
+    },
+
+    syncSectionBindings(currentSection?: number | null) {
+      if (!this._system) return;
+      const activeSection = typeof currentSection === 'number' && Number.isFinite(currentSection)
+        ? currentSection
+        : safeGetCurrentWorldSection();
+      for (const binding of this._sectionBindings) {
+        this._applySectionBinding(binding, activeSection);
+      }
+    },
+
+    bindGroupToSections(group: string | number, sections: number | string | Array<number | string>, options?: { clearFocusOnHide?: boolean }) {
+      if (!this._system) {
+        throw new Error('GUI system not initialized. Call gui.init() first.');
+      }
+
+      const resolvedSections = normalizeSectionList(sections);
+      if (resolvedSections.length === 0) {
+        throw new Error('gui.bindGroupToSections(group, sections): could not resolve any section selectors');
+      }
+
+      const clearFocusOnHide = options?.clearFocusOnHide !== false;
+      const existing = this._findSectionBinding(group);
+      if (existing) {
+        existing.sections = resolvedSections;
+        existing.clearFocusOnHide = clearFocusOnHide;
+        this._applySectionBinding(existing);
+        return group;
+      }
+
+      const binding = {
+        group,
+        sections: resolvedSections,
+        clearFocusOnHide
+      };
+      this._sectionBindings.push(binding);
+      this._applySectionBinding(binding);
+      return group;
+    },
+
+    bindGroupToSection(group: string | number, section: number | string, options?: { clearFocusOnHide?: boolean }) {
+      return this.bindGroupToSections(group, [section], options);
+    },
+
+    section(section: number | string | Array<number | string> = 'current', options?: { group?: string | number; clearFocusOnHide?: boolean }) {
+      if (!this._system) {
+        throw new Error('GUI system not initialized. Call gui.init() first.');
+      }
+
+      const group = options?.group ?? this._allocateSectionGroup();
+      this.bindGroupToSections(group, section, options);
+
+      const withGroup = (config: any) => ({ ...(config || {}), group });
+
+      const sectionAPI: any = {
+        group,
+        bind: (nextSections: number | string | Array<number | string>, nextOptions?: { clearFocusOnHide?: boolean }) => {
+          api.bindGroupToSections(group, nextSections, nextOptions ?? options);
+          return sectionAPI;
+        },
+        createButton: (config: any) => api.createButton(withGroup(config)),
+        createLabel: (config: any) => api.createLabel(withGroup(config)),
+        createCheckbox: (config: any) => api.createCheckbox(withGroup(config)),
+        createSlider: (config: any) => api.createSlider(withGroup(config)),
+        createTextField: (config: any) => api.createTextField(withGroup(config)),
+        createTextEditor: (config: any) => api.createTextEditor(withGroup(config)),
+        createMarkdownView: (config: any) => api.createMarkdownView(withGroup(config)),
+        createContainer: (config: any) => api.createContainer(withGroup(config)),
+        createResponsivePanel: (config: any) => api.createResponsivePanel(withGroup(config)),
+        setVisible: (visible: boolean) => {
+          api.setGroupVisible(group, visible);
+          return sectionAPI;
+        }
+      };
+
+      return sectionAPI;
     },
 
     _normalizeConfig(config: any) {
@@ -379,6 +553,17 @@ export function createGUIAPI(
      */
     getSystem(): GUISystem | null {
       return this._system;
+    },
+
+    syncTheme() {
+      if (!this._system || !getStyle) {
+        return null;
+      }
+      try {
+        return this._system.setThemeFromStyles(getStyle);
+      } catch {
+        return null;
+      }
     },
 
     getTokens() {

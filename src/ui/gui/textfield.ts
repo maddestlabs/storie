@@ -35,10 +35,10 @@ export class GUITextField extends BaseWidget {
   public placeholder: string;
   public align: GUITextAlign;
   public textFieldStyle: {
-    fg: Color;
-    bg: Color;
-    borderColor: Color;
-    focusBorderColor: Color;
+    fg?: Color;
+    bg?: Color;
+    borderColor?: Color;
+    focusBorderColor?: Color;
     drawBackground: boolean;
     drawBorder: boolean;
     paddingX: number;
@@ -64,10 +64,10 @@ export class GUITextField extends BaseWidget {
     this.align = config.align ?? 'left';
 
     this.textFieldStyle = {
-      fg: (config.textFieldStyle?.fg ?? { r: 240, g: 240, b: 240 }) as Color,
-      bg: (config.textFieldStyle?.bg ?? { r: 30, g: 30, b: 30, a: 0.95 }) as Color,
-      borderColor: (config.textFieldStyle?.borderColor ?? { r: 90, g: 90, b: 90 }) as Color,
-      focusBorderColor: (config.textFieldStyle?.focusBorderColor ?? { r: 120, g: 170, b: 220 }) as Color,
+      fg: config.textFieldStyle?.fg,
+      bg: config.textFieldStyle?.bg,
+      borderColor: config.textFieldStyle?.borderColor,
+      focusBorderColor: config.textFieldStyle?.focusBorderColor,
       drawBackground: config.textFieldStyle?.drawBackground ?? true,
       drawBorder: config.textFieldStyle?.drawBorder ?? true,
       paddingX: config.textFieldStyle?.paddingX ?? defaultTokens.controls.input.paddingX,

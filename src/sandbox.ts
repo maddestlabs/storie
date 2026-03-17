@@ -197,6 +197,12 @@ export interface SandboxAPI {
   // Theme API
   getStyle: (name: string) => NamedStyle;
   theme: ThemeColors;
+  themes: {
+    list: () => string[];
+    getName: () => string;
+    get: (name: string) => ThemeColors | null;
+    set: (name: string) => boolean;
+  };
   
   // Module API
   modules: {
@@ -724,6 +730,18 @@ export interface SandboxAPI {
       popActivated: () => { url: string; sectionIndex: number | null; linkIndex: number | null } | null;
     };
 
+    widgets: {
+      popEvent: () => {
+        id: string;
+        kind: 'button' | 'slider' | 'checkbox' | 'label';
+        sectionIndex: number;
+        action: 'click' | 'change' | 'toggle';
+        value?: number | boolean | string;
+      } | null;
+      getValue: (id: string, section?: number | string) => number | boolean | string | null;
+      setValue: (id: string, value: number | boolean | string, section?: number | string) => boolean;
+    };
+
     nav: {
       list: (rule?: {
         scope?: 'global' | 'subtree' | 'siblings';
@@ -944,6 +962,7 @@ export class ScriptSandbox {
         // Theme API
         getStyle: this.api.getStyle,
         theme: this.api.theme,
+        themes: this.api.themes,
         
         // Module API
         modules: this.api.modules,

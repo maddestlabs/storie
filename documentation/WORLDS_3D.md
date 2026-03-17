@@ -56,11 +56,15 @@ worlds.camera.moveTo(x, y, z);
 
 ## Section Metadata
 
-Configure 3D properties in section headings using JSON metadata:
+Configure 3D properties in section headings using a trailing directive object:
 
 ```markdown
-# Section Title {"x": "100", "y": "50", "z": "-20", "rotate-x": "45", "rotate-y": "30", "rotate-z": "10", "scale": "1.5", "opacity": "0.4", "width": "80", "height": "30", "interactive": "false"}
+# Section Title {x: 100, y: 50, z: -20, rotate-x: 45, rotate-y: 30, rotate-z: 10, scale: 1.5, opacity: 0.4, width: 80, height: 30, interactive: false}
 ```
+
+Strict JSON also works and is still the better option when you need nested data or exact JSON interoperability.
+
+Card content uses the shared lightweight markdown renderer. In addition to headings, paragraphs, and links, Worlds cards now support lists, callouts (`> [!TIP]`), standalone blob-backed markdown images with optional width/alignment metadata, ASCII fenced blocks, blockquotes (`>`), and horizontal rules (`---`, `***`, `___`).
 
 ### Properties
 

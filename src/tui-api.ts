@@ -73,6 +73,16 @@ export function createTUIAPI(
     getSystem(): TUISystem | null {
       return tuiSystem;
     },
+
+    syncTheme() {
+      if (!getStyle) return null;
+      try {
+        setTUIThemeFromStyles(getStyle);
+        return true;
+      } catch {
+        return null;
+      }
+    },
     
     /**
      * Create a button widget

@@ -6,6 +6,7 @@ This doc covers:
 - Section metadata (position/rotation/size)
 - Built-in link-centric navigation (mouse + keyboard)
 - `on:enter` section hooks
+- Section-scoped GUI mounts
 - Default auto-layout (3-column grid)
 - Layout callback for custom arrangements
 
@@ -35,12 +36,18 @@ worlds.camera.focusOnSectionFit(0, 0.9);
 
 ## Section Metadata
 
-Worlds reads JSON metadata from the end of a heading title.
+Worlds reads a trailing directive object from the end of a heading title.
 
 Example:
 
 ```md
-# Card One {"x": "90", "y": "0", "z": "-30", "rotate-y": "-18", "width": "80", "height": "24"}
+# Card One {x: 90, y: 0, z: -30, rotate-y: -18, width: 80, height: 24}
+```
+
+Strict JSON also remains valid:
+
+```md
+# Card One {"x": "90", "y": "0", "z": "-30", "rotate-y": "-18"}
 ```
 
 Supported keys:
@@ -54,6 +61,73 @@ Supported keys:
 Notes:
 - Rotations are specified in degrees in metadata but are stored internally as radians.
 - `displayTitle` is the heading text with the JSON suffix stripped.
+- The relaxed form is intended for flat key/value metadata. If you need nested data, strict JSON is the safer choice.
+
+## Card Content
+
+Worlds cards use the shared lightweight markdown renderer that also powers GUI markdown views.
+
+Supported content includes:
+- Headings, paragraphs, and links
+- Ordered and unordered lists
+- Standalone markdown images referencing embedded blob names, for example `![Alt](icon)`
+- Embedded `gui` fences for block widgets such as buttons, sliders, checkboxes, and labels
+- Callouts written as blockquotes with a marker, for example `> [!TIP]`
+- ASCII fenced blocks (` ```ascii `)
+- Blockquotes using `>`
+- Horizontal rules using `---`, `***`, or `___`
+
+Non-ASCII code fences such as `js on:init` and `wgsl` remain non-visual by design; they are treated as behavior/source blocks, not card body content.
+
+Image notes:
+- The current image phase is blob-backed: the image source should match the `name:` of an embedded `blob` block whose `mime:` starts with `image/`.
+- Images are treated as standalone block elements rather than inline text runs.
+- Optional image metadata can be supplied in the title field, for example `![Alt](icon "width:50% align:center")`.
+- Worlds cards rerasterize automatically when an image finishes decoding.
+
+Callout notes:
+- GitHub-style markers such as `[!NOTE]`, `[!TIP]`, `[!WARNING]`, `[!IMPORTANT]`, `[!INFO]`, and `[!CAUTION]` are recognized when they appear at the start of a blockquote.
+- Callouts remain document content, not executable UI widgets.
+
+Embedded widget notes:
+- Use a visible `gui` fence to place a retained widget in the markdown flow.
+- Use `:gui{...}` inside text when you want a compact inline control in a paragraph, heading, or list item.
+- Supported `type:` values are `button`, `slider`, `checkbox`, and `label`.
+- Common fields: `id`, `label`, `text`, `width`, `align`, and `scale`.
+- Slider fields: `min`, `max`, `value`, `step`.
+- Checkbox field: `checked`.
+- `scale` defaults to `gui`, which keeps the normal retained-GUI text/control sizing.
+- Use `scale: worlds` when you want the live widget internals to track the projected Worlds card scale more closely.
+- Inline directives accept comma-delimited `key:value` or `key=value` pairs. Quote values when they contain spaces.
+
+Example:
+
+````md
+```gui
+type: slider
+id: mix
+label: Mix
+min: 0
+max: 1
+value: 0.5
+step: 0.05
+width: 70%
+align: center
+scale: worlds
+```
+````
+
+Runtime access:
+- Embedded widgets mount as real retained GUI widgets only for the active Worlds section.
+- Read events with `worlds.widgets.popEvent()`.
+- Read current values with `worlds.widgets.getValue(id, section?)`.
+- Update label/slider/checkbox state with `worlds.widgets.setValue(id, value, section?)`.
+
+Inline example:
+
+```md
+Tap :gui{type:button, id: quick-fire, label:"Fire", scale: worlds} to trigger the action without leaving the paragraph.
+```
 
 ## Navigation (Link-centric)
 
@@ -135,16 +209,49 @@ rainLevel = (rainLevel ?? 0) + 0.02;
 
 You can also target a section by its title (matched via a slugified form of the heading text):
 
-```md
+````md
 # Awake
 
 ```js on:render section:Awake
 term.write(0, 0, 'Awake');
 ```
-```
+````
 
 Notes:
 - Fence metadata is whitespace-delimited, so for multi-word headings prefer the slug form (e.g. `section:city-entrance`).
+
+## Section-Scoped GUI
+
+Retained GUI widgets can be bound to Worlds sections so they automatically appear only while those sections are active.
+
+Use `gui.section(...)` to create a section-scoped widget context:
+
+````md
+# Settings
+
+```js on:enter
+state.settingsGui = state.settingsGui || gui.section('current');
+
+if (!state.audioLabel) {
+  state.audioLabel = state.settingsGui.createLabel({
+    bounds: { x: 24, y: 24, width: 240, height: 32 },
+    text: 'Audio: On'
+  });
+}
+```
+````
+
+Behavior:
+- `gui.section('current')` resolves the currently focused Worlds section and allocates a dedicated GUI group for it.
+- Widgets created through that section context inherit the section's group automatically.
+- The group is shown only while the bound section is active.
+- Focus is cleared automatically if a focused widget is hidden because its section is no longer active.
+
+If you already have a GUI group, you can bind it directly:
+
+```js
+gui.bindGroupToSection(existingGroup, 'settings');
+gui.bindGroupToSections(sharedGroup, ['title', 'settings']);
 ```
 
 ## Backgrounds

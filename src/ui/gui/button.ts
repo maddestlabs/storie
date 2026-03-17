@@ -26,11 +26,11 @@ export interface GUIButtonConfig extends WidgetConfig {
 export class GUIButton extends BaseWidget {
   public label: string;
   public buttonStyle: {
-    fg: Color;
-    bg: Color;
-    borderColor: Color;
-    hoverBg: Color;
-    activeBg: Color;
+    fg?: Color;
+    bg?: Color;
+    borderColor?: Color;
+    hoverBg?: Color;
+    activeBg?: Color;
     paddingX: number;
     paddingY: number;
     borderWidth: number;
@@ -46,11 +46,11 @@ export class GUIButton extends BaseWidget {
     
     // Default style
     this.buttonStyle = {
-      fg: (config.buttonStyle?.fg ?? { r: 240, g: 240, b: 240 }) as Color,
-      bg: (config.buttonStyle?.bg ?? { r: 60, g: 60, b: 60 }) as Color,
-      borderColor: (config.buttonStyle?.borderColor ?? { r: 100, g: 100, b: 100 }) as Color,
-      hoverBg: (config.buttonStyle?.hoverBg ?? { r: 80, g: 80, b: 80 }) as Color,
-      activeBg: (config.buttonStyle?.activeBg ?? { r: 40, g: 120, b: 180 }) as Color,
+      fg: config.buttonStyle?.fg,
+      bg: config.buttonStyle?.bg,
+      borderColor: config.buttonStyle?.borderColor,
+      hoverBg: config.buttonStyle?.hoverBg,
+      activeBg: config.buttonStyle?.activeBg,
       paddingX: config.buttonStyle?.paddingX ?? defaultTokens.controls.button.paddingX,
       paddingY: config.buttonStyle?.paddingY ?? defaultTokens.controls.button.paddingY,
       borderWidth: config.buttonStyle?.borderWidth ?? defaultTokens.controls.button.borderWidth,
