@@ -6667,6 +6667,7 @@ ${exportVars}
           if (inlineGui) {
             const { charWidth, charHeight } = this.getGUIPixelMetrics();
             inlineGui.update(this.input.getMouseX(), this.input.getMouseY(), this.input.isMouseDown(0), charWidth, charHeight);
+            this.syncWorldsInlineWidgets();
           }
 
           // Render retained-mode GUI widgets
