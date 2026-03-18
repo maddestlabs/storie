@@ -8462,6 +8462,10 @@ ${exportVars}
     this.input.updateMousePosition(pixelX, pixelY);
     this.input.applySyntheticEvent({ type: 'mouse_move', x: pixelX, y: pixelY });
 
+    if (this.worldsInlineWidgetInstances.length > 0) {
+      this.handleWorldsInlineWidgetMouse(pixelX, pixelY, this.input.isMouseDown(0));
+    }
+
     let dispatchedToDoc = false;
     if (doc?.handlers?.input) {
       const charWidth = this.canvas.width / this.width;
@@ -8517,10 +8521,13 @@ ${exportVars}
 
       const { pixelX, pixelY } = this.touchToPixelXY(t);
       this.input.updateMousePosition(pixelX, pixelY);
+
+      const inlineWidgetConsumed = this.handleWorldsInlineWidgetMouse(pixelX, pixelY, action === 'press');
+
       this.input.applySyntheticEvent({ type: 'mouse', action, button: 'left', x: pixelX, y: pixelY });
 
       let handledBy3D = false;
-      if (action === 'press') {
+      if (!inlineWidgetConsumed && action === 'press') {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
