@@ -64,11 +64,14 @@ export interface CameraShakeState {
   rotVel: Vec3;
 }
 
+export type SectionRenderMode = 'all' | 'heading' | 'content' | 'none';
+
 export interface Section3DLayout {
   sectionIndex: number;
   sectionTitle: string;
   displayTitle: string;
   content: string;
+  renderMode: SectionRenderMode;
   transform: Transform3D;
   /** True when x/y was assigned by Worlds auto-layout (no explicit metadata). */
   autoPositioned?: boolean;

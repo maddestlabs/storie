@@ -27,6 +27,7 @@ export interface WidgetSpec {
   max?: number;
   value?: number;
   step?: number;
+  showValue?: boolean;
   checked?: boolean;
   align?: 'left' | 'center' | 'right';
   width?: string;

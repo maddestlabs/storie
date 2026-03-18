@@ -68,7 +68,7 @@ export const THEMES: Record<string, ThemeColors> = {
     fg:      0xA0A0A0FF,   // Dark gray
     fgAlt:   0x6F6F6FFF,   // Lighter gray
     accent1: 0xFF2671FF,   // Hot pink
-    accent2: 0x0000FFFF,   // Pure blue
+    accent2: 0x6E7BFFFF,   // Pure blue
     accent3: 0x00FF91FF,   // Bright mint
   },
   
@@ -177,7 +177,7 @@ export const THEMES: Record<string, ThemeColors> = {
     bgAlt:   0x182626FF,   // Slightly lighter teal-gray
     fg:      0xAAAAAAFF,   // Light white (~#ccc)
     fgAlt:   0x606060FF,   // Medium gray
-    accent2: 0xFFCC00FF,   // Yellow
+    accent2: 0x4FDFC2FF,
     accent1: 0x00E5FFFF,   // Cyan
     accent3: 0xFFFFFFFF,   // Bright white (#fff)
   }

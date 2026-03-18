@@ -8,7 +8,7 @@ Demos:
 - [0rain](https://maddestlabs.github.io/storie/?content=0rain) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/0rain.md)
 - [her.md](https://maddestlabs.github.io/storie/?content=her) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/her.md)
 - [depths.md](https://maddestlabs.github.io/storie/?content=depths&font=Courier+Prime) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/depths.md)
-- [automation-arcade-intro.md](https://maddestlabs.github.io/storie/?content=automation-arcade-intro) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/automation-arcade-intro.md)
+- [minesweeper.md](https://maddestlabs.github.io/storie/?content=minesweeper) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/minesweeper.md)
 - [audio-lyrics.md](https://maddestlabs.github.io/storie?content=audio-lyrics) | [Source](https://github.com/maddestlabs/storie/blob/main/docs/demos/audio-lyrics.md)
 
 Core examples:

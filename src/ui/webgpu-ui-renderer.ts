@@ -82,6 +82,18 @@ export class WebGPUUIRenderer {
   // Per-instance stencil reference (mask depth)
   private textStencilRef: Int32Array;
 
+  measureTextWidth(text: string): number {
+    if (!text) return 0;
+
+    const charW = this.atlas.getCharWidth();
+    let total = 0;
+    for (const ch of text) {
+      const glyph = this.atlas.getGlyph(ch);
+      total += Math.max(charW, glyph.pixelWidth || 0);
+    }
+    return total;
+  }
+
   // Image: 12 floats => x,y,w,h + r,g,b,a + u,v,uw,uh
   private imageData: Float32Array;
   private imageCount: number = 0;
@@ -641,10 +653,11 @@ export class WebGPUUIRenderer {
       if (this.textCount >= 4096) break;
 
       const glyph = this.atlas.getGlyph(ch);
+      const glyphWidth = Math.max(charW, glyph.pixelWidth || 0);
       const o = this.textCount * 12;
       this.textData[o + 0] = cursorX;
       this.textData[o + 1] = y;
-      this.textData[o + 2] = charW;
+      this.textData[o + 2] = glyphWidth;
       this.textData[o + 3] = charH;
       this.textData[o + 4] = r;
       this.textData[o + 5] = g;

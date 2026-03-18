@@ -14,6 +14,7 @@ import type {
   CameraShakeConfig,
   CameraShakeState,
   Section3DLayout,
+  SectionRenderMode,
   WorldsConfig
 } from './worlds-types.js';
 
@@ -908,6 +909,17 @@ export function parseTransform3D(
   const visible = !metaTruthy('hidden');
   const navigable = metaStr('navigable', 'true').trim().toLowerCase() !== 'false';
   const interactive = metaStr('interactive', 'true').trim().toLowerCase() !== 'false';
+  const renderMode = (() => {
+    const mode = metaStr('render', 'all').trim().toLowerCase();
+    switch (mode) {
+      case 'heading':
+      case 'content':
+      case 'none':
+        return mode as SectionRenderMode;
+      default:
+        return 'all' as SectionRenderMode;
+    }
+  })();
 
   // For display/rendering: markdown parser already strips directive JSON from
   // the title when it stores it in `section.directive`. Keep a legacy fallback.
@@ -920,6 +932,7 @@ export function parseTransform3D(
     sectionTitle: section.title,
     displayTitle,
     content: section.content,
+    renderMode,
     transform: {
       position: vec3(x, y, z),
       rotation: vec3(rotX, rotY, rotZ),
@@ -1231,5 +1244,6 @@ export type {
   Transform3D,
   Camera3D,
   Section3DLayout,
+  SectionRenderMode,
   WorldsConfig
 } from './worlds-types.js';

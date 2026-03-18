@@ -740,6 +740,7 @@ export interface SandboxAPI {
       } | null;
       getValue: (id: string, section?: number | string) => number | boolean | string | null;
       setValue: (id: string, value: number | boolean | string, section?: number | string) => boolean;
+      configure: (id: string, patch: { min?: number; max?: number; step?: number; label?: string; showValue?: boolean; fg?: number; trackColor?: number; knobColor?: number; knobHoverColor?: number }, section?: number | string) => boolean;
     };
 
     nav: {

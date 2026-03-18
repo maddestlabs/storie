@@ -10,6 +10,7 @@ export interface GUISliderConfig extends WidgetConfig {
   max?: number;
   value?: number;
   step?: number;
+  showValue?: boolean;
   sliderStyle?: {
     fg?: Color;
     trackColor?: Color;
@@ -33,6 +34,7 @@ export class GUISlider extends BaseWidget {
   public max: number;
   public value: number;
   public step: number;
+  public showValue: boolean;
   private dragging: boolean = false;
   public sliderStyle: {
     fg?: Color;
@@ -56,6 +58,7 @@ export class GUISlider extends BaseWidget {
     this.max = config.max ?? 100;
     this.value = config.value ?? 50;
     this.step = config.step ?? 1;
+    this.showValue = config.showValue ?? true;
     
     this.sliderStyle = {
       fg: config.sliderStyle?.fg,
@@ -90,8 +93,8 @@ export class GUISlider extends BaseWidget {
     const range = this.max - this.min;
     const ratio = range > 0 ? (this.value - this.min) / range : 0;
     const knobX = x + ratio * (width - knobWidth);
-    const knobY = trackTopY;
     const knobHeight = Math.min(trackAreaH, scaledKnobHeight);
+    const knobY = trackTopY + Math.max(0, (trackAreaH - knobHeight) / 2);
     
     // Check if mouse is over the knob specifically
     const overKnob = mouseX >= knobX && mouseX < knobX + knobWidth &&
@@ -156,7 +159,7 @@ export class GUISlider extends BaseWidget {
       ? 18 + this.sliderStyle.labelGap + this.sliderStyle.knobHeight
       : this.sliderStyle.knobHeight;
     return {
-      width: Math.max(this.bounds.width, labelWidth + trackWidth + this.sliderStyle.valueGap + 32),
+      width: Math.max(this.bounds.width, labelWidth + trackWidth + (this.showValue ? this.sliderStyle.valueGap + 32 : 0)),
       height: Math.max(this.bounds.height, contentHeight, defaultTokens.controls.slider.minHeight)
     };
   }

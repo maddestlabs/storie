@@ -59,7 +59,7 @@ worlds.camera.moveTo(x, y, z);
 Configure 3D properties in section headings using a trailing directive object:
 
 ```markdown
-# Section Title {x: 100, y: 50, z: -20, rotate-x: 45, rotate-y: 30, rotate-z: 10, scale: 1.5, opacity: 0.4, width: 80, height: 30, interactive: false}
+# Section Title {x: 100, y: 50, z: -20, rotate-x: 45, rotate-y: 30, rotate-z: 10, scale: 1.5, opacity: 0.4, width: 80, height: 30, interactive: false, render: content}
 ```
 
 Strict JSON also works and is still the better option when you need nested data or exact JSON interoperability.
@@ -80,7 +80,8 @@ Card content uses the shared lightweight markdown renderer. In addition to headi
 | `opacity` | number | 1.0 | Card alpha multiplier (0..1) |
 | `width` | number | `defaultSectionWidth` (60) | Section width in characters |
 | `height` | number | `defaultSectionHeight` (20) | Section height in lines |
-| `hidden` | boolean | false | Hide from navigation |
+| `render` | enum | `all` | Card composition: `all`, `heading`, `content`, or `none` |
+| `hidden` | boolean | false | Hide the whole card and exclude it from normal navigation |
 | `navigable` | boolean | true | Allow navigation to section |
 | `interactive` | boolean | true | Include card in picking/link interaction |
 
@@ -162,7 +163,7 @@ worlds.camera.setEaseSpeed(positionSpeed, rotationSpeed)
 ```javascript
 // Get section layout
 const layout = worlds.getSectionLayout(sectionIndex);
-// Returns: { position, rotation, scale, width, height, visible, navigable }
+// Returns: { position, rotation, scale, width, height, renderMode, visible, navigable }
 
 // Set section transform at runtime
 worlds.setSectionTransform(sectionIndex, {

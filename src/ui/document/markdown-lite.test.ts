@@ -59,7 +59,7 @@ describe('parseMarkdownLite', () => {
   });
 
   it('parses gui fences into widget nodes', () => {
-    const nodes = parseMarkdownLite('```gui\ntype: slider\nid: mix\nlabel: Mix\nmin: 0\nmax: 1\nvalue: 0.35\nstep: 0.05\nwidth: 60%\nalign: center\nscale: worlds\n```');
+    const nodes = parseMarkdownLite('```gui\ntype: slider\nid: mix\nlabel: Mix\nmin: 0\nmax: 1\nvalue: 0.35\nstep: 0.05\nshowValue: false\nwidth: 60%\nalign: center\nscale: worlds\n```');
 
     expect(nodes[0]).toEqual({
       kind: 'widget',
@@ -71,6 +71,7 @@ describe('parseMarkdownLite', () => {
         max: 1,
         value: 0.35,
         step: 0.05,
+        showValue: false,
         width: '60%',
         align: 'center',
         scale: 'worlds'

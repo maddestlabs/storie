@@ -56,6 +56,7 @@ Supported keys:
 - Uniform scale: `scale`
 - Alpha: `opacity` (`0..1`)
 - Dimensions: `width`, `height`
+- Card composition: `render: "all" | "heading" | "content" | "none"`
 - Flags: `hidden: "true"` (visibility), `navigable: "false"`, `interactive: "false"`
 
 Notes:
@@ -366,7 +367,7 @@ Focus helpers:
 - `worlds.setSectionVisible(sectionIndex, visible)`
 - `worlds.getSectionCount()`
 
-`getSectionLayout()` also exposes `opacity` and `interactive`.
+`getSectionLayout()` also exposes `opacity`, `interactive`, and `renderMode`.
 
 Rotation passed to `setSectionTransform` is in degrees.
 

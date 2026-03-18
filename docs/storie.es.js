@@ -11626,7 +11626,7 @@ const THEMES = {
     // Lighter gray
     accent1: 4280709631,
     // Hot pink
-    accent2: 65535,
+    accent2: 1853620223,
     // Pure blue
     accent3: 16749055
     // Bright mint
@@ -11768,8 +11768,7 @@ const THEMES = {
     // Light white (~#ccc)
     fgAlt: 1616929023,
     // Medium gray
-    accent2: 4291559679,
-    // Yellow
+    accent2: 1340064511,
     accent1: 15073279,
     // Cyan
     accent3: 4294967295
@@ -14284,6 +14283,7 @@ class GUISlider extends BaseWidget {
     __publicField(this, "max");
     __publicField(this, "value");
     __publicField(this, "step");
+    __publicField(this, "showValue");
     __publicField(this, "dragging", false);
     __publicField(this, "sliderStyle");
     __publicField(this, "dragOffsetX", 0);
@@ -14292,6 +14292,7 @@ class GUISlider extends BaseWidget {
     this.max = config.max ?? 100;
     this.value = config.value ?? 50;
     this.step = config.step ?? 1;
+    this.showValue = config.showValue ?? true;
     this.sliderStyle = {
       fg: (_a = config.sliderStyle) == null ? void 0 : _a.fg,
       trackColor: (_b = config.sliderStyle) == null ? void 0 : _b.trackColor,
@@ -14319,8 +14320,8 @@ class GUISlider extends BaseWidget {
     const range = this.max - this.min;
     const ratio = range > 0 ? (this.value - this.min) / range : 0;
     const knobX = x + ratio * (width - knobWidth);
-    const knobY = trackTopY;
     const knobHeight = Math.min(trackAreaH, scaledKnobHeight);
+    const knobY = trackTopY + Math.max(0, (trackAreaH - knobHeight) / 2);
     const overKnob = mouseX >= knobX && mouseX < knobX + knobWidth && mouseY >= knobY && mouseY < knobY + knobHeight;
     const overTrack = mouseX >= x && mouseX < x + width && mouseY >= trackTopY && mouseY < trackTopY + trackAreaH;
     if (mouseDown && (overKnob || overTrack) && !this.dragging) {
@@ -14361,7 +14362,7 @@ class GUISlider extends BaseWidget {
     const trackWidth = Math.max(120, this.bounds.width);
     const contentHeight = this.label ? 18 + this.sliderStyle.labelGap + this.sliderStyle.knobHeight : this.sliderStyle.knobHeight;
     return {
-      width: Math.max(this.bounds.width, labelWidth + trackWidth + this.sliderStyle.valueGap + 32),
+      width: Math.max(this.bounds.width, labelWidth + trackWidth + (this.showValue ? this.sliderStyle.valueGap + 32 : 0)),
       height: Math.max(this.bounds.height, contentHeight, defaultTokens$2.controls.slider.minHeight)
     };
   }
@@ -14962,6 +14963,7 @@ function parseWidgetSpec(values2, createWidgetId) {
     ...parseNumber("max") !== void 0 ? { max: parseNumber("max") } : {},
     ...parseNumber("value") !== void 0 ? { value: parseNumber("value") } : {},
     ...parseNumber("step") !== void 0 ? { step: parseNumber("step") } : {},
+    ...parseBoolean("showvalue") !== void 0 ? { showValue: parseBoolean("showvalue") } : {},
     ...parseBoolean("checked") !== void 0 ? { checked: parseBoolean("checked") } : {},
     ...align ? { align } : {},
     ...width ? { width } : {},
@@ -16820,7 +16822,7 @@ class GUISystem {
     ui.rect(x, y + height - border, width, border, borderColor);
     ui.rect(x, y, border, height, borderColor);
     ui.rect(x + width - border, y, border, height, borderColor);
-    const labelWidth = label.length * charW;
+    const labelWidth = typeof ui.measureTextWidth === "function" ? ui.measureTextWidth(label) : label.length * charW;
     const labelX = x + (width - labelWidth) / 2;
     const labelY = y + Math.max(0, Math.floor((height - charH) / 2));
     ui.text(label, labelX, labelY, fg);
@@ -16837,10 +16839,10 @@ class GUISystem {
     }
     let textX = x;
     if (label.align === "center") {
-      const textWidth = text.length * charW;
+      const textWidth = typeof ui.measureTextWidth === "function" ? ui.measureTextWidth(text) : text.length * charW;
       textX = x + (width - textWidth) / 2;
     } else if (label.align === "right") {
-      const textWidth = text.length * charW;
+      const textWidth = typeof ui.measureTextWidth === "function" ? ui.measureTextWidth(text) : text.length * charW;
       textX = x + width - textWidth;
     }
     ui.text(text, textX, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
@@ -16901,17 +16903,20 @@ class GUISystem {
       ui.text(slider.label, x, y, fg);
       trackY += charH + scaledLabelGap;
     }
-    const trackYPos = trackY + (height - scaledTrackHeight) / 2;
+    const trackAreaH = Math.max(0, height - (slider.label ? charH + scaledLabelGap : 0));
+    const trackYPos = trackY + Math.max(0, (trackAreaH - scaledTrackHeight) / 2);
     ui.rect(x, trackYPos, width, scaledTrackHeight, trackColor);
-    const actualKnobHeight = Math.min(height - (slider.label ? charH + scaledLabelGap : 0), scaledKnobHeight);
+    const actualKnobHeight = Math.min(trackAreaH, scaledKnobHeight);
     const range = slider.max - slider.min;
     const ratio = range > 0 ? (slider.value - slider.min) / range : 0;
     const knobX = x + ratio * (width - scaledKnobWidth);
-    const knobY = trackY + (height - actualKnobHeight) / 2;
+    const knobY = trackY + Math.max(0, (trackAreaH - actualKnobHeight) / 2);
     const knobCol = slider.isDragging() ? knobActiveColor : slider.state.hovered ? knobHoverColor : knobColor;
     ui.rect(knobX, knobY, scaledKnobWidth, actualKnobHeight, knobCol);
-    const valueText = `${Math.round(slider.value)}`;
-    ui.text(valueText, x + width + scaledValueGap, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
+    if (slider.showValue) {
+      const valueText = `${Math.round(slider.value)}`;
+      ui.text(valueText, x + width + scaledValueGap, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
+    }
   }
   /**
    * Set visibility for all widgets in a group
@@ -17995,6 +18000,16 @@ class WebGPUUIRenderer {
     this.polyMaskPopPipeline = this.createPolyMaskPipeline("decrement");
     this.writeUniforms(this.width, this.height);
   }
+  measureTextWidth(text) {
+    if (!text) return 0;
+    const charW = this.atlas.getCharWidth();
+    let total = 0;
+    for (const ch of text) {
+      const glyph = this.atlas.getGlyph(ch);
+      total += Math.max(charW, glyph.pixelWidth || 0);
+    }
+    return total;
+  }
   getTexture() {
     return this.texture;
   }
@@ -18335,10 +18350,11 @@ class WebGPUUIRenderer {
     for (const ch of text) {
       if (this.textCount >= 4096) break;
       const glyph = this.atlas.getGlyph(ch);
+      const glyphWidth = Math.max(charW, glyph.pixelWidth || 0);
       const o = this.textCount * 12;
       this.textData[o + 0] = cursorX;
       this.textData[o + 1] = y;
-      this.textData[o + 2] = charW;
+      this.textData[o + 2] = glyphWidth;
       this.textData[o + 3] = charH;
       this.textData[o + 4] = r2;
       this.textData[o + 5] = g;
@@ -20595,12 +20611,24 @@ function parseTransform3D(section, sectionIndex, config) {
   const visible = !metaTruthy("hidden");
   const navigable = metaStr("navigable", "true").trim().toLowerCase() !== "false";
   const interactive = metaStr("interactive", "true").trim().toLowerCase() !== "false";
+  const renderMode = (() => {
+    const mode = metaStr("render", "all").trim().toLowerCase();
+    switch (mode) {
+      case "heading":
+      case "content":
+      case "none":
+        return mode;
+      default:
+        return "all";
+    }
+  })();
   const displayTitle = section.directive ? section.title : section.title.replace(/\s*\{[^}]+\}\s*$/, "").trim();
   return {
     sectionIndex,
     sectionTitle: section.title,
     displayTitle,
     content: section.content,
+    renderMode,
     transform: {
       position: vec3(x, y, z),
       rotation: vec3(rotX, rotY, rotZ),
@@ -24379,6 +24407,25 @@ function parseThemeOverride(raw) {
   }
   return null;
 }
+function buildWorldsCardMarkdown(layout) {
+  const title = (layout.displayTitle || layout.sectionTitle || "").trim();
+  const content = (layout.content || "").trim();
+  switch (layout.renderMode) {
+    case "heading":
+      return title ? `# ${title}` : "";
+    case "content":
+      return content;
+    case "none":
+      return "";
+    case "all":
+    default:
+      if (title && content) return `# ${title}
+
+${content}`;
+      if (title) return `# ${title}`;
+      return content;
+  }
+}
 class StorieEngine {
   constructor(canvas, config = {}) {
     // Core systems
@@ -24455,6 +24502,7 @@ class StorieEngine {
     __publicField(this, "worldsInlineWidgetInstances", []);
     __publicField(this, "worldsInlineWidgetEventsQueue", []);
     __publicField(this, "worldsInlineWidgetValueState", /* @__PURE__ */ new Map());
+    __publicField(this, "worldsInlineWidgetConfigState", /* @__PURE__ */ new Map());
     __publicField(this, "nextMarkdownImageId", 1);
     // Host sync (engine-level, transport pluggable)
     __publicField(this, "hostSync", null);
@@ -27271,6 +27319,22 @@ class StorieEngine {
           get safeAreaInsets() {
             return engine.getSafeAreaInsetsCss();
           },
+          measureTextWidth(text) {
+            const value = String(text ?? "");
+            const ui = engine.ensureWebGPUUI();
+            if (ui && typeof ui.measureTextWidth === "function") {
+              return ui.measureTextWidth(value);
+            }
+            const atlas = engine.renderer instanceof WebGPURenderer ? engine.renderer.getAtlas() : null;
+            const charW = (atlas == null ? void 0 : atlas.getCharWidth()) ?? 10;
+            if (!atlas) return value.length * charW;
+            let total = 0;
+            for (const ch of value) {
+              const glyph = atlas.getGlyph(ch);
+              total += Math.max(charW, glyph.pixelWidth || 0);
+            }
+            return total;
+          },
           get charWidth() {
             return engine.renderer instanceof WebGPURenderer ? engine.renderer.getAtlas().getCharWidth() : 0;
           },
@@ -27392,7 +27456,10 @@ class StorieEngine {
           const atlas = engine.renderer instanceof WebGPURenderer ? engine.renderer.getAtlas() : null;
           const charW = atlas ? atlas.getCharWidth() : 10;
           const charH = atlas ? atlas.getCharHeight() : 16;
-          const labelW = label.length * charW;
+          let labelW = label.length * charW;
+          if (ui && typeof ui.measureTextWidth === "function") {
+            labelW = ui.measureTextWidth(label);
+          }
           const tx = x + Math.max(0, (w - labelW) / 2);
           const ty = y + Math.max(0, (h - charH) / 2);
           ui.text(label, tx, ty, fg);
@@ -27831,6 +27898,41 @@ class StorieEngine {
               }
             }
             return true;
+          },
+          configure: (id, patch, section) => {
+            const resolved = section === void 0 || section === null || section === "current" ? engine.current3DSectionIndex : engine.resolve3DSectionIndex(section);
+            if (!(typeof resolved === "number" && Number.isFinite(resolved))) return false;
+            const key = engine.getWorldsInlineWidgetStateKey(resolved, String(id));
+            const nextPatch = { ...engine.worldsInlineWidgetConfigState.get(key) ?? {} };
+            if (typeof patch.label === "string") nextPatch.label = patch.label;
+            if (typeof patch.showValue === "boolean") nextPatch.showValue = patch.showValue;
+            if (typeof patch.min === "number" && Number.isFinite(patch.min)) nextPatch.min = patch.min;
+            if (typeof patch.max === "number" && Number.isFinite(patch.max)) nextPatch.max = patch.max;
+            if (typeof patch.step === "number" && Number.isFinite(patch.step) && patch.step > 0) nextPatch.step = patch.step;
+            if (typeof patch.fg === "number" && Number.isFinite(patch.fg)) nextPatch.fg = patch.fg;
+            if (typeof patch.trackColor === "number" && Number.isFinite(patch.trackColor)) nextPatch.trackColor = patch.trackColor;
+            if (typeof patch.knobColor === "number" && Number.isFinite(patch.knobColor)) nextPatch.knobColor = patch.knobColor;
+            if (typeof patch.knobHoverColor === "number" && Number.isFinite(patch.knobHoverColor)) nextPatch.knobHoverColor = patch.knobHoverColor;
+            engine.worldsInlineWidgetConfigState.set(key, nextPatch);
+            const live = engine.worldsInlineWidgetInstances.find((entry) => entry.sectionIndex === resolved && entry.widgetId === id);
+            if ((live == null ? void 0 : live.kind) === "slider") {
+              if (typeof nextPatch.label === "string") live.widget.label = nextPatch.label;
+              if (typeof nextPatch.showValue === "boolean") live.widget.showValue = nextPatch.showValue;
+              if (typeof nextPatch.min === "number") live.widget.min = nextPatch.min;
+              if (typeof nextPatch.max === "number") live.widget.max = nextPatch.max;
+              if (typeof nextPatch.step === "number") live.widget.step = nextPatch.step;
+              if (typeof nextPatch.fg === "number") live.widget.sliderStyle.fg = nextPatch.fg;
+              if (typeof nextPatch.trackColor === "number") live.widget.sliderStyle.trackColor = nextPatch.trackColor;
+              if (typeof nextPatch.knobColor === "number") live.widget.sliderStyle.knobColor = nextPatch.knobColor;
+              if (typeof nextPatch.knobHoverColor === "number") live.widget.sliderStyle.knobHoverColor = nextPatch.knobHoverColor;
+              const currentValue = live.widget.getValue();
+              live.widget.setValue(currentValue);
+              live.lastValue = live.widget.getValue();
+              if (live.lastValue !== void 0) {
+                engine.worldsInlineWidgetValueState.set(key, live.lastValue);
+              }
+            }
+            return true;
           }
         },
         // Outline-based navigation helpers.
@@ -28121,6 +28223,7 @@ class StorieEngine {
           return {
             sectionIndex: layout.sectionIndex,
             sectionTitle: layout.sectionTitle,
+            renderMode: layout.renderMode,
             position: { ...layout.transform.position },
             rotation: { ...layout.transform.rotation },
             scale: { ...layout.transform.scale },
@@ -28622,6 +28725,7 @@ class StorieEngine {
     for (const placement of active.placements) {
       const projected = this.project3DTextureRectToScreen(active.layout, placement);
       const widgetKey = this.getWorldsInlineWidgetStateKey(active.layout.sectionIndex, placement.widget.id);
+      const configState = this.worldsInlineWidgetConfigState.get(widgetKey);
       if (!projected) continue;
       const renderScale = placement.widget.scale === "worlds" ? this.getWorldsInlineWidgetRenderScale(placement, projected) : 1;
       let entry = this.worldsInlineWidgetInstances.find((item) => item.sectionIndex === active.layout.sectionIndex && item.widgetId === placement.widget.id);
@@ -28645,15 +28749,25 @@ class StorieEngine {
             });
           });
         } else if (placement.widget.type === "slider") {
+          const configMin = configState == null ? void 0 : configState.min;
+          const configMax = configState == null ? void 0 : configState.max;
+          const configStep = configState == null ? void 0 : configState.step;
           widget = system.createSlider({
             id: `worlds-inline-${widgetKey}`,
             group: "__worlds-inline-widgets",
             bounds,
-            label: String(placement.widget.label || placement.widget.id),
-            min: Number.isFinite(placement.widget.min) ? Number(placement.widget.min) : 0,
-            max: Number.isFinite(placement.widget.max) ? Number(placement.widget.max) : 100,
+            label: String((configState == null ? void 0 : configState.label) ?? placement.widget.label ?? ""),
+            min: Number.isFinite(configMin) ? Number(configMin) : Number.isFinite(placement.widget.min) ? Number(placement.widget.min) : 0,
+            max: Number.isFinite(configMax) ? Number(configMax) : Number.isFinite(placement.widget.max) ? Number(placement.widget.max) : 100,
             value: typeof persisted === "number" ? persisted : Number.isFinite(placement.widget.value) ? Number(placement.widget.value) : 0,
-            step: Number.isFinite(placement.widget.step) ? Number(placement.widget.step) : 1
+            step: Number.isFinite(configStep) ? Number(configStep) : Number.isFinite(placement.widget.step) ? Number(placement.widget.step) : 1,
+            showValue: typeof (configState == null ? void 0 : configState.showValue) === "boolean" ? configState.showValue : placement.widget.showValue,
+            sliderStyle: {
+              ...typeof (configState == null ? void 0 : configState.fg) === "number" ? { fg: configState.fg } : {},
+              ...typeof (configState == null ? void 0 : configState.trackColor) === "number" ? { trackColor: configState.trackColor } : {},
+              ...typeof (configState == null ? void 0 : configState.knobColor) === "number" ? { knobColor: configState.knobColor } : {},
+              ...typeof (configState == null ? void 0 : configState.knobHoverColor) === "number" ? { knobHoverColor: configState.knobHoverColor } : {}
+            }
           });
         } else if (placement.widget.type === "checkbox") {
           widget = system.createCheckbox({
@@ -29897,11 +30011,7 @@ ${exportVars}
       const desiredH = units === "px" ? Math.round(layout.height + texturePadding * 2) : Math.round(layout.height * baseLineHeight + texturePadding * 2);
       let widthPx = Math.max(minW, Math.min(maxW, desiredW));
       let heightPx = Math.max(minH, Math.min(maxH, desiredH));
-      const title = (layout.displayTitle || layout.sectionTitle || "").trim();
-      const content = (layout.content || "").trim();
-      const markdown = `# ${title}
-
-${content}`.trim();
+      const markdown = buildWorldsCardMarkdown(layout);
       const nodes = parseMarkdownLite(markdown);
       if (overflowMode === "expand" || overflowMode === "expand-y" || overflowMode === "fit" || overflowMode === "fit-y") {
         const proceduralRuledPaper2 = this.isWorldsSectionBackgroundProceduralChainEnabled();
@@ -30470,11 +30580,7 @@ ${content}`.trim();
       const desiredH = units === "px" ? Math.round(layout.height + texturePadding * 2) : Math.round(layout.height * baseLineHeight + texturePadding * 2);
       let widthPx = Math.max(minW, Math.min(maxW, desiredW));
       let heightPx = Math.max(minH, Math.min(maxH, desiredH));
-      const title = (layout.displayTitle || layout.sectionTitle || "").trim();
-      const content = (layout.content || "").trim();
-      const markdown = `# ${title}
-
-${content}`.trim();
+      const markdown = buildWorldsCardMarkdown(layout);
       const nodes = parseMarkdownLite(markdown);
       const style = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
       if (overflowMode === "expand" || overflowMode === "expand-y" || overflowMode === "fit" || overflowMode === "fit-y") {
@@ -31587,11 +31693,7 @@ ${content}`.trim();
     const units = this.worldsConfig.sectionSizeUnits === "px" ? "px" : "text";
     const overflowCfg = this.worldsConfig.sectionOverflow;
     const overflowMode = overflowCfg === "expand" || overflowCfg === "expand-y" || overflowCfg === "fit" || overflowCfg === "fit-y" ? overflowCfg : "clip";
-    const title = (layout.displayTitle || layout.sectionTitle || "").trim();
-    const content = (layout.content || "").trim();
-    const markdown = `# ${title}
-
-${content}`.trim();
+    const markdown = buildWorldsCardMarkdown(layout);
     const nodes = parseMarkdownLite(markdown);
     const textureMode = this.worldsConfig.sectionTextureMode;
     const minW = 256;

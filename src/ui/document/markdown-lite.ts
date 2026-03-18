@@ -162,6 +162,7 @@ function parseWidgetSpec(values: Record<string, string>, createWidgetId?: (type:
     ...(parseNumber('max') !== undefined ? { max: parseNumber('max') } : {}),
     ...(parseNumber('value') !== undefined ? { value: parseNumber('value') } : {}),
     ...(parseNumber('step') !== undefined ? { step: parseNumber('step') } : {}),
+    ...(parseBoolean('showvalue') !== undefined ? { showValue: parseBoolean('showvalue') } : {}),
     ...(parseBoolean('checked') !== undefined ? { checked: parseBoolean('checked') } : {}),
     ...(align ? { align } : {}),
     ...(width ? { width } : {}),

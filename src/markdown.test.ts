@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { parseMarkdown } from './markdown.js';
-import { parseSectionMetadata } from './worlds.js';
+import { getDefaultWorldsConfig, parseSectionMetadata, parseTransform3D } from './worlds.js';
 
 describe('heading directives', () => {
   it('parses relaxed heading directives and strips them from section titles', async () => {
@@ -32,5 +32,27 @@ describe('heading directives', () => {
       'rotate-y': '-18',
       interactive: 'false'
     });
+  });
+
+  it('parses render mode metadata for Worlds layouts', async () => {
+    const doc = await parseMarkdown([
+      '# Card One {render: content}',
+      '',
+      'Body'
+    ].join('\n'));
+
+    const layout = parseTransform3D(doc.sections[0], 0, getDefaultWorldsConfig());
+    expect(layout.renderMode).toBe('content');
+  });
+
+  it('falls back to render all for unknown render modes', async () => {
+    const doc = await parseMarkdown([
+      '# Card One {render: mystery}',
+      '',
+      'Body'
+    ].join('\n'));
+
+    const layout = parseTransform3D(doc.sections[0], 0, getDefaultWorldsConfig());
+    expect(layout.renderMode).toBe('all');
   });
 });

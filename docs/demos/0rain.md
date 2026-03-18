@@ -9,11 +9,11 @@ font: "AnomalyMono"
 fontsize: 28
 ---
 
-# 0RAIN {"x": "0", "y": "0"}
+# 0RAIN {"x": "0", "y": "0", "render": "content"}
 
 - [Play](#play)
 - [Random Seed](action:randomize-seed)
-- [Settings](#settings)
+- [Settings](action:open-settings)
 
 Read the backstory.
 - [Intro](#awake)
@@ -25,14 +25,14 @@ if (typeof worlds.currentSection === 'number') {
 setRainLevel(RAIN_IDLE_GAIN, 0.35);
 ```
 
-# H3R {"x": "6", "y": "-58", "rotate-z": "270", "scale": "8", "opacity": "0.8", "interactive": "false"}
+# H3R {"x": "-5", "y": "-58", "rotate-z": "270", "scale": "8", "opacity": "0.8", "interactive": "false", "render": "content"}
 0RAIN
 
 # Awake
 
 You wake gasping.
 
-A voice, feminine and singing, calls from impossible distance. In the dream, a city of rain and light beckons you. But the *Meridian* groans around you, dying. Metal cooling. Fluids dripping.
+A voice, feminine and singing, calls from impossible distance. In the dream, a city of rain and light beckons you. But the [Meridian](action:lore-meridian) groans around you, dying. Metal cooling. Fluids dripping.
 
 Kess moves through darkness checking heads. Five crew. Everyone breathing. Not everyone whole.
 
@@ -52,7 +52,7 @@ The crash site is a tomb. Twisted corridors. Broken systems. In the engine room,
 
 "I'll live," he mutters.
 
-The engines are scrap. Fuel cells ruptured. No beacon. No rescue signal. The *Meridian* will not fly again. At the navigation console, one file survives the corruption: coordinates labeled simply **HER**.
+The engines are scrap. Fuel cells ruptured. No beacon. No rescue signal. The [Meridian](action:lore-meridian) will not fly again. At the navigation console, one file survives the corruption: coordinates labeled simply **HER**.
 
 - [Plan with Kess](#plan-with-kess)
 - [Exit](#0RAIN)
@@ -75,6 +75,16 @@ She meets your eyes. "We need to be very careful."
 ```js on:enter
 setRainLevel(RAIN_IDLE_GAIN, 0.35);
 ```
+
+# Meridian
+
+The *Meridian* was a resistance courier refitted from an aging transport hull, more endurance than elegance. It carried people, contraband, and messages through routes the system preferred to pretend were impossible.
+
+Its crew knew every rattle in the frame. Kess trusted it because it was ugly, overused, and repairable. That made it honest. In another life it moved medicine and evacuees between quiet cells beyond the system's approved maps.
+
+Now the ship is a carcass cooling in the rain, but to the survivors it still means one thing: there is no route home except the one they make themselves.
+
+- [Back](action:history-back)
 
 # Plan with Kess
 
@@ -522,13 +532,11 @@ setRainLevel(RAIN_IDLE_GAIN * 1.2, 0.35);
 
 # Play
 
-Binary strains fall through the terminal layer.
-
-Match the **bottom digit** of each falling strain with `0` or `1`. Clear a full strain from bottom to top for points. Miss and the strain resets. A strain reaching bottom ends the run.
-
-Keys: `0` / `1` · `S` start · `R` restart same seed · `Esc` settings · `H` entry
-
-Touch/click is still active here: left half = `1`, right half = `0`.
+ █████  ████     █    ███    █   █
+ ▒  ▒▒  ▒   ▒   ▒ ▒     ▒    ▒▒  ▒
+ ▒ ▒ ▒  ▒  ▒   ▒   ▒    ▒    ▒ ▒ ▒
+ ░░  ░  ░  ░   ░   ░    ░    ░  ░░
+ ░░░░░  ░   ░  ░   ░  ░░░░░  ░   ░
 
 ```js on:enter
 if (typeof worlds.currentSection === 'number') {
@@ -544,15 +552,20 @@ setRainLevel(g.gameMode === 'play' ? RAIN_PLAY_GAIN : RAIN_IDLE_GAIN, 0.35);
 To play, clear digits by:
 Pressing 0|1 or tapping LEFT|RIGHT
 
+Theme:
+:gui{type:slider,id:settings-theme-slider,min:0,max:0,value:0,step:1,showValue:false,width:100%,align:center,scale:worlds}
+
+Status: :gui{type:label,id:settings-audio-state,text:"Audio: On",width:36%,align:left,scale:worlds}
+
 - [Audio on](action:audio-on)
 - [Audio off](action:audio-off)
-- [Back](#0RAIN)
+- [Back](action:history-back)
 
 ```js on:enter
 if (typeof worlds.currentSection === 'number') {
   g.settingsSectionIndex = worlds.currentSection;
 }
-ensureSettingsSectionGui();
+syncSettingsWorldWidgets();
 setRainLevel(RAIN_IDLE_GAIN, 0.35);
 ```
 
@@ -574,6 +587,9 @@ var WORLDS_CARD_HEIGHT = 1960;
 var GUI_GROUP_HUD = 1;
 var GUI_GROUP_KEYPAD = 2;
 var SEED_MAX_DIGITS = 12;
+var SETTINGS_THEME_SLIDER_ID = 'settings-theme-slider';
+var SETTINGS_AUDIO_LABEL_ID = 'settings-audio-state';
+var NAV_HISTORY_MAX = 24;
 
 var guiWidgets = null;
 
@@ -597,7 +613,8 @@ var g = {
   titleSectionIndex: null,
   playSectionIndex: null,
   settingsSectionIndex: null,
-  settingsGui: null,
+  navBackStack: [],
+  navForwardStack: [],
   themeNames: [],
   themeIndex: 0,
   themeName: 'zerorain',
@@ -769,12 +786,84 @@ function shouldKeepSeedFocusOnText(text) {
   return typeof text === 'string' && /^\d+$/.test(text);
 }
 
+function rememberSectionForBack(sectionIndex) {
+  if (typeof sectionIndex !== 'number') return;
+  var stack = g.navBackStack;
+  var last = stack.length ? stack[stack.length - 1] : null;
+  if (last === sectionIndex) return;
+  stack.push(sectionIndex);
+  if (stack.length > NAV_HISTORY_MAX) stack.splice(0, stack.length - NAV_HISTORY_MAX);
+}
+
+function rememberSectionForForward(sectionIndex) {
+  if (typeof sectionIndex !== 'number') return;
+  var stack = g.navForwardStack;
+  var last = stack.length ? stack[stack.length - 1] : null;
+  if (last === sectionIndex) return;
+  stack.push(sectionIndex);
+  if (stack.length > NAV_HISTORY_MAX) stack.splice(0, stack.length - NAV_HISTORY_MAX);
+}
+
+function clearForwardHistory() {
+  if (g.navForwardStack.length) g.navForwardStack.length = 0;
+}
+
+function navigateToSectionWithHistory(target, fromSectionIndex) {
+  rememberSectionForBack(fromSectionIndex);
+  clearForwardHistory();
+  focusWorldSection(target);
+}
+
+function getNavigationSourceSection(activated) {
+  if (activated && typeof activated.sectionIndex === 'number') return activated.sectionIndex;
+  if (worlds && typeof worlds.currentSection === 'number') return worlds.currentSection;
+  return null;
+}
+
+function goBackInHistory(fallbackTarget) {
+  if (!g.navBackStack.length) {
+    if (fallbackTarget) focusWorldSection(fallbackTarget);
+    return false;
+  }
+
+  var currentSection = worlds && typeof worlds.currentSection === 'number' ? worlds.currentSection : null;
+  var previousSection = g.navBackStack.pop();
+  if (typeof currentSection === 'number') rememberSectionForForward(currentSection);
+  focusWorldSection(previousSection);
+  return true;
+}
+
+function openSettings(fromSectionIndex) {
+  navigateToSectionWithHistory('Settings', fromSectionIndex);
+}
+
+function openMeridianLore(fromSectionIndex) {
+  navigateToSectionWithHistory('Meridian', fromSectionIndex);
+}
+
 function handleWorldLinkActions() {
   if (!worlds || !worlds.links || !worlds.links.popActivated) return;
 
   for (;;) {
     var activated = worlds.links.popActivated();
     if (!activated) break;
+
+    var sourceSectionIndex = getNavigationSourceSection(activated);
+
+    if (activated.url === 'action:open-settings') {
+      openSettings(sourceSectionIndex);
+      continue;
+    }
+
+    if (activated.url === 'action:lore-meridian') {
+      openMeridianLore(sourceSectionIndex);
+      continue;
+    }
+
+    if (activated.url === 'action:history-back') {
+      goBackInHistory('0RAIN');
+      continue;
+    }
 
     if (activated.url === 'action:randomize-seed') {
       randomizeSeed();
@@ -812,48 +901,41 @@ function syncPlaySectionVisibility() {
   g.playSectionHidden = shouldHide;
 }
 
-function ensureSettingsSectionGui() {
-  if (g.settingsGui || typeof gui === 'undefined' || typeof gui.section !== 'function') return g.settingsGui;
+function getSettingsWidgetSectionRef() {
+  return typeof g.settingsSectionIndex === 'number' ? g.settingsSectionIndex : 'Settings';
+}
 
-  var settingsSection = gui.section('current');
-  g.settingsGui = {
-    section: settingsSection,
-    themeCaptionLabel: settingsSection.createLabel({
-      focusable: false,
-      align: 'left',
-      bounds: { x: 0, y: 0, width: 320, height: 32 },
-      text: 'Theme'
-    }),
-    themeValueLabel: settingsSection.createLabel({
-      focusable: false,
-      align: 'center',
-      bounds: { x: 0, y: 0, width: 320, height: 40 },
-      text: ''
-    }),
-    themePrevButton: settingsSection.createButton({
-      bounds: { x: 0, y: 0, width: 80, height: 40 },
-      label: '←'
-    }),
-    themeNextButton: settingsSection.createButton({
-      bounds: { x: 0, y: 0, width: 80, height: 40 },
-      label: '→'
-    }),
-    audioStateLabel: settingsSection.createLabel({
-      focusable: false,
-      align: 'left',
-      bounds: { x: 0, y: 0, width: 280, height: 40 },
-      text: ''
-    })
-  };
+function syncSettingsWorldWidgets() {
+  if (!worlds || !worlds.widgets || typeof worlds.widgets.setValue !== 'function') return;
 
-  g.settingsGui.themePrevButton.on('click', function () {
-    cycleThemeIndex(-1);
-  });
-  g.settingsGui.themeNextButton.on('click', function () {
-    cycleThemeIndex(1);
-  });
+  ensureThemeSelectorState();
+  var sectionRef = getSettingsWidgetSectionRef();
+  if (typeof worlds.widgets.configure === 'function') {
+    var sliderColor = getStyle('info').fg;
+    worlds.widgets.configure(SETTINGS_THEME_SLIDER_ID, {
+      label: '',
+      min: 0,
+      max: Math.max(0, g.themeNames.length - 1),
+      step: 1,
+      showValue: false,
+      trackColor: alphaColor(sliderColor, 0.5)
+    }, sectionRef);
+  }
+  worlds.widgets.setValue(SETTINGS_THEME_SLIDER_ID, g.themeIndex, sectionRef);
+  worlds.widgets.setValue(SETTINGS_AUDIO_LABEL_ID, 'Audio: ' + (g.audioEnabled ? 'On' : 'Off'), sectionRef);
+}
 
-  return g.settingsGui;
+function handleSettingsWorldWidgetEvents() {
+  if (!worlds || !worlds.widgets || typeof worlds.widgets.popEvent !== 'function') return;
+
+  for (;;) {
+    var widgetEvent = worlds.widgets.popEvent();
+    if (!widgetEvent) break;
+
+    if (widgetEvent.id === SETTINGS_THEME_SLIDER_ID && widgetEvent.action === 'change' && typeof widgetEvent.value === 'number') {
+      applyThemeIndex(widgetEvent.value);
+    }
+  }
 }
 
 function ensureThemeSelectorState() {
@@ -878,26 +960,6 @@ function ensureThemeSelectorState() {
 
   g.themeIndex = index;
   g.themeName = g.themeNames[index];
-
-  if (g.settingsGui && g.settingsGui.themeValueLabel) {
-    g.settingsGui.themeValueLabel.setText(g.themeName);
-  }
-
-  if (g.settingsGui && g.settingsGui.themePrevButton && g.settingsGui.themeNextButton) {
-    var canCycle = g.themeNames.length > 1;
-    g.settingsGui.themePrevButton.setEnabled(canCycle);
-    g.settingsGui.themeNextButton.setEnabled(canCycle);
-  }
-}
-
-function cycleThemeIndex(delta) {
-  ensureThemeSelectorState();
-  if (!g.themeNames || g.themeNames.length === 0) return;
-
-  var dir = delta < 0 ? -1 : 1;
-  var count = g.themeNames.length;
-  var nextIndex = (g.themeIndex + dir + count) % count;
-  applyThemeIndex(nextIndex);
 }
 
 function applyThemeIndex(index) {
@@ -913,10 +975,7 @@ function applyThemeIndex(index) {
 
   g.themeIndex = nextIndex;
   g.themeName = nextName;
-
-  if (g.settingsGui && g.settingsGui.themeValueLabel) {
-    g.settingsGui.themeValueLabel.setText(nextName);
-  }
+  syncSettingsWorldWidgets();
 }
 
 function unlockExperienceAudio() {
@@ -1044,60 +1103,6 @@ function layoutOverlayGui() {
     height: hudHeight
   });
 
-  if (g.settingsGui && g.settingsGui.audioStateLabel) {
-    var settingsBaseX = inset;
-    var audioY = height - inset - hudHeight;
-    var themeRowY = audioY - hudHeight - 10;
-    var themeCaptionY = themeRowY - hudHeight + 4;
-    var themeButtonGap = Math.max(8, Math.floor(hudHeight * 0.18));
-    var themeButtonWidth = Math.max(52, Math.floor(hudHeight * 1.25));
-    var themeValueWidth = Math.max(120, hudWidth - themeButtonWidth * 2 - themeButtonGap * 2);
-    var themeValueX = settingsBaseX + Math.max(0, Math.floor((hudWidth - themeValueWidth) / 2));
-
-    if (g.settingsGui.themeCaptionLabel) {
-      g.settingsGui.themeCaptionLabel.setBounds({
-        x: settingsBaseX,
-        y: themeCaptionY,
-        width: hudWidth,
-        height: hudHeight
-      });
-    }
-
-    if (g.settingsGui.themePrevButton) {
-      g.settingsGui.themePrevButton.setBounds({
-        x: settingsBaseX,
-        y: themeRowY,
-        width: themeButtonWidth,
-        height: hudHeight
-      });
-    }
-
-    if (g.settingsGui.themeNextButton) {
-      g.settingsGui.themeNextButton.setBounds({
-        x: settingsBaseX + hudWidth - themeButtonWidth,
-        y: themeRowY,
-        width: themeButtonWidth,
-        height: hudHeight
-      });
-    }
-
-    if (g.settingsGui.themeValueLabel) {
-      g.settingsGui.themeValueLabel.setBounds({
-        x: themeValueX,
-        y: themeRowY,
-        width: themeValueWidth,
-        height: hudHeight
-      });
-    }
-
-    g.settingsGui.audioStateLabel.setBounds({
-      x: settingsBaseX,
-      y: audioY,
-      width: hudWidth,
-      height: hudHeight
-    });
-  }
-
   for (var i = 0; i < guiWidgets.keypadButtons.length; i++) {
     var keypad = guiWidgets.keypadButtons[i];
     var col = i % keypadColumns;
@@ -1144,10 +1149,7 @@ function updateOverlayHud() {
   guiWidgets.scoreLabel.setText(g.gameMode === 'start' ? '' : String(g.score));
 
   ensureThemeSelectorState();
-
-  if (g.settingsGui && g.settingsGui.audioStateLabel) {
-    g.settingsGui.audioStateLabel.setText('Audio: ' + (g.audioEnabled ? 'On' : 'Off'));
-  }
+  syncSettingsWorldWidgets();
 }
 
 function getDigitColor(s, i, alpha) {
@@ -1156,7 +1158,7 @@ function getDigitColor(s, i, alpha) {
   var pulse = i === Math.floor(s.currentAnim);
 
   if (i > s.highlight) {
-    return alphaColor(theme.accent3, 0.75 * alpha);
+    return alphaColor(theme.fg, 0.75 * alpha);
   }
 
   if (i === s.strainSize - 1) {
@@ -1164,14 +1166,14 @@ function getDigitColor(s, i, alpha) {
   }
 
   if (i === s.highlight) {
-    return alphaColor(theme.accent1, Math.max(a, 0.95 * alpha));
+    return alphaColor(theme.fg, Math.max(a, 0.95 * alpha));
   }
 
   if (pulse) {
-    return alphaColor(mixColor(theme.fg, theme.accent3, 0.45), Math.max(a, 0.7 * alpha));
+    return alphaColor(mixColor(theme.accent1, theme.fg, 0.45), Math.max(a, 0.7 * alpha));
   }
 
-  return alphaColor(theme.fg, a);
+  return alphaColor(theme.accent1, a);
 }
 
 function bgDropTarget() {
@@ -1763,7 +1765,7 @@ if (isSeedInputFocused()) return;
 
 if (event.type === 'keydown') {
   var k = event.key;
-  if (k === 'Escape')                            { focusWorldSection('Settings'); return; }
+  if (k === 'Escape')                            { openSettings(worlds.currentSection); return; }
   else if (k === 'h' || k === 'H')              { focusWorldSection('0RAIN'); return; }
   if      (k === '0' || k === 'Numpad0')       { if (_gm === 'play') handleDigit('0'); }
   else if (k === '1' || k === 'Numpad1')        { if (_gm === 'play') handleDigit('1'); }
@@ -1802,6 +1804,7 @@ if (g.gameMode === 'play') {
 
 ```js on:update
 handleWorldLinkActions();
+handleSettingsWorldWidgetEvents();
 gui.update(getMouseX(), getMouseY(), !!g.guiMouseDown);
 layoutOverlayGui();
 updateOverlayHud();
