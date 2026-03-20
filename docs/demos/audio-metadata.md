@@ -300,43 +300,46 @@ function saveModifiedFile() {
 ```js on:init
 term.layerID = 'default';
 gui.init();
+const tokens = gui.getTokens();
 
-const PW = 520; // panel width
-
-const panel = gui.createContainer({
-  bounds: { x: 0, y: 0, width: PW, height: 820 },
-  padding: 14, gap: 6, alignX: 'stretch'
+const panel = gui.createResponsivePanel({
+  bounds: { x: 0, y: 0, width: 520, height: 820 },
+  padding: tokens.spacing.md,
+  gap: tokens.spacing.xs,
+  maxWidth: 520,
+  alignX: 'stretch',
+  layout: { widthPolicy: 'fill', heightPolicy: 'fill' }
 });
 
-const heading  = gui.createLabel({ bounds: { x:0,y:0,width:PW,height:30 }, text: 'Audio Metadata Editor', align: 'left' });
-const hint     = gui.createLabel({ bounds: { x:0,y:0,width:PW,height:20 }, text: 'Drop an .mp3 to read and edit embedded tags.', align: 'left' });
-const fileInfo = gui.createLabel({ bounds: { x:0,y:0,width:PW,height:20 }, text: 'File: (none)', align: 'left' });
-const status   = gui.createLabel({ bounds: { x:0,y:0,width:PW,height:20 }, text: state.statusText, align: 'left' });
+const heading  = gui.createLabel({ bounds: { x:0,y:0,width:1,height:30 }, text: 'Audio Metadata Editor', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const hint     = gui.createLabel({ bounds: { x:0,y:0,width:1,height:20 }, text: 'Drop an .mp3 to read and edit embedded tags.', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const fileInfo = gui.createLabel({ bounds: { x:0,y:0,width:1,height:20 }, text: 'File: (none)', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const status   = gui.createLabel({ bounds: { x:0,y:0,width:1,height:20 }, text: state.statusText, align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
 // ── Editable metadata fields ──
-const lTitle   = gui.createLabel({ bounds:{x:0,y:0,width:PW,height:18}, text:'Title', align:'left' });
-const fTitle   = gui.createTextField({ bounds:{x:0,y:0,width:PW,height:40}, value:'', placeholder:'Song title (TIT2)' });
+const lTitle   = gui.createLabel({ bounds:{x:0,y:0,width:1,height:18}, text:'Title', align:'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const fTitle   = gui.createTextField({ bounds:{x:0,y:0,width:1,height:40}, value:'', placeholder:'Song title (TIT2)', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const lArtist  = gui.createLabel({ bounds:{x:0,y:0,width:PW,height:18}, text:'Artist', align:'left' });
-const fArtist  = gui.createTextField({ bounds:{x:0,y:0,width:PW,height:40}, value:'', placeholder:'Artist name (TPE1)' });
+const lArtist  = gui.createLabel({ bounds:{x:0,y:0,width:1,height:18}, text:'Artist', align:'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const fArtist  = gui.createTextField({ bounds:{x:0,y:0,width:1,height:40}, value:'', placeholder:'Artist name (TPE1)', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const lGenre   = gui.createLabel({ bounds:{x:0,y:0,width:PW,height:18}, text:'Genre', align:'left' });
-const fGenre   = gui.createTextField({ bounds:{x:0,y:0,width:PW,height:40}, value:'', placeholder:'Genre (TCON)' });
+const lGenre   = gui.createLabel({ bounds:{x:0,y:0,width:1,height:18}, text:'Genre', align:'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const fGenre   = gui.createTextField({ bounds:{x:0,y:0,width:1,height:40}, value:'', placeholder:'Genre (TCON)', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const lLyrics  = gui.createLabel({ bounds:{x:0,y:0,width:PW,height:18}, text:'Lyrics  (USLT — standard lyrics tag)', align:'left' });
+const lLyrics  = gui.createLabel({ bounds:{x:0,y:0,width:1,height:18}, text:'Lyrics  (USLT — standard lyrics tag)', align:'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 const fLyrics  = (typeof gui.createTextEditor === 'function')
-  ? gui.createTextEditor({ bounds:{x:0,y:0,width:PW,height:110}, value:'', placeholder:'Paste plain-text lyrics here' })
-  : gui.createTextField({ bounds:{x:0,y:0,width:PW,height:40}, value:'', placeholder:'Lyrics (USLT)' });
+  ? gui.createTextEditor({ bounds:{x:0,y:0,width:1,height:110}, value:'', placeholder:'Paste plain-text lyrics here', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } })
+  : gui.createTextField({ bounds:{x:0,y:0,width:1,height:40}, value:'', placeholder:'Lyrics (USLT)', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const lStorie  = gui.createLabel({ bounds:{x:0,y:0,width:PW,height:18}, text:'Storie Markdown  (TXXX:STORIE — lyric-visualizer content)', align:'left' });
+const lStorie  = gui.createLabel({ bounds:{x:0,y:0,width:1,height:18}, text:'Storie Markdown  (TXXX:STORIE — lyric-visualizer content)', align:'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 const fStorie  = (typeof gui.createTextEditor === 'function')
-  ? gui.createTextEditor({ bounds:{x:0,y:0,width:PW,height:140}, value:'', placeholder:'# Verse 1\nLyrics here…\n\n# Chorus\nMore lyrics…' })
-  : gui.createTextField({ bounds:{x:0,y:0,width:PW,height:40}, value:'', placeholder:'Storie markdown (TXXX:STORIE)' });
+  ? gui.createTextEditor({ bounds:{x:0,y:0,width:1,height:140}, value:'', placeholder:'# Verse 1\nLyrics here…\n\n# Chorus\nMore lyrics…', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } })
+  : gui.createTextField({ bounds:{x:0,y:0,width:1,height:40}, value:'', placeholder:'Storie markdown (TXXX:STORIE)', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
 // ── Action buttons ────────────────────────────────────────────────────────────
-const btnSave  = gui.createButton({ bounds:{x:0,y:0,width:PW,height:44}, label:'💾  Save Modified File (.mp3)' });
-const btnPlay  = gui.createButton({ bounds:{x:0,y:0,width:PW,height:36}, label:'▶  Play' });
-const btnPause = gui.createButton({ bounds:{x:0,y:0,width:PW,height:36}, label:'⏸  Pause' });
+const btnSave  = gui.createButton({ bounds:{x:0,y:0,width:1,height:44}, label:'💾  Save Modified File (.mp3)', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const btnPlay  = gui.createButton({ bounds:{x:0,y:0,width:1,height:36}, label:'▶  Play', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const btnPause = gui.createButton({ bounds:{x:0,y:0,width:1,height:36}, label:'⏸  Pause', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
 panel
   .add(heading).add(hint).add(fileInfo).add(status)
@@ -434,11 +437,29 @@ if (event.type === 'mouse_move') gui.handleMouse(event.x, event.y, state.mouseDo
 ```js on:update
 if (!state.widgets) return;
 
-// Pin panel to top-left with margin
 if (state.panel) {
-  const margin = 20;
-  const h = Math.max(500, ui.metrics?.canvasHeight ? ui.metrics.canvasHeight - margin * 2 : 820);
-  state.panel.setBounds({ x: margin, y: margin, width: 520, height: h }, true);
+  const tokens = gui.getTokens();
+  const viewport = gui.getViewportRect();
+  const info = gui.getResponsiveInfo({ width: viewport.width, height: viewport.height });
+  const inset = info.breakpoint === 'xs' ? tokens.spacing.sm : tokens.spacing.lg;
+  const maxWidth = info.breakpoint === 'xs' ? 420 : 520;
+  const panelHeight = Math.max(500, viewport.height - inset * 2);
+
+  state.panel.container.padding = info.breakpoint === 'xs' ? tokens.spacing.sm : tokens.spacing.md;
+  state.panel.container.gap = info.breakpoint === 'xs' ? tokens.spacing.xs : tokens.spacing.sm;
+  state.panel.setMaxWidth(maxWidth, false);
+  state.panel.fitToViewport(viewport, {
+    insetTop: inset,
+    insetRight: inset,
+    insetBottom: inset,
+    insetLeft: inset,
+    safeArea: true,
+    maxWidth: maxWidth,
+    height: panelHeight,
+    anchorX: 'start',
+    anchorY: 'start'
+  }, false);
+  state.panel.layout();
 }
 
 gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);

@@ -5,12 +5,15 @@
 
 import { WidgetManager } from '../core/widget-manager.js';
 import { InputRouter } from '../core/input-router.js';
+import { isTextInputCapable } from '../core/text-input.js';
 import type { InputCoordinate } from '../core/types.js';
+import type { TextInputCapable } from '../core/types.js';
 
 import { GUIButton, type GUIButtonConfig } from './button.js';
 import { GUILabel, type GUILabelConfig } from './label.js';
 import { GUICheckbox, type GUICheckboxConfig } from './checkbox.js';
 import { GUISlider, type GUISliderConfig } from './slider.js';
+import { GUIPianoKeyboard, type GUIPianoKeyboardConfig } from './piano.js';
 import { GUITextField, type GUITextFieldConfig } from './textfield.js';
 import { GUITextEditor, type GUITextEditorConfig } from './texteditor.js';
 import { GUIMarkdownView, type GUIMarkdownViewConfig } from './markdown-view.js';
@@ -128,6 +131,15 @@ export class GUISystem {
     if (widget instanceof GUISlider) {
       return { ...base, kind: 'slider', label: widget.label, min: widget.min, max: widget.max, value: widget.value };
     }
+    if (widget instanceof GUIPianoKeyboard) {
+      return {
+        ...base,
+        kind: 'pianoKeyboard',
+        orientation: widget.orientation,
+        activeMidi: widget.getActiveMidi(),
+        visibleWhiteKeys: widget.visibleWhiteKeys
+      };
+    }
     if (widget instanceof GUIMarkdownView) {
       return { ...base, kind: 'markdownView' };
     }
@@ -177,6 +189,15 @@ export class GUISystem {
     const slider = new GUISlider(applySliderTokens(config, this.tokens));
     this.widgetManager.register(slider);
     return slider;
+  }
+
+  /**
+   * Create a piano keyboard widget
+   */
+  createPianoKeyboard(config: GUIPianoKeyboardConfig): GUIPianoKeyboard {
+    const piano = new GUIPianoKeyboard(config);
+    this.widgetManager.register(piano);
+    return piano;
   }
 
   /**
@@ -248,6 +269,11 @@ export class GUISystem {
     for (const slider of sliders) {
       const metrics = slider.resolveRenderContext(charWidth, charHeight);
       slider.handleDrag(mouseX, mouseY, mouseDown, metrics.charHeight, metrics.scale);
+    }
+
+    const pianos = this.widgetManager.getAll().filter(w => w instanceof GUIPianoKeyboard) as GUIPianoKeyboard[];
+    for (const piano of pianos) {
+      piano.handlePointer(mouseX, mouseY, mouseDown);
     }
 
     // Update text field metrics (for caret placement/scroll)
@@ -322,6 +348,11 @@ export class GUISystem {
   getFocusedWidget(): any | null {
     return this.widgetManager.getFocused();
   }
+
+  getFocusedTextInput(): TextInputCapable | null {
+    const focused = this.widgetManager.getFocused();
+    return isTextInputCapable(focused) ? focused : null;
+  }
   
   /**
    * Render all visible widgets
@@ -354,6 +385,8 @@ export class GUISystem {
         this.renderCheckbox(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUISlider) {
         this.renderSlider(widget, uiAPI, charWidth, charHeight);
+      } else if (widget instanceof GUIPianoKeyboard) {
+        this.renderPianoKeyboard(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUITextField) {
         this.renderTextField(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUITextEditor) {
@@ -690,6 +723,100 @@ export class GUISystem {
       ui.text(valueText, x + width + scaledValueGap, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
     }
   }
+
+  private renderPianoKeyboard(widget: GUIPianoKeyboard, ui: Draw2D, charW: number, charH: number): void {
+    const layout = widget.getLayoutSnapshot();
+    const metrics = widget.resolveRenderContext(charW, charH);
+    charW = metrics.charWidth;
+    charH = metrics.charHeight;
+    const style = widget.pianoStyle;
+    const border = widget.getRenderPixels(style.borderWidth);
+    const activeMidi = widget.getActiveMidi();
+    const hoveredMidi = widget.getHoveredMidi();
+
+    ui.rect(widget.bounds.x, widget.bounds.y, widget.bounds.width, widget.bounds.height, style.background);
+
+    if (layout.railBounds) {
+      ui.rect(layout.railBounds.x, layout.railBounds.y, layout.railBounds.width, layout.railBounds.height, style.railColor);
+      if (layout.railThumbBounds) {
+        const hoverRail = widget.state.hovered && layout.railBounds
+          && (widget.orientation === 'horizontal'
+            ? this.lastMouseY >= layout.railBounds.y && this.lastMouseY < layout.railBounds.y + layout.railBounds.height
+            : this.lastMouseX >= layout.railBounds.x && this.lastMouseX < layout.railBounds.x + layout.railBounds.width);
+        const thumbColor = widget.state.pressed
+          ? style.railThumbActiveColor
+          : hoverRail
+            ? style.railThumbHoverColor
+            : style.railThumbColor;
+        ui.rect(layout.railThumbBounds.x, layout.railThumbBounds.y, layout.railThumbBounds.width, layout.railThumbBounds.height, style.railViewportColor);
+        ui.rect(layout.railThumbBounds.x, layout.railThumbBounds.y, layout.railThumbBounds.width, layout.railThumbBounds.height, thumbColor);
+      }
+    }
+
+    if (ui.pushClipRect) ui.pushClipRect(layout.mainBounds.x, layout.mainBounds.y, layout.mainBounds.width, layout.mainBounds.height);
+
+    for (const key of layout.whiteKeys) {
+      const isActive = activeMidi === key.midi;
+      const isHovered = widget.state.hovered && key.midi === hoveredMidi;
+      const fill = isActive ? style.whiteKeyActiveColor : (isHovered ? style.whiteKeyHoverColor : style.whiteKeyColor);
+      ui.rect(key.bounds.x, key.bounds.y, key.bounds.width, key.bounds.height, fill);
+      ui.rect(key.bounds.x, key.bounds.y, key.bounds.width, border, style.whiteKeyBorderColor);
+      ui.rect(key.bounds.x, key.bounds.y + key.bounds.height - border, key.bounds.width, border, style.whiteKeyBorderColor);
+      ui.rect(key.bounds.x, key.bounds.y, border, key.bounds.height, style.whiteKeyBorderColor);
+      ui.rect(key.bounds.x + key.bounds.width - border, key.bounds.y, border, key.bounds.height, style.whiteKeyBorderColor);
+
+      if (key.noteName.startsWith('C') && key.midi !== layout.firstVisibleMidi) {
+        if (widget.orientation === 'horizontal') {
+          ui.rect(key.bounds.x, key.bounds.y, border, key.bounds.height, style.octaveLineColor);
+        } else {
+          ui.rect(key.bounds.x, key.bounds.y, key.bounds.width, border, style.octaveLineColor);
+        }
+      }
+
+      const shouldDrawLabel = widget.showLabels === 'white' || widget.showLabels === 'all' || (widget.showLabels === 'c' && key.noteName.startsWith('C'));
+      if (!shouldDrawLabel) continue;
+      const labelWidth = typeof ui.measureTextWidth === 'function' ? ui.measureTextWidth(key.noteName) : key.noteName.length * charW;
+      const enoughAlong = widget.orientation === 'horizontal' ? key.bounds.width >= labelWidth + style.labelInset * 2 : key.bounds.height >= charH + style.labelInset * 2;
+      const enoughCross = widget.orientation === 'horizontal' ? key.bounds.height >= charH + style.labelInset * 2 : key.bounds.width >= labelWidth + style.labelInset * 2;
+      if (!enoughAlong || !enoughCross) continue;
+      const textX = widget.orientation === 'horizontal'
+        ? key.bounds.x + style.labelInset
+        : key.bounds.x + Math.max(style.labelInset, key.bounds.width - labelWidth - style.labelInset);
+      const textY = widget.orientation === 'horizontal'
+        ? key.bounds.y + Math.max(style.labelInset, key.bounds.height - charH - style.labelInset)
+        : key.bounds.y + style.labelInset;
+      ui.text(key.noteName, textX, textY, style.labelColor);
+    }
+
+    for (const key of layout.blackKeys) {
+      const isActive = activeMidi === key.midi;
+      const isHovered = widget.state.hovered && key.midi === hoveredMidi;
+      const fill = isActive ? style.blackKeyActiveColor : (isHovered ? style.blackKeyHoverColor : style.blackKeyColor);
+      ui.rect(key.bounds.x, key.bounds.y, key.bounds.width, key.bounds.height, fill);
+      ui.rect(key.bounds.x, key.bounds.y, key.bounds.width, border, style.blackKeyBorderColor);
+      ui.rect(key.bounds.x, key.bounds.y + key.bounds.height - border, key.bounds.width, border, style.blackKeyBorderColor);
+      ui.rect(key.bounds.x, key.bounds.y, border, key.bounds.height, style.blackKeyBorderColor);
+      ui.rect(key.bounds.x + key.bounds.width - border, key.bounds.y, border, key.bounds.height, style.blackKeyBorderColor);
+
+      if (widget.showLabels !== 'all') continue;
+      const labelWidth = typeof ui.measureTextWidth === 'function' ? ui.measureTextWidth(key.noteName) : key.noteName.length * charW;
+      const enoughAlong = widget.orientation === 'horizontal' ? key.bounds.width >= labelWidth + style.labelInset * 2 : key.bounds.height >= charH + style.labelInset * 2;
+      const enoughCross = widget.orientation === 'horizontal' ? key.bounds.height >= charH + style.labelInset * 2 : key.bounds.width >= labelWidth + style.labelInset * 2;
+      if (!enoughAlong || !enoughCross) continue;
+      const textX = key.bounds.x + style.labelInset;
+      const textY = key.bounds.y + style.labelInset;
+      ui.text(key.noteName, textX, textY, style.blackLabelColor);
+    }
+
+    if (ui.popClipRect) ui.popClipRect();
+
+    if (widget.state.focused) {
+      ui.rect(widget.bounds.x, widget.bounds.y, widget.bounds.width, border, style.focusBorderColor);
+      ui.rect(widget.bounds.x, widget.bounds.y + widget.bounds.height - border, widget.bounds.width, border, style.focusBorderColor);
+      ui.rect(widget.bounds.x, widget.bounds.y, border, widget.bounds.height, style.focusBorderColor);
+      ui.rect(widget.bounds.x + widget.bounds.width - border, widget.bounds.y, border, widget.bounds.height, style.focusBorderColor);
+    }
+  }
   
   /**
    * Set visibility for all widgets in a group
@@ -849,12 +976,13 @@ export class GUISystem {
 }
 
 // Re-export widget types for convenience
-export { GUIButton, GUILabel, GUICheckbox, GUISlider, GUITextField, GUITextEditor, GUIMarkdownView, GUILayoutContainer };
+export { GUIButton, GUILabel, GUICheckbox, GUISlider, GUIPianoKeyboard, GUITextField, GUITextEditor, GUIMarkdownView, GUILayoutContainer };
 export type {
   GUIButtonConfig,
   GUILabelConfig,
   GUICheckboxConfig,
   GUISliderConfig,
+  GUIPianoKeyboardConfig,
   GUITextFieldConfig,
   GUITextEditorConfig,
   GUIMarkdownViewConfig,

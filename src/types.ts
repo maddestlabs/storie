@@ -182,6 +182,11 @@ export interface Style {
 }
 
 export interface Section {
+  /**
+   * Stable identifier for this section within the currently loaded document.
+   * Assigned during markdown parsing and preserved by the runtime section store.
+   */
+  id?: string;
   title: string;
   level: number; // 1-6 for h1-h6
   content: string;

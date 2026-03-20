@@ -532,11 +532,13 @@ setRainLevel(RAIN_IDLE_GAIN * 1.2, 0.35);
 
 # Play
 
+```ascii
  █████  ████     █    ███    █   █
  ▒  ▒▒  ▒   ▒   ▒ ▒     ▒    ▒▒  ▒
  ▒ ▒ ▒  ▒  ▒   ▒   ▒    ▒    ▒ ▒ ▒
  ░░  ░  ░  ░   ░   ░    ░    ░  ░░
  ░░░░░  ░   ░  ░   ░  ░░░░░  ░   ░
+```
 
 ```js on:enter
 if (typeof worlds.currentSection === 'number') {

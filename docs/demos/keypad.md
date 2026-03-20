@@ -13,6 +13,7 @@ var seedText = String(random.seed());
 var statusText = 'Tap the seed field or the buttons below it.';
 var currentBreakpoint = '';
 var widgets = null;
+var layouts = null;
 
 var keypadSpec = [
   { label: '1', action: 'digit', value: '1' },
@@ -178,17 +179,19 @@ function getBreakpointConfig() {
   var width = viewport && viewport.width ? viewport.width : 800;
   var height = viewport && viewport.height ? viewport.height : 600;
   var info = gui.getResponsiveInfo({ width: width, height: height });
+  var tokens = gui.getTokens();
   var breakpoint = info.breakpoint === 'xs' ? 'xs' : info.breakpoint === 'sm' ? 'sm' : 'md';
 
   if (breakpoint === 'xs') {
     return {
       breakpoint: 'xs',
-      x: 12,
-      y: 24,
-      panelWidth: 280,
+      insetX: tokens.spacing.sm,
+      insetY: tokens.spacing.md,
+      panelPadding: tokens.spacing.md,
+      sectionGap: tokens.spacing.sm,
+      buttonGap: tokens.spacing.sm,
+      maxWidth: Math.max(280, Math.min(380, info.usableWidth || width)),
       columns: 2,
-      rowGap: 8,
-      columnGap: 8,
       showSubtitle: false,
       showSeedValue: false,
       footerText: 'Tap buttons or type digits.'
@@ -198,12 +201,13 @@ function getBreakpointConfig() {
   if (breakpoint === 'sm') {
     return {
       breakpoint: 'sm',
-      x: 14,
-      y: 24,
-      panelWidth: 320,
+      insetX: tokens.spacing.md,
+      insetY: tokens.spacing.lg,
+      panelPadding: tokens.spacing.lg,
+      sectionGap: tokens.spacing.sm,
+      buttonGap: tokens.spacing.sm,
+      maxWidth: Math.max(360, Math.min(520, info.usableWidth || width)),
       columns: 3,
-      rowGap: 8,
-      columnGap: 8,
       showSubtitle: true,
       showSeedValue: false,
       footerText: 'Tap buttons or type digits. Copy/Paste works when clipboard is available.'
@@ -212,12 +216,13 @@ function getBreakpointConfig() {
 
   return {
     breakpoint: 'md',
-    x: 20,
-    y: 24,
-    panelWidth: 342,
+    insetX: tokens.spacing.lg,
+    insetY: tokens.spacing.xl,
+    panelPadding: tokens.spacing.lg,
+    sectionGap: tokens.spacing.md,
+    buttonGap: tokens.spacing.md,
+    maxWidth: Math.max(420, Math.min(620, info.usableWidth || width)),
     columns: 4,
-    rowGap: 10,
-    columnGap: 10,
     showSubtitle: true,
     showSeedValue: true,
     footerText: 'Tap buttons or type digits. Copy/Paste uses the browser clipboard when available.'
@@ -226,119 +231,159 @@ function getBreakpointConfig() {
 
 function rebuildLayout(force) {
   var config = getBreakpointConfig();
-  if (!force && widgets && currentBreakpoint === config.breakpoint) return;
+  if (!widgets || !layouts) {
+    gui.init();
 
-  currentBreakpoint = config.breakpoint;
-  gui.init();
+    var tokens = gui.getTokens();
+    var keypadButtons = [];
 
-  var x = config.x;
-  var cursorY = config.y;
-  var panelWidth = config.panelWidth;
+    layouts = {
+      root: gui.createResponsivePanel({
+        bounds: { x: 0, y: 0, width: 420, height: 1 },
+        gap: tokens.spacing.md,
+        padding: tokens.spacing.lg,
+        maxWidth: 620,
+        layout: { widthPolicy: 'fill', heightPolicy: 'fit-content' }
+      }),
+      keypad: gui.createContainer({
+        bounds: { x: 0, y: 0, width: 1, height: 1 },
+        mode: 'grid',
+        columns: 4,
+        rowGap: tokens.spacing.sm,
+        columnGap: tokens.spacing.sm,
+        alignX: 'stretch',
+        alignY: 'stretch',
+        layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
+      })
+    };
 
-  var title = gui.createLabel({
-    focusable: false,
-    align: 'center',
-    bounds: { x: x, y: cursorY, width: panelWidth, height: 30 },
-    text: 'Soft Keypad Demo',
-    labelStyle: { typographyRole: 'title' }
-  });
-  cursorY += 32;
-
-  var subtitle = gui.createLabel({
-    focusable: false,
-    align: 'center',
-    bounds: { x: x, y: cursorY, width: panelWidth, height: 24 },
-    text: 'Responsive soft keypad rebuilt per breakpoint',
-    visible: config.showSubtitle
-  });
-  if (config.showSubtitle) cursorY += 28;
-
-  var seedLabel = gui.createLabel({
-    focusable: false,
-    align: 'left',
-    bounds: { x: x, y: cursorY, width: panelWidth, height: 20 },
-    text: 'SEED',
-    labelStyle: { typographyRole: 'caption' }
-  });
-  cursorY += 24;
-
-  var seedInput = gui.createTextField({
-    align: 'right',
-    bounds: { x: x, y: cursorY, width: panelWidth, height: 44 },
-    value: seedText,
-    placeholder: 'Seed',
-    textFieldStyle: {
-      fg: ui.colors.rgba(255, 255, 255, 220),
-      drawBorder: false,
-      drawBackground: false
-    }
-  });
-  cursorY += 52;
-
-  var seedValueLabel = gui.createLabel({
-    focusable: false,
-    align: 'left',
-    bounds: { x: x, y: cursorY, width: panelWidth, height: 22 },
-    text: '',
-    visible: config.showSeedValue
-  });
-  if (config.showSeedValue) cursorY += 28;
-
-  var statusLabel = gui.createLabel({
-    focusable: false,
-    align: 'left',
-    bounds: { x: x, y: cursorY, width: panelWidth, height: 22 },
-    text: statusText
-  });
-  cursorY += 34;
-
-  var buttonWidth = config.columns > 1
-    ? Math.floor((panelWidth - config.columnGap * (config.columns - 1)) / config.columns)
-    : panelWidth;
-  var keypadButtons = [];
-
-  for (var i = 0; i < keypadSpec.length; i++) {
-    var spec = keypadSpec[i];
-    var col = i % config.columns;
-    var row = Math.floor(i / config.columns);
-    var button = gui.createButton({
+    var title = gui.createLabel({
       focusable: false,
-      bounds: {
-        x: x + col * (buttonWidth + config.columnGap),
-        y: cursorY + row * (46 + config.rowGap),
-        width: buttonWidth,
-        height: 46
-      },
-      label: spec.label
+      align: 'center',
+      bounds: { x: 0, y: 0, width: 1, height: 30 },
+      text: 'Soft Keypad Demo',
+      labelStyle: { typographyRole: 'title' },
+      layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
     });
-    (function (buttonAction, buttonValue) {
-      button.on('click', function () {
-        applyKeypadAction(buttonAction, buttonValue);
+
+    var subtitle = gui.createLabel({
+      focusable: false,
+      align: 'center',
+      bounds: { x: 0, y: 0, width: 1, height: 24 },
+      text: 'Responsive soft keypad with fluid relayout',
+      layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
+    });
+
+    var seedLabel = gui.createLabel({
+      focusable: false,
+      align: 'left',
+      bounds: { x: 0, y: 0, width: 1, height: 20 },
+      text: 'SEED',
+      labelStyle: { typographyRole: 'caption' },
+      layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
+    });
+
+    var seedInput = gui.createTextField({
+      align: 'right',
+      bounds: { x: 0, y: 0, width: 1, height: 44 },
+      value: seedText,
+      placeholder: 'Seed',
+      textFieldStyle: {
+        fg: ui.colors.rgba(255, 255, 255, 220),
+        drawBorder: false,
+        drawBackground: false
+      },
+      layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
+    });
+
+    var seedValueLabel = gui.createLabel({
+      focusable: false,
+      align: 'left',
+      bounds: { x: 0, y: 0, width: 1, height: 22 },
+      text: '',
+      layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
+    });
+
+    var statusLabel = gui.createLabel({
+      focusable: false,
+      align: 'left',
+      bounds: { x: 0, y: 0, width: 1, height: 22 },
+      text: statusText,
+      layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
+    });
+
+    for (var i = 0; i < keypadSpec.length; i++) {
+      var spec = keypadSpec[i];
+      var button = gui.createButton({
+        focusable: false,
+        bounds: { x: 0, y: 0, width: 1, height: 46 },
+        label: spec.label,
+        layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
       });
-    })(spec.action, spec.value);
-    keypadButtons.push({ action: spec.action, value: spec.value, button: button });
+      (function (buttonAction, buttonValue) {
+        button.on('click', function () {
+          applyKeypadAction(buttonAction, buttonValue);
+        });
+      })(spec.action, spec.value);
+      keypadButtons.push({ action: spec.action, value: spec.value, button: button });
+      layouts.keypad.add(button);
+    }
+
+    var footerLabel = gui.createLabel({
+      focusable: false,
+      align: 'left',
+      bounds: { x: 0, y: 0, width: 1, height: 24 },
+      text: config.footerText,
+      layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
+    });
+
+    layouts.root
+      .add(title)
+      .add(subtitle)
+      .add(seedLabel)
+      .add(seedInput)
+      .add(seedValueLabel)
+      .add(statusLabel)
+      .add(layouts.keypad)
+      .add(footerLabel);
+
+    widgets = {
+      title: title,
+      subtitle: subtitle,
+      seedLabel: seedLabel,
+      seedInput: seedInput,
+      seedValueLabel: seedValueLabel,
+      statusLabel: statusLabel,
+      footerLabel: footerLabel,
+      keypadButtons: keypadButtons
+    };
   }
 
-  cursorY += Math.ceil(keypadSpec.length / config.columns) * 46 + (Math.ceil(keypadSpec.length / config.columns) - 1) * config.rowGap + 16;
+  currentBreakpoint = config.breakpoint;
+  widgets.subtitle.setVisible(config.showSubtitle);
+  widgets.seedValueLabel.setVisible(config.showSeedValue);
+  widgets.footerLabel.setText(config.footerText);
 
-  var footerLabel = gui.createLabel({
-    focusable: false,
-    align: 'left',
-    bounds: { x: x, y: cursorY, width: panelWidth, height: 24 },
-    text: config.footerText
-  });
+  layouts.root.container.padding = config.panelPadding;
+  layouts.root.container.gap = config.sectionGap;
+  layouts.root.setMaxWidth(config.maxWidth, false);
+  layouts.keypad.setColumns(config.columns, false);
+  layouts.keypad.gap = config.buttonGap;
+  layouts.keypad.rowGap = config.buttonGap;
+  layouts.keypad.columnGap = config.buttonGap;
 
-  widgets = {
-    title: title,
-    subtitle: subtitle,
-    seedLabel: seedLabel,
-    seedInput: seedInput,
-    seedValueLabel: seedValueLabel,
-    statusLabel: statusLabel,
-    footerLabel: footerLabel,
-    keypadButtons: keypadButtons
-  };
-
+  var viewport = gui.getViewportRect();
+  layouts.root.fitToViewport(viewport, {
+    insetTop: config.insetY,
+    insetRight: config.insetX,
+    insetBottom: config.insetY,
+    insetLeft: config.insetX,
+    safeArea: true,
+    maxWidth: config.maxWidth,
+    anchorX: 'center',
+    anchorY: 'start'
+  }, false);
+  layouts.root.layout();
   syncWidgetState();
 }
 

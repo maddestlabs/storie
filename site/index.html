@@ -418,17 +418,23 @@ This demo showcases:
       try {
         // Add .md extension if not present
         const demoFile = demoName.endsWith('.md') ? demoName : demoName + '.md';
+        const demoFetchSuffix = (() => {
+          const seed = window.location.search ? window.location.search.slice(1) : '__BUILD_ID__';
+          if (!seed) return '';
+          return (demoFile.includes('?') ? '&' : '?') + 'v=' + encodeURIComponent(seed);
+        })();
+        const fetchDemo = (path) => fetch(path + demoFetchSuffix, { cache: 'no-store' });
         
         // Try loading from demos/ subfolder first if not already a path
         let response;
         if (!demoFile.includes('/')) {
-          response = await fetch('demos/' + demoFile);
+          response = await fetchDemo('demos/' + demoFile);
           if (!response.ok) {
             // Fallback to root level
-            response = await fetch(demoFile);
+            response = await fetchDemo(demoFile);
           }
         } else {
-          response = await fetch(demoFile);
+          response = await fetchDemo(demoFile);
         }
         
         if (!response.ok) {

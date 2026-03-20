@@ -177,6 +177,12 @@ worlds.setSectionVisible(sectionIndex, visible);
 
 // Get total section count
 const count = worlds.getSectionCount();
+
+// Experimental runtime section CRUD
+const inserted = worlds.sections.insert({ title: 'Spawned Room', content: 'Generated at runtime.' });
+worlds.sections.move(inserted.sectionId, { index: 0 });
+worlds.sections.update(inserted.sectionId, { title: 'Spawned Room A' });
+const current = worlds.sections.get(inserted.sectionId);
 ```
 
 #### Configuration

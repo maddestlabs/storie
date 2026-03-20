@@ -926,8 +926,12 @@ export function parseTransform3D(
   const displayTitle = section.directive
     ? section.title
     : section.title.replace(/\s*\{[^}]+\}\s*$/, '').trim();
+  const sectionId = typeof section.id === 'string' && section.id.trim().length > 0
+    ? section.id.trim()
+    : `section-${sectionIndex}`;
 
   return {
+    sectionId,
     sectionIndex,
     sectionTitle: section.title,
     displayTitle,

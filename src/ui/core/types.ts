@@ -55,7 +55,7 @@ export interface WidgetState {
  * Widget interaction event
  */
 export interface WidgetEvent {
-  type: 'click' | 'hover' | 'focus' | 'blur' | 'change' | 'drag';
+  type: 'click' | 'hover' | 'focus' | 'blur' | 'change' | 'drag' | 'noteon' | 'noteoff' | 'viewportchange';
   widget: WidgetId;
   timestamp: number;
   data?: any;
@@ -128,4 +128,37 @@ export interface WidgetRenderContext {
   charWidth: number;
   charHeight: number;
   scale: number;
+}
+
+export type TextInputMode = 'text' | 'search' | 'tel' | 'url' | 'email' | 'numeric' | 'decimal';
+
+export type TextInputEnterKeyHint = 'enter' | 'done' | 'go' | 'next' | 'previous' | 'search' | 'send';
+
+export type TextInputAutoCapitalize = 'off' | 'none' | 'sentences' | 'words' | 'characters';
+
+export type TextSelectionDirection = 'forward' | 'backward' | 'none';
+
+export interface TextSelectionRange {
+  start: number;
+  end: number;
+  direction?: TextSelectionDirection;
+}
+
+export interface TextInputOptions {
+  multiline: boolean;
+  inputMode: TextInputMode;
+  enterKeyHint: TextInputEnterKeyHint;
+  autoCapitalize: TextInputAutoCapitalize;
+  autoCorrect: boolean;
+  spellcheck: boolean;
+  secure: boolean;
+}
+
+export interface TextInputCapable {
+  getValue(): string;
+  setValue(next: string): void;
+  getSelectionRange(): TextSelectionRange;
+  setSelectionRange(start: number, end?: number, direction?: TextSelectionDirection): boolean;
+  replaceTextRange(start: number, end: number, text: string): boolean;
+  getTextInputOptions(): TextInputOptions;
 }

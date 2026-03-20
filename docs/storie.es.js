@@ -10745,6 +10745,37 @@ function parseTimedFormat(text, format = "auto") {
       return parseTimedNative(text);
   }
 }
+function slugifySectionIdPart(value) {
+  const slug = String(value ?? "").toLowerCase().trim().replace(/[`*_~]/g, "").replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || "section";
+}
+function ensureSectionIds(sections) {
+  const used = /* @__PURE__ */ new Set();
+  const assign2 = (list) => {
+    for (const section of list) {
+      const existing = typeof section.id === "string" ? section.id.trim() : "";
+      if (existing && !used.has(existing)) {
+        section.id = existing;
+        used.add(existing);
+      } else {
+        const lineSuffix = Number.isFinite(section.startLine) ? `-${section.startLine + 1}` : "";
+        const base = `${slugifySectionIdPart(section.title)}${lineSuffix}`;
+        let candidate = base;
+        let suffix = 2;
+        while (used.has(candidate)) {
+          candidate = `${base}-${suffix++}`;
+        }
+        section.id = candidate;
+        used.add(candidate);
+      }
+      if (section.children.length > 0) {
+        assign2(section.children);
+      }
+    }
+  };
+  assign2(sections);
+  return sections;
+}
 async function parseMarkdown(source) {
   const normalizedSource = source.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const expandedSource = await expandMagicBlocks(normalizedSource);
@@ -11157,6 +11188,7 @@ function extractSections(source) {
     const content = contentLines.join("\n").trim();
     const { displayTitle, directive, timedMs } = _parseHeadingDirective(heading.title);
     const section = {
+      id: void 0,
       title: displayTitle,
       level: heading.level,
       content,
@@ -11176,7 +11208,7 @@ function extractSections(source) {
     }
     stack.push({ section, level: heading.level });
   }
-  return rootSections;
+  return ensureSectionIds(rootSections);
 }
 function extractCodeBlocks(source) {
   const lines = source.split("\n");
@@ -11333,7 +11365,7 @@ function flattenSections(sections) {
 function clamp01(x) {
   return x < 0 ? 0 : x > 1 ? 1 : x;
 }
-function isRecord(v2) {
+function isRecord$1(v2) {
   return !!v2 && typeof v2 === "object" && !Array.isArray(v2);
 }
 function parseEaseSpec(raw) {
@@ -11343,7 +11375,7 @@ function parseEaseSpec(raw) {
     const name = s;
     return name;
   }
-  if (isRecord(raw) && raw.type === "cubicBezier") {
+  if (isRecord$1(raw) && raw.type === "cubicBezier") {
     const x1 = Number(raw.x1);
     const y1 = Number(raw.y1);
     const x2 = Number(raw.x2);
@@ -11411,7 +11443,7 @@ function ease(u, spec = "linear") {
     }
   };
   if (typeof spec === "string") return named(spec);
-  if (isRecord(spec) && spec.type === "cubicBezier") {
+  if (isRecord$1(spec) && spec.type === "cubicBezier") {
     const x1 = spec.x1, y1 = spec.y1, x2 = spec.x2, y2 = spec.y2;
     const cx = 3 * x1;
     const bx = 3 * (x2 - x1) - cx;
@@ -11473,12 +11505,12 @@ function compileAutomation(entries2) {
     } catch {
       continue;
     }
-    if (!isRecord(obj)) continue;
+    if (!isRecord$1(obj)) continue;
     if (typeof obj.call === "string" && obj.call.trim()) {
       impulses.push({ type: "call", ms, call: String(obj.call), args: Array.isArray(obj.args) ? obj.args : void 0 });
       continue;
     }
-    if (isRecord(obj.input) && typeof obj.input.type === "string") {
+    if (isRecord$1(obj.input) && typeof obj.input.type === "string") {
       const input = { ...obj.input, type: String(obj.input.type) };
       impulses.push({ type: "input", ms, input });
       continue;
@@ -11547,6 +11579,215 @@ function impulsesBetween(compiled, prevTimeSec, nowTimeSec) {
     out.push(ev);
   }
   return out;
+}
+function isRecord(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function normalizeSelector(raw) {
+  if (typeof raw === "number" && Number.isFinite(raw)) return Math.trunc(raw);
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (/^-?\d+$/.test(trimmed)) return Number(trimmed);
+  return trimmed;
+}
+function normalizeNumber(raw) {
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : void 0;
+}
+function normalizeBoolean(raw) {
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "string") {
+    const value = raw.trim().toLowerCase();
+    if (value === "true" || value === "1" || value === "yes" || value === "on") return true;
+    if (value === "false" || value === "0" || value === "no" || value === "off") return false;
+  }
+  return void 0;
+}
+function normalizeVec3(raw) {
+  if (!isRecord(raw)) return void 0;
+  const x = normalizeNumber(raw.x);
+  const y = normalizeNumber(raw.y);
+  const z = normalizeNumber(raw.z);
+  if (x === void 0 && y === void 0 && z === void 0) return void 0;
+  return {
+    ...x !== void 0 ? { x } : {},
+    ...y !== void 0 ? { y } : {},
+    ...z !== void 0 ? { z } : {}
+  };
+}
+function normalizeScale(raw) {
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return { x: raw, y: raw, z: raw };
+  }
+  if (typeof raw === "string") {
+    const value = Number(raw.trim());
+    if (Number.isFinite(value)) return { x: value, y: value, z: value };
+  }
+  return normalizeVec3(raw);
+}
+function normalizeAliases(source) {
+  const positionX = normalizeNumber(source.x);
+  const positionY = normalizeNumber(source.y);
+  const positionZ = normalizeNumber(source.z ?? source.depth);
+  const rotationX = normalizeNumber(source.rotateX ?? source["rotate-x"]);
+  const rotationY = normalizeNumber(source.rotateY ?? source["rotate-y"]);
+  const rotationZ = normalizeNumber(source.rotateZ ?? source["rotate-z"]);
+  const scaleX = normalizeNumber(source.scaleX ?? source["scale-x"]);
+  const scaleY = normalizeNumber(source.scaleY ?? source["scale-y"]);
+  const scaleZ = normalizeNumber(source.scaleZ ?? source["scale-z"]);
+  return {
+    ...positionX !== void 0 || positionY !== void 0 || positionZ !== void 0 ? {
+      position: {
+        ...positionX !== void 0 ? { x: positionX } : {},
+        ...positionY !== void 0 ? { y: positionY } : {},
+        ...positionZ !== void 0 ? { z: positionZ } : {}
+      }
+    } : {},
+    ...rotationX !== void 0 || rotationY !== void 0 || rotationZ !== void 0 ? {
+      rotation: {
+        ...rotationX !== void 0 ? { x: rotationX } : {},
+        ...rotationY !== void 0 ? { y: rotationY } : {},
+        ...rotationZ !== void 0 ? { z: rotationZ } : {}
+      }
+    } : {},
+    ...scaleX !== void 0 || scaleY !== void 0 || scaleZ !== void 0 ? {
+      scale: {
+        ...scaleX !== void 0 ? { x: scaleX } : {},
+        ...scaleY !== void 0 ? { y: scaleY } : {},
+        ...scaleZ !== void 0 ? { z: scaleZ } : {}
+      }
+    } : {}
+  };
+}
+function hasVec3(vec) {
+  return !!vec && (vec.x !== void 0 || vec.y !== void 0 || vec.z !== void 0);
+}
+function mergeVec3(base, patch) {
+  if (!patch) return base ? { ...base } : void 0;
+  const merged = {
+    ...base ?? {},
+    ...patch
+  };
+  return hasVec3(merged) ? merged : void 0;
+}
+function mergeWorldsTimelinePatch(base, patch) {
+  const merged = {
+    ...base ?? {},
+    ...patch ?? {}
+  };
+  merged.position = mergeVec3(base == null ? void 0 : base.position, patch == null ? void 0 : patch.position);
+  merged.rotation = mergeVec3(base == null ? void 0 : base.rotation, patch == null ? void 0 : patch.rotation);
+  merged.scale = mergeVec3(base == null ? void 0 : base.scale, patch == null ? void 0 : patch.scale);
+  if (!hasVec3(merged.position)) delete merged.position;
+  if (!hasVec3(merged.rotation)) delete merged.rotation;
+  if (!hasVec3(merged.scale)) delete merged.scale;
+  return merged;
+}
+function patchHasData(patch) {
+  return patch.title !== void 0 || patch.content !== void 0 || patch.visible !== void 0 || hasVec3(patch.position) || hasVec3(patch.rotation) || hasVec3(patch.scale);
+}
+function normalizeWorldsTimelinePatch(raw) {
+  if (!isRecord(raw)) return null;
+  const aliases = normalizeAliases(raw);
+  const title = typeof raw.title === "string" ? raw.title : void 0;
+  const content = typeof raw.content === "string" ? raw.content : void 0;
+  const visible = raw.hidden !== void 0 ? (() => {
+    const hidden = normalizeBoolean(raw.hidden);
+    return hidden === void 0 ? void 0 : !hidden;
+  })() : normalizeBoolean(raw.visible ?? raw.show);
+  const nestedPosition = normalizeVec3(raw.position);
+  const nestedRotation = normalizeVec3(raw.rotation);
+  const nestedScale = normalizeScale(raw.scale);
+  const patch = {
+    ...title !== void 0 ? { title } : {},
+    ...content !== void 0 ? { content } : {},
+    ...visible !== void 0 ? { visible } : {},
+    ...nestedPosition || aliases.position ? { position: mergeVec3(aliases.position, nestedPosition) } : {},
+    ...nestedRotation || aliases.rotation ? { rotation: mergeVec3(aliases.rotation, nestedRotation) } : {},
+    ...nestedScale || aliases.scale ? { scale: mergeVec3(aliases.scale, nestedScale) } : {}
+  };
+  return patchHasData(patch) ? patch : null;
+}
+function compileWorldsTimeline(entries2) {
+  const sorted = Array.from(entries2).filter((entry) => entry && Number.isFinite(entry.ms) && typeof entry.text === "string").sort((a, b) => a.ms - b.ms);
+  const events = [];
+  const sections = [];
+  const seenSections = /* @__PURE__ */ new Set();
+  for (const entry of sorted) {
+    const rawText = String(entry.text ?? "").trim();
+    if (!rawText) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      continue;
+    }
+    if (!isRecord(parsed)) continue;
+    const selector = normalizeSelector(parsed.section ?? parsed.target ?? parsed.sectionId ?? parsed.sectionIndex);
+    if (selector === null) continue;
+    const patchSource = isRecord(parsed.set) ? parsed.set : parsed;
+    const patch = normalizeWorldsTimelinePatch(patchSource);
+    if (!patch) continue;
+    events.push({
+      ms: Math.max(0, Math.round(Number(entry.ms))),
+      section: selector,
+      patch
+    });
+    const key = typeof selector === "number" ? `#${selector}` : `$${selector}`;
+    if (!seenSections.has(key)) {
+      seenSections.add(key);
+      sections.push(selector);
+    }
+  }
+  return { events, sections };
+}
+function getWorldsTimelineSelectorKey(selector) {
+  return typeof selector === "number" ? `#${selector}` : `$${selector}`;
+}
+function stateAtWorldsTimeline(compiled, timeSec) {
+  const cutoffMs = Math.max(0, Math.round(Number(timeSec) * 1e3));
+  const bySection = /* @__PURE__ */ new Map();
+  for (const event of compiled.events) {
+    if (event.ms > cutoffMs) break;
+    const key = getWorldsTimelineSelectorKey(event.section);
+    const prev = bySection.get(key);
+    bySection.set(key, {
+      section: event.section,
+      patch: mergeWorldsTimelinePatch(prev == null ? void 0 : prev.patch, event.patch)
+    });
+  }
+  return Array.from(bySection.values());
+}
+function normalizeTimedEntries(entries2) {
+  return Array.from(entries2).filter((entry) => entry && Number.isFinite(entry.ms) && typeof entry.text === "string").map((entry) => ({ ms: Math.max(0, Math.round(Number(entry.ms))), text: String(entry.text) })).sort((a, b) => a.ms - b.ms);
+}
+function stateAtWorldsContent(entries2, timeSec, options) {
+  const mode = (options == null ? void 0 : options.mode) === "append" ? "append" : "replace";
+  const separator = typeof (options == null ? void 0 : options.separator) === "string" ? options.separator : "\n";
+  const maxEntries = Number.isFinite(options == null ? void 0 : options.maxEntries) ? Math.max(1, Math.floor(Number(options == null ? void 0 : options.maxEntries))) : null;
+  const cutoffMs = Math.max(0, Math.round(Number(timeSec) * 1e3));
+  const sorted = normalizeTimedEntries(entries2);
+  let current = null;
+  const activeEntries = [];
+  for (const entry of sorted) {
+    if (entry.ms > cutoffMs) break;
+    current = entry;
+    activeEntries.push(entry);
+  }
+  if (mode === "replace") {
+    return {
+      text: (current == null ? void 0 : current.text) ?? "",
+      current,
+      entries: current ? [current] : []
+    };
+  }
+  const entriesToUse = maxEntries ? activeEntries.slice(-maxEntries) : activeEntries;
+  return {
+    text: entriesToUse.map((entry) => entry.text).join(separator),
+    current,
+    entries: entriesToUse
+  };
 }
 function mixColors(from, to, ratio) {
   const t = Math.max(0, Math.min(1, Number(ratio) || 0));
@@ -13908,7 +14149,48 @@ function createTUIAPI(renderer, getCellBuffer, getStyle, isTrustedUserInput) {
     }
   };
 }
-function cloneBounds(bounds) {
+const DEFAULT_TEXT_INPUT_OPTIONS = {
+  multiline: false,
+  inputMode: "text",
+  enterKeyHint: "done",
+  autoCapitalize: "none",
+  autoCorrect: false,
+  spellcheck: false,
+  secure: false
+};
+function createTextInputOptions(overrides, defaults2) {
+  const base = {
+    ...DEFAULT_TEXT_INPUT_OPTIONS,
+    ...defaults2 ?? {}
+  };
+  return {
+    ...base,
+    ...overrides ?? {},
+    multiline: (overrides == null ? void 0 : overrides.multiline) ?? (defaults2 == null ? void 0 : defaults2.multiline) ?? base.multiline,
+    autoCorrect: (overrides == null ? void 0 : overrides.autoCorrect) ?? (defaults2 == null ? void 0 : defaults2.autoCorrect) ?? base.autoCorrect,
+    spellcheck: (overrides == null ? void 0 : overrides.spellcheck) ?? (defaults2 == null ? void 0 : defaults2.spellcheck) ?? base.spellcheck,
+    secure: (overrides == null ? void 0 : overrides.secure) ?? (defaults2 == null ? void 0 : defaults2.secure) ?? base.secure
+  };
+}
+function normalizeTextSelectionRange(length, start, end, direction = "none") {
+  const size = Math.max(0, Number(length) | 0);
+  const rawStart = Number.isFinite(start) ? Math.max(0, Math.min(size, start | 0)) : 0;
+  const rawEnd = Number.isFinite(end) ? Math.max(0, Math.min(size, end | 0)) : rawStart;
+  return {
+    start: Math.min(rawStart, rawEnd),
+    end: Math.max(rawStart, rawEnd),
+    direction
+  };
+}
+function normalizeSingleLineText(value) {
+  return String(value ?? "").replace(/\r\n/g, " ").replace(/[\r\n]+/g, " ");
+}
+function isTextInputCapable(value) {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value;
+  return typeof candidate.getValue === "function" && typeof candidate.setValue === "function" && typeof candidate.getSelectionRange === "function" && typeof candidate.setSelectionRange === "function" && typeof candidate.replaceTextRange === "function" && typeof candidate.getTextInputOptions === "function";
+}
+function cloneBounds$1(bounds) {
   return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
 }
 function finiteOr(value, fallback) {
@@ -14051,7 +14333,7 @@ function mergeGUITokens(base, patch) {
   return next;
 }
 function withMinHeight(bounds, minHeight) {
-  const next = cloneBounds(bounds);
+  const next = cloneBounds$1(bounds);
   next.height = Math.max(next.height, minHeight);
   return next;
 }
@@ -14367,6 +14649,458 @@ class GUISlider extends BaseWidget {
     };
   }
 }
+const BLACK_PITCH_CLASSES = /* @__PURE__ */ new Set([1, 3, 6, 8, 10]);
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+function isBlackMidi(midi) {
+  const pc = (Math.trunc(midi) % 12 + 12) % 12;
+  return BLACK_PITCH_CLASSES.has(pc);
+}
+function midiToHz(midi) {
+  return 440 * Math.pow(2, (Number(midi) - 69) / 12);
+}
+function formatMidiNoteName(midi) {
+  const rounded = Math.trunc(midi);
+  const pc = (rounded % 12 + 12) % 12;
+  const octave = Math.floor(rounded / 12) - 1;
+  return `${NOTE_NAMES[pc]}${octave}`;
+}
+function collectWhiteMidis(minMidi, maxMidi) {
+  const lo = Math.min(Math.trunc(minMidi), Math.trunc(maxMidi));
+  const hi = Math.max(Math.trunc(minMidi), Math.trunc(maxMidi));
+  const result = [];
+  for (let midi = lo; midi <= hi; midi++) {
+    if (!isBlackMidi(midi)) result.push(midi);
+  }
+  return result;
+}
+function clamp$4(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+function cloneBounds(bounds) {
+  return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+}
+function boundsContains(bounds, x, y) {
+  if (!bounds) return false;
+  return x >= bounds.x && x < bounds.x + bounds.width && y >= bounds.y && y < bounds.y + bounds.height;
+}
+function maxStartIndex(totalWhiteKeys, visibleWhiteKeys) {
+  return Math.max(0, totalWhiteKeys - visibleWhiteKeys);
+}
+function buildPianoLayout(options) {
+  const bounds = cloneBounds(options.bounds);
+  const whiteMidis = collectWhiteMidis(options.minMidi, options.maxMidi);
+  const totalWhiteKeys = Math.max(1, whiteMidis.length);
+  const visibleWhiteKeys = clamp$4(Math.round(options.visibleWhiteKeys), 1, totalWhiteKeys);
+  const firstVisibleWhiteKey = clamp$4(Math.round(options.firstVisibleWhiteKey), 0, maxStartIndex(totalWhiteKeys, visibleWhiteKeys));
+  const railThickness = options.railPlacement === "none" ? 0 : Math.max(0, Number(options.railThickness) || 0);
+  let railBounds = null;
+  const mainBounds = cloneBounds(bounds);
+  if (railThickness > 0) {
+    if (options.orientation === "horizontal") {
+      if (options.railPlacement === "leading") {
+        railBounds = { x: bounds.x, y: bounds.y, width: bounds.width, height: railThickness };
+        mainBounds.y += railThickness;
+        mainBounds.height = Math.max(0, mainBounds.height - railThickness);
+      } else if (options.railPlacement === "trailing") {
+        railBounds = { x: bounds.x, y: bounds.y + bounds.height - railThickness, width: bounds.width, height: railThickness };
+        mainBounds.height = Math.max(0, mainBounds.height - railThickness);
+      }
+    } else {
+      if (options.railPlacement === "leading") {
+        railBounds = { x: bounds.x, y: bounds.y, width: railThickness, height: bounds.height };
+        mainBounds.x += railThickness;
+        mainBounds.width = Math.max(0, mainBounds.width - railThickness);
+      } else if (options.railPlacement === "trailing") {
+        railBounds = { x: bounds.x + bounds.width - railThickness, y: bounds.y, width: railThickness, height: bounds.height };
+        mainBounds.width = Math.max(0, mainBounds.width - railThickness);
+      }
+    }
+  }
+  const alongSpan = options.orientation === "horizontal" ? mainBounds.width : mainBounds.height;
+  const crossSpan = options.orientation === "horizontal" ? mainBounds.height : mainBounds.width;
+  const alongOrigin = options.orientation === "horizontal" ? mainBounds.x : mainBounds.y;
+  const whiteAlongSize = visibleWhiteKeys > 0 ? alongSpan / visibleWhiteKeys : 0;
+  const blackAlongSize = whiteAlongSize * clamp$4(options.blackKeyWidthRatio, 0.15, 0.95);
+  const blackCrossSize = crossSpan * clamp$4(options.blackKeyLengthRatio, 0.2, 1);
+  const whiteKeys = [];
+  for (let visibleIndex = 0; visibleIndex < visibleWhiteKeys; visibleIndex++) {
+    const globalWhiteIndex = firstVisibleWhiteKey + visibleIndex;
+    const midi = whiteMidis[globalWhiteIndex];
+    const alongStart = options.noteFlow === "asc" ? alongOrigin + visibleIndex * whiteAlongSize : alongOrigin + alongSpan - (visibleIndex + 1) * whiteAlongSize;
+    const boundsForKey = options.orientation === "horizontal" ? { x: alongStart, y: mainBounds.y, width: whiteAlongSize, height: crossSpan } : { x: mainBounds.x, y: alongStart, width: crossSpan, height: whiteAlongSize };
+    whiteKeys.push({
+      midi,
+      noteName: formatMidiNoteName(midi),
+      isBlack: false,
+      bounds: boundsForKey,
+      alongStart,
+      alongSize: whiteAlongSize
+    });
+  }
+  const blackKeys = [];
+  for (let index = 0; index < whiteKeys.length - 1; index++) {
+    const midi = whiteKeys[index].midi + 1;
+    if (midi < options.minMidi || midi > options.maxMidi || !isBlackMidi(midi)) continue;
+    const boundary = options.noteFlow === "asc" ? whiteKeys[index].alongStart + whiteKeys[index].alongSize : whiteKeys[index].alongStart;
+    const alongStart = boundary - blackAlongSize / 2;
+    const boundsForKey = options.orientation === "horizontal" ? { x: alongStart, y: mainBounds.y, width: blackAlongSize, height: blackCrossSize } : { x: mainBounds.x, y: alongStart, width: blackCrossSize, height: blackAlongSize };
+    blackKeys.push({
+      midi,
+      noteName: formatMidiNoteName(midi),
+      isBlack: true,
+      bounds: boundsForKey,
+      alongStart,
+      alongSize: blackAlongSize
+    });
+  }
+  let railThumbBounds = null;
+  if (railBounds) {
+    const railAlongOrigin = options.orientation === "horizontal" ? railBounds.x : railBounds.y;
+    const railAlongSpan = options.orientation === "horizontal" ? railBounds.width : railBounds.height;
+    const maximumStart = maxStartIndex(totalWhiteKeys, visibleWhiteKeys);
+    const thumbAlongSize = maximumStart === 0 ? railAlongSpan : clamp$4(railAlongSpan * visibleWhiteKeys / totalWhiteKeys, Math.min(options.minThumbLength, railAlongSpan), railAlongSpan);
+    const travel = Math.max(0, railAlongSpan - thumbAlongSize);
+    const ratio = maximumStart > 0 ? firstVisibleWhiteKey / maximumStart : 0;
+    const thumbAlongStart = railAlongOrigin + ratio * travel;
+    const paddedRail = Math.max(0, Number(options.railPadding) || 0);
+    railThumbBounds = options.orientation === "horizontal" ? {
+      x: thumbAlongStart,
+      y: railBounds.y + paddedRail,
+      width: thumbAlongSize,
+      height: Math.max(0, railBounds.height - paddedRail * 2)
+    } : {
+      x: railBounds.x + paddedRail,
+      y: thumbAlongStart,
+      width: Math.max(0, railBounds.width - paddedRail * 2),
+      height: thumbAlongSize
+    };
+  }
+  return {
+    orientation: options.orientation,
+    noteFlow: options.noteFlow,
+    bounds,
+    mainBounds,
+    railBounds,
+    railThumbBounds,
+    totalWhiteKeys,
+    firstVisibleWhiteKey,
+    visibleWhiteKeys,
+    firstVisibleMidi: whiteKeys.length > 0 ? whiteKeys[0].midi : null,
+    lastVisibleMidi: whiteKeys.length > 0 ? whiteKeys[whiteKeys.length - 1].midi : null,
+    whiteKeys,
+    blackKeys
+  };
+}
+class GUIPianoKeyboard extends BaseWidget {
+  constructor(config) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y;
+    super({ ...config, focusable: config.focusable ?? true });
+    __publicField(this, "orientation");
+    __publicField(this, "noteFlow");
+    __publicField(this, "railPlacement");
+    __publicField(this, "minMidi");
+    __publicField(this, "maxMidi");
+    __publicField(this, "visibleWhiteKeys");
+    __publicField(this, "minVisibleWhiteKeys");
+    __publicField(this, "maxVisibleWhiteKeys");
+    __publicField(this, "firstVisibleWhiteKey");
+    __publicField(this, "showLabels");
+    __publicField(this, "interactionMode");
+    __publicField(this, "velocityMode");
+    __publicField(this, "fixedVelocity");
+    __publicField(this, "pianoStyle");
+    __publicField(this, "pointerDown", false);
+    __publicField(this, "pointerMode", "none");
+    __publicField(this, "railDragOffset", 0);
+    __publicField(this, "hoveredMidi", null);
+    __publicField(this, "activeMidi", null);
+    this.orientation = config.orientation ?? "horizontal";
+    this.noteFlow = config.noteFlow ?? "asc";
+    this.railPlacement = config.railPlacement ?? "leading";
+    this.minMidi = Math.trunc(config.minMidi ?? 36);
+    this.maxMidi = Math.trunc(config.maxMidi ?? 96);
+    if (this.maxMidi < this.minMidi) {
+      const swap = this.minMidi;
+      this.minMidi = this.maxMidi;
+      this.maxMidi = swap;
+    }
+    const totalWhiteKeys = collectWhiteMidis(this.minMidi, this.maxMidi).length || 1;
+    this.minVisibleWhiteKeys = clamp$4(Math.round(config.minVisibleWhiteKeys ?? 7), 1, totalWhiteKeys);
+    this.maxVisibleWhiteKeys = clamp$4(Math.round(config.maxVisibleWhiteKeys ?? 21), this.minVisibleWhiteKeys, totalWhiteKeys);
+    this.visibleWhiteKeys = clamp$4(Math.round(config.visibleWhiteKeys ?? Math.min(14, totalWhiteKeys)), this.minVisibleWhiteKeys, this.maxVisibleWhiteKeys);
+    this.firstVisibleWhiteKey = clamp$4(Math.round(config.firstVisibleWhiteKey ?? 0), 0, maxStartIndex(totalWhiteKeys, this.visibleWhiteKeys));
+    this.showLabels = config.showLabels ?? "c";
+    this.interactionMode = config.interactionMode ?? "gate";
+    this.velocityMode = config.velocityMode ?? "fixed";
+    this.fixedVelocity = clamp$4(Number(config.fixedVelocity ?? 0.85), 0.05, 1);
+    this.pianoStyle = {
+      background: ((_a = config.pianoStyle) == null ? void 0 : _a.background) ?? ColorUtils.rgba(10, 14, 20, 210),
+      whiteKeyColor: ((_b = config.pianoStyle) == null ? void 0 : _b.whiteKeyColor) ?? ColorUtils.rgba(248, 246, 238, 255),
+      whiteKeyHoverColor: ((_c = config.pianoStyle) == null ? void 0 : _c.whiteKeyHoverColor) ?? ColorUtils.rgba(255, 252, 244, 255),
+      whiteKeyActiveColor: ((_d = config.pianoStyle) == null ? void 0 : _d.whiteKeyActiveColor) ?? ColorUtils.rgba(245, 206, 124, 255),
+      whiteKeyBorderColor: ((_e = config.pianoStyle) == null ? void 0 : _e.whiteKeyBorderColor) ?? ColorUtils.rgba(44, 48, 58, 255),
+      blackKeyColor: ((_f = config.pianoStyle) == null ? void 0 : _f.blackKeyColor) ?? ColorUtils.rgba(26, 30, 38, 255),
+      blackKeyHoverColor: ((_g = config.pianoStyle) == null ? void 0 : _g.blackKeyHoverColor) ?? ColorUtils.rgba(40, 48, 60, 255),
+      blackKeyActiveColor: ((_h = config.pianoStyle) == null ? void 0 : _h.blackKeyActiveColor) ?? ColorUtils.rgba(237, 162, 82, 255),
+      blackKeyBorderColor: ((_i = config.pianoStyle) == null ? void 0 : _i.blackKeyBorderColor) ?? ColorUtils.rgba(6, 8, 12, 255),
+      railColor: ((_j = config.pianoStyle) == null ? void 0 : _j.railColor) ?? ColorUtils.rgba(20, 26, 34, 255),
+      railThumbColor: ((_k = config.pianoStyle) == null ? void 0 : _k.railThumbColor) ?? ColorUtils.rgba(96, 122, 150, 255),
+      railThumbHoverColor: ((_l = config.pianoStyle) == null ? void 0 : _l.railThumbHoverColor) ?? ColorUtils.rgba(132, 164, 196, 255),
+      railThumbActiveColor: ((_m = config.pianoStyle) == null ? void 0 : _m.railThumbActiveColor) ?? ColorUtils.rgba(238, 185, 92, 255),
+      railViewportColor: ((_n = config.pianoStyle) == null ? void 0 : _n.railViewportColor) ?? ColorUtils.rgba(210, 220, 232, 30),
+      labelColor: ((_o = config.pianoStyle) == null ? void 0 : _o.labelColor) ?? ColorUtils.rgba(28, 34, 44, 255),
+      blackLabelColor: ((_p = config.pianoStyle) == null ? void 0 : _p.blackLabelColor) ?? ColorUtils.rgba(244, 246, 250, 255),
+      octaveLineColor: ((_q = config.pianoStyle) == null ? void 0 : _q.octaveLineColor) ?? ColorUtils.rgba(208, 135, 74, 180),
+      focusBorderColor: ((_r = config.pianoStyle) == null ? void 0 : _r.focusBorderColor) ?? ColorUtils.rgba(251, 176, 88, 255),
+      borderWidth: Math.max(1, ((_s = config.pianoStyle) == null ? void 0 : _s.borderWidth) ?? 1),
+      railThickness: Math.max(0, ((_t = config.pianoStyle) == null ? void 0 : _t.railThickness) ?? 28),
+      railPadding: Math.max(0, ((_u = config.pianoStyle) == null ? void 0 : _u.railPadding) ?? 4),
+      blackKeyLengthRatio: clamp$4(((_v = config.pianoStyle) == null ? void 0 : _v.blackKeyLengthRatio) ?? 0.62, 0.2, 0.95),
+      blackKeyWidthRatio: clamp$4(((_w = config.pianoStyle) == null ? void 0 : _w.blackKeyWidthRatio) ?? 0.7, 0.2, 0.95),
+      labelInset: Math.max(0, ((_x = config.pianoStyle) == null ? void 0 : _x.labelInset) ?? 6),
+      minThumbLength: Math.max(8, ((_y = config.pianoStyle) == null ? void 0 : _y.minThumbLength) ?? 18)
+    };
+  }
+  getActiveMidi() {
+    return this.activeMidi;
+  }
+  getHoveredMidi() {
+    return this.hoveredMidi;
+  }
+  getViewportState() {
+    const layout = this.getLayoutSnapshot();
+    return {
+      firstVisibleWhiteKey: this.firstVisibleWhiteKey,
+      visibleWhiteKeys: this.visibleWhiteKeys,
+      firstVisibleMidi: layout.firstVisibleMidi,
+      lastVisibleMidi: layout.lastVisibleMidi
+    };
+  }
+  getLayoutSnapshot() {
+    return buildPianoLayout({
+      bounds: this.bounds,
+      orientation: this.orientation,
+      noteFlow: this.noteFlow,
+      railPlacement: this.railPlacement,
+      railThickness: this.pianoStyle.railThickness,
+      railPadding: this.pianoStyle.railPadding,
+      minThumbLength: this.pianoStyle.minThumbLength,
+      minMidi: this.minMidi,
+      maxMidi: this.maxMidi,
+      firstVisibleWhiteKey: this.firstVisibleWhiteKey,
+      visibleWhiteKeys: this.visibleWhiteKeys,
+      blackKeyLengthRatio: this.pianoStyle.blackKeyLengthRatio,
+      blackKeyWidthRatio: this.pianoStyle.blackKeyWidthRatio
+    });
+  }
+  setFirstVisibleWhiteKey(index, emit = true) {
+    const totalWhiteKeys = collectWhiteMidis(this.minMidi, this.maxMidi).length || 1;
+    const next = clamp$4(Math.round(index), 0, maxStartIndex(totalWhiteKeys, this.visibleWhiteKeys));
+    if (next === this.firstVisibleWhiteKey) return false;
+    this.firstVisibleWhiteKey = next;
+    if (emit) this.emitViewportChange();
+    return true;
+  }
+  panWhiteKeys(delta, emit = true) {
+    return this.setFirstVisibleWhiteKey(this.firstVisibleWhiteKey + Math.round(delta), emit);
+  }
+  setVisibleWhiteKeys(count, anchorRatio = 0.5, emit = true) {
+    const totalWhiteKeys = collectWhiteMidis(this.minMidi, this.maxMidi).length || 1;
+    const nextCount = clamp$4(Math.round(count), this.minVisibleWhiteKeys, Math.min(this.maxVisibleWhiteKeys, totalWhiteKeys));
+    if (nextCount === this.visibleWhiteKeys) return false;
+    const clampedAnchor = clamp$4(Number(anchorRatio) || 0.5, 0, 1);
+    const anchorWhite = this.firstVisibleWhiteKey + clampedAnchor * Math.max(0, this.visibleWhiteKeys - 1);
+    this.visibleWhiteKeys = nextCount;
+    const nextFirst = Math.round(anchorWhite - clampedAnchor * Math.max(0, this.visibleWhiteKeys - 1));
+    this.firstVisibleWhiteKey = clamp$4(nextFirst, 0, maxStartIndex(totalWhiteKeys, this.visibleWhiteKeys));
+    if (emit) this.emitViewportChange();
+    return true;
+  }
+  zoomBy(deltaWhiteKeys, anchorRatio = 0.5, emit = true) {
+    return this.setVisibleWhiteKeys(this.visibleWhiteKeys + Math.round(deltaWhiteKeys), anchorRatio, emit);
+  }
+  noteOn(midi, velocity = this.fixedVelocity, source = "api") {
+    const rounded = Math.trunc(midi);
+    if (rounded < this.minMidi || rounded > this.maxMidi) return false;
+    this.activeMidi = rounded;
+    this.emitNoteEvent("noteon", rounded, clamp$4(velocity, 0, 1), source);
+    return true;
+  }
+  noteOff(midi, velocity = 0, source = "api") {
+    const target = Math.trunc(midi ?? this.activeMidi ?? NaN);
+    if (!Number.isFinite(target) || target < this.minMidi || target > this.maxMidi) return false;
+    if (this.activeMidi === target) this.activeMidi = null;
+    this.emitNoteEvent("noteoff", target, clamp$4(velocity, 0, 1), source);
+    return true;
+  }
+  onNoteOn(callback) {
+    this.on("noteon", callback);
+  }
+  onNoteOff(callback) {
+    this.on("noteoff", callback);
+  }
+  onViewportChange(callback) {
+    this.on("viewportchange", callback);
+  }
+  handleKey(key, modifiers) {
+    if (!this.state.enabled) return false;
+    if ((modifiers == null ? void 0 : modifiers.ctrl) || (modifiers == null ? void 0 : modifiers.alt)) return false;
+    const step = (modifiers == null ? void 0 : modifiers.shift) ? 7 : 1;
+    if (key === "ArrowRight" || key === "ArrowUp") return this.panWhiteKeys(step);
+    if (key === "ArrowLeft" || key === "ArrowDown") return this.panWhiteKeys(-step);
+    if (key === "+" || key === "=") return this.zoomBy(-1);
+    if (key === "-" || key === "_") return this.zoomBy(1);
+    if (key === "PageUp") return this.panWhiteKeys(step * 2);
+    if (key === "PageDown") return this.panWhiteKeys(-step * 2);
+    if (key === "Home") return this.setFirstVisibleWhiteKey(0);
+    if (key === "End") {
+      const totalWhiteKeys = collectWhiteMidis(this.minMidi, this.maxMidi).length || 1;
+      return this.setFirstVisibleWhiteKey(maxStartIndex(totalWhiteKeys, this.visibleWhiteKeys));
+    }
+    return false;
+  }
+  handlePointer(mouseX, mouseY, mouseDown) {
+    if (!this.state.visible || !this.state.enabled) {
+      this.pointerDown = mouseDown;
+      return;
+    }
+    const layout = this.getLayoutSnapshot();
+    const justPressed = mouseDown && !this.pointerDown;
+    const justReleased = !mouseDown && this.pointerDown;
+    const hit = this.hitTest(layout, mouseX, mouseY);
+    this.hoveredMidi = hit ? hit.midi : null;
+    if (justPressed) {
+      if (boundsContains(layout.railBounds, mouseX, mouseY)) {
+        this.pointerMode = "rail";
+        const thumb = layout.railThumbBounds;
+        const pointerAlong = this.getAlongCoord(mouseX, mouseY);
+        this.railDragOffset = thumb ? pointerAlong - this.getAlongStart(thumb) : 0;
+        if (!thumb || !boundsContains(thumb, mouseX, mouseY)) {
+          this.railDragOffset = thumb ? this.getAlongSize(thumb) / 2 : 0;
+        }
+        this.updateViewportFromRail(layout, pointerAlong);
+      } else if (hit) {
+        this.pointerMode = "keys";
+        this.triggerPointerNote(hit.midi, mouseX, mouseY, true);
+      } else {
+        this.pointerMode = "none";
+      }
+    } else if (mouseDown) {
+      if (this.pointerMode === "rail") {
+        this.updateViewportFromRail(layout, this.getAlongCoord(mouseX, mouseY));
+      } else if (this.pointerMode === "keys") {
+        if (hit) {
+          this.triggerPointerNote(hit.midi, mouseX, mouseY, false);
+        } else if (this.interactionMode === "gate" && this.activeMidi != null) {
+          this.noteOff(this.activeMidi, 0, "pointer");
+        }
+      }
+    }
+    if (justReleased) {
+      if (this.pointerMode === "keys" && this.interactionMode === "gate" && this.activeMidi != null) {
+        this.noteOff(this.activeMidi, 0, "pointer");
+      }
+      this.pointerMode = "none";
+      this.railDragOffset = 0;
+      if (this.interactionMode !== "gate") {
+        this.activeMidi = null;
+      }
+    }
+    this.pointerDown = mouseDown;
+  }
+  render() {
+  }
+  getPreferredSize() {
+    if (this.orientation === "horizontal") {
+      return {
+        width: Math.max(this.bounds.width, this.visibleWhiteKeys * 22),
+        height: Math.max(this.bounds.height, 120)
+      };
+    }
+    return {
+      width: Math.max(this.bounds.width, 96),
+      height: Math.max(this.bounds.height, this.visibleWhiteKeys * 18)
+    };
+  }
+  hitTest(layout, mouseX, mouseY) {
+    for (const key of layout.blackKeys) {
+      if (boundsContains(key.bounds, mouseX, mouseY)) return key;
+    }
+    for (const key of layout.whiteKeys) {
+      if (boundsContains(key.bounds, mouseX, mouseY)) return key;
+    }
+    return null;
+  }
+  getAlongCoord(mouseX, mouseY) {
+    return this.orientation === "horizontal" ? mouseX : mouseY;
+  }
+  getAlongStart(bounds) {
+    return this.orientation === "horizontal" ? bounds.x : bounds.y;
+  }
+  getAlongSize(bounds) {
+    return this.orientation === "horizontal" ? bounds.width : bounds.height;
+  }
+  computeVelocity(layout, mouseX, mouseY) {
+    if (this.velocityMode === "fixed") return this.fixedVelocity;
+    const main = layout.mainBounds;
+    const ratio = this.orientation === "horizontal" ? (mouseY - main.y) / Math.max(1, main.height) : (mouseX - main.x) / Math.max(1, main.width);
+    return clamp$4(ratio, 0.05, 1);
+  }
+  triggerPointerNote(midi, mouseX, mouseY, initialPress) {
+    const velocity = this.computeVelocity(this.getLayoutSnapshot(), mouseX, mouseY);
+    if (this.interactionMode === "gate") {
+      if (this.activeMidi === midi && !initialPress) return;
+      if (this.activeMidi != null && this.activeMidi !== midi) {
+        this.noteOff(this.activeMidi, 0, "pointer");
+      }
+      this.noteOn(midi, velocity, "pointer");
+      return;
+    }
+    if (this.activeMidi !== midi || initialPress) {
+      this.activeMidi = midi;
+      this.emitNoteEvent("noteon", midi, velocity, "pointer");
+    }
+  }
+  updateViewportFromRail(layout, pointerAlong) {
+    if (!layout.railBounds || !layout.railThumbBounds) return;
+    const railStart = this.getAlongStart(layout.railBounds);
+    const railSize = this.getAlongSize(layout.railBounds);
+    const thumbSize = this.getAlongSize(layout.railThumbBounds);
+    const travel = Math.max(0, railSize - thumbSize);
+    const maximumStart = maxStartIndex(layout.totalWhiteKeys, this.visibleWhiteKeys);
+    if (maximumStart <= 0 || travel <= 0) {
+      this.setFirstVisibleWhiteKey(0);
+      return;
+    }
+    const thumbAlongStart = clamp$4(pointerAlong - this.railDragOffset, railStart, railStart + travel);
+    const ratio = (thumbAlongStart - railStart) / travel;
+    this.setFirstVisibleWhiteKey(Math.round(ratio * maximumStart));
+  }
+  emitViewportChange() {
+    const viewport = this.getViewportState();
+    this.emit({
+      type: "viewportchange",
+      widget: this.id,
+      timestamp: Date.now(),
+      data: viewport
+    });
+  }
+  emitNoteEvent(type, midi, velocity, source) {
+    const data = {
+      midi,
+      hz: midiToHz(midi),
+      velocity,
+      noteName: formatMidiNoteName(midi),
+      source
+    };
+    this.emit({
+      type,
+      widget: this.id,
+      timestamp: Date.now(),
+      data
+    });
+  }
+}
 const defaultTokens$1 = createDefaultGUITokens();
 class GUITextField extends BaseWidget {
   constructor(config) {
@@ -14374,17 +15108,27 @@ class GUITextField extends BaseWidget {
     super(config);
     __publicField(this, "placeholder");
     __publicField(this, "align");
+    __publicField(this, "textInput");
     __publicField(this, "textFieldStyle");
     __publicField(this, "value");
     __publicField(this, "cursorPos");
+    __publicField(this, "selectionStart");
+    __publicField(this, "selectionEnd");
+    __publicField(this, "selectionDirection", "none");
     __publicField(this, "scrollOffset");
     __publicField(this, "changedThisFrame", false);
     __publicField(this, "charWidth", 10);
-    this.value = config.value ?? "";
+    this.value = normalizeSingleLineText(config.value ?? "");
     this.cursorPos = this.value.length;
+    this.selectionStart = this.cursorPos;
+    this.selectionEnd = this.cursorPos;
     this.scrollOffset = 0;
     this.placeholder = config.placeholder ?? "";
     this.align = config.align ?? "left";
+    this.textInput = createTextInputOptions(config.textInput, {
+      multiline: false,
+      enterKeyHint: "done"
+    });
     this.textFieldStyle = {
       fg: (_a = config.textFieldStyle) == null ? void 0 : _a.fg,
       bg: (_b = config.textFieldStyle) == null ? void 0 : _b.bg,
@@ -14412,7 +15156,7 @@ class GUITextField extends BaseWidget {
       const relPx = Math.max(0, Math.min(innerW, clickX - textStartX));
       const relChars = Math.floor(relPx / Math.max(1, this.charWidth));
       const target = this.scrollOffset + relChars;
-      this.cursorPos = Math.max(0, Math.min(this.value.length, target));
+      this.setSelectionRange(target, target);
     });
   }
   updateMetrics(charWidth, charHeight) {
@@ -14422,9 +15166,44 @@ class GUITextField extends BaseWidget {
     return this.value;
   }
   setValue(next) {
-    this.value = next ?? "";
+    this.value = normalizeSingleLineText(next ?? "");
     this.cursorPos = Math.max(0, Math.min(this.cursorPos, this.value.length));
+    this.selectionStart = this.cursorPos;
+    this.selectionEnd = this.cursorPos;
+    this.selectionDirection = "none";
     this.scrollOffset = 0;
+  }
+  getSelectionRange() {
+    return {
+      start: this.selectionStart,
+      end: this.selectionEnd,
+      direction: this.selectionDirection
+    };
+  }
+  setSelectionRange(start, end = start, direction = "none") {
+    const next = normalizeTextSelectionRange(this.value.length, start, end, direction);
+    const changed = next.start !== this.selectionStart || next.end !== this.selectionEnd || next.direction !== this.selectionDirection;
+    this.selectionStart = next.start;
+    this.selectionEnd = next.end;
+    this.selectionDirection = next.direction ?? "none";
+    this.cursorPos = this.selectionEnd;
+    return changed;
+  }
+  replaceTextRange(start, end, text) {
+    const range = normalizeTextSelectionRange(this.value.length, start, end);
+    const insert = normalizeSingleLineText(text ?? "");
+    const nextValue = this.value.slice(0, range.start) + insert + this.value.slice(range.end);
+    const changed = nextValue !== this.value;
+    this.value = nextValue;
+    const nextCaret = range.start + insert.length;
+    this.setSelectionRange(nextCaret, nextCaret);
+    if (changed) {
+      this.markChanged();
+    }
+    return changed;
+  }
+  getTextInputOptions() {
+    return { ...this.textInput };
   }
   wasChanged() {
     const result = this.changedThisFrame;
@@ -14435,11 +15214,7 @@ class GUITextField extends BaseWidget {
     if (!this.state.enabled || !this.state.visible) return false;
     if (!this.state.focused) return false;
     if (!text) return false;
-    const before = this.value.slice(0, this.cursorPos);
-    const after = this.value.slice(this.cursorPos);
-    this.value = before + text + after;
-    this.cursorPos += text.length;
-    this.markChanged();
+    this.replaceTextRange(this.selectionStart, this.selectionEnd, text);
     return true;
   }
   handleKey(key, modifiers) {
@@ -14449,39 +15224,44 @@ class GUITextField extends BaseWidget {
     const alt = !!(modifiers == null ? void 0 : modifiers.alt);
     switch (key) {
       case "ArrowLeft":
-        if (this.cursorPos > 0) this.cursorPos -= 1;
+        if (this.selectionStart !== this.selectionEnd) {
+          this.setSelectionRange(this.selectionStart, this.selectionStart);
+        } else if (this.cursorPos > 0) {
+          this.setSelectionRange(this.cursorPos - 1, this.cursorPos - 1);
+        }
         return true;
       case "ArrowRight":
-        if (this.cursorPos < this.value.length) this.cursorPos += 1;
+        if (this.selectionStart !== this.selectionEnd) {
+          this.setSelectionRange(this.selectionEnd, this.selectionEnd);
+        } else if (this.cursorPos < this.value.length) {
+          this.setSelectionRange(this.cursorPos + 1, this.cursorPos + 1);
+        }
         return true;
       case "Home":
-        this.cursorPos = 0;
+        this.setSelectionRange(0, 0);
         return true;
       case "End":
-        this.cursorPos = this.value.length;
+        this.setSelectionRange(this.value.length, this.value.length);
         return true;
       case "Backspace":
-        if (this.cursorPos > 0) {
-          this.value = this.value.slice(0, this.cursorPos - 1) + this.value.slice(this.cursorPos);
-          this.cursorPos -= 1;
-          this.markChanged();
+        if (this.selectionStart !== this.selectionEnd) {
+          this.replaceTextRange(this.selectionStart, this.selectionEnd, "");
+        } else if (this.cursorPos > 0) {
+          this.replaceTextRange(this.cursorPos - 1, this.cursorPos, "");
         }
         return true;
       case "Delete":
-        if (this.cursorPos < this.value.length) {
-          this.value = this.value.slice(0, this.cursorPos) + this.value.slice(this.cursorPos + 1);
-          this.markChanged();
+        if (this.selectionStart !== this.selectionEnd) {
+          this.replaceTextRange(this.selectionStart, this.selectionEnd, "");
+        } else if (this.cursorPos < this.value.length) {
+          this.replaceTextRange(this.cursorPos, this.cursorPos + 1, "");
         }
         return true;
       case "Enter":
         return true;
       default:
         if (!ctrl && !alt && key.length === 1) {
-          const before = this.value.slice(0, this.cursorPos);
-          const after = this.value.slice(this.cursorPos);
-          this.value = before + key + after;
-          this.cursorPos += 1;
-          this.markChanged();
+          this.replaceTextRange(this.selectionStart, this.selectionEnd, key);
           return true;
         }
         return false;
@@ -14535,11 +15315,15 @@ class GUITextEditor extends BaseWidget {
     super(config);
     __publicField(this, "placeholder");
     __publicField(this, "align");
+    __publicField(this, "textInput");
     __publicField(this, "textEditorStyle");
     __publicField(this, "lines");
     __publicField(this, "cursorRow");
     __publicField(this, "cursorCol");
     __publicField(this, "desiredCol");
+    __publicField(this, "selectionStart");
+    __publicField(this, "selectionEnd");
+    __publicField(this, "selectionDirection", "none");
     __publicField(this, "scrollX");
     __publicField(this, "scrollY");
     __publicField(this, "changedThisFrame", false);
@@ -14549,10 +15333,16 @@ class GUITextEditor extends BaseWidget {
     this.cursorRow = Math.max(0, this.lines.length - 1);
     this.cursorCol = this.lines[this.cursorRow].length;
     this.desiredCol = this.cursorCol;
+    this.selectionStart = this.getOffsetFromPosition(this.cursorRow, this.cursorCol);
+    this.selectionEnd = this.selectionStart;
     this.scrollX = 0;
     this.scrollY = 0;
     this.placeholder = config.placeholder ?? "";
     this.align = config.align ?? "left";
+    this.textInput = createTextInputOptions(config.textInput, {
+      multiline: true,
+      enterKeyHint: "enter"
+    });
     this.textEditorStyle = {
       fg: (_a = config.textEditorStyle) == null ? void 0 : _a.fg,
       bg: (_b = config.textEditorStyle) == null ? void 0 : _b.bg,
@@ -14587,9 +15377,8 @@ class GUITextEditor extends BaseWidget {
       const alignedX = this.getAlignedColumnOffset(maxCols, lineLength, this.scrollX);
       const relColAligned = Math.floor(relPxX / Math.max(1, this.charWidth)) - alignedX;
       const targetCol = Math.max(0, Math.min(lineLength, this.scrollX + relColAligned));
-      this.cursorRow = targetRow;
-      this.cursorCol = targetCol;
-      this.desiredCol = this.cursorCol;
+      const targetOffset = this.getOffsetFromPosition(targetRow, targetCol);
+      this.setSelectionRange(targetOffset, targetOffset);
     });
   }
   updateMetrics(charWidth, charHeight) {
@@ -14617,8 +15406,45 @@ class GUITextEditor extends BaseWidget {
     this.cursorRow = Math.max(0, Math.min(this.cursorRow, this.lines.length - 1));
     this.cursorCol = Math.max(0, Math.min(this.cursorCol, this.lines[this.cursorRow].length));
     this.desiredCol = this.cursorCol;
+    const offset = this.getOffsetFromPosition(this.cursorRow, this.cursorCol);
+    this.selectionStart = offset;
+    this.selectionEnd = offset;
+    this.selectionDirection = "none";
     this.scrollX = 0;
     this.scrollY = 0;
+  }
+  getSelectionRange() {
+    return {
+      start: this.selectionStart,
+      end: this.selectionEnd,
+      direction: this.selectionDirection
+    };
+  }
+  setSelectionRange(start, end = start, direction = "none") {
+    const next = normalizeTextSelectionRange(this.getValue().length, start, end, direction);
+    const changed = next.start !== this.selectionStart || next.end !== this.selectionEnd || next.direction !== this.selectionDirection;
+    this.selectionStart = next.start;
+    this.selectionEnd = next.end;
+    this.selectionDirection = next.direction ?? "none";
+    this.updateCursorFromOffset(this.selectionEnd);
+    return changed;
+  }
+  replaceTextRange(start, end, text) {
+    const current = this.getValue();
+    const range = normalizeTextSelectionRange(current.length, start, end);
+    const insert = String(text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    const nextValue = current.slice(0, range.start) + insert + current.slice(range.end);
+    const changed = nextValue !== current;
+    this.lines = splitLines(nextValue);
+    const nextCaret = range.start + insert.length;
+    this.setSelectionRange(nextCaret, nextCaret);
+    if (changed) {
+      this.markChanged();
+    }
+    return changed;
+  }
+  getTextInputOptions() {
+    return { ...this.textInput };
   }
   wasChanged() {
     const result = this.changedThisFrame;
@@ -14629,8 +15455,7 @@ class GUITextEditor extends BaseWidget {
     if (!this.state.enabled || !this.state.visible) return false;
     if (!this.state.focused) return false;
     if (!text) return false;
-    this.insertText(text);
-    this.markChanged();
+    this.replaceTextRange(this.selectionStart, this.selectionEnd, text);
     return true;
   }
   handleKey(key, modifiers) {
@@ -14640,39 +15465,59 @@ class GUITextEditor extends BaseWidget {
     const alt = !!(modifiers == null ? void 0 : modifiers.alt);
     switch (key) {
       case "ArrowLeft":
+        if (this.selectionStart !== this.selectionEnd) {
+          this.setSelectionRange(this.selectionStart, this.selectionStart);
+          return true;
+        }
         this.moveLeft();
+        this.collapseSelectionToCursor();
         return true;
       case "ArrowRight":
+        if (this.selectionStart !== this.selectionEnd) {
+          this.setSelectionRange(this.selectionEnd, this.selectionEnd);
+          return true;
+        }
         this.moveRight();
+        this.collapseSelectionToCursor();
         return true;
       case "ArrowUp":
         this.moveUp();
+        this.collapseSelectionToCursor();
         return true;
       case "ArrowDown":
         this.moveDown();
+        this.collapseSelectionToCursor();
         return true;
       case "Home":
         this.cursorCol = 0;
         this.desiredCol = 0;
+        this.collapseSelectionToCursor();
         return true;
       case "End":
         this.cursorCol = this.lines[this.cursorRow].length;
         this.desiredCol = this.cursorCol;
+        this.collapseSelectionToCursor();
         return true;
       case "Backspace":
-        if (this.backspace()) this.markChanged();
+        if (this.selectionStart !== this.selectionEnd) {
+          this.replaceTextRange(this.selectionStart, this.selectionEnd, "");
+        } else if (this.backspace()) {
+          this.markChanged();
+        }
         return true;
       case "Delete":
-        if (this.del()) this.markChanged();
+        if (this.selectionStart !== this.selectionEnd) {
+          this.replaceTextRange(this.selectionStart, this.selectionEnd, "");
+        } else if (this.del()) {
+          this.markChanged();
+        }
         return true;
       case "Enter":
-        this.insertNewline();
-        this.markChanged();
+        this.replaceTextRange(this.selectionStart, this.selectionEnd, "\n");
         return true;
       default:
         if (!ctrl && !alt && key.length === 1) {
-          this.insertText(key);
-          this.markChanged();
+          this.replaceTextRange(this.selectionStart, this.selectionEnd, key);
           return true;
         }
         return false;
@@ -14702,43 +15547,13 @@ class GUITextEditor extends BaseWidget {
     if (this.align === "center") return Math.floor(gap / 2);
     return 0;
   }
-  insertText(text) {
-    const parts = (text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-    if (parts.length === 1) {
-      const line2 = this.lines[this.cursorRow];
-      this.lines[this.cursorRow] = line2.slice(0, this.cursorCol) + parts[0] + line2.slice(this.cursorCol);
-      this.cursorCol += parts[0].length;
-      this.desiredCol = this.cursorCol;
-      return;
-    }
-    const line = this.lines[this.cursorRow];
-    const before = line.slice(0, this.cursorCol);
-    const after = line.slice(this.cursorCol);
-    const first = before + parts[0];
-    const last = parts[parts.length - 1] + after;
-    const middle = parts.slice(1, -1);
-    const newLines = [first, ...middle, last];
-    this.lines.splice(this.cursorRow, 1, ...newLines);
-    this.cursorRow += newLines.length - 1;
-    this.cursorCol = parts[parts.length - 1].length;
-    this.desiredCol = this.cursorCol;
-  }
-  insertNewline() {
-    const line = this.lines[this.cursorRow];
-    const before = line.slice(0, this.cursorCol);
-    const after = line.slice(this.cursorCol);
-    this.lines[this.cursorRow] = before;
-    this.lines.splice(this.cursorRow + 1, 0, after);
-    this.cursorRow += 1;
-    this.cursorCol = 0;
-    this.desiredCol = 0;
-  }
   backspace() {
     if (this.cursorCol > 0) {
       const line = this.lines[this.cursorRow];
       this.lines[this.cursorRow] = line.slice(0, this.cursorCol - 1) + line.slice(this.cursorCol);
       this.cursorCol -= 1;
       this.desiredCol = this.cursorCol;
+      this.collapseSelectionToCursor();
       return true;
     }
     if (this.cursorRow > 0) {
@@ -14750,6 +15565,7 @@ class GUITextEditor extends BaseWidget {
       this.cursorRow -= 1;
       this.cursorCol = nextCol;
       this.desiredCol = this.cursorCol;
+      this.collapseSelectionToCursor();
       return true;
     }
     return false;
@@ -14759,6 +15575,7 @@ class GUITextEditor extends BaseWidget {
     if (this.cursorCol < line.length) {
       this.lines[this.cursorRow] = line.slice(0, this.cursorCol) + line.slice(this.cursorCol + 1);
       this.desiredCol = this.cursorCol;
+      this.collapseSelectionToCursor();
       return true;
     }
     if (this.cursorRow < this.lines.length - 1) {
@@ -14766,6 +15583,7 @@ class GUITextEditor extends BaseWidget {
       this.lines[this.cursorRow] = line + next;
       this.lines.splice(this.cursorRow + 1, 1);
       this.desiredCol = this.cursorCol;
+      this.collapseSelectionToCursor();
       return true;
     }
     return false;
@@ -14804,6 +15622,44 @@ class GUITextEditor extends BaseWidget {
     if (this.cursorRow >= this.lines.length - 1) return;
     this.cursorRow += 1;
     this.cursorCol = Math.min(this.lines[this.cursorRow].length, this.desiredCol);
+  }
+  collapseSelectionToCursor() {
+    const offset = this.getOffsetFromPosition(this.cursorRow, this.cursorCol);
+    this.selectionStart = offset;
+    this.selectionEnd = offset;
+    this.selectionDirection = "none";
+  }
+  updateCursorFromOffset(offset) {
+    const pos = this.getPositionFromOffset(offset);
+    this.cursorRow = pos.row;
+    this.cursorCol = pos.col;
+    this.desiredCol = this.cursorCol;
+  }
+  getOffsetFromPosition(row, col) {
+    let offset = 0;
+    const targetRow = Math.max(0, Math.min(this.lines.length - 1, row | 0));
+    for (let i = 0; i < targetRow; i++) {
+      offset += this.lines[i].length + 1;
+    }
+    const targetCol = Math.max(0, Math.min(this.lines[targetRow].length, col | 0));
+    return offset + targetCol;
+  }
+  getPositionFromOffset(offset) {
+    const text = this.getValue();
+    let remaining = Math.max(0, Math.min(text.length, offset | 0));
+    for (let row = 0; row < this.lines.length; row++) {
+      const lineLength = this.lines[row].length;
+      if (remaining <= lineLength) {
+        return { row, col: remaining };
+      }
+      remaining -= lineLength;
+      if (row < this.lines.length - 1) {
+        if (remaining === 0) return { row: row + 1, col: 0 };
+        remaining -= 1;
+      }
+    }
+    const lastRow = Math.max(0, this.lines.length - 1);
+    return { row: lastRow, col: this.lines[lastRow].length };
   }
   markChanged() {
     this.changedThisFrame = true;
@@ -15929,8 +16785,10 @@ class GUILayoutContainer {
     __publicField(this, "columns");
     __publicField(this, "maxWidth");
     __publicField(this, "includeHidden");
+    __publicField(this, "baseBounds");
     __publicField(this, "children", []);
     this.bounds = { ...config.bounds };
+    this.baseBounds = { ...config.bounds };
     this.layoutHints = { ...config.layout || {} };
     this.padding = config.padding ?? 0;
     this.gap = config.gap ?? 0;
@@ -15985,6 +16843,7 @@ class GUILayoutContainer {
   }
   setBounds(bounds, relayout = true) {
     this.bounds = { ...bounds };
+    this.baseBounds = { ...bounds };
     if (relayout) this.layout();
   }
   setMode(mode, relayout = true) {
@@ -16012,10 +16871,14 @@ class GUILayoutContainer {
     const availableW = Math.max(0, viewport.width - insetLeft - insetRight);
     const availableH = Math.max(0, viewport.height - insetTop - insetBottom);
     const measured = this.measureLayout();
+    const explicitWidth = Number.isFinite(options == null ? void 0 : options.width) ? Number(options == null ? void 0 : options.width) : null;
+    const explicitHeight = Number.isFinite(options == null ? void 0 : options.height) ? Number(options == null ? void 0 : options.height) : null;
     const currentWidth = Number.isFinite(this.bounds.width) && this.bounds.width > 1 ? Number(this.bounds.width) : measured.width;
     const currentHeight = Number.isFinite(this.bounds.height) && this.bounds.height > 1 ? Number(this.bounds.height) : measured.height;
-    const desiredW = Number.isFinite(options == null ? void 0 : options.width) ? Number(options == null ? void 0 : options.width) : currentWidth;
-    const desiredH = Number.isFinite(options == null ? void 0 : options.height) ? Number(options == null ? void 0 : options.height) : currentHeight;
+    const baseWidth = Number.isFinite(this.baseBounds.width) && this.baseBounds.width > 1 ? Number(this.baseBounds.width) : measured.width;
+    const baseHeight = Number.isFinite(this.baseBounds.height) && this.baseBounds.height > 1 ? Number(this.baseBounds.height) : measured.height;
+    const desiredW = explicitWidth ?? Math.max(measured.width, currentWidth, baseWidth);
+    const desiredH = explicitHeight ?? Math.max(measured.height, currentHeight, baseHeight);
     const maxW = Number.isFinite(options == null ? void 0 : options.maxWidth) ? Number(options == null ? void 0 : options.maxWidth) : availableW;
     const maxH = Number.isFinite(options == null ? void 0 : options.maxHeight) ? Number(options == null ? void 0 : options.maxHeight) : availableH;
     const width = Math.max(0, Math.min(availableW, maxW, desiredW));
@@ -16462,6 +17325,15 @@ class GUISystem {
     if (widget instanceof GUISlider) {
       return { ...base, kind: "slider", label: widget.label, min: widget.min, max: widget.max, value: widget.value };
     }
+    if (widget instanceof GUIPianoKeyboard) {
+      return {
+        ...base,
+        kind: "pianoKeyboard",
+        orientation: widget.orientation,
+        activeMidi: widget.getActiveMidi(),
+        visibleWhiteKeys: widget.visibleWhiteKeys
+      };
+    }
     if (widget instanceof GUIMarkdownView) {
       return { ...base, kind: "markdownView" };
     }
@@ -16504,6 +17376,14 @@ class GUISystem {
     const slider = new GUISlider(applySliderTokens(config, this.tokens));
     this.widgetManager.register(slider);
     return slider;
+  }
+  /**
+   * Create a piano keyboard widget
+   */
+  createPianoKeyboard(config) {
+    const piano = new GUIPianoKeyboard(config);
+    this.widgetManager.register(piano);
+    return piano;
   }
   /**
    * Create a text field widget
@@ -16564,6 +17444,10 @@ class GUISystem {
       const metrics = slider.resolveRenderContext(charWidth, charHeight);
       slider.handleDrag(mouseX, mouseY, mouseDown, metrics.charHeight, metrics.scale);
     }
+    const pianos = this.widgetManager.getAll().filter((w) => w instanceof GUIPianoKeyboard);
+    for (const piano of pianos) {
+      piano.handlePointer(mouseX, mouseY, mouseDown);
+    }
     const textFields = this.widgetManager.getAll().filter((w) => w instanceof GUITextField);
     for (const tf of textFields) {
       const metrics = tf.resolveRenderContext(charWidth, charHeight);
@@ -16622,6 +17506,10 @@ class GUISystem {
   getFocusedWidget() {
     return this.widgetManager.getFocused();
   }
+  getFocusedTextInput() {
+    const focused = this.widgetManager.getFocused();
+    return isTextInputCapable(focused) ? focused : null;
+  }
   /**
    * Render all visible widgets
    * Call this in your render loop
@@ -16649,6 +17537,8 @@ class GUISystem {
         this.renderCheckbox(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUISlider) {
         this.renderSlider(widget, uiAPI, charWidth, charHeight);
+      } else if (widget instanceof GUIPianoKeyboard) {
+        this.renderPianoKeyboard(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUITextField) {
         this.renderTextField(widget, uiAPI, charWidth, charHeight);
       } else if (widget instanceof GUITextEditor) {
@@ -16916,6 +17806,78 @@ class GUISystem {
     if (slider.showValue) {
       const valueText = `${Math.round(slider.value)}`;
       ui.text(valueText, x + width + scaledValueGap, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
+    }
+  }
+  renderPianoKeyboard(widget, ui, charW, charH) {
+    const layout = widget.getLayoutSnapshot();
+    const metrics = widget.resolveRenderContext(charW, charH);
+    charW = metrics.charWidth;
+    charH = metrics.charHeight;
+    const style = widget.pianoStyle;
+    const border = widget.getRenderPixels(style.borderWidth);
+    const activeMidi = widget.getActiveMidi();
+    const hoveredMidi = widget.getHoveredMidi();
+    ui.rect(widget.bounds.x, widget.bounds.y, widget.bounds.width, widget.bounds.height, style.background);
+    if (layout.railBounds) {
+      ui.rect(layout.railBounds.x, layout.railBounds.y, layout.railBounds.width, layout.railBounds.height, style.railColor);
+      if (layout.railThumbBounds) {
+        const hoverRail = widget.state.hovered && layout.railBounds && (widget.orientation === "horizontal" ? this.lastMouseY >= layout.railBounds.y && this.lastMouseY < layout.railBounds.y + layout.railBounds.height : this.lastMouseX >= layout.railBounds.x && this.lastMouseX < layout.railBounds.x + layout.railBounds.width);
+        const thumbColor = widget.state.pressed ? style.railThumbActiveColor : hoverRail ? style.railThumbHoverColor : style.railThumbColor;
+        ui.rect(layout.railThumbBounds.x, layout.railThumbBounds.y, layout.railThumbBounds.width, layout.railThumbBounds.height, style.railViewportColor);
+        ui.rect(layout.railThumbBounds.x, layout.railThumbBounds.y, layout.railThumbBounds.width, layout.railThumbBounds.height, thumbColor);
+      }
+    }
+    if (ui.pushClipRect) ui.pushClipRect(layout.mainBounds.x, layout.mainBounds.y, layout.mainBounds.width, layout.mainBounds.height);
+    for (const key of layout.whiteKeys) {
+      const isActive = activeMidi === key.midi;
+      const isHovered = widget.state.hovered && key.midi === hoveredMidi;
+      const fill = isActive ? style.whiteKeyActiveColor : isHovered ? style.whiteKeyHoverColor : style.whiteKeyColor;
+      ui.rect(key.bounds.x, key.bounds.y, key.bounds.width, key.bounds.height, fill);
+      ui.rect(key.bounds.x, key.bounds.y, key.bounds.width, border, style.whiteKeyBorderColor);
+      ui.rect(key.bounds.x, key.bounds.y + key.bounds.height - border, key.bounds.width, border, style.whiteKeyBorderColor);
+      ui.rect(key.bounds.x, key.bounds.y, border, key.bounds.height, style.whiteKeyBorderColor);
+      ui.rect(key.bounds.x + key.bounds.width - border, key.bounds.y, border, key.bounds.height, style.whiteKeyBorderColor);
+      if (key.noteName.startsWith("C") && key.midi !== layout.firstVisibleMidi) {
+        if (widget.orientation === "horizontal") {
+          ui.rect(key.bounds.x, key.bounds.y, border, key.bounds.height, style.octaveLineColor);
+        } else {
+          ui.rect(key.bounds.x, key.bounds.y, key.bounds.width, border, style.octaveLineColor);
+        }
+      }
+      const shouldDrawLabel = widget.showLabels === "white" || widget.showLabels === "all" || widget.showLabels === "c" && key.noteName.startsWith("C");
+      if (!shouldDrawLabel) continue;
+      const labelWidth = typeof ui.measureTextWidth === "function" ? ui.measureTextWidth(key.noteName) : key.noteName.length * charW;
+      const enoughAlong = widget.orientation === "horizontal" ? key.bounds.width >= labelWidth + style.labelInset * 2 : key.bounds.height >= charH + style.labelInset * 2;
+      const enoughCross = widget.orientation === "horizontal" ? key.bounds.height >= charH + style.labelInset * 2 : key.bounds.width >= labelWidth + style.labelInset * 2;
+      if (!enoughAlong || !enoughCross) continue;
+      const textX = widget.orientation === "horizontal" ? key.bounds.x + style.labelInset : key.bounds.x + Math.max(style.labelInset, key.bounds.width - labelWidth - style.labelInset);
+      const textY = widget.orientation === "horizontal" ? key.bounds.y + Math.max(style.labelInset, key.bounds.height - charH - style.labelInset) : key.bounds.y + style.labelInset;
+      ui.text(key.noteName, textX, textY, style.labelColor);
+    }
+    for (const key of layout.blackKeys) {
+      const isActive = activeMidi === key.midi;
+      const isHovered = widget.state.hovered && key.midi === hoveredMidi;
+      const fill = isActive ? style.blackKeyActiveColor : isHovered ? style.blackKeyHoverColor : style.blackKeyColor;
+      ui.rect(key.bounds.x, key.bounds.y, key.bounds.width, key.bounds.height, fill);
+      ui.rect(key.bounds.x, key.bounds.y, key.bounds.width, border, style.blackKeyBorderColor);
+      ui.rect(key.bounds.x, key.bounds.y + key.bounds.height - border, key.bounds.width, border, style.blackKeyBorderColor);
+      ui.rect(key.bounds.x, key.bounds.y, border, key.bounds.height, style.blackKeyBorderColor);
+      ui.rect(key.bounds.x + key.bounds.width - border, key.bounds.y, border, key.bounds.height, style.blackKeyBorderColor);
+      if (widget.showLabels !== "all") continue;
+      const labelWidth = typeof ui.measureTextWidth === "function" ? ui.measureTextWidth(key.noteName) : key.noteName.length * charW;
+      const enoughAlong = widget.orientation === "horizontal" ? key.bounds.width >= labelWidth + style.labelInset * 2 : key.bounds.height >= charH + style.labelInset * 2;
+      const enoughCross = widget.orientation === "horizontal" ? key.bounds.height >= charH + style.labelInset * 2 : key.bounds.width >= labelWidth + style.labelInset * 2;
+      if (!enoughAlong || !enoughCross) continue;
+      const textX = key.bounds.x + style.labelInset;
+      const textY = key.bounds.y + style.labelInset;
+      ui.text(key.noteName, textX, textY, style.blackLabelColor);
+    }
+    if (ui.popClipRect) ui.popClipRect();
+    if (widget.state.focused) {
+      ui.rect(widget.bounds.x, widget.bounds.y, widget.bounds.width, border, style.focusBorderColor);
+      ui.rect(widget.bounds.x, widget.bounds.y + widget.bounds.height - border, widget.bounds.width, border, style.focusBorderColor);
+      ui.rect(widget.bounds.x, widget.bounds.y, border, widget.bounds.height, style.focusBorderColor);
+      ui.rect(widget.bounds.x + widget.bounds.width - border, widget.bounds.y, border, widget.bounds.height, style.focusBorderColor);
     }
   }
   /**
@@ -17427,6 +18389,7 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
         createLabel: (config) => api.createLabel(withGroup(config)),
         createCheckbox: (config) => api.createCheckbox(withGroup(config)),
         createSlider: (config) => api.createSlider(withGroup(config)),
+        createPianoKeyboard: (config) => api.createPianoKeyboard(withGroup(config)),
         createTextField: (config) => api.createTextField(withGroup(config)),
         createTextEditor: (config) => api.createTextEditor(withGroup(config)),
         createMarkdownView: (config) => api.createMarkdownView(withGroup(config)),
@@ -17453,6 +18416,14 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
       if (typeof next.columnGap === "number") next.columnGap = scaleLength(next.columnGap);
       if (typeof next.maxWidth === "number") next.maxWidth = scaleLength(next.maxWidth);
       if (typeof next.maxHeight === "number") next.maxHeight = scaleLength(next.maxHeight);
+      if (next.pianoStyle && typeof next.pianoStyle === "object") {
+        next.pianoStyle = { ...next.pianoStyle };
+        if (typeof next.pianoStyle.borderWidth === "number") next.pianoStyle.borderWidth = scaleLength(next.pianoStyle.borderWidth);
+        if (typeof next.pianoStyle.railThickness === "number") next.pianoStyle.railThickness = scaleLength(next.pianoStyle.railThickness);
+        if (typeof next.pianoStyle.railPadding === "number") next.pianoStyle.railPadding = scaleLength(next.pianoStyle.railPadding);
+        if (typeof next.pianoStyle.labelInset === "number") next.pianoStyle.labelInset = scaleLength(next.pianoStyle.labelInset);
+        if (typeof next.pianoStyle.minThumbLength === "number") next.pianoStyle.minThumbLength = scaleLength(next.pianoStyle.minThumbLength);
+      }
       return next;
     },
     /**
@@ -17583,6 +18554,15 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
         throw new Error("GUI system not initialized. Call gui.init() first.");
       }
       return this._system.createSlider(this._normalizeConfig(config));
+    },
+    /**
+     * Create a piano keyboard widget
+     */
+    createPianoKeyboard(config) {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      return this._system.createPianoKeyboard(this._normalizeConfig(config));
     },
     /**
      * Create a text field widget
@@ -20623,7 +21603,9 @@ function parseTransform3D(section, sectionIndex, config) {
     }
   })();
   const displayTitle = section.directive ? section.title : section.title.replace(/\s*\{[^}]+\}\s*$/, "").trim();
+  const sectionId = typeof section.id === "string" && section.id.trim().length > 0 ? section.id.trim() : `section-${sectionIndex}`;
   return {
+    sectionId,
     sectionIndex,
     sectionTitle: section.title,
     displayTitle,
@@ -24407,9 +25389,9 @@ function parseThemeOverride(raw) {
   }
   return null;
 }
-function buildWorldsCardMarkdown(layout) {
-  const title = (layout.displayTitle || layout.sectionTitle || "").trim();
-  const content = (layout.content || "").trim();
+function buildWorldsCardMarkdown(layout, overrides) {
+  const title = ((overrides == null ? void 0 : overrides.title) ?? layout.displayTitle ?? layout.sectionTitle ?? "").trim();
+  const content = ((overrides == null ? void 0 : overrides.content) ?? layout.content ?? "").trim();
   switch (layout.renderMode) {
     case "heading":
       return title ? `# ${title}` : "";
@@ -24475,6 +25457,12 @@ class StorieEngine {
     // 3D Canvas system
     __publicField(this, "worldsRenderer", null);
     __publicField(this, "camera3D", null);
+    __publicField(this, "runtimeSectionStore", {
+      sections: [],
+      byId: /* @__PURE__ */ new Map(),
+      order: [],
+      indexById: /* @__PURE__ */ new Map()
+    });
     __publicField(this, "section3DLayouts", []);
     __publicField(this, "pending3DCameraFocus", null);
     // Last focus request that was actually applied (used to re-frame on resize).
@@ -24493,6 +25481,7 @@ class StorieEngine {
     // 3D link-centric interaction (canvas.nim parity)
     __publicField(this, "hovered3DLink", null);
     __publicField(this, "focused3DLink", null);
+    __publicField(this, "current3DSectionId", null);
     __publicField(this, "current3DSectionIndex", null);
     __publicField(this, "activated3DLinksQueue", []);
     // 3D section texture rasterization cache
@@ -24531,13 +25520,16 @@ class StorieEngine {
     // Documents
     __publicField(this, "documents", /* @__PURE__ */ new Map());
     __publicField(this, "activeDocumentId", null);
+    __publicField(this, "worldsSectionOverridesByDocument", /* @__PURE__ */ new Map());
     __publicField(this, "outlineCache", null);
+    __publicField(this, "worldsSectionContentOverridesByDocument", /* @__PURE__ */ new Map());
     // Worlds Overview (host-only)
     __publicField(this, "worldsOverviewEnabled", false);
     __publicField(this, "worldsOverviewSavedTransforms", null);
     __publicField(this, "pendingWorldsOverview", null);
     // Cache last computed auto-layout step sizes so we don't rewrite positions every frame.
     __publicField(this, "worldsAutoLayoutCache", null);
+    __publicField(this, "worldsTimelineRuntimeState", /* @__PURE__ */ new WeakMap());
     // Dropped-file handling (binary-safe)
     __publicField(this, "lastDroppedFile", null);
     __publicField(this, "dropHandlingCleanup", null);
@@ -24554,6 +25546,8 @@ class StorieEngine {
     __publicField(this, "height");
     // Canvas reference for event listeners
     __publicField(this, "canvas");
+    __publicField(this, "hiddenTextInput", null);
+    __publicField(this, "hiddenTextInputSyncing", false);
     /** True while a video export is in progress. Exposed to document code via api.isExporting. */
     __publicField(this, "_isExporting", false);
     /** AudioBuffer captured by document code via captureForExport() during an export pass. */
@@ -25678,9 +26672,9 @@ class StorieEngine {
       // Section indices match Worlds's depth-first layout order.
       doc: {
         sectionsFlat: () => {
-          const d = engine.getActiveDocument();
-          if (!d) return [];
-          const flat = flattenSections(d.sections);
+          const roots = engine.getReadableSectionRoots();
+          if (roots.length === 0) return [];
+          const flat = flattenSections(roots);
           return flat.map((s, index) => ({
             index,
             title: s.title,
@@ -25690,9 +26684,7 @@ class StorieEngine {
           }));
         },
         sectionCount: () => {
-          const d = engine.getActiveDocument();
-          if (!d) return 0;
-          return flattenSections(d.sections).length;
+          return flattenSections(engine.getReadableSectionRoots()).length;
         },
         outline: () => {
           return engine.getOutlineNodes();
@@ -27876,16 +28868,18 @@ class StorieEngine {
             return engine.worldsInlineWidgetEventsQueue.shift() ?? null;
           },
           getValue: (id, section) => {
-            const resolved = section === void 0 || section === null || section === "current" ? engine.current3DSectionIndex : engine.resolve3DSectionIndex(section);
+            const resolved = section === void 0 || section === null || section === "current" ? engine.getResolvedCurrent3DSectionIndex() : engine.resolve3DSectionIndex(section);
             if (!(typeof resolved === "number" && Number.isFinite(resolved))) return null;
             return engine.worldsInlineWidgetValueState.get(engine.getWorldsInlineWidgetStateKey(resolved, String(id))) ?? null;
           },
           setValue: (id, value, section) => {
-            const resolved = section === void 0 || section === null || section === "current" ? engine.current3DSectionIndex : engine.resolve3DSectionIndex(section);
+            var _a;
+            const resolved = section === void 0 || section === null || section === "current" ? engine.getResolvedCurrent3DSectionIndex() : engine.resolve3DSectionIndex(section);
             if (!(typeof resolved === "number" && Number.isFinite(resolved))) return false;
             const key = engine.getWorldsInlineWidgetStateKey(resolved, String(id));
             engine.worldsInlineWidgetValueState.set(key, value);
-            const live = engine.worldsInlineWidgetInstances.find((entry) => entry.sectionIndex === resolved && entry.widgetId === id);
+            const sectionId = (_a = engine.getSectionLayoutByIndex(resolved)) == null ? void 0 : _a.sectionId;
+            const live = sectionId ? engine.worldsInlineWidgetInstances.find((entry) => entry.sectionId === sectionId && entry.widgetId === id) : null;
             if (live) {
               if (live.kind === "slider" && typeof live.widget.setValue === "function" && typeof value === "number") {
                 live.widget.setValue(value);
@@ -27900,7 +28894,8 @@ class StorieEngine {
             return true;
           },
           configure: (id, patch, section) => {
-            const resolved = section === void 0 || section === null || section === "current" ? engine.current3DSectionIndex : engine.resolve3DSectionIndex(section);
+            var _a;
+            const resolved = section === void 0 || section === null || section === "current" ? engine.getResolvedCurrent3DSectionIndex() : engine.resolve3DSectionIndex(section);
             if (!(typeof resolved === "number" && Number.isFinite(resolved))) return false;
             const key = engine.getWorldsInlineWidgetStateKey(resolved, String(id));
             const nextPatch = { ...engine.worldsInlineWidgetConfigState.get(key) ?? {} };
@@ -27914,7 +28909,8 @@ class StorieEngine {
             if (typeof patch.knobColor === "number" && Number.isFinite(patch.knobColor)) nextPatch.knobColor = patch.knobColor;
             if (typeof patch.knobHoverColor === "number" && Number.isFinite(patch.knobHoverColor)) nextPatch.knobHoverColor = patch.knobHoverColor;
             engine.worldsInlineWidgetConfigState.set(key, nextPatch);
-            const live = engine.worldsInlineWidgetInstances.find((entry) => entry.sectionIndex === resolved && entry.widgetId === id);
+            const sectionId = (_a = engine.getSectionLayoutByIndex(resolved)) == null ? void 0 : _a.sectionId;
+            const live = sectionId ? engine.worldsInlineWidgetInstances.find((entry) => entry.sectionId === sectionId && entry.widgetId === id) : null;
             if ((live == null ? void 0 : live.kind) === "slider") {
               if (typeof nextPatch.label === "string") live.widget.label = nextPatch.label;
               if (typeof nextPatch.showValue === "boolean") live.widget.showValue = nextPatch.showValue;
@@ -28214,13 +29210,14 @@ class StorieEngine {
           }
         },
         get currentSection() {
-          return engine.current3DSectionIndex;
+          return engine.getResolvedCurrent3DSectionIndex();
         },
         // Section layout access
         getSectionLayout: (sectionIndex) => {
           const layout = engine.section3DLayouts[sectionIndex];
           if (!layout) return null;
           return {
+            sectionId: layout.sectionId,
             sectionIndex: layout.sectionIndex,
             sectionTitle: layout.sectionTitle,
             renderMode: layout.renderMode,
@@ -28241,9 +29238,11 @@ class StorieEngine {
             console.warn(`Section ${sectionIndex} not found`);
             return;
           }
+          const override = engine.getOrCreateSectionRuntimeOverride(layout.sectionId);
           if (transform.position) {
             layout.transform.position = { ...transform.position };
             layout.autoPositioned = false;
+            override.position = { ...transform.position };
           }
           if (transform.rotation) {
             layout.transform.rotation = {
@@ -28251,9 +29250,11 @@ class StorieEngine {
               y: transform.rotation.y * Math.PI / 180,
               z: transform.rotation.z * Math.PI / 180
             };
+            override.rotationDegrees = { ...transform.rotation };
           }
           if (transform.scale) {
             layout.transform.scale = { ...transform.scale };
+            override.scale = { ...transform.scale };
           }
         },
         setSectionVisible: (sectionIndex, visible) => {
@@ -28263,9 +29264,95 @@ class StorieEngine {
             return;
           }
           layout.visible = visible;
+          engine.getOrCreateSectionRuntimeOverride(layout.sectionId).visible = visible;
         },
         getSectionCount: () => {
           return engine.section3DLayouts.length;
+        },
+        content: {
+          get: (selector) => {
+            const ref = engine.resolveWorldsContentSectionRef(selector);
+            if (!ref) return null;
+            const override = engine.getWorldsSectionContentOverride(ref.sectionId);
+            return {
+              sectionId: ref.sectionId,
+              sectionIndex: ref.sectionIndex,
+              baseTitle: ref.section.title,
+              baseContent: ref.section.content,
+              ...(override == null ? void 0 : override.title) !== void 0 ? { overrideTitle: override.title } : {},
+              ...(override == null ? void 0 : override.content) !== void 0 ? { overrideContent: override.content } : {},
+              effectiveTitle: (override == null ? void 0 : override.title) ?? ref.section.title,
+              effectiveContent: (override == null ? void 0 : override.content) ?? ref.section.content
+            };
+          },
+          set: (selector, patch) => {
+            return engine.setWorldsSectionContentOverride(selector, patch);
+          },
+          clear: (selector, target = "all") => {
+            return engine.clearWorldsSectionContentOverride(selector, target);
+          },
+          clearAll: () => {
+            engine.clearWorldsSectionContentOverrides();
+          },
+          stateAt: (entries2, timeSec, options) => {
+            return stateAtWorldsContent(entries2, Number(timeSec) || 0, options);
+          },
+          applyTimed: (selector, entries2, timeSec, options) => {
+            return engine.applyWorldsTimedContent(selector, entries2, Number(timeSec) || 0, options);
+          }
+        },
+        timeline: {
+          compile: (entries2) => {
+            try {
+              return compileWorldsTimeline(entries2);
+            } catch (e) {
+              console.warn("[worlds.timeline.compile] failed:", e);
+              return { events: [], sections: [] };
+            }
+          },
+          stateAt: (compiled, timeSec) => {
+            try {
+              return stateAtWorldsTimeline(compiled, Number(timeSec) || 0);
+            } catch (e) {
+              console.warn("[worlds.timeline.stateAt] failed:", e);
+              return [];
+            }
+          },
+          apply: (compiled, timeSec) => {
+            try {
+              return engine.applyWorldsTimeline(compiled, Number(timeSec) || 0);
+            } catch (e) {
+              console.warn("[worlds.timeline.apply] failed:", e);
+              return [];
+            }
+          },
+          reset: (compiled) => {
+            try {
+              engine.resetWorldsTimelineRuntimeState(compiled);
+            } catch (e) {
+              console.warn("[worlds.timeline.reset] failed:", e);
+            }
+          }
+        },
+        sections: {
+          list: () => {
+            return engine.getRuntimeSectionSummaries();
+          },
+          get: (selector) => {
+            return engine.getRuntimeSectionSummary(selector);
+          },
+          insert: (section, options) => {
+            return engine.insertRuntimeSection(section, options);
+          },
+          update: (selector, patch) => {
+            return engine.updateRuntimeSection(selector, patch);
+          },
+          remove: (selector) => {
+            return engine.removeRuntimeSection(selector);
+          },
+          move: (selector, options) => {
+            return engine.moveRuntimeSection(selector, options);
+          }
         },
         // Configuration
         config: {
@@ -28605,7 +29692,71 @@ class StorieEngine {
     }
   }
   getWorldsInlineWidgetStateKey(sectionIndex, widgetId) {
-    return `${sectionIndex}:${widgetId}`;
+    const layout = this.getSectionLayoutByIndex(sectionIndex);
+    const sectionKey = (layout == null ? void 0 : layout.sectionId) ?? `section-${sectionIndex}`;
+    return `${sectionKey}:${widgetId}`;
+  }
+  getSectionLayoutByIndex(sectionIndex) {
+    if (!(typeof sectionIndex === "number" && Number.isFinite(sectionIndex))) return null;
+    return this.section3DLayouts.find((item) => item.sectionIndex === sectionIndex) ?? null;
+  }
+  getSectionLayoutById(sectionId) {
+    if (typeof sectionId !== "string" || sectionId.length === 0) return null;
+    return this.section3DLayouts.find((item) => item.sectionId === sectionId) ?? null;
+  }
+  getSectionIndexById(sectionId) {
+    var _a;
+    if (typeof sectionId !== "string" || sectionId.length === 0) return null;
+    const indexed = this.runtimeSectionStore.indexById.get(sectionId);
+    if (typeof indexed === "number" && Number.isFinite(indexed)) return indexed;
+    return ((_a = this.getSectionLayoutById(sectionId)) == null ? void 0 : _a.sectionIndex) ?? null;
+  }
+  getResolvedCurrent3DSectionIndex() {
+    const byId = this.getSectionIndexById(this.current3DSectionId);
+    if (typeof byId === "number" && Number.isFinite(byId)) return byId;
+    return typeof this.current3DSectionIndex === "number" && Number.isFinite(this.current3DSectionIndex) ? this.current3DSectionIndex : null;
+  }
+  getCurrent3DSectionLayout() {
+    const byId = this.getSectionLayoutById(this.current3DSectionId);
+    if (byId) return byId;
+    return this.getSectionLayoutByIndex(this.current3DSectionIndex);
+  }
+  rebind3DStateToRuntimeSectionStore() {
+    this.current3DSectionIndex = this.getSectionIndexById(this.current3DSectionId);
+    const rebindLink = (entry) => {
+      if (!entry) return null;
+      const nextIndex = this.getSectionIndexById(entry.sectionId);
+      if (!(typeof nextIndex === "number" && Number.isFinite(nextIndex))) return null;
+      return { ...entry, sectionIndex: nextIndex };
+    };
+    this.hovered3DLink = rebindLink(this.hovered3DLink);
+    this.focused3DLink = rebindLink(this.focused3DLink);
+    this.activated3DLinksQueue = this.activated3DLinksQueue.map((entry) => {
+      if (!entry.sectionId) return entry;
+      const nextIndex = this.getSectionIndexById(entry.sectionId);
+      return {
+        ...entry,
+        sectionIndex: typeof nextIndex === "number" && Number.isFinite(nextIndex) ? nextIndex : null
+      };
+    }).filter((entry) => entry.sectionId === null || entry.sectionIndex !== null);
+    if (this.lastApplied3DCameraFocus) {
+      const nextIndex = this.getSectionIndexById(this.lastApplied3DCameraFocus.sectionId);
+      if (typeof nextIndex === "number" && Number.isFinite(nextIndex)) {
+        this.lastApplied3DCameraFocus = {
+          ...this.lastApplied3DCameraFocus,
+          sectionIndex: nextIndex
+        };
+      }
+    }
+    this.sceneState.sectionIndex = this.current3DSectionIndex;
+  }
+  getSectionCacheKey(layoutOrIndex) {
+    var _a;
+    if (typeof layoutOrIndex === "number") {
+      return ((_a = this.getSectionLayoutByIndex(layoutOrIndex)) == null ? void 0 : _a.sectionId) ?? null;
+    }
+    if (!layoutOrIndex) return null;
+    return layoutOrIndex.sectionId;
   }
   getGUIPixelMetrics() {
     const atlas = this.renderer instanceof WebGPURenderer ? this.renderer.getAtlas() : null;
@@ -28631,16 +29782,15 @@ class StorieEngine {
     this.worldsInlineWidgetInstances = [];
   }
   getActiveWorldsInlineWidgetPlacements() {
-    if (!(typeof this.current3DSectionIndex === "number")) return null;
-    const layout = this.section3DLayouts.find((item) => item.sectionIndex === this.current3DSectionIndex);
+    const layout = this.getCurrent3DSectionLayout();
     if (!layout || !layout.texture || !layout.visible || layout.interactive === false) return null;
-    const placements = this.sectionWidgetPlacementsCache.get(layout.sectionIndex);
+    const placements = this.sectionWidgetPlacementsCache.get(layout.sectionId);
     if (!placements || placements.length === 0) return null;
     return { layout, placements };
   }
   project3DTextureRectToScreen(layout, rect) {
     if (!this.camera3D) return null;
-    const dims = this.sectionTextureCache.get(layout.sectionIndex);
+    const dims = this.sectionTextureCache.get(layout.sectionId);
     if (!dims || dims.width <= 0 || dims.height <= 0) return null;
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
@@ -28717,7 +29867,7 @@ class StorieEngine {
     for (let i = this.worldsInlineWidgetInstances.length - 1; i >= 0; i--) {
       const entry = this.worldsInlineWidgetInstances[i];
       const key = this.getWorldsInlineWidgetStateKey(entry.sectionIndex, entry.widgetId);
-      if (entry.sectionIndex !== active.layout.sectionIndex || !nextKeys.has(key)) {
+      if (entry.sectionId !== active.layout.sectionId || !nextKeys.has(key)) {
         manager.unregister(entry.widget.id);
         this.worldsInlineWidgetInstances.splice(i, 1);
       }
@@ -28728,7 +29878,7 @@ class StorieEngine {
       const configState = this.worldsInlineWidgetConfigState.get(widgetKey);
       if (!projected) continue;
       const renderScale = placement.widget.scale === "worlds" ? this.getWorldsInlineWidgetRenderScale(placement, projected) : 1;
-      let entry = this.worldsInlineWidgetInstances.find((item) => item.sectionIndex === active.layout.sectionIndex && item.widgetId === placement.widget.id);
+      let entry = this.worldsInlineWidgetInstances.find((item) => item.sectionId === active.layout.sectionId && item.widgetId === placement.widget.id);
       if (!entry) {
         const persisted = this.worldsInlineWidgetValueState.get(widgetKey);
         const bounds = { x: projected.x, y: projected.y, width: projected.width, height: projected.height };
@@ -28800,6 +29950,7 @@ class StorieEngine {
         }
         entry = {
           engineId: widgetKey,
+          sectionId: active.layout.sectionId,
           sectionIndex: active.layout.sectionIndex,
           widgetId: placement.widget.id,
           kind: placement.widget.type,
@@ -28888,6 +30039,8 @@ class StorieEngine {
           console.warn("[Engine] Failed to unload modules during document swap:", error);
         }
         this.documents.clear();
+        this.worldsSectionContentOverridesByDocument.clear();
+        this.worldsSectionOverridesByDocument.clear();
         this.sandbox.clearAll();
         this.activeDocumentId = null;
       }
@@ -28903,6 +30056,7 @@ class StorieEngine {
         this.clear3DSectionTextures();
       } catch {
       }
+      this.resetRuntimeSectionStore();
       this.section3DLayouts = [];
       this.worldsEnabled = false;
       this.worldsOverviewEnabled = false;
@@ -28950,13 +30104,9 @@ class StorieEngine {
           }
         }
       }
+      this.initializeRuntimeSectionStore(parsed.sections);
       if (this.worldsRenderer) {
-        this.section3DLayouts = createSection3DLayouts(parsed.sections, this.worldsConfig);
-        console.log(`  Created 3D layouts for ${this.section3DLayouts.length} sections`);
-        this.reflowWorldsAutoLayout();
-        this.applyPending3DCameraFocus();
-        this.applyWorldsLayoutCallback(parsed.sections);
-        this.applyPendingWorldsOverview();
+        this.compileWorldsLayoutsFromRuntimeSectionStore("load");
       }
       if (this.themeOverrideFromUrl) {
         this.applyThemeColors(this.themeOverrideFromUrl.theme, this.themeOverrideFromUrl.label, "url");
@@ -29453,9 +30603,12 @@ ${exportVars}
    * Set the active document
    */
   setActiveDocument(documentId) {
-    if (this.documents.has(documentId)) {
-      this.activeDocumentId = documentId;
-    }
+    const nextDocument = this.documents.get(documentId);
+    if (!nextDocument) return;
+    this.activeDocumentId = documentId;
+    this.outlineCache = null;
+    this.initializeRuntimeSectionStore(nextDocument.sections);
+    this.applyRuntimeSectionStoreMutation(`activate document ${documentId}`);
   }
   /**
    * Apply shader chain (typically from URL parameter, overrides frontmatter)
@@ -29474,6 +30627,555 @@ ${exportVars}
   getActiveDocument() {
     if (!this.activeDocumentId) return null;
     return this.documents.get(this.activeDocumentId) || null;
+  }
+  getReadableSectionRoots() {
+    var _a;
+    if (this.runtimeSectionStore.sections.length > 0) {
+      return this.runtimeSectionStore.sections;
+    }
+    return ((_a = this.getActiveDocument()) == null ? void 0 : _a.sections) ?? [];
+  }
+  getActiveWorldsSectionContentOverrideMap(create2 = false) {
+    const documentId = this.activeDocumentId;
+    if (!documentId) return null;
+    const existing = this.worldsSectionContentOverridesByDocument.get(documentId);
+    if (existing || !create2) return existing ?? null;
+    const next = /* @__PURE__ */ new Map();
+    this.worldsSectionContentOverridesByDocument.set(documentId, next);
+    return next;
+  }
+  getWorldsSectionContentOverride(sectionId) {
+    const overrides = this.getActiveWorldsSectionContentOverrideMap();
+    if (!overrides) return null;
+    return overrides.get(sectionId) ?? null;
+  }
+  pruneActiveWorldsSectionContentOverrides() {
+    const overrides = this.getActiveWorldsSectionContentOverrideMap();
+    if (!overrides) return;
+    const validIds = new Set(this.runtimeSectionStore.order);
+    for (const sectionId of overrides.keys()) {
+      if (!validIds.has(sectionId)) {
+        overrides.delete(sectionId);
+      }
+    }
+    if (overrides.size === 0 && this.activeDocumentId) {
+      this.worldsSectionContentOverridesByDocument.delete(this.activeDocumentId);
+    }
+  }
+  resolveWorldsContentSectionRef(selector) {
+    if (selector === void 0 || selector === null || selector === "current") {
+      const currentIndex = this.getResolvedCurrent3DSectionIndex();
+      return typeof currentIndex === "number" && Number.isFinite(currentIndex) ? this.resolveRuntimeSectionRef(currentIndex) : null;
+    }
+    return this.resolveRuntimeSectionRef(selector);
+  }
+  setWorldsSectionContentOverride(selector, patch) {
+    const ref = this.resolveWorldsContentSectionRef(selector);
+    if (!ref) return false;
+    const overrides = this.getActiveWorldsSectionContentOverrideMap(true);
+    if (!overrides) return false;
+    const previous = overrides.get(ref.sectionId) ?? {};
+    const next = { ...previous };
+    let touched = false;
+    if (patch.title !== void 0) {
+      touched = true;
+      if (patch.title === null) delete next.title;
+      else next.title = String(patch.title);
+    }
+    if (patch.content !== void 0) {
+      touched = true;
+      if (patch.content === null) delete next.content;
+      else next.content = String(patch.content);
+    }
+    if (!touched) return false;
+    const unchanged = previous.title === next.title && previous.content === next.content;
+    if (unchanged) return true;
+    if (next.title === void 0 && next.content === void 0) {
+      overrides.delete(ref.sectionId);
+    } else {
+      overrides.set(ref.sectionId, next);
+    }
+    this.invalidate3DSectionTexture(ref.sectionIndex);
+    return true;
+  }
+  clearWorldsSectionContentOverride(selector, target = "all") {
+    const ref = this.resolveWorldsContentSectionRef(selector);
+    if (!ref) return false;
+    const overrides = this.getActiveWorldsSectionContentOverrideMap();
+    if (!overrides) return false;
+    const existing = overrides.get(ref.sectionId);
+    if (!existing) return false;
+    const next = { ...existing };
+    if (target === "all" || target === "title") delete next.title;
+    if (target === "all" || target === "content") delete next.content;
+    if (next.title === void 0 && next.content === void 0) {
+      overrides.delete(ref.sectionId);
+    } else {
+      overrides.set(ref.sectionId, next);
+    }
+    this.invalidate3DSectionTexture(ref.sectionIndex);
+    return true;
+  }
+  clearWorldsSectionContentOverrides() {
+    const overrides = this.getActiveWorldsSectionContentOverrideMap();
+    if (!overrides || overrides.size === 0) return;
+    overrides.clear();
+    this.clear3DSectionTextures();
+  }
+  applyWorldsTimedContent(selector, entries2, timeSec, options) {
+    const ref = this.resolveWorldsContentSectionRef(selector);
+    if (!ref) return null;
+    const state = stateAtWorldsContent(entries2, timeSec, options);
+    const target = (options == null ? void 0 : options.target) === "title" ? "title" : "content";
+    const clearWhenEmpty = (options == null ? void 0 : options.clearWhenEmpty) !== false;
+    const hasText = state.entries.length > 0 || state.text.length > 0;
+    if (!hasText && clearWhenEmpty) {
+      this.clearWorldsSectionContentOverride(ref.sectionId, target);
+      return state;
+    }
+    this.setWorldsSectionContentOverride(ref.sectionId, {
+      [target]: hasText ? state.text : ""
+    });
+    return state;
+  }
+  getActiveWorldsSectionOverrideMap(create2 = false) {
+    const documentId = this.activeDocumentId;
+    if (!documentId) return null;
+    const existing = this.worldsSectionOverridesByDocument.get(documentId);
+    if (existing || !create2) return existing ?? null;
+    const next = /* @__PURE__ */ new Map();
+    this.worldsSectionOverridesByDocument.set(documentId, next);
+    return next;
+  }
+  getOrCreateSectionRuntimeOverride(sectionId) {
+    const overrides = this.getActiveWorldsSectionOverrideMap(true);
+    if (!overrides) return {};
+    const existing = overrides.get(sectionId);
+    if (existing) return existing;
+    const next = {};
+    overrides.set(sectionId, next);
+    return next;
+  }
+  pruneActiveWorldsSectionOverrides() {
+    const overrides = this.getActiveWorldsSectionOverrideMap();
+    if (!overrides) return;
+    const validIds = new Set(this.section3DLayouts.map((layout) => layout.sectionId));
+    for (const sectionId of overrides.keys()) {
+      if (!validIds.has(sectionId)) {
+        overrides.delete(sectionId);
+      }
+    }
+    if (overrides.size === 0 && this.activeDocumentId) {
+      this.worldsSectionOverridesByDocument.delete(this.activeDocumentId);
+    }
+  }
+  applyActiveWorldsSectionOverrides() {
+    const overrides = this.getActiveWorldsSectionOverrideMap();
+    if (!overrides || overrides.size === 0) return;
+    for (const layout of this.section3DLayouts) {
+      const override = overrides.get(layout.sectionId);
+      if (!override) continue;
+      if (override.position) {
+        layout.transform.position = { ...override.position };
+        layout.autoPositioned = false;
+      }
+      if (override.rotationDegrees) {
+        layout.transform.rotation = {
+          x: override.rotationDegrees.x * Math.PI / 180,
+          y: override.rotationDegrees.y * Math.PI / 180,
+          z: override.rotationDegrees.z * Math.PI / 180
+        };
+      }
+      if (override.scale) {
+        layout.transform.scale = { ...override.scale };
+      }
+      if (typeof override.visible === "boolean") {
+        layout.visible = override.visible;
+      }
+    }
+  }
+  cloneRuntimeSectionTree(sections) {
+    return sections.map((section) => this.cloneRuntimeSectionNode(section));
+  }
+  cloneRuntimeSectionNode(section) {
+    const cloned = {
+      ...section,
+      children: section.children.map((child) => this.cloneRuntimeSectionNode(child))
+    };
+    if (section.directive && typeof section.directive === "object" && !Array.isArray(section.directive)) {
+      cloned.directive = { ...section.directive };
+    }
+    return cloned;
+  }
+  resetRuntimeSectionStore() {
+    this.runtimeSectionStore.sections = [];
+    this.runtimeSectionStore.byId.clear();
+    this.runtimeSectionStore.order = [];
+    this.runtimeSectionStore.indexById.clear();
+  }
+  rebuildRuntimeSectionStoreIndex() {
+    this.runtimeSectionStore.byId.clear();
+    this.runtimeSectionStore.order = [];
+    this.runtimeSectionStore.indexById.clear();
+    let sectionIndex = 0;
+    const walk = (sections) => {
+      for (const section of sections) {
+        if (!section.id) continue;
+        this.runtimeSectionStore.byId.set(section.id, section);
+        this.runtimeSectionStore.order.push(section.id);
+        this.runtimeSectionStore.indexById.set(section.id, sectionIndex++);
+        if (section.children.length > 0) {
+          walk(section.children);
+        }
+      }
+    };
+    walk(this.runtimeSectionStore.sections);
+  }
+  initializeRuntimeSectionStore(sections) {
+    this.runtimeSectionStore.sections = this.cloneRuntimeSectionTree(sections);
+    this.rebuildRuntimeSectionStoreIndex();
+  }
+  syncRuntimeSectionStoreToActiveDocument() {
+    const activeDocument = this.getActiveDocument();
+    if (!activeDocument) return;
+    const nextSections = this.cloneRuntimeSectionTree(this.runtimeSectionStore.sections);
+    activeDocument.sections = nextSections;
+    if (activeDocument._parsedMarkdown && Array.isArray(activeDocument._parsedMarkdown.sections)) {
+      activeDocument._parsedMarkdown.sections = this.cloneRuntimeSectionTree(this.runtimeSectionStore.sections);
+    }
+  }
+  applyRuntimeSectionStoreMutation(reason) {
+    ensureSectionIds(this.runtimeSectionStore.sections);
+    this.rebuildRuntimeSectionStoreIndex();
+    this.syncRuntimeSectionStoreToActiveDocument();
+    this.outlineCache = null;
+    this.pruneActiveWorldsSectionContentOverrides();
+    this.section3DLayouts = createSection3DLayouts(this.runtimeSectionStore.sections, this.worldsConfig);
+    this.rebind3DStateToRuntimeSectionStore();
+    this.applyWorldsLayoutCallback();
+    this.applyActiveWorldsSectionOverrides();
+    this.pruneActiveWorldsSectionOverrides();
+    if (this.worldsRenderer) {
+      console.log(`  Created ${this.section3DLayouts.length} 3D layouts from runtime store (${reason})`);
+      this.reflowWorldsAutoLayout();
+      this.applyPending3DCameraFocus();
+      this.applyPendingWorldsOverview();
+    }
+  }
+  compileWorldsLayoutsFromRuntimeSectionStore(reason) {
+    this.applyRuntimeSectionStoreMutation(reason);
+  }
+  clampRuntimeSectionLevel(level) {
+    return Math.max(1, Math.min(6, Math.round(level)));
+  }
+  createRuntimeSectionFromInput(input, level = 1) {
+    const normalizedLevel = this.clampRuntimeSectionLevel(Number.isFinite(input == null ? void 0 : input.level) ? Number(input.level) : level);
+    const title = typeof (input == null ? void 0 : input.title) === "string" && input.title.trim().length > 0 ? input.title.trim() : "Section";
+    const section = {
+      id: typeof (input == null ? void 0 : input.id) === "string" && input.id.trim().length > 0 ? input.id.trim() : void 0,
+      title,
+      level: normalizedLevel,
+      content: typeof (input == null ? void 0 : input.content) === "string" ? input.content : "",
+      startLine: Number.isFinite(input == null ? void 0 : input.startLine) ? Number(input.startLine) : -1,
+      endLine: Number.isFinite(input == null ? void 0 : input.endLine) ? Number(input.endLine) : -1,
+      children: []
+    };
+    if (Number.isFinite(input == null ? void 0 : input.timedMs)) {
+      section.timedMs = Number(input.timedMs);
+    }
+    if ((input == null ? void 0 : input.directive) && typeof input.directive === "object" && !Array.isArray(input.directive)) {
+      section.directive = { ...input.directive };
+    }
+    const children = Array.isArray(input == null ? void 0 : input.children) ? input.children : [];
+    section.children = children.map((child) => this.createRuntimeSectionFromInput(child, normalizedLevel + 1));
+    return section;
+  }
+  setRuntimeSectionSubtreeLevels(section, level) {
+    section.level = this.clampRuntimeSectionLevel(level);
+    for (const child of section.children) {
+      this.setRuntimeSectionSubtreeLevels(child, section.level + 1);
+    }
+  }
+  getRuntimeSectionRefs() {
+    const refs = [];
+    let sectionIndex = 0;
+    const visit = (sections, parent, parentIndex) => {
+      for (let siblingIndex = 0; siblingIndex < sections.length; siblingIndex++) {
+        const section = sections[siblingIndex];
+        const sectionId = typeof section.id === "string" && section.id.length > 0 ? section.id : `section-${sectionIndex}`;
+        const ref = {
+          section,
+          sectionId,
+          sectionIndex,
+          parent,
+          parentId: (parent == null ? void 0 : parent.id) ?? null,
+          parentIndex,
+          siblings: sections,
+          siblingIndex
+        };
+        refs.push(ref);
+        sectionIndex += 1;
+        const currentIndex = ref.sectionIndex;
+        if (section.children.length > 0) {
+          visit(section.children, section, currentIndex);
+        }
+      }
+    };
+    visit(this.runtimeSectionStore.sections, null, null);
+    return refs;
+  }
+  resolveRuntimeSectionRef(selector) {
+    const refs = this.getRuntimeSectionRefs();
+    if (typeof selector === "number" && Number.isFinite(selector)) {
+      return refs.find((ref) => ref.sectionIndex === selector) ?? null;
+    }
+    if (typeof selector !== "string") return null;
+    const query = selector.trim();
+    if (!query) return null;
+    const exactId = refs.find((ref) => ref.sectionId === query);
+    if (exactId) return exactId;
+    const slugify = (value) => value.toLowerCase().trim().replace(/[`*_~]/g, "").replace(/\{[^}]*\}\s*$/g, "").replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-");
+    const wanted = slugify(query);
+    return refs.find((ref) => slugify(ref.section.title) === wanted) ?? null;
+  }
+  sectionTreeContainsId(section, sectionId) {
+    if (section.id === sectionId) return true;
+    return section.children.some((child) => this.sectionTreeContainsId(child, sectionId));
+  }
+  getRuntimeSectionSummary(selector) {
+    const ref = this.resolveRuntimeSectionRef(selector);
+    if (!ref) return null;
+    return {
+      sectionId: ref.sectionId,
+      sectionIndex: ref.sectionIndex,
+      parentId: ref.parentId,
+      parentIndex: ref.parentIndex,
+      title: ref.section.title,
+      level: ref.section.level,
+      content: ref.section.content,
+      childCount: ref.section.children.length,
+      ...ref.section.timedMs !== void 0 ? { timedMs: ref.section.timedMs } : {},
+      ...ref.section.directive ? { directive: { ...ref.section.directive } } : {}
+    };
+  }
+  getRuntimeSectionSummaries() {
+    return this.getRuntimeSectionRefs().map((ref) => ({
+      sectionId: ref.sectionId,
+      sectionIndex: ref.sectionIndex,
+      parentId: ref.parentId,
+      parentIndex: ref.parentIndex,
+      title: ref.section.title,
+      level: ref.section.level,
+      content: ref.section.content,
+      childCount: ref.section.children.length,
+      ...ref.section.timedMs !== void 0 ? { timedMs: ref.section.timedMs } : {},
+      ...ref.section.directive ? { directive: { ...ref.section.directive } } : {}
+    }));
+  }
+  insertRuntimeSection(sectionInput, options) {
+    const parentRef = (options == null ? void 0 : options.parent) === void 0 || (options == null ? void 0 : options.parent) === null ? null : this.resolveRuntimeSectionRef(options.parent);
+    if ((options == null ? void 0 : options.parent) !== void 0 && (options == null ? void 0 : options.parent) !== null && !parentRef) {
+      return null;
+    }
+    const nextSection = this.createRuntimeSectionFromInput(
+      sectionInput,
+      parentRef ? parentRef.section.level + 1 : Number.isFinite(sectionInput.level) ? Number(sectionInput.level) : 1
+    );
+    this.setRuntimeSectionSubtreeLevels(nextSection, parentRef ? parentRef.section.level + 1 : nextSection.level);
+    const siblings = parentRef ? parentRef.section.children : this.runtimeSectionStore.sections;
+    const rawIndex = Number(options == null ? void 0 : options.index);
+    const insertIndex = Number.isFinite(rawIndex) ? Math.max(0, Math.min(siblings.length, Math.floor(rawIndex))) : siblings.length;
+    siblings.splice(insertIndex, 0, nextSection);
+    this.applyRuntimeSectionStoreMutation("insert section");
+    const inserted = nextSection.id ? this.resolveRuntimeSectionRef(nextSection.id) : null;
+    return inserted ? { sectionId: inserted.sectionId, sectionIndex: inserted.sectionIndex } : null;
+  }
+  updateRuntimeSection(selector, patch) {
+    const ref = this.resolveRuntimeSectionRef(selector);
+    if (!ref) return false;
+    if (typeof patch.id === "string") {
+      ref.section.id = patch.id.trim() || void 0;
+    }
+    if (typeof patch.title === "string" && patch.title.trim().length > 0) {
+      ref.section.title = patch.title.trim();
+    }
+    if (typeof patch.content === "string") {
+      ref.section.content = patch.content;
+    }
+    if (patch.timedMs === void 0) ;
+    else if (patch.timedMs === null || !Number.isFinite(patch.timedMs)) {
+      delete ref.section.timedMs;
+    } else {
+      ref.section.timedMs = Number(patch.timedMs);
+    }
+    if (patch.directive === void 0) ;
+    else if (patch.directive && typeof patch.directive === "object" && !Array.isArray(patch.directive)) {
+      ref.section.directive = { ...patch.directive };
+    } else {
+      delete ref.section.directive;
+    }
+    if (Array.isArray(patch.children)) {
+      ref.section.children = patch.children.map(
+        (child) => this.createRuntimeSectionFromInput(child, ref.section.level + 1)
+      );
+      for (const child of ref.section.children) {
+        this.setRuntimeSectionSubtreeLevels(child, ref.section.level + 1);
+      }
+    }
+    this.applyRuntimeSectionStoreMutation("update section");
+    return true;
+  }
+  removeRuntimeSection(selector) {
+    const ref = this.resolveRuntimeSectionRef(selector);
+    if (!ref) return false;
+    ref.siblings.splice(ref.siblingIndex, 1);
+    this.applyRuntimeSectionStoreMutation("remove section");
+    return true;
+  }
+  moveRuntimeSection(selector, options) {
+    const ref = this.resolveRuntimeSectionRef(selector);
+    if (!ref) return null;
+    const targetParentRef = (options == null ? void 0 : options.parent) === void 0 || (options == null ? void 0 : options.parent) === null ? null : this.resolveRuntimeSectionRef(options.parent);
+    if ((options == null ? void 0 : options.parent) !== void 0 && (options == null ? void 0 : options.parent) !== null && !targetParentRef) {
+      return null;
+    }
+    if (targetParentRef && this.sectionTreeContainsId(ref.section, targetParentRef.sectionId)) {
+      return null;
+    }
+    const targetSiblings = targetParentRef ? targetParentRef.section.children : this.runtimeSectionStore.sections;
+    const rawIndex = Number(options == null ? void 0 : options.index);
+    let insertIndex = Number.isFinite(rawIndex) ? Math.max(0, Math.min(targetSiblings.length, Math.floor(rawIndex))) : targetSiblings.length;
+    ref.siblings.splice(ref.siblingIndex, 1);
+    if (ref.siblings === targetSiblings && insertIndex > ref.siblingIndex) {
+      insertIndex -= 1;
+    }
+    this.setRuntimeSectionSubtreeLevels(ref.section, targetParentRef ? targetParentRef.section.level + 1 : ref.section.level);
+    targetSiblings.splice(insertIndex, 0, ref.section);
+    this.applyRuntimeSectionStoreMutation("move section");
+    const moved = ref.section.id ? this.resolveRuntimeSectionRef(ref.section.id) : null;
+    return moved ? { sectionId: moved.sectionId, sectionIndex: moved.sectionIndex } : null;
+  }
+  getWorldsTimelineRuntimeState(track) {
+    const key = track;
+    const existing = this.worldsTimelineRuntimeState.get(key);
+    if (existing) return existing;
+    const next = {
+      baseByKey: /* @__PURE__ */ new Map(),
+      lastAppliedByKey: /* @__PURE__ */ new Map()
+    };
+    this.worldsTimelineRuntimeState.set(key, next);
+    return next;
+  }
+  resetWorldsTimelineRuntimeState(track) {
+    this.worldsTimelineRuntimeState.delete(track);
+  }
+  captureWorldsTimelineBaseState(selector) {
+    const ref = this.resolveRuntimeSectionRef(selector);
+    if (!ref) return null;
+    const layout = this.getSectionLayoutByIndex(ref.sectionIndex);
+    return {
+      selector,
+      title: ref.section.title,
+      content: ref.section.content,
+      visible: (layout == null ? void 0 : layout.visible) ?? true,
+      autoPositioned: (layout == null ? void 0 : layout.autoPositioned) ?? false,
+      position: layout ? { ...layout.transform.position } : { x: 0, y: 0, z: 0 },
+      rotation: layout ? {
+        x: layout.transform.rotation.x * 180 / Math.PI,
+        y: layout.transform.rotation.y * 180 / Math.PI,
+        z: layout.transform.rotation.z * 180 / Math.PI
+      } : { x: 0, y: 0, z: 0 },
+      scale: layout ? { ...layout.transform.scale } : { x: 1, y: 1, z: 1 }
+    };
+  }
+  buildWorldsTimelineEffectiveState(base, patch) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    return {
+      selector: base.selector,
+      title: (patch == null ? void 0 : patch.title) ?? base.title,
+      content: (patch == null ? void 0 : patch.content) ?? base.content,
+      visible: (patch == null ? void 0 : patch.visible) ?? base.visible,
+      autoPositioned: base.autoPositioned,
+      position: {
+        x: ((_a = patch == null ? void 0 : patch.position) == null ? void 0 : _a.x) ?? base.position.x,
+        y: ((_b = patch == null ? void 0 : patch.position) == null ? void 0 : _b.y) ?? base.position.y,
+        z: ((_c = patch == null ? void 0 : patch.position) == null ? void 0 : _c.z) ?? base.position.z
+      },
+      rotation: {
+        x: ((_d = patch == null ? void 0 : patch.rotation) == null ? void 0 : _d.x) ?? base.rotation.x,
+        y: ((_e = patch == null ? void 0 : patch.rotation) == null ? void 0 : _e.y) ?? base.rotation.y,
+        z: ((_f = patch == null ? void 0 : patch.rotation) == null ? void 0 : _f.z) ?? base.rotation.z
+      },
+      scale: {
+        x: ((_g = patch == null ? void 0 : patch.scale) == null ? void 0 : _g.x) ?? base.scale.x,
+        y: ((_h = patch == null ? void 0 : patch.scale) == null ? void 0 : _h.y) ?? base.scale.y,
+        z: ((_i = patch == null ? void 0 : patch.scale) == null ? void 0 : _i.z) ?? base.scale.z
+      }
+    };
+  }
+  worldsTimelineStatesEqual(a, b) {
+    if (!a) return false;
+    return a.title === b.title && a.content === b.content && a.visible === b.visible && a.position.x === b.position.x && a.position.y === b.position.y && a.position.z === b.position.z && a.rotation.x === b.rotation.x && a.rotation.y === b.rotation.y && a.rotation.z === b.rotation.z && a.scale.x === b.scale.x && a.scale.y === b.scale.y && a.scale.z === b.scale.z;
+  }
+  applyWorldsTimeline(track, timeSec) {
+    var _a;
+    const runtime = this.getWorldsTimelineRuntimeState(track);
+    const nextState = stateAtWorldsTimeline(track, timeSec);
+    const nextByKey = new Map(nextState.map((entry) => [getWorldsTimelineSelectorKey(entry.section), entry]));
+    for (const selector of track.sections) {
+      const key = getWorldsTimelineSelectorKey(selector);
+      let base = runtime.baseByKey.get(key);
+      if (!base) {
+        const captured = this.captureWorldsTimelineBaseState(selector);
+        if (captured) {
+          runtime.baseByKey.set(key, captured);
+          base = captured;
+        }
+      }
+      if (!base) continue;
+      const activePatch = (_a = nextByKey.get(key)) == null ? void 0 : _a.patch;
+      const desired = this.buildWorldsTimelineEffectiveState(base, activePatch);
+      const previous = runtime.lastAppliedByKey.get(key);
+      if (!previous && !activePatch) {
+        runtime.lastAppliedByKey.set(key, desired);
+        continue;
+      }
+      if (this.worldsTimelineStatesEqual(previous, desired)) continue;
+      const contentPatch = {};
+      if (!previous || previous.title !== desired.title) contentPatch.title = desired.title;
+      if (!previous || previous.content !== desired.content) contentPatch.content = desired.content;
+      if (Object.keys(contentPatch).length > 0) {
+        this.updateRuntimeSection(selector, contentPatch);
+      }
+      const ref = this.resolveRuntimeSectionRef(selector);
+      if (!ref) continue;
+      const layout = this.getSectionLayoutByIndex(ref.sectionIndex);
+      if (!layout) continue;
+      if (!previous || previous.visible !== desired.visible) {
+        layout.visible = desired.visible;
+        this.getOrCreateSectionRuntimeOverride(layout.sectionId).visible = desired.visible;
+      }
+      if (!previous || previous.position.x !== desired.position.x || previous.position.y !== desired.position.y || previous.position.z !== desired.position.z || previous.rotation.x !== desired.rotation.x || previous.rotation.y !== desired.rotation.y || previous.rotation.z !== desired.rotation.z || previous.scale.x !== desired.scale.x || previous.scale.y !== desired.scale.y || previous.scale.z !== desired.scale.z) {
+        layout.transform.position = { ...desired.position };
+        layout.transform.rotation = {
+          x: desired.rotation.x * Math.PI / 180,
+          y: desired.rotation.y * Math.PI / 180,
+          z: desired.rotation.z * Math.PI / 180
+        };
+        layout.transform.scale = { ...desired.scale };
+        const hasTransformPatch = !!((activePatch == null ? void 0 : activePatch.position) || (activePatch == null ? void 0 : activePatch.rotation) || (activePatch == null ? void 0 : activePatch.scale));
+        layout.autoPositioned = hasTransformPatch ? false : base.autoPositioned;
+        const override = this.getOrCreateSectionRuntimeOverride(layout.sectionId);
+        if (activePatch == null ? void 0 : activePatch.position) override.position = { ...desired.position };
+        else delete override.position;
+        if (activePatch == null ? void 0 : activePatch.rotation) override.rotationDegrees = { ...desired.rotation };
+        else delete override.rotationDegrees;
+        if (activePatch == null ? void 0 : activePatch.scale) override.scale = { ...desired.scale };
+        else delete override.scale;
+      }
+      runtime.lastAppliedByKey.set(key, desired);
+    }
+    return nextState;
   }
   /**
    * Start the main loop (async to support WebGPU init)
@@ -29531,12 +31233,10 @@ ${exportVars}
               for (const [docId, docData] of this.documents.entries()) {
                 const anyDocData = docData;
                 if ((_a = anyDocData._parsedMarkdown) == null ? void 0 : _a.sections) {
-                  const layouts = createSection3DLayouts(anyDocData._parsedMarkdown.sections, this.worldsConfig);
-                  this.section3DLayouts = layouts;
-                  this.applyPending3DCameraFocus();
-                  this.applyWorldsLayoutCallback(anyDocData._parsedMarkdown.sections);
-                  this.applyPendingWorldsOverview();
-                  console.log(`✓ Created ${layouts.length} 3D section layouts for document ${docId}`);
+                  if (this.runtimeSectionStore.order.length === 0) {
+                    this.initializeRuntimeSectionStore(anyDocData._parsedMarkdown.sections);
+                  }
+                  this.compileWorldsLayoutsFromRuntimeSectionStore(`deferred init for document ${docId}`);
                 } else {
                 }
               }
@@ -29616,7 +31316,11 @@ ${exportVars}
           if (pick) {
             const linkHit = this.hitTest3DLinkAtUV(pick.layout.sectionIndex, pick.u, pick.v);
             if (linkHit) {
-              this.hovered3DLink = { sectionIndex: pick.layout.sectionIndex, linkIndex: linkHit.linkIndex };
+              this.hovered3DLink = {
+                sectionId: pick.layout.sectionId,
+                sectionIndex: pick.layout.sectionIndex,
+                linkIndex: linkHit.linkIndex
+              };
             }
           }
           if (this.section3DLayouts.length > 0 && this.renderer instanceof WebGPURenderer) {
@@ -29991,7 +31695,7 @@ ${exportVars}
         continue;
       }
       if (layout.texture) {
-        const existing = this.sectionTextureCache.get(layout.sectionIndex);
+        const existing = this.sectionTextureCache.get(layout.sectionId);
         if (existing && existing.activeLinkIndex === activeLinkIndex) {
           const prevW = layout.worldWidth;
           const prevH = layout.worldHeight;
@@ -30012,8 +31716,8 @@ ${exportVars}
       const desiredH = units === "px" ? Math.round(layout.height + texturePadding * 2) : Math.round(layout.height * baseLineHeight + texturePadding * 2);
       let widthPx = Math.max(minW, Math.min(maxW, desiredW));
       let heightPx = Math.max(minH, Math.min(maxH, desiredH));
-      const markdown = buildWorldsCardMarkdown(layout);
-      const nodes = parseMarkdownLite(markdown);
+      const contentOverride = this.getWorldsSectionContentOverride(layout.sectionId);
+      const nodes = parseMarkdownLite(buildWorldsCardMarkdown(layout, contentOverride ?? void 0));
       if (overflowMode === "expand" || overflowMode === "expand-y" || overflowMode === "fit" || overflowMode === "fit-y") {
         const proceduralRuledPaper2 = this.isWorldsSectionBackgroundProceduralChainEnabled();
         const bakedRuledPaper2 = this.isWorldsSectionBackgroundBakedRuledLines();
@@ -30228,9 +31932,9 @@ ${exportVars}
         continue;
       }
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionIndex, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
-      this.sectionLinkRegionsCache.set(layout.sectionIndex, scaledLinkRegions);
-      this.sectionWidgetPlacementsCache.set(layout.sectionIndex, scaledWidgetPlacements);
+      this.sectionTextureCache.set(layout.sectionId, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
+      this.sectionLinkRegionsCache.set(layout.sectionId, scaledLinkRegions);
+      this.sectionWidgetPlacementsCache.set(layout.sectionId, scaledWidgetPlacements);
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }
     if (worldSizeChanged) {
@@ -30259,7 +31963,7 @@ ${exportVars}
     this.worldsAutoLayoutCache = null;
   }
   invalidate3DSectionTexture(sectionIndex) {
-    const layout = this.section3DLayouts.find((item) => item.sectionIndex === sectionIndex);
+    const layout = this.getSectionLayoutByIndex(sectionIndex);
     if (!layout) return;
     if (layout.texture) {
       try {
@@ -30269,9 +31973,9 @@ ${exportVars}
       layout.texture = null;
     }
     layout.highlightUvRect = void 0;
-    this.sectionTextureCache.delete(sectionIndex);
-    this.sectionLinkRegionsCache.delete(sectionIndex);
-    this.sectionWidgetPlacementsCache.delete(sectionIndex);
+    this.sectionTextureCache.delete(layout.sectionId);
+    this.sectionLinkRegionsCache.delete(layout.sectionId);
+    this.sectionWidgetPlacementsCache.delete(layout.sectionId);
     this.worldsAutoLayoutCache = null;
   }
   getWorldsWidgetLayoutOptions(sectionIndex, overflow) {
@@ -30581,7 +32285,8 @@ ${exportVars}
       const desiredH = units === "px" ? Math.round(layout.height + texturePadding * 2) : Math.round(layout.height * baseLineHeight + texturePadding * 2);
       let widthPx = Math.max(minW, Math.min(maxW, desiredW));
       let heightPx = Math.max(minH, Math.min(maxH, desiredH));
-      const markdown = buildWorldsCardMarkdown(layout);
+      const contentOverride = this.getWorldsSectionContentOverride(layout.sectionId);
+      const markdown = buildWorldsCardMarkdown(layout, contentOverride ?? void 0);
       const nodes = parseMarkdownLite(markdown);
       const style = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
       if (overflowMode === "expand" || overflowMode === "expand-y" || overflowMode === "fit" || overflowMode === "fit-y") {
@@ -30623,9 +32328,9 @@ ${exportVars}
       }
       const textureWidthPx = Math.max(1, Math.round(widthPx * textureScale));
       const textureHeightPx = Math.max(1, Math.round(heightPx * textureScale));
-      const existing = this.sectionTextureCache.get(layout.sectionIndex);
+      const existing = this.sectionTextureCache.get(layout.sectionId);
       if (existing && existing.width === textureWidthPx && existing.height === textureHeightPx && existing.activeLinkIndex === activeLinkIndex && layout.texture) {
-        if (!this.sectionLinkRegionsCache.has(layout.sectionIndex) || !this.sectionWidgetPlacementsCache.has(layout.sectionIndex)) {
+        if (!this.sectionLinkRegionsCache.has(layout.sectionId) || !this.sectionWidgetPlacementsCache.has(layout.sectionId)) {
           const style2 = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
           const result2 = layoutMarkdownDocument(
             nodes,
@@ -30651,8 +32356,8 @@ ${exportVars}
             }
             this.translateWidgetPlacements(result2.widgetPlacements, dx, dy);
           }
-          this.sectionLinkRegionsCache.set(layout.sectionIndex, this.scaleLinkRegions(result2.linkRegions, textureScale));
-          this.sectionWidgetPlacementsCache.set(layout.sectionIndex, this.scaleWidgetPlacements(result2.widgetPlacements, textureScale));
+          this.sectionLinkRegionsCache.set(layout.sectionId, this.scaleLinkRegions(result2.linkRegions, textureScale));
+          this.sectionWidgetPlacementsCache.set(layout.sectionId, this.scaleWidgetPlacements(result2.widgetPlacements, textureScale));
         }
         continue;
       }
@@ -30703,8 +32408,8 @@ ${exportVars}
           this.translateWidgetPlacements(result.widgetPlacements, dx, dy);
         }
       }
-      this.sectionLinkRegionsCache.set(layout.sectionIndex, this.scaleLinkRegions(result.linkRegions, textureScale));
-      this.sectionWidgetPlacementsCache.set(layout.sectionIndex, this.scaleWidgetPlacements(result.widgetPlacements, textureScale));
+      this.sectionLinkRegionsCache.set(layout.sectionId, this.scaleLinkRegions(result.linkRegions, textureScale));
+      this.sectionWidgetPlacementsCache.set(layout.sectionId, this.scaleWidgetPlacements(result.widgetPlacements, textureScale));
       ui.clearCommands();
       if (bakedRuledPaper) {
         const ruledLine = this.withAlpha(style.mutedFg, 64);
@@ -30738,7 +32443,7 @@ ${exportVars}
       }
       ui.flushTo(texture, textureWidthPx, textureHeightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionIndex, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
+      this.sectionTextureCache.set(layout.sectionId, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }
     if (worldSizeChanged) {
@@ -30747,7 +32452,7 @@ ${exportVars}
   }
   get3DCardXScaleFactor(layout) {
     if (layout) {
-      const dims = this.sectionTextureCache.get(layout.sectionIndex);
+      const dims = this.sectionTextureCache.get(layout.sectionId);
       if (dims && dims.width > 0 && dims.height > 0 && layout.width > 0 && layout.height > 0) {
         const pixelAspect = dims.width / dims.height;
         const logicalAspect = layout.width / layout.height;
@@ -30838,6 +32543,7 @@ ${exportVars}
         this.recordUserHandlerError("update", error);
       }
     }
+    this.syncHiddenTextInputBridge(false);
   }
   /**
    * Render phase - call user's render handler
@@ -30990,6 +32696,127 @@ ${exportVars}
     this.canvas.addEventListener("touchcancel", (e) => this.handleTouchEvent(e, "release"), { passive: false });
     this.canvas.tabIndex = 0;
     this.canvas.focus();
+    this.setupHiddenTextInputBridge();
+  }
+  setupHiddenTextInputBridge() {
+    if (typeof document === "undefined" || this.hiddenTextInput) return;
+    const input = document.createElement("textarea");
+    input.setAttribute("aria-label", "Storie hidden text input");
+    input.setAttribute("autocorrect", "off");
+    input.setAttribute("autocomplete", "off");
+    input.setAttribute("autocapitalize", "none");
+    input.wrap = "off";
+    input.rows = 1;
+    input.spellcheck = false;
+    input.tabIndex = -1;
+    input.style.position = "fixed";
+    input.style.left = "0";
+    input.style.top = "0";
+    input.style.width = "1px";
+    input.style.height = "1px";
+    input.style.opacity = "0";
+    input.style.padding = "0";
+    input.style.border = "0";
+    input.style.margin = "0";
+    input.style.fontSize = "16px";
+    input.style.pointerEvents = "none";
+    input.style.resize = "none";
+    input.style.zIndex = "-1";
+    input.addEventListener("keydown", (e) => {
+      const target = this.getFocusedGUITextInput();
+      if (!target) return;
+      if (this.shouldDispatchHiddenTextInputKeyEvent(e, target)) {
+        this.handleKeyEvent(e, "press");
+        this.syncHiddenTextInputBridge(false);
+      }
+    });
+    input.addEventListener("keyup", (e) => {
+      const target = this.getFocusedGUITextInput();
+      if (!target) return;
+      if (this.shouldDispatchHiddenTextInputKeyEvent(e, target)) {
+        this.handleKeyEvent(e, "release");
+      }
+    });
+    input.addEventListener("input", () => {
+      this.handleHiddenTextInputValueChange();
+    });
+    document.body.appendChild(input);
+    this.hiddenTextInput = input;
+  }
+  getFocusedGUITextInput() {
+    var _a, _b;
+    const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
+    const system = (_b = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _b.call(guiAPI);
+    return system && typeof system.getFocusedTextInput === "function" ? system.getFocusedTextInput() : null;
+  }
+  shouldDispatchHiddenTextInputKeyEvent(e, target) {
+    const key = String(e.key ?? "");
+    const lower = key.toLowerCase();
+    const options = target.getTextInputOptions();
+    if (e.ctrlKey || e.metaKey || e.altKey) {
+      return lower !== "c" && lower !== "v" && lower !== "x";
+    }
+    if (key === "Enter") {
+      return !options.multiline;
+    }
+    return key === "Tab" || key === "Escape" || key === "Home" || key === "End" || key === "PageUp" || key === "PageDown" || key === "ArrowLeft" || key === "ArrowRight" || key === "ArrowUp" || key === "ArrowDown";
+  }
+  handleHiddenTextInputValueChange() {
+    if (this.hiddenTextInputSyncing) return;
+    const input = this.hiddenTextInput;
+    const target = this.getFocusedGUITextInput();
+    if (!input || !target) return;
+    const options = target.getTextInputOptions();
+    const nextValue = options.multiline ? String(input.value ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n") : normalizeSingleLineText(input.value ?? "");
+    const currentValue = target.getValue();
+    if (nextValue !== currentValue) {
+      target.replaceTextRange(0, currentValue.length, nextValue);
+    }
+    const selectionStart = Number.isFinite(input.selectionStart) ? input.selectionStart ?? nextValue.length : nextValue.length;
+    const selectionEnd = Number.isFinite(input.selectionEnd) ? input.selectionEnd ?? selectionStart : selectionStart;
+    const direction = input.selectionDirection === "forward" || input.selectionDirection === "backward" ? input.selectionDirection : "none";
+    target.setSelectionRange(selectionStart, selectionEnd, direction);
+    this.syncHiddenTextInputBridge(false);
+  }
+  syncHiddenTextInputBridge(preferFocus = false) {
+    const input = this.hiddenTextInput;
+    if (!input || typeof document === "undefined") return;
+    const target = this.getFocusedGUITextInput();
+    if (!target) {
+      if (document.activeElement === input) {
+        input.blur();
+      }
+      return;
+    }
+    const options = target.getTextInputOptions();
+    const value = options.multiline ? target.getValue() : normalizeSingleLineText(target.getValue());
+    const selection = target.getSelectionRange();
+    this.hiddenTextInputSyncing = true;
+    try {
+      if (input.value !== value) {
+        input.value = value;
+      }
+      input.rows = options.multiline ? 2 : 1;
+      input.spellcheck = options.spellcheck;
+      input.autocapitalize = options.autoCapitalize === "off" ? "none" : options.autoCapitalize;
+      input.setAttribute("autocorrect", options.autoCorrect ? "on" : "off");
+      input.inputMode = options.inputMode;
+      input.enterKeyHint = options.enterKeyHint;
+      const start = Math.max(0, Math.min(value.length, selection.start | 0));
+      const end = Math.max(0, Math.min(value.length, selection.end | 0));
+      if (input.selectionStart !== start || input.selectionEnd !== end || input.selectionDirection !== (selection.direction ?? "none")) {
+        input.setSelectionRange(start, end, selection.direction ?? "none");
+      }
+      if (preferFocus && document.activeElement !== input) {
+        try {
+          input.focus({ preventScroll: true });
+        } catch {
+          input.focus();
+        }
+      }
+    } finally {
+      this.hiddenTextInputSyncing = false;
+    }
   }
   beginTrustedAudioGesture() {
     this.trustedAudioGestureDepth++;
@@ -31144,8 +32971,17 @@ ${exportVars}
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
           if (linkHit) {
             handledBy3D = true;
-            this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
-            this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
+            this.focused3DLink = {
+              sectionId: picked.layout.sectionId,
+              sectionIndex: picked.layout.sectionIndex,
+              linkIndex: linkHit.linkIndex
+            };
+            this.activate3DLink(
+              linkHit.region.url,
+              picked.layout.sectionId,
+              picked.layout.sectionIndex,
+              linkHit.linkIndex
+            );
           } else if (this.worldsConfig.sectionClickFocusEnabled !== false) {
             handledBy3D = true;
             const style = this.lastApplied3DCameraFocus;
@@ -31189,6 +33025,7 @@ ${exportVars}
         dispatchedToDoc = true;
       }
       if (handledBy3D || dispatchedToDoc || this.worldsEnabled) e.preventDefault();
+      this.syncHiddenTextInputBridge(action === "press");
     } finally {
       if (isGesturePress) this.endTrustedAudioGesture();
     }
@@ -31371,6 +33208,7 @@ ${exportVars}
       if (handledBy3D || inlineWidgetHandled || ((_b = doc == null ? void 0 : doc.handlers) == null ? void 0 : _b.input)) {
         e.preventDefault();
       }
+      this.syncHiddenTextInputBridge(action === "press");
     } finally {
       if (isGesturePress) this.endTrustedAudioGesture();
     }
@@ -31404,8 +33242,17 @@ ${exportVars}
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
           if (linkHit) {
-            this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
-            this.activate3DLink(linkHit.region.url);
+            this.focused3DLink = {
+              sectionId: picked.layout.sectionId,
+              sectionIndex: picked.layout.sectionIndex,
+              linkIndex: linkHit.linkIndex
+            };
+            this.activate3DLink(
+              linkHit.region.url,
+              picked.layout.sectionId,
+              picked.layout.sectionIndex,
+              linkHit.linkIndex
+            );
           } else if (this.worldsConfig.sectionClickFocusEnabled !== false) {
             const style = this.lastApplied3DCameraFocus;
             const fill = (style == null ? void 0 : style.kind) === "fit" ? style.fill : 0.9;
@@ -31453,6 +33300,7 @@ ${exportVars}
         }
       }
       e.preventDefault();
+      this.syncHiddenTextInputBridge(action === "press");
     } finally {
       if (isGesturePress) this.endTrustedAudioGesture();
     }
@@ -31512,8 +33360,10 @@ ${exportVars}
     return best ? { layout: best.layout, u: best.u, v: best.v } : null;
   }
   hitTest3DLinkAtUV(sectionIndex, u, v2) {
-    const dims = this.sectionTextureCache.get(sectionIndex);
-    const regions = this.sectionLinkRegionsCache.get(sectionIndex);
+    const sectionKey = this.getSectionCacheKey(sectionIndex);
+    if (!sectionKey) return null;
+    const dims = this.sectionTextureCache.get(sectionKey);
+    const regions = this.sectionLinkRegionsCache.get(sectionKey);
     if (!dims || !regions || regions.length === 0) return null;
     const xPx = u * dims.width;
     const yPx = v2 * dims.height;
@@ -31545,10 +33395,11 @@ ${exportVars}
   activateFocused3DLink() {
     const focused = this.focused3DLink;
     if (!focused) return;
-    const regions = this.sectionLinkRegionsCache.get(focused.sectionIndex);
+    const sectionKey = focused.sectionId;
+    const regions = sectionKey ? this.sectionLinkRegionsCache.get(sectionKey) : null;
     const region = regions ? regions[focused.linkIndex] : void 0;
     if (!region) return;
-    this.activate3DLink(region.url, focused.sectionIndex, focused.linkIndex);
+    this.activate3DLink(region.url, focused.sectionId, focused.sectionIndex, focused.linkIndex);
   }
   move3DLinkFocus(delta) {
     const links = this.getVisible3DLinks();
@@ -31559,16 +33410,21 @@ ${exportVars}
     const cur = this.focused3DLink;
     let idx = -1;
     if (cur) {
-      idx = links.findIndex((l) => l.sectionIndex === cur.sectionIndex && l.linkIndex === cur.linkIndex);
+      idx = links.findIndex((l) => l.sectionId === cur.sectionId && l.linkIndex === cur.linkIndex);
     }
     const next = ((idx >= 0 ? idx : 0) + delta + links.length) % links.length;
     const sel = links[next];
-    this.focused3DLink = { sectionIndex: sel.sectionIndex, linkIndex: sel.linkIndex };
+    this.focused3DLink = {
+      sectionId: sel.sectionId,
+      sectionIndex: sel.sectionIndex,
+      linkIndex: sel.linkIndex
+    };
   }
-  activate3DLink(url, sectionIndex, linkIndex) {
+  activate3DLink(url, sectionId, sectionIndex, linkIndex) {
     if (!url) return;
     this.activated3DLinksQueue.push({
       url,
+      sectionId: typeof sectionId === "string" && sectionId ? sectionId : null,
       sectionIndex: typeof sectionIndex === "number" ? sectionIndex : null,
       linkIndex: typeof linkIndex === "number" ? linkIndex : null
     });
@@ -31654,6 +33510,7 @@ ${exportVars}
     if (req.kind === "focus") {
       this.lastApplied3DCameraFocus = {
         kind: "focus",
+        sectionId: layout.sectionId,
         sectionIndex: layout.sectionIndex,
         distance: req.distance,
         ...keepRotation ? { keepRotation: true } : {},
@@ -31664,6 +33521,7 @@ ${exportVars}
     } else {
       this.lastApplied3DCameraFocus = {
         kind: "fit",
+        sectionId: layout.sectionId,
         sectionIndex: layout.sectionIndex,
         fill: req.fill,
         ...keepRotation ? { keepRotation: true } : {},
@@ -31698,7 +33556,8 @@ ${exportVars}
     const units = this.worldsConfig.sectionSizeUnits === "px" ? "px" : "text";
     const overflowCfg = this.worldsConfig.sectionOverflow;
     const overflowMode = overflowCfg === "expand" || overflowCfg === "expand-y" || overflowCfg === "fit" || overflowCfg === "fit-y" ? overflowCfg : "clip";
-    const markdown = buildWorldsCardMarkdown(layout);
+    const contentOverride = this.getWorldsSectionContentOverride(layout.sectionId);
+    const markdown = buildWorldsCardMarkdown(layout, contentOverride ?? void 0);
     const nodes = parseMarkdownLite(markdown);
     const textureMode = this.worldsConfig.sectionTextureMode;
     const minW = 256;
@@ -31788,7 +33647,7 @@ ${exportVars}
   refocus3DForCurrentViewport() {
     if (!this.worldsEnabled || !this.camera3D) return;
     if (!this.lastApplied3DCameraFocus) return;
-    const layout = this.section3DLayouts.find((l) => l.sectionIndex === this.lastApplied3DCameraFocus.sectionIndex);
+    const layout = this.getSectionLayoutById(this.lastApplied3DCameraFocus.sectionId) ?? this.section3DLayouts.find((l) => l.sectionIndex === this.lastApplied3DCameraFocus.sectionIndex);
     if (!layout) return;
     if (this.lastApplied3DCameraFocus.kind === "focus") {
       const cfg = this.worldsConfig;
@@ -31833,29 +33692,32 @@ ${exportVars}
   }
   setCurrent3DSection(sectionIndex) {
     var _a, _b;
-    if (this.current3DSectionIndex === sectionIndex) return;
-    const previousSectionIndex = this.current3DSectionIndex;
+    const nextLayout = this.getSectionLayoutByIndex(sectionIndex);
+    if (!nextLayout) return;
+    if (this.current3DSectionId === nextLayout.sectionId) return;
+    const previousSectionIndex = this.getResolvedCurrent3DSectionIndex();
     this.clearWorldsInlineWidgets();
-    this.current3DSectionIndex = sectionIndex;
+    this.current3DSectionId = nextLayout.sectionId;
+    this.current3DSectionIndex = nextLayout.sectionIndex;
     if (typeof previousSectionIndex === "number" && Number.isFinite(previousSectionIndex)) {
       this.invalidate3DSectionTexture(previousSectionIndex);
     }
-    this.invalidate3DSectionTexture(sectionIndex);
+    this.invalidate3DSectionTexture(nextLayout.sectionIndex);
     const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
     if (guiAPI && typeof guiAPI.syncSectionBindings === "function") {
-      guiAPI.syncSectionBindings(sectionIndex);
+      guiAPI.syncSectionBindings(nextLayout.sectionIndex);
     }
-    this.sceneState.sectionIndex = sectionIndex;
+    this.sceneState.sectionIndex = nextLayout.sectionIndex;
     this.sceneState.revealStep = 0;
     const h = this.hostSync;
     if (h && h.getSessionInfo().role === "host") {
       const fill = ((_b = this.lastApplied3DCameraFocus) == null ? void 0 : _b.kind) === "fit" ? this.lastApplied3DCameraFocus.fill : 0.9;
-      h.sendGotoSectionFit(sectionIndex, fill);
-      h.sendSceneFit(sectionIndex, this.sceneState.revealStep, fill);
+      h.sendGotoSectionFit(nextLayout.sectionIndex, fill);
+      h.sendSceneFit(nextLayout.sectionIndex, this.sceneState.revealStep, fill);
     }
-    this.runSectionEnterHandlers(sectionIndex);
+    this.runSectionEnterHandlers(nextLayout.sectionIndex);
     if (guiAPI && typeof guiAPI.syncSectionBindings === "function") {
-      guiAPI.syncSectionBindings(sectionIndex);
+      guiAPI.syncSectionBindings(nextLayout.sectionIndex);
     }
     this.syncWorldsInlineWidgets();
   }
@@ -31873,19 +33735,11 @@ ${exportVars}
     }
   }
   resolve3DSectionIndex(selector) {
+    var _a;
     if (typeof selector === "number" && Number.isFinite(selector)) {
       return selector;
     }
-    if (typeof selector !== "string") return null;
-    const query = selector.trim();
-    if (!query) return null;
-    const slugify = (s) => s.toLowerCase().trim().replace(/[`*_~]/g, "").replace(/\{[^}]*\}\s*$/g, "").replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-");
-    const want = slugify(query);
-    const exact = this.section3DLayouts.find((l) => {
-      const title = (l.displayTitle || l.sectionTitle || "").trim();
-      return slugify(title) === want;
-    });
-    return exact ? exact.sectionIndex : null;
+    return ((_a = this.resolveRuntimeSectionRef(selector)) == null ? void 0 : _a.sectionIndex) ?? null;
   }
   getOutlineNodes() {
     const d = this.getActiveDocument();
@@ -31912,7 +33766,7 @@ ${exportVars}
       }
       node.lastDescendantIndex = nodes.length - 1;
     };
-    const roots = Array.isArray(d.sections) ? d.sections : [];
+    const roots = this.getReadableSectionRoots();
     for (const s of roots) {
       walk(s, null);
     }
@@ -31955,7 +33809,8 @@ ${exportVars}
         if (Array.isArray(s.children) && s.children.length > 0) walk(s.children);
       }
     };
-    const doc = sections ? { sections } : ((_a = this.getActiveDocument()) == null ? void 0 : _a.sections) ? { sections: this.getActiveDocument().sections } : null;
+    const runtimeSections = this.runtimeSectionStore.sections;
+    const doc = sections ? { sections } : runtimeSections.length > 0 ? { sections: runtimeSections } : ((_a = this.getActiveDocument()) == null ? void 0 : _a.sections) ? { sections: this.getActiveDocument().sections } : null;
     if (!(doc == null ? void 0 : doc.sections)) return;
     walk(doc.sections);
     for (let i = 0; i < Math.min(order.length, this.section3DLayouts.length); i++) {
@@ -32031,8 +33886,8 @@ ${exportVars}
     for (const layout of this.section3DLayouts) {
       if (!layout.visible || !layout.texture || layout.interactive === false) continue;
       if (!this.is3DCardPossiblyVisible(viewProj, layout)) continue;
-      const dims = this.sectionTextureCache.get(layout.sectionIndex);
-      const regions = this.sectionLinkRegionsCache.get(layout.sectionIndex);
+      const dims = this.sectionTextureCache.get(layout.sectionId);
+      const regions = this.sectionLinkRegionsCache.get(layout.sectionId);
       if (!dims || !regions || regions.length === 0) continue;
       const model = this.get3DCardModelMatrix(layout);
       for (let i = 0; i < regions.length; i++) {
@@ -32049,7 +33904,14 @@ ${exportVars}
         if (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1) continue;
         const screenX = (ndcX * 0.5 + 0.5) * canvasW;
         const screenY = (1 - (ndcY * 0.5 + 0.5)) * canvasH;
-        out.push({ sectionIndex: layout.sectionIndex, linkIndex: i, region: r2, screenX, screenY });
+        out.push({
+          sectionId: layout.sectionId,
+          sectionIndex: layout.sectionIndex,
+          linkIndex: i,
+          region: r2,
+          screenX,
+          screenY
+        });
       }
     }
     out.sort((a, b) => a.screenY - b.screenY || a.screenX - b.screenX);
@@ -32108,6 +33970,7 @@ ${exportVars}
     this.moduleLoader.dispose();
     this.documents.clear();
     this.activeDocumentId = null;
+    this.worldsSectionContentOverridesByDocument.clear();
     if (this.audioContext.state !== "closed") {
       this.audioContext.close().catch((err2) => {
         console.warn("Error closing AudioContext:", err2);
@@ -32115,6 +33978,10 @@ ${exportVars}
     }
     if (this.offscreenCanvas2D && this.offscreenCanvas2D.parentElement) {
       this.offscreenCanvas2D.parentElement.removeChild(this.offscreenCanvas2D);
+    }
+    if (this.hiddenTextInput && this.hiddenTextInput.parentElement) {
+      this.hiddenTextInput.parentElement.removeChild(this.hiddenTextInput);
+      this.hiddenTextInput = null;
     }
     if (this.safeAreaProbeElement && this.safeAreaProbeElement.parentElement) {
       this.safeAreaProbeElement.parentElement.removeChild(this.safeAreaProbeElement);
@@ -32198,6 +34065,7 @@ export {
   WebGPURenderer,
   WorldsRenderer,
   applyTheme,
+  compileWorldsTimeline,
   createCamera3D,
   createSection3DLayouts,
   distance,
@@ -32207,11 +34075,15 @@ export {
   getAvailableThemes,
   getDefaultWorldsConfig,
   getTheme,
+  getWorldsTimelineSelectorKey,
   lerp,
   lerpAngle,
   lerpRotation,
   lerpVec3,
+  mergeWorldsTimelinePatch,
   parseMarkdown,
+  stateAtWorldsContent,
+  stateAtWorldsTimeline,
   updateCamera3D,
   vec3
 };

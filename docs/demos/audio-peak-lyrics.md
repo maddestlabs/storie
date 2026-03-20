@@ -309,28 +309,36 @@ gui.init();
   s.peakTuning.minProminence = opts.minProminence;
 }
 
-// Top-right panel (kept pinned each frame in on:update)
-const panel = gui.createContainer({ bounds: { x: 0, y: 0, width: 420, height: 520 }, padding: 12, gap: 8, alignX: 'stretch' });
+const tokens = gui.getTokens();
 
-const title = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 30 }, text: 'Audio Peaks → Lyric Sections', align: 'left' });
-const hint = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: 'Drop an .mp3. Play. Peaks focus sections (WebGPU required).', align: 'left' });
-const file = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: 'File: (none)', align: 'left' });
-const status = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: s.statusText, align: 'left' });
+// Top-right panel, fit to viewport each frame instead of pinning fixed bounds.
+const panel = gui.createResponsivePanel({
+  bounds: { x: 0, y: 0, width: 420, height: 520 },
+  padding: tokens.spacing.lg,
+  gap: tokens.spacing.sm,
+  maxWidth: 460,
+  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content' }
+});
 
-const btnPlay = gui.createButton({ bounds: { x: 0, y: 0, width: 420, height: 44 }, label: 'Play' });
-const btnPause = gui.createButton({ bounds: { x: 0, y: 0, width: 420, height: 44 }, label: 'Pause' });
+const title = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 30 }, text: 'Audio Peaks → Lyric Sections', align: 'left', labelStyle: { typographyRole: 'title' }, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const hint = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 24 }, text: 'Drop an .mp3. Play. Peaks focus sections (WebGPU required).', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const file = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 24 }, text: 'File: (none)', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const status = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 24 }, text: s.statusText, align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const time = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: 'Time: --:-- / --:--', align: 'left' });
-const seek = gui.createSlider({ bounds: { x: 0, y: 0, width: 420, height: 52 }, label: 'Seek (sec)', min: 0, max: 1, value: 0, step: 0.01 });
+const btnPlay = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 44 }, label: 'Play', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const btnPause = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 44 }, label: 'Pause', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const section = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: 'Section: (none)', align: 'left' });
-const peaksLbl = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: 'Peaks: (none)', align: 'left' });
+const time = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 24 }, text: 'Time: --:-- / --:--', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const seek = gui.createSlider({ bounds: { x: 0, y: 0, width: 1, height: 52 }, label: 'Seek (sec)', min: 0, max: 1, value: 0, step: 0.01, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const peakThresholdMulSld = gui.createSlider({ bounds: { x: 0, y: 0, width: 420, height: 52 }, label: 'Peak threshold mul', min: 0.5, max: 5, value: s.peakTuning.thresholdMul, step: 0.05 });
-const peakMinProminenceSld = gui.createSlider({ bounds: { x: 0, y: 0, width: 420, height: 52 }, label: 'Peak min prominence', min: 0, max: 0.2, value: s.peakTuning.minProminence, step: 0.005 });
-const peakMinGapMsSld = gui.createSlider({ bounds: { x: 0, y: 0, width: 420, height: 52 }, label: 'Peak min gap (ms)', min: 0, max: 500, value: s.peakTuning.minGapMs, step: 10 });
-const peakSmoothMsSld = gui.createSlider({ bounds: { x: 0, y: 0, width: 420, height: 52 }, label: 'Peak smooth (ms)', min: 0, max: 500, value: s.peakTuning.smoothMs, step: 10 });
-const btnReanalyze = gui.createButton({ bounds: { x: 0, y: 0, width: 420, height: 44 }, label: 'Reanalyze Peaks' });
+const section = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 24 }, text: 'Section: (none)', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const peaksLbl = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 24 }, text: 'Peaks: (none)', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+
+const peakThresholdMulSld = gui.createSlider({ bounds: { x: 0, y: 0, width: 1, height: 52 }, label: 'Peak threshold mul', min: 0.5, max: 5, value: s.peakTuning.thresholdMul, step: 0.05, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const peakMinProminenceSld = gui.createSlider({ bounds: { x: 0, y: 0, width: 1, height: 52 }, label: 'Peak min prominence', min: 0, max: 0.2, value: s.peakTuning.minProminence, step: 0.005, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const peakMinGapMsSld = gui.createSlider({ bounds: { x: 0, y: 0, width: 1, height: 52 }, label: 'Peak min gap (ms)', min: 0, max: 500, value: s.peakTuning.minGapMs, step: 10, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const peakSmoothMsSld = gui.createSlider({ bounds: { x: 0, y: 0, width: 1, height: 52 }, label: 'Peak smooth (ms)', min: 0, max: 500, value: s.peakTuning.smoothMs, step: 10, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const btnReanalyze = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 44 }, label: 'Reanalyze Peaks', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
 panel
   .add(title)
@@ -468,12 +476,26 @@ if (!s.widgets) return;
 
 // Keep panel pinned top-right (above animated content)
 if (s.panel) {
-  const margin = 20;
-  const w = 420;
-  const h = 520;
-  const x = Math.max(margin, getScreenW() - w - margin);
-  const y = margin;
-  s.panel.setBounds({ x, y, width: w, height: h }, true);
+  const viewport = gui.getViewportRect();
+  const info = gui.getResponsiveInfo({ width: viewport.width, height: viewport.height });
+  const tokens = gui.getTokens();
+  const compact = info.breakpoint === 'xs';
+  const inset = compact ? tokens.spacing.sm : tokens.spacing.lg;
+  const maxWidth = compact
+    ? Math.max(300, Math.min(380, info.usableWidth || viewport.width))
+    : Math.max(360, Math.min(460, info.usableWidth || viewport.width));
+
+  s.panel.container.padding = compact ? tokens.spacing.md : tokens.spacing.lg;
+  s.panel.container.gap = compact ? tokens.spacing.xs : tokens.spacing.sm;
+  s.panel.setMaxWidth(maxWidth, false);
+  s.panel.fitToViewport(viewport, {
+    inset,
+    safeArea: true,
+    maxWidth,
+    anchorX: 'end',
+    anchorY: 'start'
+  }, false);
+  s.panel.layout();
 }
 
 gui.update(getMouseX(), getMouseY(), s.mouseDownLeft);

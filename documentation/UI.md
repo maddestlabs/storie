@@ -300,6 +300,79 @@ responsive.fitToViewport(viewport, {
 });
 ```
 
+### Responsive Authoring Pattern
+
+For retained GUI, the recommended pattern is:
+
+1. Create widgets and containers once in `on:init`.
+2. Use `layout` hints plus containers for structure.
+3. In `on:update`, recompute only responsive inputs like breakpoints, gaps, and viewport fit.
+4. Call `fitToViewport(...)` on every layout pass instead of only when a breakpoint changes.
+5. Use breakpoints for structural mode changes like stack vs row or 2 columns vs 4 columns, not for every absolute coordinate.
+
+Preferred shape:
+
+```javascript
+const tokens = gui.getTokens();
+
+const root = gui.createResponsivePanel({
+  bounds: { x: 0, y: 0, width: 620, height: 1 },
+  gap: tokens.spacing.md,
+  padding: tokens.spacing.lg,
+  maxWidth: 720,
+  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content' }
+});
+
+const title = gui.createLabel({
+  bounds: { x: 0, y: 0, width: 1, height: 28 },
+  text: 'Responsive Panel',
+  labelStyle: { typographyRole: 'title' },
+  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
+});
+
+const body = gui.createTextField({
+  bounds: { x: 0, y: 0, width: 1, height: 44 },
+  value: '',
+  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
+});
+
+root.add(title).add(body);
+
+function relayout() {
+  const viewport = gui.getViewportRect();
+  const info = gui.getResponsiveInfo({ width: viewport.width, height: viewport.height });
+  const tokens = gui.getTokens();
+
+  root.container.padding = info.breakpoint === 'xs' ? tokens.spacing.md : tokens.spacing.lg;
+  root.container.gap = info.breakpoint === 'xs' ? tokens.spacing.sm : tokens.spacing.md;
+  root.setMaxWidth(info.breakpoint === 'xs' ? 360 : 720, false);
+
+  root.fitToViewport(viewport, {
+    inset: info.breakpoint === 'xs' ? tokens.spacing.sm : tokens.spacing.lg,
+    safeArea: true,
+    maxWidth: info.breakpoint === 'xs' ? 360 : 720,
+    anchorX: 'center',
+    anchorY: 'start'
+  }, false);
+
+  root.layout();
+}
+```
+
+Avoid using `setBounds(...)` every frame for root placement when `fitToViewport(...)` can express the same intent.
+If a UI must pin to a corner, prefer viewport anchors:
+
+- top-left: `anchorX: 'start', anchorY: 'start'`
+- top-right: `anchorX: 'end', anchorY: 'start'`
+- centered modal: `anchorX: 'center', anchorY: 'center'`
+
+Good reference demos:
+
+- [docs/demos/keypad.md](docs/demos/keypad.md)
+- [docs/demos/piano-keyboard.md](docs/demos/piano-keyboard.md)
+
+Older demos may still use fixed root bounds or manual `setBounds(...)` pinning. Treat those as migration candidates rather than the preferred pattern.
+
 Breakpoint helpers are also available for responsive decisions:
 
 ```javascript

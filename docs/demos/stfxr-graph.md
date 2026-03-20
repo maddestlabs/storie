@@ -8,6 +8,7 @@ A basic **graph viewer** for a single `stfxr` preset.
 
 - **Play** auditions the preset
 - **Click** a node to select it
+- **Place the cursor over a numeric JSON value** to retarget the slider
 - **Drag** a node to reposition it
 - **Drag empty space** to pan the view
 
@@ -41,7 +42,12 @@ let state = {
   // UI widgets
   widgets: null,
   lastSelectedId: null,
+  inspectorId: null,
   nodeJsonDirty: false,
+  numericBinding: null,
+  lastNodeJsonSelectionStart: -1,
+  lastNodeJsonSelectionEnd: -1,
+  lastSliderWidgetValue: null,
   statusText: ''
 };
 
@@ -291,9 +297,344 @@ function paramTargetPoint(layout, toId, param) {
 
 function buildSelectedNodeJson(graph, selectedId) {
   if (!graph || !selectedId) return '';
+  if (String(selectedId) === 'out') {
+    return JSON.stringify({ id: 'out', kind: 'out', volume: Number(state.volume.toFixed(4)) }, null, 2);
+  }
   const node = graph.nodeById.get(selectedId);
   if (!node) return '';
   return JSON.stringify(node, null, 2);
+}
+
+function formatBindingPath(path) {
+  if (!Array.isArray(path) || path.length === 0) return 'value';
+  let out = '';
+  for (const part of path) {
+    if (typeof part === 'number') out += `[${part}]`;
+    else out += out ? `.${part}` : String(part);
+  }
+  return out || 'value';
+}
+
+function parseJsonNumericBindings(text) {
+  const src = String(text ?? '');
+  const bindings = [];
+  let i = 0;
+
+  const fail = (msg) => {
+    throw new Error(`JSON parse error at ${i}: ${msg}`);
+  };
+
+  const skipWs = () => {
+    while (i < src.length) {
+      const ch = src[i];
+      if (ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t') i += 1;
+      else break;
+    }
+  };
+
+  const parseString = () => {
+    if (src[i] !== '"') fail('expected string');
+    const start = i;
+    i += 1;
+    let out = '';
+    while (i < src.length) {
+      const ch = src[i++];
+      if (ch === '"') return { value: out, start, end: i };
+      if (ch === '\\') {
+        if (i >= src.length) fail('unterminated escape');
+        const esc = src[i++];
+        if (esc === '"' || esc === '\\' || esc === '/') out += esc;
+        else if (esc === 'b') out += '\b';
+        else if (esc === 'f') out += '\f';
+        else if (esc === 'n') out += '\n';
+        else if (esc === 'r') out += '\r';
+        else if (esc === 't') out += '\t';
+        else if (esc === 'u') {
+          const hex = src.slice(i, i + 4);
+          if (!/^[0-9a-fA-F]{4}$/.test(hex)) fail('invalid unicode escape');
+          out += String.fromCharCode(parseInt(hex, 16));
+          i += 4;
+        } else fail('invalid escape');
+      } else {
+        out += ch;
+      }
+    }
+    fail('unterminated string');
+  };
+
+  const parseNumber = (path) => {
+    const start = i;
+    if (src[i] === '-') i += 1;
+    if (src[i] === '0') i += 1;
+    else {
+      if (!/[1-9]/.test(src[i] ?? '')) fail('invalid number');
+      while (/[0-9]/.test(src[i] ?? '')) i += 1;
+    }
+    if (src[i] === '.') {
+      i += 1;
+      if (!/[0-9]/.test(src[i] ?? '')) fail('invalid fraction');
+      while (/[0-9]/.test(src[i] ?? '')) i += 1;
+    }
+    if (src[i] === 'e' || src[i] === 'E') {
+      i += 1;
+      if (src[i] === '+' || src[i] === '-') i += 1;
+      if (!/[0-9]/.test(src[i] ?? '')) fail('invalid exponent');
+      while (/[0-9]/.test(src[i] ?? '')) i += 1;
+    }
+    const raw = src.slice(start, i);
+    const value = Number(raw);
+    if (!Number.isFinite(value)) fail('number must be finite');
+    bindings.push({
+      path: Array.isArray(path) ? path.slice() : [],
+      label: formatBindingPath(path),
+      start,
+      end: i,
+      value
+    });
+  };
+
+  const parseLiteral = (literal) => {
+    if (src.slice(i, i + literal.length) !== literal) fail(`expected ${literal}`);
+    i += literal.length;
+  };
+
+  const parseValue = (path) => {
+    skipWs();
+    const ch = src[i];
+    if (ch === '{') {
+      i += 1;
+      skipWs();
+      if (src[i] === '}') {
+        i += 1;
+        return;
+      }
+      while (i < src.length) {
+        skipWs();
+        const key = parseString().value;
+        skipWs();
+        if (src[i] !== ':') fail('expected colon');
+        i += 1;
+        parseValue(path.concat(key));
+        skipWs();
+        if (src[i] === ',') {
+          i += 1;
+          continue;
+        }
+        if (src[i] === '}') {
+          i += 1;
+          return;
+        }
+        fail('expected comma or object end');
+      }
+      fail('unterminated object');
+    }
+    if (ch === '[') {
+      i += 1;
+      skipWs();
+      if (src[i] === ']') {
+        i += 1;
+        return;
+      }
+      let idx = 0;
+      while (i < src.length) {
+        parseValue(path.concat(idx));
+        idx += 1;
+        skipWs();
+        if (src[i] === ',') {
+          i += 1;
+          continue;
+        }
+        if (src[i] === ']') {
+          i += 1;
+          return;
+        }
+        fail('expected comma or array end');
+      }
+      fail('unterminated array');
+    }
+    if (ch === '"') {
+      parseString();
+      return;
+    }
+    if (ch === '-' || /[0-9]/.test(ch ?? '')) {
+      parseNumber(path);
+      return;
+    }
+    if (ch === 't') {
+      parseLiteral('true');
+      return;
+    }
+    if (ch === 'f') {
+      parseLiteral('false');
+      return;
+    }
+    if (ch === 'n') {
+      parseLiteral('null');
+      return;
+    }
+    fail('unexpected token');
+  };
+
+  skipWs();
+  if (!src) return bindings;
+  parseValue([]);
+  skipWs();
+  if (i !== src.length) fail('unexpected trailing content');
+  return bindings;
+}
+
+function findNumericBindingAtCursor(bindings, selectionStart, selectionEnd, preferredLabel) {
+  if (!Array.isArray(bindings) || bindings.length === 0) return null;
+  const start = Math.max(0, Number(selectionStart) || 0);
+  const end = Math.max(start, Number(selectionEnd) || start);
+
+  for (const binding of bindings) {
+    if (end >= binding.start && start <= binding.end) return binding;
+  }
+  for (const binding of bindings) {
+    if (end === binding.end || end === binding.start) return binding;
+  }
+  if (preferredLabel) {
+    const exact = bindings.find((binding) => binding.label === preferredLabel);
+    if (exact) return exact;
+  }
+  return null;
+}
+
+function niceCeil(value) {
+  const n = Math.abs(Number(value) || 0);
+  if (!n) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(n)));
+  const norm = n / mag;
+  const step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+  return step * mag;
+}
+
+function sliderSpecForBinding(binding) {
+  const label = String(binding?.label ?? 'value');
+  const lower = label.toLowerCase();
+  const value = Number(binding?.value ?? 0);
+  if (/volume|gain|peak|mix|wet|dry|q$/.test(lower) && value >= 0 && value <= 2) {
+    return { min: 0, max: 2, step: 0.01 };
+  }
+  if (/freq|hz/.test(lower) && value >= 0) {
+    return { min: 0, max: Math.max(1000, niceCeil(Math.max(1, value) * 2)), step: 1 };
+  }
+  if (/attack|release|decay|duration|time|delay|stopafter/.test(lower) && value >= 0) {
+    return { min: 0, max: Math.max(1, niceCeil(Math.max(0.1, value) * 2)), step: value < 1 ? 0.01 : 0.1 };
+  }
+
+  const abs = Math.abs(value);
+  let step = 1;
+  if (abs < 0.001) step = 0.0001;
+  else if (abs < 0.01) step = 0.001;
+  else if (abs < 0.1) step = 0.005;
+  else if (abs < 1) step = 0.01;
+  else if (abs < 10) step = 0.1;
+  else if (abs < 100) step = 1;
+  else if (abs < 1000) step = 5;
+  else step = 10;
+
+  if (value === 0) return { min: -1, max: 1, step };
+  if (value > 0) return { min: 0, max: niceCeil(abs * 2), step };
+
+  const bound = niceCeil(abs * 2);
+  return { min: -bound, max: bound, step };
+}
+
+function decimalsForStep(step) {
+  const s = String(step ?? '');
+  const expIdx = s.indexOf('e-');
+  if (expIdx >= 0) return Math.max(0, Math.min(6, parseInt(s.slice(expIdx + 2), 10) || 0));
+  const dot = s.indexOf('.');
+  return dot >= 0 ? Math.max(0, Math.min(6, s.length - dot - 1)) : 0;
+}
+
+function formatSliderNumber(value, step) {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) return '0';
+  const decimals = decimalsForStep(step);
+  let out = decimals > 0 ? n.toFixed(decimals) : String(Math.round(n));
+  if (out.includes('.')) out = out.replace(/\.?0+$/, '');
+  if (out === '-0') out = '0';
+  return out;
+}
+
+function getInspectorId() {
+  return state.inspectorId || state.selectedId || null;
+}
+
+function syncNumericBindingFromEditor() {
+  if (!state.widgets?.nodeJson || !state.widgets?.vol) return;
+
+  const editor = state.widgets.nodeJson;
+  const slider = state.widgets.vol;
+  const inspectorId = getInspectorId();
+  const selection = typeof editor.getSelectionRange === 'function'
+    ? editor.getSelectionRange()
+    : { start: 0, end: 0 };
+  const text = String(editor.getValue() ?? '');
+
+  let bindings = [];
+  try {
+    bindings = parseJsonNumericBindings(text);
+  } catch {
+    bindings = [];
+  }
+
+  const preferredLabel = inspectorId === 'out' ? 'volume' : null;
+  const found = findNumericBindingAtCursor(bindings, selection.start, selection.end, preferredLabel);
+
+  if (!found) {
+    state.numericBinding = null;
+    slider.label = inspectorId === 'out' ? 'Volume' : 'Select Numeric Value';
+    slider.setEnabled(false);
+    state.lastSliderWidgetValue = slider.getValue();
+    return;
+  }
+
+  const bindingKey = `${String(inspectorId ?? '')}:${found.label}`;
+  const prev = state.numericBinding;
+  const spec = prev && prev.key === bindingKey
+    ? { min: prev.min, max: prev.max, step: prev.step }
+    : sliderSpecForBinding(found);
+
+  state.numericBinding = {
+    key: bindingKey,
+    label: found.label,
+    start: found.start,
+    end: found.end,
+    value: found.value,
+    min: spec.min,
+    max: spec.max,
+    step: spec.step
+  };
+
+  slider.label = found.label;
+  slider.min = spec.min;
+  slider.max = spec.max;
+  slider.step = spec.step;
+  slider.setEnabled(true);
+  slider.setValue(found.value);
+  state.lastSliderWidgetValue = slider.getValue();
+}
+
+function applyNumericSliderValue(nextValue) {
+  if (!state.widgets?.nodeJson || !state.numericBinding) return false;
+
+  const editor = state.widgets.nodeJson;
+  const binding = state.numericBinding;
+  const clamped = clamp(Number(nextValue ?? binding.value), binding.min, binding.max);
+  const nextText = formatSliderNumber(clamped, binding.step);
+  editor.replaceTextRange(binding.start, binding.end, nextText);
+  state.nodeJsonDirty = true;
+
+  if (getInspectorId() === 'out' && binding.label === 'volume') {
+    state.volume = clamp(clamped, 0, 2);
+  }
+
+  syncNumericBindingFromEditor();
+  return true;
 }
 
 function getPresetNodeById(id) {
@@ -347,7 +688,8 @@ function writeLayoutToPreset(layout) {
 }
 
 function applySelectedNodeJson(jsonText) {
-  if (!state.preset || !state.graph || !state.selectedId) {
+  const inspectorId = getInspectorId();
+  if (!inspectorId) {
     state.statusText = 'No preset/node selected.';
     return false;
   }
@@ -365,7 +707,19 @@ function applySelectedNodeJson(jsonText) {
     return false;
   }
 
-  const selectedId = String(state.selectedId);
+  const selectedId = String(inspectorId);
+  if (selectedId === 'out') {
+    const volume = Number(parsed.volume);
+    if (!Number.isFinite(volume)) {
+      state.statusText = 'Out node JSON must include a finite numeric volume.';
+      return false;
+    }
+    state.volume = clamp(volume, 0, 2);
+    state.nodeJsonDirty = false;
+    state.statusText = 'Updated out volume.';
+    return true;
+  }
+
   const prev = state.graph.nodeById.get(selectedId);
   if (!prev) {
     state.statusText = 'Selected node not found.';
@@ -600,6 +954,8 @@ audio.context.resume().catch(() => {});
 if (state.graph && state.selectedId && state.widgets?.nodeJson) {
   state.widgets.nodeJson.setValue(buildSelectedNodeJson(state.graph, state.selectedId));
   state.lastSelectedId = state.selectedId;
+  state.inspectorId = state.selectedId;
+  syncNumericBindingFromEditor();
 }
 ```
 
@@ -784,7 +1140,31 @@ if (state.widgets.btnRand.wasClicked()) {
   state.widgets.seedField.setValue(String(state.seed));
 }
 
-state.volume = clamp((state.widgets.vol.getValue() || 0) / 100, 0, 1);
+const nodeJsonChanged = state.widgets.nodeJson.wasChanged();
+if (nodeJsonChanged) {
+  state.nodeJsonDirty = true;
+}
+
+{
+  const selection = typeof state.widgets.nodeJson.getSelectionRange === 'function'
+    ? state.widgets.nodeJson.getSelectionRange()
+    : { start: 0, end: 0 };
+  const selectionChanged = selection.start !== state.lastNodeJsonSelectionStart
+    || selection.end !== state.lastNodeJsonSelectionEnd;
+  if (nodeJsonChanged || selectionChanged) {
+    syncNumericBindingFromEditor();
+    state.lastNodeJsonSelectionStart = selection.start;
+    state.lastNodeJsonSelectionEnd = selection.end;
+  }
+}
+
+if (state.numericBinding) {
+  const sliderValue = state.widgets.vol.getValue();
+  if (Math.abs(sliderValue - (state.lastSliderWidgetValue ?? sliderValue)) > Math.max(1e-6, state.numericBinding.step * 0.25)) {
+    applyNumericSliderValue(sliderValue);
+  }
+  state.lastSliderWidgetValue = state.widgets.vol.getValue();
+}
 
 if (state.widgets.btnAuto.wasClicked()) {
   if (state.graph) {
@@ -804,24 +1184,26 @@ if (state.widgets.btnPlay.wasClicked()) {
   if (state.preset) stfxr.playPreset(state.preset, state.seed, { volume: state.volume });
 }
 
-// Node JSON editor dirty tracking
-if (state.widgets.nodeJson.wasChanged()) {
-  state.nodeJsonDirty = true;
-}
-
 // If selection changed, refresh node JSON editor (unless user is mid-edit)
 if (state.selectedId !== state.lastSelectedId) {
   const canOverwrite = !state.nodeJsonDirty;
   if (canOverwrite && state.graph) {
     state.widgets.nodeJson.setValue(buildSelectedNodeJson(state.graph, state.selectedId));
     state.nodeJsonDirty = false;
+    state.inspectorId = state.selectedId;
+    syncNumericBindingFromEditor();
+    const selection = typeof state.widgets.nodeJson.getSelectionRange === 'function'
+      ? state.widgets.nodeJson.getSelectionRange()
+      : { start: 0, end: 0 };
+    state.lastNodeJsonSelectionStart = selection.start;
+    state.lastNodeJsonSelectionEnd = selection.end;
   }
   state.lastSelectedId = state.selectedId;
 }
 
 // Update label
 {
-  const id = state.selectedId ? String(state.selectedId) : '(none)';
+  const id = getInspectorId() ? String(getInspectorId()) : '(none)';
   state.widgets.nodeJsonLabel.setText(`Node JSON — ${id}`);
 }
 
@@ -831,6 +1213,13 @@ if (state.widgets.btnUpdate.wasClicked()) {
   if (ok && state.graph) {
     // Keep editor reflecting canonical applied JSON.
     state.widgets.nodeJson.setValue(buildSelectedNodeJson(state.graph, state.selectedId));
+    state.inspectorId = state.selectedId;
+    syncNumericBindingFromEditor();
+    const selection = typeof state.widgets.nodeJson.getSelectionRange === 'function'
+      ? state.widgets.nodeJson.getSelectionRange()
+      : { start: 0, end: 0 };
+    state.lastNodeJsonSelectionStart = selection.start;
+    state.lastNodeJsonSelectionEnd = selection.end;
   }
 }
 

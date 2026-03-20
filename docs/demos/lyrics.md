@@ -8,6 +8,7 @@ Demonstrates both lyric sync layers:
 
 - **Line layer** — `doc.atTime('lyrics', audio.currentTime)` reads millisecond-stamped lines from the `timed` block below.
 - **Section layer** — heading directives `{"timed": "Xms"}` advance the active section automatically when the playhead passes each timestamp.
+- **Worlds card layer** — the currently active Worlds card now keeps its authored body text and appends a rolling live lyric block in-place via `worlds.content.stateAt(...)` plus `worlds.content.set(...)`.
 
 Drop an `.mp3` to replace the built-in placeholder content.  If the file carries a `TXXX:STORIE` tag (written by the Metadata Editor demo), those lyrics are loaded instead.  If it carries a standard `USLT` lyrics tag, that plain text is split into lines and used.
 
@@ -88,6 +89,7 @@ var state = {
   // Active lyric line and section title (updated each frame)
   currentLine:    '',
   currentSection: '',
+  currentSectionId: null,
 
   // Ordered list of {timedMs, title, index} built from heading directives
   timedSections:  [],
@@ -104,6 +106,7 @@ var state = {
 };
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const WORLDS_LYRIC_WINDOW = 3;
 
 function fmtTime(sec) {
   if (!Number.isFinite(sec)) return '--:--';
@@ -193,6 +196,83 @@ function lineAtTime(timeSec) {
   // Use built-in doc timed block via the engine API.
   const entry = doc.atTime('lyrics', timeSec);
   return entry ? entry.text : '';
+}
+
+function getLyricEntries() {
+  return state.externalEntries || doc.timedBlock('lyrics');
+}
+
+function getSectionWindow(section) {
+  if (!section) return null;
+  const list = state.timedSections;
+  const startMs = Number(section.timedMs);
+  if (!Number.isFinite(startMs)) return null;
+  const index = list.findIndex((item) => item.index === section.index && item.timedMs === section.timedMs);
+  const next = index >= 0 ? list[index + 1] : null;
+  const endMs = Number.isFinite(next?.timedMs) ? Number(next.timedMs) : null;
+  return { startMs, endMs };
+}
+
+function entriesForSection(section) {
+  const window = getSectionWindow(section);
+  if (!window) return [];
+  return getLyricEntries().filter((entry) => {
+    if (!Number.isFinite(entry.ms)) return false;
+    if (entry.ms < window.startMs) return false;
+    if (window.endMs !== null && entry.ms >= window.endMs) return false;
+    return true;
+  });
+}
+
+function composeWorldsSectionContent(baseContent, sampledText) {
+  const base = String(baseContent || '').trim();
+  const lyrics = String(sampledText || '').trim();
+  if (!lyrics) return base;
+  if (!base) return lyrics;
+  return [base, '', '### Live Lyrics', '', lyrics].join('\n');
+}
+
+function syncWorldsSectionContent(section, posSec) {
+  if (!worlds.content) return;
+
+  const nextLayout = section ? worlds.getSectionLayout(section.index) : null;
+  const nextSectionId = nextLayout?.sectionId ?? null;
+
+  if (state.currentSectionId && state.currentSectionId !== nextSectionId) {
+    worlds.content.clear(state.currentSectionId, 'content');
+  }
+
+  if (!section || !nextSectionId) {
+    state.currentSectionId = null;
+    return;
+  }
+
+  const sectionEntries = entriesForSection(section);
+  const sampled = worlds.content.stateAt(sectionEntries, posSec, {
+    mode: 'append',
+    separator: '\n',
+    maxEntries: WORLDS_LYRIC_WINDOW,
+  });
+
+  if (!sampled.text) {
+    worlds.content.clear(nextSectionId, 'content');
+    state.currentSectionId = nextSectionId;
+    return;
+  }
+
+  const existing = worlds.content.get(nextSectionId);
+  if (!existing) return;
+
+  const composedContent = composeWorldsSectionContent(existing.baseContent, sampled.text);
+  if (existing.overrideContent === composedContent || existing.effectiveContent === composedContent) {
+    state.currentSectionId = nextSectionId;
+    return;
+  }
+
+  worlds.content.set(nextSectionId, {
+    content: composedContent,
+  });
+  state.currentSectionId = nextSectionId;
 }
 
 // ── ID3v2 metadata reader (same as audio-lyrics.md / metadata editor) ─────────
@@ -301,22 +381,28 @@ gui.init();
 
 buildTimedSections();
 
-const PW = 500;
+const tokens = gui.getTokens();
 
-const panel = gui.createContainer({ bounds: { x: 0, y: 0, width: PW, height: 600 }, padding: 14, gap: 8, alignX: 'stretch' });
+const panel = gui.createResponsivePanel({
+  bounds: { x: 0, y: 0, width: 500, height: 600 },
+  padding: tokens.spacing.lg,
+  gap: tokens.spacing.sm,
+  maxWidth: 540,
+  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content' }
+});
 
-const heading  = gui.createLabel({ bounds: { x:0,y:0,width:PW,height:28 }, text: 'Timed Lyrics Demo', align: 'left' });
-const fileInfo = gui.createLabel({ bounds: { x:0,y:0,width:PW,height:20 }, text: 'File: (none) — using built-in placeholder', align: 'left' });
-const status   = gui.createLabel({ bounds: { x:0,y:0,width:PW,height:20 }, text: 'Drop an .mp3 to load real content.', align: 'left' });
+const heading  = gui.createLabel({ bounds: { x:0,y:0,width:1,height:28 }, text: 'Timed Lyrics Demo', align: 'left', labelStyle: { typographyRole: 'title' }, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const fileInfo = gui.createLabel({ bounds: { x:0,y:0,width:1,height:20 }, text: 'File: (none) — using built-in placeholder', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const status   = gui.createLabel({ bounds: { x:0,y:0,width:1,height:20 }, text: 'Drop an .mp3 to load real content.', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const section  = gui.createLabel({ bounds: { x:0,y:0,width:PW,height:26 }, text: 'Section: Intro', align: 'left' });
-const lyricLine = gui.createLabel({ bounds: { x:0,y:0,width:PW,height:26 }, text: '', align: 'left' });
+const section  = gui.createLabel({ bounds: { x:0,y:0,width:1,height:26 }, text: 'Section: Intro', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const lyricLine = gui.createLabel({ bounds: { x:0,y:0,width:1,height:26 }, text: '', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const time = gui.createLabel({ bounds: { x:0,y:0,width:PW,height:20 }, text: 'Time: --:-- / --:--', align: 'left' });
-const seek = gui.createSlider({ bounds: { x:0,y:0,width:PW,height:48 }, label: 'Seek', min: 0, max: 30, value: 0, step: 0.1 });
+const time = gui.createLabel({ bounds: { x:0,y:0,width:1,height:20 }, text: 'Time: --:-- / --:--', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const seek = gui.createSlider({ bounds: { x:0,y:0,width:1,height:48 }, label: 'Seek', min: 0, max: 30, value: 0, step: 0.1, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const btnPlay  = gui.createButton({ bounds: { x:0,y:0,width:PW,height:40 }, label: '▶  Play' });
-const btnPause = gui.createButton({ bounds: { x:0,y:0,width:PW,height:40 }, label: '⏸  Pause' });
+const btnPlay  = gui.createButton({ bounds: { x:0,y:0,width:1,height:40 }, label: '▶  Play', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const btnPause = gui.createButton({ bounds: { x:0,y:0,width:1,height:40 }, label: '⏸  Pause', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
 panel
   .add(heading)
@@ -337,6 +423,8 @@ state.widgets = { heading, fileInfo, status, section, lyricLine, time, seek, btn
 state.gain = audio.createGain();
 state.gain.gain.value = 1;
 state.gain.connect(audio.destination);
+
+worlds.content?.clearAll?.();
 ```
 
 ```js on:drop
@@ -345,6 +433,10 @@ state.audioBuffer    = null;
 state.pauseOffset    = 0;
 state.externalEntries = null;
 state.fromMeta       = false;
+if (state.currentSectionId) {
+  worlds.content?.clear(state.currentSectionId, 'content');
+  state.currentSectionId = null;
+}
 
 const fileName = file.name || 'audio.mp3';
 state.widgets.fileInfo.setText(`File: ${fileName}  (${(file.size / (1024*1024)).toFixed(2)} MB)`);
@@ -402,8 +494,26 @@ if (!state.widgets) return;
 
 // Pin panel top-left
 if (state.panel) {
-  const m = 20;
-  state.panel.setBounds({ x: m, y: m, width: 500, height: 600 }, true);
+  const viewport = gui.getViewportRect();
+  const info = gui.getResponsiveInfo({ width: viewport.width, height: viewport.height });
+  const tokens = gui.getTokens();
+  const compact = info.breakpoint === 'xs';
+  const inset = compact ? tokens.spacing.sm : tokens.spacing.lg;
+  const maxWidth = compact
+    ? Math.max(300, Math.min(420, info.usableWidth || viewport.width))
+    : Math.max(420, Math.min(540, info.usableWidth || viewport.width));
+
+  state.panel.container.padding = compact ? tokens.spacing.md : tokens.spacing.lg;
+  state.panel.container.gap = compact ? tokens.spacing.xs : tokens.spacing.sm;
+  state.panel.setMaxWidth(maxWidth, false);
+  state.panel.fitToViewport(viewport, {
+    inset,
+    safeArea: true,
+    maxWidth,
+    anchorX: 'start',
+    anchorY: 'start'
+  }, false);
+  state.panel.layout();
 }
 
 gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);
@@ -445,6 +555,8 @@ if (state.audioBuffer) {
     state.currentSection = secTitle;
     state.widgets.section.setText(`Section: ${secTitle}`);
   }
+
+  syncWorldsSectionContent(sec, pos);
 }
 ```
 

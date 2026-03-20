@@ -67,6 +67,7 @@ export interface CameraShakeState {
 export type SectionRenderMode = 'all' | 'heading' | 'content' | 'none';
 
 export interface Section3DLayout {
+  sectionId: string;
   sectionIndex: number;
   sectionTitle: string;
   displayTitle: string;

@@ -14,6 +14,15 @@ export { ModuleLoader } from './modules/loader.js';
 export { BuiltInModules } from './modules/types.js';
 export { WorldsRenderer } from './worlds-renderer.js';
 export {
+  stateAtWorldsContent,
+} from './worlds-content.js';
+export {
+  compileWorldsTimeline,
+  stateAtWorldsTimeline,
+  mergeWorldsTimelinePatch,
+  getWorldsTimelineSelectorKey,
+} from './worlds-timeline.js';
+export {
   createCamera3D,
   updateCamera3D,
   createSection3DLayouts,
@@ -60,6 +69,23 @@ export type {
   Section3DLayout,
   WorldsConfig
 } from './worlds-types.js';
+
+export type {
+  WorldsContentTimedEntry,
+  WorldsContentMode,
+  WorldsContentTarget,
+  WorldsContentState,
+  WorldsContentStateOptions,
+} from './worlds-content.js';
+
+export type {
+  WorldsTimelineSectionSelector,
+  WorldsTimelineVec3,
+  WorldsTimelinePatch,
+  WorldsTimelineEvent,
+  WorldsTimelineStateEntry,
+  CompiledWorldsTimeline,
+} from './worlds-timeline.js';
 
 export { KEY, COLORS } from './types.js';
 

@@ -13,6 +13,7 @@ describe('heading directives', () => {
 
     expect(doc.sections).toHaveLength(1);
     expect(doc.sections[0]).toMatchObject({
+      id: 'card-one-1',
       title: 'Card One',
       timedMs: 4500,
       directive: {
@@ -42,6 +43,7 @@ describe('heading directives', () => {
     ].join('\n'));
 
     const layout = parseTransform3D(doc.sections[0], 0, getDefaultWorldsConfig());
+    expect(layout.sectionId).toBe('card-one-1');
     expect(layout.renderMode).toBe('content');
   });
 
@@ -54,5 +56,19 @@ describe('heading directives', () => {
 
     const layout = parseTransform3D(doc.sections[0], 0, getDefaultWorldsConfig());
     expect(layout.renderMode).toBe('all');
+  });
+
+  it('assigns unique stable ids to duplicate section titles', async () => {
+    const doc = await parseMarkdown([
+      '# Card One',
+      '',
+      'Body',
+      '',
+      '# Card One',
+      '',
+      'More body'
+    ].join('\n'));
+
+    expect(doc.sections.map((section) => section.id)).toEqual(['card-one-1', 'card-one-5']);
   });
 });

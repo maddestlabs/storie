@@ -9,7 +9,7 @@ import { Canvas2DRenderer } from './renderer.js';
 import { WebGPURenderer } from './webgpu-renderer.js';
 import { Compositor } from './compositor.js';
 import { ScriptSandbox } from './sandbox.js';
-import { parseMarkdown, flattenSections } from './markdown.js';
+import { parseMarkdown, flattenSections, ensureSectionIds } from './markdown.js';
 import { parseTimedFormat, type TimedFormat } from './timed-parsers.js';
 import {
   compileAutomation,
@@ -21,6 +21,23 @@ import {
   type EaseSpec,
   type AutomationImpulseEvent,
 } from './automation.js';
+import {
+  compileWorldsTimeline,
+  stateAtWorldsTimeline,
+  getWorldsTimelineSelectorKey,
+  type CompiledWorldsTimeline,
+  type WorldsTimelineStateEntry,
+  type WorldsTimelineSectionSelector,
+  type WorldsTimelinePatch,
+} from './worlds-timeline.js';
+import {
+  stateAtWorldsContent,
+  type WorldsContentMode,
+  type WorldsContentState,
+  type WorldsContentStateOptions,
+  type WorldsContentTarget,
+  type WorldsContentTimedEntry,
+} from './worlds-content.js';
 import { getTheme, applyTheme, THEMES } from './themes.js';
 import { ModuleLoader } from './modules/loader.js';
 import { createTUIAPI } from './tui-api.js';
@@ -31,6 +48,8 @@ import { parseMarkdownLite } from './ui/document/markdown-lite.js';
 import { layoutMarkdownDocument } from './ui/document/layout.js';
 import type { LinkRegion, MarkdownStyle, WidgetPlacement, LayoutOptions } from './ui/document/types.js';
 import type { Draw2D } from './ui/draw2d.js';
+import { normalizeSingleLineText } from './ui/core/text-input.js';
+import type { TextInputCapable } from './ui/core/types.js';
 import { ShaderManager } from './shader-manager.js';
 import { ShaderChainManager } from './shader-chain.js';
 import { WorldsRenderer } from './worlds-renderer.js';
@@ -62,7 +81,7 @@ import {
   type WorldsConfig
 } from './worlds.js';
 import type { ModuleResolverConfig } from './modules/types.js';
-import type { UserScript, Color, InputEvent, ThemeColors, ThemeStyleSheet, NamedStyle, DroppedFile, SafeAreaInsets } from './types.js';
+import type { UserScript, Section, Color, InputEvent, ThemeColors, ThemeStyleSheet, NamedStyle, DroppedFile, SafeAreaInsets } from './types.js';
 import { detectPeaksFromAudioBuffer, type PeakDetectionOptions, type PeakDetectionResult } from './audio/peaks.js';
 import { analyzeBeatsFromAudioBuffer, getBeatState, type BeatAnalysisResult, type BeatDetectionOptions, type BeatState } from './audio/beats.js';
 import { KEY } from './types.js';
@@ -88,6 +107,22 @@ import {
 } from './font-loading.js';
 
 type ThemeOverride = { theme: ThemeColors; label: string };
+type RuntimeSectionRef = {
+  section: Section;
+  sectionId: string;
+  sectionIndex: number;
+  parent: Section | null;
+  parentId: string | null;
+  parentIndex: number | null;
+  siblings: Section[];
+  siblingIndex: number;
+};
+type WorldsSectionRuntimeOverride = {
+  position?: { x: number; y: number; z: number };
+  rotationDegrees?: { x: number; y: number; z: number };
+  scale?: { x: number; y: number; z: number };
+  visible?: boolean;
+};
 
 function parseThemeOverride(raw: string): ThemeOverride | null {
   const s = String(raw ?? '').trim();
@@ -124,9 +159,12 @@ function parseThemeOverride(raw: string): ThemeOverride | null {
   return null;
 }
 
-function buildWorldsCardMarkdown(layout: Section3DLayout): string {
-  const title = (layout.displayTitle || layout.sectionTitle || '').trim();
-  const content = (layout.content || '').trim();
+function buildWorldsCardMarkdown(
+  layout: Section3DLayout,
+  overrides?: { title?: string; content?: string }
+): string {
+  const title = (overrides?.title ?? layout.displayTitle ?? layout.sectionTitle ?? '').trim();
+  const content = (overrides?.content ?? layout.content ?? '').trim();
 
   switch (layout.renderMode) {
     case 'heading':
@@ -214,6 +252,29 @@ type WorldsOverviewOptions = {
   includeNonNavigable?: boolean;
   /** Selection: filter by heading levels (default 'any'). */
   levels?: OutlineLevels;
+};
+
+type WorldsTimelineBaseState = {
+  selector: WorldsTimelineSectionSelector;
+  title: string;
+  content: string;
+  visible: boolean;
+  autoPositioned: boolean;
+  position: { x: number; y: number; z: number };
+  rotation: { x: number; y: number; z: number };
+  scale: { x: number; y: number; z: number };
+};
+
+type WorldsTimelineEffectiveState = WorldsTimelineBaseState;
+
+type WorldsTimelineRuntimeState = {
+  baseByKey: Map<string, WorldsTimelineBaseState>;
+  lastAppliedByKey: Map<string, WorldsTimelineEffectiveState>;
+};
+
+type WorldsSectionContentOverride = {
+  title?: string;
+  content?: string;
 };
 
 export interface OutlineNode {
@@ -305,6 +366,17 @@ export class StorieEngine {
   // 3D Canvas system
   private worldsRenderer: WorldsRenderer | null = null;
   private camera3D: Camera3D | null = null;
+  private runtimeSectionStore: {
+    sections: Section[];
+    byId: Map<string, Section>;
+    order: string[];
+    indexById: Map<string, number>;
+  } = {
+    sections: [],
+    byId: new Map(),
+    order: [],
+    indexById: new Map(),
+  };
   private section3DLayouts: Section3DLayout[] = [];
 
   private pending3DCameraFocus:
@@ -332,6 +404,7 @@ export class StorieEngine {
   private lastApplied3DCameraFocus:
     | {
         kind: 'focus';
+        sectionId: string;
         sectionIndex: number;
         distance: number;
         keepRotation?: boolean;
@@ -341,6 +414,7 @@ export class StorieEngine {
       }
     | {
         kind: 'fit';
+      sectionId: string;
         sectionIndex: number;
         fill: number;
         keepRotation?: boolean;
@@ -380,17 +454,19 @@ export class StorieEngine {
   private mouseLookLastY: number = 0;
 
   // 3D link-centric interaction (canvas.nim parity)
-  private hovered3DLink: { sectionIndex: number; linkIndex: number } | null = null;
-  private focused3DLink: { sectionIndex: number; linkIndex: number } | null = null;
+  private hovered3DLink: { sectionId: string; sectionIndex: number; linkIndex: number } | null = null;
+  private focused3DLink: { sectionId: string; sectionIndex: number; linkIndex: number } | null = null;
+  private current3DSectionId: string | null = null;
   private current3DSectionIndex: number | null = null;
-  private activated3DLinksQueue: Array<{ url: string; sectionIndex: number | null; linkIndex: number | null }> = [];
+  private activated3DLinksQueue: Array<{ url: string; sectionId: string | null; sectionIndex: number | null; linkIndex: number | null }> = [];
 
   // 3D section texture rasterization cache
-  private sectionTextureCache: Map<number, { width: number; height: number; activeLinkIndex: number | null }> = new Map();
-  private sectionLinkRegionsCache: Map<number, LinkRegion[]> = new Map();
-  private sectionWidgetPlacementsCache: Map<number, WidgetPlacement[]> = new Map();
+  private sectionTextureCache: Map<string, { width: number; height: number; activeLinkIndex: number | null }> = new Map();
+  private sectionLinkRegionsCache: Map<string, LinkRegion[]> = new Map();
+  private sectionWidgetPlacementsCache: Map<string, WidgetPlacement[]> = new Map();
   private worldsInlineWidgetInstances: Array<{
     engineId: string;
+    sectionId: string;
     sectionIndex: number;
     widgetId: string;
     kind: 'button' | 'slider' | 'checkbox' | 'label';
@@ -451,8 +527,10 @@ export class StorieEngine {
   // Documents
   private documents: Map<string, UserScript> = new Map();
   private activeDocumentId: string | null = null;
+  private worldsSectionOverridesByDocument: Map<string, Map<string, WorldsSectionRuntimeOverride>> = new Map();
 
   private outlineCache: { documentId: string; nodes: OutlineNode[] } | null = null;
+  private worldsSectionContentOverridesByDocument: Map<string, Map<string, WorldsSectionContentOverride>> = new Map();
 
   // Worlds Overview (host-only)
   private worldsOverviewEnabled: boolean = false;
@@ -467,6 +545,7 @@ export class StorieEngine {
 
   // Cache last computed auto-layout step sizes so we don't rewrite positions every frame.
   private worldsAutoLayoutCache: { cols: number; stepX: number; stepY: number } | null = null;
+  private worldsTimelineRuntimeState: WeakMap<object, WorldsTimelineRuntimeState> = new WeakMap();
 
   // Dropped-file handling (binary-safe)
   private lastDroppedFile: DroppedFile | null = null;
@@ -488,6 +567,8 @@ export class StorieEngine {
   
   // Canvas reference for event listeners
   private canvas: HTMLCanvasElement;
+  private hiddenTextInput: HTMLTextAreaElement | null = null;
+  private hiddenTextInputSyncing: boolean = false;
 
   private applyThemeColors(theme: ThemeColors, label: string, source: 'url' | 'frontmatter' | 'default' | 'runtime'): void {
     const nextTheme = { ...theme } as ThemeColors;
@@ -1879,9 +1960,9 @@ export class StorieEngine {
       // Section indices match Worlds's depth-first layout order.
       doc: {
         sectionsFlat: () => {
-          const d = engine.getActiveDocument();
-          if (!d) return [] as Array<{ index: number; title: string; level: number; timedMs?: number; directive?: Record<string, any> }>;
-          const flat = flattenSections(d.sections);
+          const roots = engine.getReadableSectionRoots();
+          if (roots.length === 0) return [] as Array<{ index: number; title: string; level: number; timedMs?: number; directive?: Record<string, any> }>;
+          const flat = flattenSections(roots);
           return flat.map((s, index) => ({
             index,
             title: s.title,
@@ -1891,9 +1972,7 @@ export class StorieEngine {
           }));
         },
         sectionCount: () => {
-          const d = engine.getActiveDocument();
-          if (!d) return 0;
-          return flattenSections(d.sections).length;
+          return flattenSections(engine.getReadableSectionRoots()).length;
         },
         outline: () => {
           return engine.getOutlineNodes();
@@ -4327,19 +4406,22 @@ export class StorieEngine {
           },
           getValue: (id: string, section?: number | string) => {
             const resolved = section === undefined || section === null || section === 'current'
-              ? engine.current3DSectionIndex
+              ? engine.getResolvedCurrent3DSectionIndex()
               : engine.resolve3DSectionIndex(section as any);
             if (!(typeof resolved === 'number' && Number.isFinite(resolved))) return null;
             return engine.worldsInlineWidgetValueState.get(engine.getWorldsInlineWidgetStateKey(resolved, String(id))) ?? null;
           },
           setValue: (id: string, value: number | boolean | string, section?: number | string) => {
             const resolved = section === undefined || section === null || section === 'current'
-              ? engine.current3DSectionIndex
+              ? engine.getResolvedCurrent3DSectionIndex()
               : engine.resolve3DSectionIndex(section as any);
             if (!(typeof resolved === 'number' && Number.isFinite(resolved))) return false;
             const key = engine.getWorldsInlineWidgetStateKey(resolved, String(id));
             engine.worldsInlineWidgetValueState.set(key, value);
-            const live = engine.worldsInlineWidgetInstances.find((entry) => entry.sectionIndex === resolved && entry.widgetId === id);
+            const sectionId = engine.getSectionLayoutByIndex(resolved)?.sectionId;
+            const live = sectionId
+              ? engine.worldsInlineWidgetInstances.find((entry) => entry.sectionId === sectionId && entry.widgetId === id)
+              : null;
             if (live) {
               if (live.kind === 'slider' && typeof live.widget.setValue === 'function' && typeof value === 'number') {
                 live.widget.setValue(value);
@@ -4355,7 +4437,7 @@ export class StorieEngine {
           },
           configure: (id: string, patch: { min?: number; max?: number; step?: number; label?: string; showValue?: boolean; fg?: number; trackColor?: number; knobColor?: number; knobHoverColor?: number }, section?: number | string) => {
             const resolved = section === undefined || section === null || section === 'current'
-              ? engine.current3DSectionIndex
+              ? engine.getResolvedCurrent3DSectionIndex()
               : engine.resolve3DSectionIndex(section as any);
             if (!(typeof resolved === 'number' && Number.isFinite(resolved))) return false;
             const key = engine.getWorldsInlineWidgetStateKey(resolved, String(id));
@@ -4373,7 +4455,10 @@ export class StorieEngine {
 
             engine.worldsInlineWidgetConfigState.set(key, nextPatch);
 
-            const live = engine.worldsInlineWidgetInstances.find((entry) => entry.sectionIndex === resolved && entry.widgetId === id);
+            const sectionId = engine.getSectionLayoutByIndex(resolved)?.sectionId;
+            const live = sectionId
+              ? engine.worldsInlineWidgetInstances.find((entry) => entry.sectionId === sectionId && entry.widgetId === id)
+              : null;
             if (live?.kind === 'slider') {
               if (typeof nextPatch.label === 'string') live.widget.label = nextPatch.label;
               if (typeof nextPatch.showValue === 'boolean') live.widget.showValue = nextPatch.showValue;
@@ -4747,7 +4832,7 @@ export class StorieEngine {
         },
 
         get currentSection(): number | null {
-          return engine.current3DSectionIndex;
+          return engine.getResolvedCurrent3DSectionIndex();
         },
         
         // Section layout access
@@ -4755,6 +4840,7 @@ export class StorieEngine {
           const layout = engine.section3DLayouts[sectionIndex];
           if (!layout) return null;
           return {
+            sectionId: layout.sectionId,
             sectionIndex: layout.sectionIndex,
             sectionTitle: layout.sectionTitle,
             renderMode: layout.renderMode,
@@ -4780,9 +4866,11 @@ export class StorieEngine {
             console.warn(`Section ${sectionIndex} not found`);
             return;
           }
+          const override = engine.getOrCreateSectionRuntimeOverride(layout.sectionId);
           if (transform.position) {
             layout.transform.position = { ...transform.position };
             layout.autoPositioned = false;
+            override.position = { ...transform.position };
           }
           if (transform.rotation) {
             // Convert degrees to radians
@@ -4791,9 +4879,11 @@ export class StorieEngine {
               y: (transform.rotation.y * Math.PI) / 180,
               z: (transform.rotation.z * Math.PI) / 180
             };
+            override.rotationDegrees = { ...transform.rotation };
           }
           if (transform.scale) {
             layout.transform.scale = { ...transform.scale };
+            override.scale = { ...transform.scale };
           }
         },
         
@@ -4804,10 +4894,110 @@ export class StorieEngine {
             return;
           }
           layout.visible = visible;
+          engine.getOrCreateSectionRuntimeOverride(layout.sectionId).visible = visible;
         },
         
         getSectionCount: () => {
           return engine.section3DLayouts.length;
+        },
+
+        content: {
+          get: (selector?: number | string) => {
+            const ref = engine.resolveWorldsContentSectionRef(selector);
+            if (!ref) return null;
+            const override = engine.getWorldsSectionContentOverride(ref.sectionId);
+            return {
+              sectionId: ref.sectionId,
+              sectionIndex: ref.sectionIndex,
+              baseTitle: ref.section.title,
+              baseContent: ref.section.content,
+              ...(override?.title !== undefined ? { overrideTitle: override.title } : {}),
+              ...(override?.content !== undefined ? { overrideContent: override.content } : {}),
+              effectiveTitle: override?.title ?? ref.section.title,
+              effectiveContent: override?.content ?? ref.section.content,
+            };
+          },
+          set: (selector: number | string, patch: { title?: string | null; content?: string | null }) => {
+            return engine.setWorldsSectionContentOverride(selector, patch);
+          },
+          clear: (selector?: number | string, target: 'title' | 'content' | 'all' = 'all') => {
+            return engine.clearWorldsSectionContentOverride(selector, target);
+          },
+          clearAll: () => {
+            engine.clearWorldsSectionContentOverrides();
+          },
+          stateAt: (entries: WorldsContentTimedEntry[], timeSec: number, options?: WorldsContentStateOptions) => {
+            return stateAtWorldsContent(entries, Number(timeSec) || 0, options);
+          },
+          applyTimed: (
+            selector: number | string,
+            entries: WorldsContentTimedEntry[],
+            timeSec: number,
+            options?: {
+              mode?: WorldsContentMode;
+              target?: WorldsContentTarget;
+              separator?: string;
+              maxEntries?: number;
+              clearWhenEmpty?: boolean;
+            }
+          ) => {
+            return engine.applyWorldsTimedContent(selector, entries, Number(timeSec) || 0, options);
+          },
+        },
+
+        timeline: {
+          compile: (entries: Array<{ ms: number; text: string }>) => {
+            try {
+              return compileWorldsTimeline(entries);
+            } catch (e) {
+              console.warn('[worlds.timeline.compile] failed:', e);
+              return { events: [], sections: [] } as CompiledWorldsTimeline;
+            }
+          },
+          stateAt: (compiled: CompiledWorldsTimeline, timeSec: number) => {
+            try {
+              return stateAtWorldsTimeline(compiled, Number(timeSec) || 0);
+            } catch (e) {
+              console.warn('[worlds.timeline.stateAt] failed:', e);
+              return [] as WorldsTimelineStateEntry[];
+            }
+          },
+          apply: (compiled: CompiledWorldsTimeline, timeSec: number) => {
+            try {
+              return engine.applyWorldsTimeline(compiled, Number(timeSec) || 0);
+            } catch (e) {
+              console.warn('[worlds.timeline.apply] failed:', e);
+              return [] as WorldsTimelineStateEntry[];
+            }
+          },
+          reset: (compiled: CompiledWorldsTimeline) => {
+            try {
+              engine.resetWorldsTimelineRuntimeState(compiled);
+            } catch (e) {
+              console.warn('[worlds.timeline.reset] failed:', e);
+            }
+          }
+        },
+
+        sections: {
+          list: () => {
+            return engine.getRuntimeSectionSummaries();
+          },
+          get: (selector: number | string) => {
+            return engine.getRuntimeSectionSummary(selector);
+          },
+          insert: (section: Partial<Section>, options?: { parent?: number | string | null; index?: number }) => {
+            return engine.insertRuntimeSection(section, options);
+          },
+          update: (selector: number | string, patch: Partial<Section>) => {
+            return engine.updateRuntimeSection(selector, patch);
+          },
+          remove: (selector: number | string) => {
+            return engine.removeRuntimeSection(selector);
+          },
+          move: (selector: number | string, options?: { parent?: number | string | null; index?: number }) => {
+            return engine.moveRuntimeSection(selector, options);
+          },
         },
         
         // Configuration
@@ -5217,7 +5407,86 @@ export class StorieEngine {
   }
 
   private getWorldsInlineWidgetStateKey(sectionIndex: number, widgetId: string): string {
-    return `${sectionIndex}:${widgetId}`;
+    const layout = this.getSectionLayoutByIndex(sectionIndex);
+    const sectionKey = layout?.sectionId ?? `section-${sectionIndex}`;
+    return `${sectionKey}:${widgetId}`;
+  }
+
+  private getSectionLayoutByIndex(sectionIndex: number | null | undefined): Section3DLayout | null {
+    if (!(typeof sectionIndex === 'number' && Number.isFinite(sectionIndex))) return null;
+    return this.section3DLayouts.find((item) => item.sectionIndex === sectionIndex) ?? null;
+  }
+
+  private getSectionLayoutById(sectionId: string | null | undefined): Section3DLayout | null {
+    if (typeof sectionId !== 'string' || sectionId.length === 0) return null;
+    return this.section3DLayouts.find((item) => item.sectionId === sectionId) ?? null;
+  }
+
+  private getSectionIndexById(sectionId: string | null | undefined): number | null {
+    if (typeof sectionId !== 'string' || sectionId.length === 0) return null;
+    const indexed = this.runtimeSectionStore.indexById.get(sectionId);
+    if (typeof indexed === 'number' && Number.isFinite(indexed)) return indexed;
+    return this.getSectionLayoutById(sectionId)?.sectionIndex ?? null;
+  }
+
+  private getResolvedCurrent3DSectionIndex(): number | null {
+    const byId = this.getSectionIndexById(this.current3DSectionId);
+    if (typeof byId === 'number' && Number.isFinite(byId)) return byId;
+    return typeof this.current3DSectionIndex === 'number' && Number.isFinite(this.current3DSectionIndex)
+      ? this.current3DSectionIndex
+      : null;
+  }
+
+  private getCurrent3DSectionLayout(): Section3DLayout | null {
+    const byId = this.getSectionLayoutById(this.current3DSectionId);
+    if (byId) return byId;
+    return this.getSectionLayoutByIndex(this.current3DSectionIndex);
+  }
+
+  private rebind3DStateToRuntimeSectionStore(): void {
+    this.current3DSectionIndex = this.getSectionIndexById(this.current3DSectionId);
+
+    const rebindLink = (
+      entry: { sectionId: string; sectionIndex: number; linkIndex: number } | null
+    ): { sectionId: string; sectionIndex: number; linkIndex: number } | null => {
+      if (!entry) return null;
+      const nextIndex = this.getSectionIndexById(entry.sectionId);
+      if (!(typeof nextIndex === 'number' && Number.isFinite(nextIndex))) return null;
+      return { ...entry, sectionIndex: nextIndex };
+    };
+
+    this.hovered3DLink = rebindLink(this.hovered3DLink);
+    this.focused3DLink = rebindLink(this.focused3DLink);
+    this.activated3DLinksQueue = this.activated3DLinksQueue
+      .map((entry) => {
+        if (!entry.sectionId) return entry;
+        const nextIndex = this.getSectionIndexById(entry.sectionId);
+        return {
+          ...entry,
+          sectionIndex: typeof nextIndex === 'number' && Number.isFinite(nextIndex) ? nextIndex : null,
+        };
+      })
+      .filter((entry) => entry.sectionId === null || entry.sectionIndex !== null);
+
+    if (this.lastApplied3DCameraFocus) {
+      const nextIndex = this.getSectionIndexById(this.lastApplied3DCameraFocus.sectionId);
+      if (typeof nextIndex === 'number' && Number.isFinite(nextIndex)) {
+        this.lastApplied3DCameraFocus = {
+          ...this.lastApplied3DCameraFocus,
+          sectionIndex: nextIndex,
+        } as any;
+      }
+    }
+
+    this.sceneState.sectionIndex = this.current3DSectionIndex;
+  }
+
+  private getSectionCacheKey(layoutOrIndex: Section3DLayout | number | null | undefined): string | null {
+    if (typeof layoutOrIndex === 'number') {
+      return this.getSectionLayoutByIndex(layoutOrIndex)?.sectionId ?? null;
+    }
+    if (!layoutOrIndex) return null;
+    return layoutOrIndex.sectionId;
   }
 
   private getGUIPixelMetrics(): { charWidth: number; charHeight: number } {
@@ -5245,10 +5514,9 @@ export class StorieEngine {
   }
 
   private getActiveWorldsInlineWidgetPlacements(): { layout: Section3DLayout; placements: WidgetPlacement[] } | null {
-    if (!(typeof this.current3DSectionIndex === 'number')) return null;
-    const layout = this.section3DLayouts.find((item) => item.sectionIndex === this.current3DSectionIndex);
+    const layout = this.getCurrent3DSectionLayout();
     if (!layout || !layout.texture || !layout.visible || layout.interactive === false) return null;
-    const placements = this.sectionWidgetPlacementsCache.get(layout.sectionIndex);
+    const placements = this.sectionWidgetPlacementsCache.get(layout.sectionId);
     if (!placements || placements.length === 0) return null;
     return { layout, placements };
   }
@@ -5256,7 +5524,7 @@ export class StorieEngine {
   private project3DTextureRectToScreen(layout: Section3DLayout, rect: { x: number; y: number; w: number; h: number }): { x: number; y: number; width: number; height: number } | null {
     if (!this.camera3D) return null;
 
-    const dims = this.sectionTextureCache.get(layout.sectionIndex);
+    const dims = this.sectionTextureCache.get(layout.sectionId);
     if (!dims || dims.width <= 0 || dims.height <= 0) return null;
 
     const canvasW = this.canvas.width;
@@ -5345,7 +5613,7 @@ export class StorieEngine {
     for (let i = this.worldsInlineWidgetInstances.length - 1; i >= 0; i--) {
       const entry = this.worldsInlineWidgetInstances[i];
       const key = this.getWorldsInlineWidgetStateKey(entry.sectionIndex, entry.widgetId);
-      if (entry.sectionIndex !== active.layout.sectionIndex || !nextKeys.has(key)) {
+      if (entry.sectionId !== active.layout.sectionId || !nextKeys.has(key)) {
         manager.unregister(entry.widget.id);
         this.worldsInlineWidgetInstances.splice(i, 1);
       }
@@ -5360,7 +5628,7 @@ export class StorieEngine {
         ? this.getWorldsInlineWidgetRenderScale(placement, projected)
         : 1;
 
-      let entry = this.worldsInlineWidgetInstances.find((item) => item.sectionIndex === active.layout.sectionIndex && item.widgetId === placement.widget.id);
+      let entry = this.worldsInlineWidgetInstances.find((item) => item.sectionId === active.layout.sectionId && item.widgetId === placement.widget.id);
       if (!entry) {
         const persisted = this.worldsInlineWidgetValueState.get(widgetKey);
         const bounds = { x: projected.x, y: projected.y, width: projected.width, height: projected.height };
@@ -5437,6 +5705,7 @@ export class StorieEngine {
 
         entry = {
           engineId: widgetKey,
+          sectionId: active.layout.sectionId,
           sectionIndex: active.layout.sectionIndex,
           widgetId: placement.widget.id,
           kind: placement.widget.type,
@@ -5548,6 +5817,8 @@ export class StorieEngine {
         }
 
         this.documents.clear();
+        this.worldsSectionContentOverridesByDocument.clear();
+        this.worldsSectionOverridesByDocument.clear();
         this.sandbox.clearAll();
         this.activeDocumentId = null;
       }
@@ -5568,6 +5839,7 @@ export class StorieEngine {
       } catch {
         // ignore
       }
+      this.resetRuntimeSectionStore();
       this.section3DLayouts = [];
       this.worldsEnabled = false;
       this.worldsOverviewEnabled = false;
@@ -5626,15 +5898,12 @@ export class StorieEngine {
         }
         }
       }
+
+      this.initializeRuntimeSectionStore(parsed.sections);
       
       // Create 3D layouts for sections (if 3D canvas is available)
       if (this.worldsRenderer) {
-        this.section3DLayouts = createSection3DLayouts(parsed.sections, this.worldsConfig);
-        console.log(`  Created 3D layouts for ${this.section3DLayouts.length} sections`);
-        this.reflowWorldsAutoLayout();
-        this.applyPending3DCameraFocus();
-        this.applyWorldsLayoutCallback(parsed.sections);
-        this.applyPendingWorldsOverview();
+        this.compileWorldsLayoutsFromRuntimeSectionStore('load');
       }
       
       // Apply theme:
@@ -6304,9 +6573,13 @@ ${exportVars}
    * Set the active document
    */
   setActiveDocument(documentId: string): void {
-    if (this.documents.has(documentId)) {
-      this.activeDocumentId = documentId;
-    }
+    const nextDocument = this.documents.get(documentId);
+    if (!nextDocument) return;
+
+    this.activeDocumentId = documentId;
+    this.outlineCache = null;
+    this.initializeRuntimeSectionStore(nextDocument.sections);
+    this.applyRuntimeSectionStoreMutation(`activate document ${documentId}`);
   }
 
   /**
@@ -6328,6 +6601,745 @@ ${exportVars}
   private getActiveDocument(): UserScript | null {
     if (!this.activeDocumentId) return null;
     return this.documents.get(this.activeDocumentId) || null;
+  }
+
+  private getReadableSectionRoots(): Section[] {
+    if (this.runtimeSectionStore.sections.length > 0) {
+      return this.runtimeSectionStore.sections;
+    }
+    return this.getActiveDocument()?.sections ?? [];
+  }
+
+  private getActiveWorldsSectionContentOverrideMap(create: boolean = false): Map<string, WorldsSectionContentOverride> | null {
+    const documentId = this.activeDocumentId;
+    if (!documentId) return null;
+
+    const existing = this.worldsSectionContentOverridesByDocument.get(documentId);
+    if (existing || !create) return existing ?? null;
+
+    const next = new Map<string, WorldsSectionContentOverride>();
+    this.worldsSectionContentOverridesByDocument.set(documentId, next);
+    return next;
+  }
+
+  private getWorldsSectionContentOverride(sectionId: string): WorldsSectionContentOverride | null {
+    const overrides = this.getActiveWorldsSectionContentOverrideMap();
+    if (!overrides) return null;
+    return overrides.get(sectionId) ?? null;
+  }
+
+  private pruneActiveWorldsSectionContentOverrides(): void {
+    const overrides = this.getActiveWorldsSectionContentOverrideMap();
+    if (!overrides) return;
+
+    const validIds = new Set(this.runtimeSectionStore.order);
+    for (const sectionId of overrides.keys()) {
+      if (!validIds.has(sectionId)) {
+        overrides.delete(sectionId);
+      }
+    }
+
+    if (overrides.size === 0 && this.activeDocumentId) {
+      this.worldsSectionContentOverridesByDocument.delete(this.activeDocumentId);
+    }
+  }
+
+  private resolveWorldsContentSectionRef(selector?: number | string | null): RuntimeSectionRef | null {
+    if (selector === undefined || selector === null || selector === 'current') {
+      const currentIndex = this.getResolvedCurrent3DSectionIndex();
+      return typeof currentIndex === 'number' && Number.isFinite(currentIndex)
+        ? this.resolveRuntimeSectionRef(currentIndex)
+        : null;
+    }
+    return this.resolveRuntimeSectionRef(selector);
+  }
+
+  private setWorldsSectionContentOverride(
+    selector: number | string,
+    patch: { title?: string | null; content?: string | null }
+  ): boolean {
+    const ref = this.resolveWorldsContentSectionRef(selector);
+    if (!ref) return false;
+
+    const overrides = this.getActiveWorldsSectionContentOverrideMap(true);
+    if (!overrides) return false;
+
+    const previous = overrides.get(ref.sectionId) ?? {};
+    const next: WorldsSectionContentOverride = { ...previous };
+    let touched = false;
+
+    if (patch.title !== undefined) {
+      touched = true;
+      if (patch.title === null) delete next.title;
+      else next.title = String(patch.title);
+    }
+    if (patch.content !== undefined) {
+      touched = true;
+      if (patch.content === null) delete next.content;
+      else next.content = String(patch.content);
+    }
+    if (!touched) return false;
+
+    const unchanged = previous.title === next.title && previous.content === next.content;
+    if (unchanged) return true;
+
+    if (next.title === undefined && next.content === undefined) {
+      overrides.delete(ref.sectionId);
+    } else {
+      overrides.set(ref.sectionId, next);
+    }
+
+    this.invalidate3DSectionTexture(ref.sectionIndex);
+    return true;
+  }
+
+  private clearWorldsSectionContentOverride(
+    selector?: number | string,
+    target: 'title' | 'content' | 'all' = 'all'
+  ): boolean {
+    const ref = this.resolveWorldsContentSectionRef(selector);
+    if (!ref) return false;
+
+    const overrides = this.getActiveWorldsSectionContentOverrideMap();
+    if (!overrides) return false;
+    const existing = overrides.get(ref.sectionId);
+    if (!existing) return false;
+
+    const next: WorldsSectionContentOverride = { ...existing };
+    if (target === 'all' || target === 'title') delete next.title;
+    if (target === 'all' || target === 'content') delete next.content;
+
+    if (next.title === undefined && next.content === undefined) {
+      overrides.delete(ref.sectionId);
+    } else {
+      overrides.set(ref.sectionId, next);
+    }
+
+    this.invalidate3DSectionTexture(ref.sectionIndex);
+    return true;
+  }
+
+  private clearWorldsSectionContentOverrides(): void {
+    const overrides = this.getActiveWorldsSectionContentOverrideMap();
+    if (!overrides || overrides.size === 0) return;
+    overrides.clear();
+    this.clear3DSectionTextures();
+  }
+
+  private applyWorldsTimedContent(
+    selector: number | string,
+    entries: WorldsContentTimedEntry[],
+    timeSec: number,
+    options?: {
+      mode?: WorldsContentMode;
+      target?: WorldsContentTarget;
+      separator?: string;
+      maxEntries?: number;
+      clearWhenEmpty?: boolean;
+    }
+  ): WorldsContentState | null {
+    const ref = this.resolveWorldsContentSectionRef(selector);
+    if (!ref) return null;
+
+    const state = stateAtWorldsContent(entries, timeSec, options);
+    const target = options?.target === 'title' ? 'title' : 'content';
+    const clearWhenEmpty = options?.clearWhenEmpty !== false;
+    const hasText = state.entries.length > 0 || state.text.length > 0;
+
+    if (!hasText && clearWhenEmpty) {
+      this.clearWorldsSectionContentOverride(ref.sectionId, target);
+      return state;
+    }
+
+    this.setWorldsSectionContentOverride(ref.sectionId, {
+      [target]: hasText ? state.text : '',
+    } as { title?: string | null; content?: string | null });
+    return state;
+  }
+
+  private getActiveWorldsSectionOverrideMap(create: boolean = false): Map<string, WorldsSectionRuntimeOverride> | null {
+    const documentId = this.activeDocumentId;
+    if (!documentId) return null;
+
+    const existing = this.worldsSectionOverridesByDocument.get(documentId);
+    if (existing || !create) return existing ?? null;
+
+    const next = new Map<string, WorldsSectionRuntimeOverride>();
+    this.worldsSectionOverridesByDocument.set(documentId, next);
+    return next;
+  }
+
+  private getOrCreateSectionRuntimeOverride(sectionId: string): WorldsSectionRuntimeOverride {
+    const overrides = this.getActiveWorldsSectionOverrideMap(true);
+    if (!overrides) return {};
+    const existing = overrides.get(sectionId);
+    if (existing) return existing;
+    const next: WorldsSectionRuntimeOverride = {};
+    overrides.set(sectionId, next);
+    return next;
+  }
+
+  private pruneActiveWorldsSectionOverrides(): void {
+    const overrides = this.getActiveWorldsSectionOverrideMap();
+    if (!overrides) return;
+
+    const validIds = new Set(this.section3DLayouts.map((layout) => layout.sectionId));
+    for (const sectionId of overrides.keys()) {
+      if (!validIds.has(sectionId)) {
+        overrides.delete(sectionId);
+      }
+    }
+
+    if (overrides.size === 0 && this.activeDocumentId) {
+      this.worldsSectionOverridesByDocument.delete(this.activeDocumentId);
+    }
+  }
+
+  private applyActiveWorldsSectionOverrides(): void {
+    const overrides = this.getActiveWorldsSectionOverrideMap();
+    if (!overrides || overrides.size === 0) return;
+
+    for (const layout of this.section3DLayouts) {
+      const override = overrides.get(layout.sectionId);
+      if (!override) continue;
+
+      if (override.position) {
+        layout.transform.position = { ...override.position };
+        layout.autoPositioned = false;
+      }
+      if (override.rotationDegrees) {
+        layout.transform.rotation = {
+          x: (override.rotationDegrees.x * Math.PI) / 180,
+          y: (override.rotationDegrees.y * Math.PI) / 180,
+          z: (override.rotationDegrees.z * Math.PI) / 180,
+        };
+      }
+      if (override.scale) {
+        layout.transform.scale = { ...override.scale };
+      }
+      if (typeof override.visible === 'boolean') {
+        layout.visible = override.visible;
+      }
+    }
+  }
+
+  private cloneRuntimeSectionTree(sections: Section[]): Section[] {
+    return sections.map((section) => this.cloneRuntimeSectionNode(section));
+  }
+
+  private cloneRuntimeSectionNode(section: Section): Section {
+    const cloned: Section = {
+      ...section,
+      children: section.children.map((child) => this.cloneRuntimeSectionNode(child)),
+    };
+    if (section.directive && typeof section.directive === 'object' && !Array.isArray(section.directive)) {
+      cloned.directive = { ...section.directive };
+    }
+    return cloned;
+  }
+
+  private resetRuntimeSectionStore(): void {
+    this.runtimeSectionStore.sections = [];
+    this.runtimeSectionStore.byId.clear();
+    this.runtimeSectionStore.order = [];
+    this.runtimeSectionStore.indexById.clear();
+  }
+
+  private rebuildRuntimeSectionStoreIndex(): void {
+    this.runtimeSectionStore.byId.clear();
+    this.runtimeSectionStore.order = [];
+    this.runtimeSectionStore.indexById.clear();
+
+    let sectionIndex = 0;
+    const walk = (sections: Section[]) => {
+      for (const section of sections) {
+        if (!section.id) continue;
+        this.runtimeSectionStore.byId.set(section.id, section);
+        this.runtimeSectionStore.order.push(section.id);
+        this.runtimeSectionStore.indexById.set(section.id, sectionIndex++);
+        if (section.children.length > 0) {
+          walk(section.children);
+        }
+      }
+    };
+
+    walk(this.runtimeSectionStore.sections);
+  }
+
+  private initializeRuntimeSectionStore(sections: Section[]): void {
+    this.runtimeSectionStore.sections = this.cloneRuntimeSectionTree(sections);
+    this.rebuildRuntimeSectionStoreIndex();
+  }
+
+  private syncRuntimeSectionStoreToActiveDocument(): void {
+    const activeDocument = this.getActiveDocument() as (UserScript & { _parsedMarkdown?: { sections?: Section[] } }) | null;
+    if (!activeDocument) return;
+
+    const nextSections = this.cloneRuntimeSectionTree(this.runtimeSectionStore.sections);
+    activeDocument.sections = nextSections;
+    if (activeDocument._parsedMarkdown && Array.isArray(activeDocument._parsedMarkdown.sections)) {
+      activeDocument._parsedMarkdown.sections = this.cloneRuntimeSectionTree(this.runtimeSectionStore.sections);
+    }
+  }
+
+  private applyRuntimeSectionStoreMutation(reason: string): void {
+    ensureSectionIds(this.runtimeSectionStore.sections);
+    this.rebuildRuntimeSectionStoreIndex();
+    this.syncRuntimeSectionStoreToActiveDocument();
+    this.outlineCache = null;
+    this.pruneActiveWorldsSectionContentOverrides();
+
+    this.section3DLayouts = createSection3DLayouts(this.runtimeSectionStore.sections, this.worldsConfig);
+    this.rebind3DStateToRuntimeSectionStore();
+    this.applyWorldsLayoutCallback();
+    this.applyActiveWorldsSectionOverrides();
+    this.pruneActiveWorldsSectionOverrides();
+
+    if (this.worldsRenderer) {
+      console.log(`  Created ${this.section3DLayouts.length} 3D layouts from runtime store (${reason})`);
+      this.reflowWorldsAutoLayout();
+      this.applyPending3DCameraFocus();
+      this.applyPendingWorldsOverview();
+    }
+  }
+
+  private compileWorldsLayoutsFromRuntimeSectionStore(reason: string): void {
+    this.applyRuntimeSectionStoreMutation(reason);
+  }
+
+  private clampRuntimeSectionLevel(level: number): number {
+    return Math.max(1, Math.min(6, Math.round(level)));
+  }
+
+  private createRuntimeSectionFromInput(input: Partial<Section> | null | undefined, level: number = 1): Section {
+    const normalizedLevel = this.clampRuntimeSectionLevel(Number.isFinite(input?.level as number) ? Number(input!.level) : level);
+    const title = typeof input?.title === 'string' && input.title.trim().length > 0
+      ? input.title.trim()
+      : 'Section';
+    const section: Section = {
+      id: typeof input?.id === 'string' && input.id.trim().length > 0 ? input.id.trim() : undefined,
+      title,
+      level: normalizedLevel,
+      content: typeof input?.content === 'string' ? input.content : '',
+      startLine: Number.isFinite(input?.startLine as number) ? Number(input!.startLine) : -1,
+      endLine: Number.isFinite(input?.endLine as number) ? Number(input!.endLine) : -1,
+      children: [],
+    };
+
+    if (Number.isFinite(input?.timedMs as number)) {
+      section.timedMs = Number(input!.timedMs);
+    }
+    if (input?.directive && typeof input.directive === 'object' && !Array.isArray(input.directive)) {
+      section.directive = { ...input.directive };
+    }
+
+    const children = Array.isArray(input?.children) ? input.children : [];
+    section.children = children.map((child) => this.createRuntimeSectionFromInput(child, normalizedLevel + 1));
+    return section;
+  }
+
+  private setRuntimeSectionSubtreeLevels(section: Section, level: number): void {
+    section.level = this.clampRuntimeSectionLevel(level);
+    for (const child of section.children) {
+      this.setRuntimeSectionSubtreeLevels(child, section.level + 1);
+    }
+  }
+
+  private getRuntimeSectionRefs(): RuntimeSectionRef[] {
+    const refs: RuntimeSectionRef[] = [];
+    let sectionIndex = 0;
+
+    const visit = (sections: Section[], parent: Section | null, parentIndex: number | null) => {
+      for (let siblingIndex = 0; siblingIndex < sections.length; siblingIndex++) {
+        const section = sections[siblingIndex];
+        const sectionId = typeof section.id === 'string' && section.id.length > 0 ? section.id : `section-${sectionIndex}`;
+        const ref: RuntimeSectionRef = {
+          section,
+          sectionId,
+          sectionIndex,
+          parent,
+          parentId: parent?.id ?? null,
+          parentIndex,
+          siblings: sections,
+          siblingIndex,
+        };
+        refs.push(ref);
+        sectionIndex += 1;
+
+        const currentIndex = ref.sectionIndex;
+        if (section.children.length > 0) {
+          visit(section.children, section, currentIndex);
+        }
+      }
+    };
+
+    visit(this.runtimeSectionStore.sections, null, null);
+    return refs;
+  }
+
+  private resolveRuntimeSectionRef(selector: number | string | null | undefined): RuntimeSectionRef | null {
+    const refs = this.getRuntimeSectionRefs();
+    if (typeof selector === 'number' && Number.isFinite(selector)) {
+      return refs.find((ref) => ref.sectionIndex === selector) ?? null;
+    }
+    if (typeof selector !== 'string') return null;
+
+    const query = selector.trim();
+    if (!query) return null;
+
+    const exactId = refs.find((ref) => ref.sectionId === query);
+    if (exactId) return exactId;
+
+    const slugify = (value: string) =>
+      value
+        .toLowerCase()
+        .trim()
+        .replace(/[`*_~]/g, '')
+        .replace(/\{[^}]*\}\s*$/g, '')
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-');
+
+    const wanted = slugify(query);
+    return refs.find((ref) => slugify(ref.section.title) === wanted) ?? null;
+  }
+
+  private sectionTreeContainsId(section: Section, sectionId: string): boolean {
+    if (section.id === sectionId) return true;
+    return section.children.some((child) => this.sectionTreeContainsId(child, sectionId));
+  }
+
+  private getRuntimeSectionSummary(selector: number | string): {
+    sectionId: string;
+    sectionIndex: number;
+    parentId: string | null;
+    parentIndex: number | null;
+    title: string;
+    level: number;
+    content: string;
+    childCount: number;
+    timedMs?: number;
+    directive?: Record<string, any>;
+  } | null {
+    const ref = this.resolveRuntimeSectionRef(selector);
+    if (!ref) return null;
+
+    return {
+      sectionId: ref.sectionId,
+      sectionIndex: ref.sectionIndex,
+      parentId: ref.parentId,
+      parentIndex: ref.parentIndex,
+      title: ref.section.title,
+      level: ref.section.level,
+      content: ref.section.content,
+      childCount: ref.section.children.length,
+      ...(ref.section.timedMs !== undefined ? { timedMs: ref.section.timedMs } : {}),
+      ...(ref.section.directive ? { directive: { ...ref.section.directive } } : {}),
+    };
+  }
+
+  private getRuntimeSectionSummaries(): Array<{
+    sectionId: string;
+    sectionIndex: number;
+    parentId: string | null;
+    parentIndex: number | null;
+    title: string;
+    level: number;
+    content: string;
+    childCount: number;
+    timedMs?: number;
+    directive?: Record<string, any>;
+  }> {
+    return this.getRuntimeSectionRefs().map((ref) => ({
+      sectionId: ref.sectionId,
+      sectionIndex: ref.sectionIndex,
+      parentId: ref.parentId,
+      parentIndex: ref.parentIndex,
+      title: ref.section.title,
+      level: ref.section.level,
+      content: ref.section.content,
+      childCount: ref.section.children.length,
+      ...(ref.section.timedMs !== undefined ? { timedMs: ref.section.timedMs } : {}),
+      ...(ref.section.directive ? { directive: { ...ref.section.directive } } : {}),
+    }));
+  }
+
+  private insertRuntimeSection(
+    sectionInput: Partial<Section>,
+    options?: { parent?: number | string | null; index?: number }
+  ): { sectionId: string; sectionIndex: number } | null {
+    const parentRef = options?.parent === undefined || options?.parent === null
+      ? null
+      : this.resolveRuntimeSectionRef(options.parent);
+    if (options?.parent !== undefined && options?.parent !== null && !parentRef) {
+      return null;
+    }
+
+    const nextSection = this.createRuntimeSectionFromInput(
+      sectionInput,
+      parentRef ? parentRef.section.level + 1 : (Number.isFinite(sectionInput.level as number) ? Number(sectionInput.level) : 1),
+    );
+    this.setRuntimeSectionSubtreeLevels(nextSection, parentRef ? parentRef.section.level + 1 : nextSection.level);
+
+    const siblings = parentRef ? parentRef.section.children : this.runtimeSectionStore.sections;
+    const rawIndex = Number(options?.index);
+    const insertIndex = Number.isFinite(rawIndex)
+      ? Math.max(0, Math.min(siblings.length, Math.floor(rawIndex)))
+      : siblings.length;
+    siblings.splice(insertIndex, 0, nextSection);
+
+    this.applyRuntimeSectionStoreMutation('insert section');
+    const inserted = nextSection.id ? this.resolveRuntimeSectionRef(nextSection.id) : null;
+    return inserted ? { sectionId: inserted.sectionId, sectionIndex: inserted.sectionIndex } : null;
+  }
+
+  private updateRuntimeSection(selector: number | string, patch: Partial<Section>): boolean {
+    const ref = this.resolveRuntimeSectionRef(selector);
+    if (!ref) return false;
+
+    if (typeof patch.id === 'string') {
+      ref.section.id = patch.id.trim() || undefined;
+    }
+    if (typeof patch.title === 'string' && patch.title.trim().length > 0) {
+      ref.section.title = patch.title.trim();
+    }
+    if (typeof patch.content === 'string') {
+      ref.section.content = patch.content;
+    }
+    if (patch.timedMs === undefined) {
+      // no-op
+    } else if (patch.timedMs === null || !Number.isFinite(patch.timedMs as number)) {
+      delete ref.section.timedMs;
+    } else {
+      ref.section.timedMs = Number(patch.timedMs);
+    }
+    if (patch.directive === undefined) {
+      // no-op
+    } else if (patch.directive && typeof patch.directive === 'object' && !Array.isArray(patch.directive)) {
+      ref.section.directive = { ...patch.directive };
+    } else {
+      delete ref.section.directive;
+    }
+    if (Array.isArray(patch.children)) {
+      ref.section.children = patch.children.map((child) =>
+        this.createRuntimeSectionFromInput(child, ref.section.level + 1)
+      );
+      for (const child of ref.section.children) {
+        this.setRuntimeSectionSubtreeLevels(child, ref.section.level + 1);
+      }
+    }
+
+    this.applyRuntimeSectionStoreMutation('update section');
+    return true;
+  }
+
+  private removeRuntimeSection(selector: number | string): boolean {
+    const ref = this.resolveRuntimeSectionRef(selector);
+    if (!ref) return false;
+
+    ref.siblings.splice(ref.siblingIndex, 1);
+    this.applyRuntimeSectionStoreMutation('remove section');
+    return true;
+  }
+
+  private moveRuntimeSection(
+    selector: number | string,
+    options?: { parent?: number | string | null; index?: number }
+  ): { sectionId: string; sectionIndex: number } | null {
+    const ref = this.resolveRuntimeSectionRef(selector);
+    if (!ref) return null;
+
+    const targetParentRef = options?.parent === undefined || options?.parent === null
+      ? null
+      : this.resolveRuntimeSectionRef(options.parent);
+    if (options?.parent !== undefined && options?.parent !== null && !targetParentRef) {
+      return null;
+    }
+    if (targetParentRef && this.sectionTreeContainsId(ref.section, targetParentRef.sectionId)) {
+      return null;
+    }
+
+    const targetSiblings = targetParentRef ? targetParentRef.section.children : this.runtimeSectionStore.sections;
+    const rawIndex = Number(options?.index);
+    let insertIndex = Number.isFinite(rawIndex)
+      ? Math.max(0, Math.min(targetSiblings.length, Math.floor(rawIndex)))
+      : targetSiblings.length;
+
+    ref.siblings.splice(ref.siblingIndex, 1);
+    if (ref.siblings === targetSiblings && insertIndex > ref.siblingIndex) {
+      insertIndex -= 1;
+    }
+
+    this.setRuntimeSectionSubtreeLevels(ref.section, targetParentRef ? targetParentRef.section.level + 1 : ref.section.level);
+    targetSiblings.splice(insertIndex, 0, ref.section);
+
+    this.applyRuntimeSectionStoreMutation('move section');
+    const moved = ref.section.id ? this.resolveRuntimeSectionRef(ref.section.id) : null;
+    return moved ? { sectionId: moved.sectionId, sectionIndex: moved.sectionIndex } : null;
+  }
+
+  private getWorldsTimelineRuntimeState(track: CompiledWorldsTimeline): WorldsTimelineRuntimeState {
+    const key = track as unknown as object;
+    const existing = this.worldsTimelineRuntimeState.get(key);
+    if (existing) return existing;
+    const next: WorldsTimelineRuntimeState = {
+      baseByKey: new Map(),
+      lastAppliedByKey: new Map(),
+    };
+    this.worldsTimelineRuntimeState.set(key, next);
+    return next;
+  }
+
+  private resetWorldsTimelineRuntimeState(track: CompiledWorldsTimeline): void {
+    this.worldsTimelineRuntimeState.delete(track as unknown as object);
+  }
+
+  private captureWorldsTimelineBaseState(selector: WorldsTimelineSectionSelector): WorldsTimelineBaseState | null {
+    const ref = this.resolveRuntimeSectionRef(selector);
+    if (!ref) return null;
+    const layout = this.getSectionLayoutByIndex(ref.sectionIndex);
+    return {
+      selector,
+      title: ref.section.title,
+      content: ref.section.content,
+      visible: layout?.visible ?? true,
+      autoPositioned: layout?.autoPositioned ?? false,
+      position: layout ? { ...layout.transform.position } : { x: 0, y: 0, z: 0 },
+      rotation: layout
+        ? {
+            x: (layout.transform.rotation.x * 180) / Math.PI,
+            y: (layout.transform.rotation.y * 180) / Math.PI,
+            z: (layout.transform.rotation.z * 180) / Math.PI,
+          }
+        : { x: 0, y: 0, z: 0 },
+      scale: layout ? { ...layout.transform.scale } : { x: 1, y: 1, z: 1 },
+    };
+  }
+
+  private buildWorldsTimelineEffectiveState(
+    base: WorldsTimelineBaseState,
+    patch: WorldsTimelinePatch | undefined,
+  ): WorldsTimelineEffectiveState {
+    return {
+      selector: base.selector,
+      title: patch?.title ?? base.title,
+      content: patch?.content ?? base.content,
+      visible: patch?.visible ?? base.visible,
+      autoPositioned: base.autoPositioned,
+      position: {
+        x: patch?.position?.x ?? base.position.x,
+        y: patch?.position?.y ?? base.position.y,
+        z: patch?.position?.z ?? base.position.z,
+      },
+      rotation: {
+        x: patch?.rotation?.x ?? base.rotation.x,
+        y: patch?.rotation?.y ?? base.rotation.y,
+        z: patch?.rotation?.z ?? base.rotation.z,
+      },
+      scale: {
+        x: patch?.scale?.x ?? base.scale.x,
+        y: patch?.scale?.y ?? base.scale.y,
+        z: patch?.scale?.z ?? base.scale.z,
+      },
+    };
+  }
+
+  private worldsTimelineStatesEqual(a: WorldsTimelineEffectiveState | undefined, b: WorldsTimelineEffectiveState): boolean {
+    if (!a) return false;
+    return (
+      a.title === b.title &&
+      a.content === b.content &&
+      a.visible === b.visible &&
+      a.position.x === b.position.x &&
+      a.position.y === b.position.y &&
+      a.position.z === b.position.z &&
+      a.rotation.x === b.rotation.x &&
+      a.rotation.y === b.rotation.y &&
+      a.rotation.z === b.rotation.z &&
+      a.scale.x === b.scale.x &&
+      a.scale.y === b.scale.y &&
+      a.scale.z === b.scale.z
+    );
+  }
+
+  private applyWorldsTimeline(track: CompiledWorldsTimeline, timeSec: number): WorldsTimelineStateEntry[] {
+    const runtime = this.getWorldsTimelineRuntimeState(track);
+    const nextState = stateAtWorldsTimeline(track, timeSec);
+    const nextByKey = new Map(nextState.map((entry) => [getWorldsTimelineSelectorKey(entry.section), entry]));
+
+    for (const selector of track.sections) {
+      const key = getWorldsTimelineSelectorKey(selector);
+      let base = runtime.baseByKey.get(key);
+      if (!base) {
+        const captured = this.captureWorldsTimelineBaseState(selector);
+        if (captured) {
+          runtime.baseByKey.set(key, captured);
+          base = captured;
+        }
+      }
+      if (!base) continue;
+
+      const activePatch = nextByKey.get(key)?.patch;
+      const desired = this.buildWorldsTimelineEffectiveState(base, activePatch);
+      const previous = runtime.lastAppliedByKey.get(key);
+      if (!previous && !activePatch) {
+        runtime.lastAppliedByKey.set(key, desired);
+        continue;
+      }
+      if (this.worldsTimelineStatesEqual(previous, desired)) continue;
+
+      const contentPatch: Partial<Section> = {};
+      if (!previous || previous.title !== desired.title) contentPatch.title = desired.title;
+      if (!previous || previous.content !== desired.content) contentPatch.content = desired.content;
+      if (Object.keys(contentPatch).length > 0) {
+        this.updateRuntimeSection(selector, contentPatch);
+      }
+
+      const ref = this.resolveRuntimeSectionRef(selector);
+      if (!ref) continue;
+      const layout = this.getSectionLayoutByIndex(ref.sectionIndex);
+      if (!layout) continue;
+
+      if (!previous || previous.visible !== desired.visible) {
+        layout.visible = desired.visible;
+        this.getOrCreateSectionRuntimeOverride(layout.sectionId).visible = desired.visible;
+      }
+
+      if (
+        !previous ||
+        previous.position.x !== desired.position.x ||
+        previous.position.y !== desired.position.y ||
+        previous.position.z !== desired.position.z ||
+        previous.rotation.x !== desired.rotation.x ||
+        previous.rotation.y !== desired.rotation.y ||
+        previous.rotation.z !== desired.rotation.z ||
+        previous.scale.x !== desired.scale.x ||
+        previous.scale.y !== desired.scale.y ||
+        previous.scale.z !== desired.scale.z
+      ) {
+        layout.transform.position = { ...desired.position };
+        layout.transform.rotation = {
+          x: (desired.rotation.x * Math.PI) / 180,
+          y: (desired.rotation.y * Math.PI) / 180,
+          z: (desired.rotation.z * Math.PI) / 180,
+        };
+        layout.transform.scale = { ...desired.scale };
+        const hasTransformPatch = !!(activePatch?.position || activePatch?.rotation || activePatch?.scale);
+        layout.autoPositioned = hasTransformPatch ? false : base.autoPositioned;
+
+        const override = this.getOrCreateSectionRuntimeOverride(layout.sectionId);
+        if (activePatch?.position) override.position = { ...desired.position };
+        else delete override.position;
+        if (activePatch?.rotation) override.rotationDegrees = { ...desired.rotation };
+        else delete override.rotationDegrees;
+        if (activePatch?.scale) override.scale = { ...desired.scale };
+        else delete override.scale;
+      }
+
+      runtime.lastAppliedByKey.set(key, desired);
+    }
+
+    return nextState;
   }
 
   /**
@@ -6400,12 +7412,10 @@ ${exportVars}
               for (const [docId, docData] of this.documents.entries()) {
                 const anyDocData = docData as any;
                 if (anyDocData._parsedMarkdown?.sections) {
-                  const layouts = createSection3DLayouts(anyDocData._parsedMarkdown.sections, this.worldsConfig);
-                  this.section3DLayouts = layouts;
-                  this.applyPending3DCameraFocus();
-                  this.applyWorldsLayoutCallback(anyDocData._parsedMarkdown.sections);
-                  this.applyPendingWorldsOverview();
-                  console.log(`✓ Created ${layouts.length} 3D section layouts for document ${docId}`);
+                  if (this.runtimeSectionStore.order.length === 0) {
+                    this.initializeRuntimeSectionStore(anyDocData._parsedMarkdown.sections);
+                  }
+                  this.compileWorldsLayoutsFromRuntimeSectionStore(`deferred init for document ${docId}`);
                 } else {
                   // (debug log removed)
                 }
@@ -6519,7 +7529,11 @@ ${exportVars}
           if (pick) {
             const linkHit = this.hitTest3DLinkAtUV(pick.layout.sectionIndex, pick.u, pick.v);
             if (linkHit) {
-              this.hovered3DLink = { sectionIndex: pick.layout.sectionIndex, linkIndex: linkHit.linkIndex };
+                this.hovered3DLink = {
+                  sectionId: pick.layout.sectionId,
+                  sectionIndex: pick.layout.sectionIndex,
+                  linkIndex: linkHit.linkIndex,
+                };
             }
           }
 
@@ -7043,7 +8057,7 @@ ${exportVars}
 
       // Re-rasterize when the active hovered/focused link changes for this card.
       if (layout.texture) {
-        const existing = this.sectionTextureCache.get(layout.sectionIndex);
+        const existing = this.sectionTextureCache.get(layout.sectionId);
         if (existing && existing.activeLinkIndex === activeLinkIndex) {
           const prevW = layout.worldWidth;
           const prevH = layout.worldHeight;
@@ -7073,8 +8087,8 @@ ${exportVars}
       let widthPx = Math.max(minW, Math.min(maxW, desiredW));
       let heightPx = Math.max(minH, Math.min(maxH, desiredH));
 
-      const markdown = buildWorldsCardMarkdown(layout);
-      const nodes = parseMarkdownLite(markdown);
+      const contentOverride = this.getWorldsSectionContentOverride(layout.sectionId);
+      const nodes = parseMarkdownLite(buildWorldsCardMarkdown(layout, contentOverride ?? undefined));
 
       // Overflow resize modes: do a cheap layout pass to compute required pixel
       // size from the actual rendered markdown content.
@@ -7344,9 +8358,9 @@ ${exportVars}
       }
 
       layout.texture = texture;
-        this.sectionTextureCache.set(layout.sectionIndex, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
-        this.sectionLinkRegionsCache.set(layout.sectionIndex, scaledLinkRegions);
-        this.sectionWidgetPlacementsCache.set(layout.sectionIndex, scaledWidgetPlacements);
+      this.sectionTextureCache.set(layout.sectionId, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
+      this.sectionLinkRegionsCache.set(layout.sectionId, scaledLinkRegions);
+      this.sectionWidgetPlacementsCache.set(layout.sectionId, scaledWidgetPlacements);
 
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }
@@ -7380,7 +8394,7 @@ ${exportVars}
   }
 
   private invalidate3DSectionTexture(sectionIndex: number): void {
-    const layout = this.section3DLayouts.find((item) => item.sectionIndex === sectionIndex);
+    const layout = this.getSectionLayoutByIndex(sectionIndex);
     if (!layout) return;
 
     if (layout.texture) {
@@ -7393,9 +8407,9 @@ ${exportVars}
     }
 
     layout.highlightUvRect = undefined;
-    this.sectionTextureCache.delete(sectionIndex);
-    this.sectionLinkRegionsCache.delete(sectionIndex);
-    this.sectionWidgetPlacementsCache.delete(sectionIndex);
+    this.sectionTextureCache.delete(layout.sectionId);
+    this.sectionLinkRegionsCache.delete(layout.sectionId);
+    this.sectionWidgetPlacementsCache.delete(layout.sectionId);
     this.worldsAutoLayoutCache = null;
   }
 
@@ -7829,7 +8843,8 @@ ${exportVars}
       let widthPx = Math.max(minW, Math.min(maxW, desiredW));
       let heightPx = Math.max(minH, Math.min(maxH, desiredH));
 
-      const markdown = buildWorldsCardMarkdown(layout);
+      const contentOverride = this.getWorldsSectionContentOverride(layout.sectionId);
+      const markdown = buildWorldsCardMarkdown(layout, contentOverride ?? undefined);
       const nodes = parseMarkdownLite(markdown);
       const style = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
 
@@ -7877,7 +8892,7 @@ ${exportVars}
       const textureWidthPx = Math.max(1, Math.round(widthPx * textureScale));
       const textureHeightPx = Math.max(1, Math.round(heightPx * textureScale));
 
-      const existing = this.sectionTextureCache.get(layout.sectionIndex);
+      const existing = this.sectionTextureCache.get(layout.sectionId);
       if (
         existing &&
         existing.width === textureWidthPx &&
@@ -7886,7 +8901,7 @@ ${exportVars}
         layout.texture
       ) {
         // Texture already matches current size; ensure link regions are present.
-        if (!this.sectionLinkRegionsCache.has(layout.sectionIndex) || !this.sectionWidgetPlacementsCache.has(layout.sectionIndex)) {
+        if (!this.sectionLinkRegionsCache.has(layout.sectionId) || !this.sectionWidgetPlacementsCache.has(layout.sectionId)) {
           const style = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
           const result = layoutMarkdownDocument(
             nodes,
@@ -7912,8 +8927,8 @@ ${exportVars}
             }
             this.translateWidgetPlacements(result.widgetPlacements, dx, dy);
           }
-          this.sectionLinkRegionsCache.set(layout.sectionIndex, this.scaleLinkRegions(result.linkRegions, textureScale));
-          this.sectionWidgetPlacementsCache.set(layout.sectionIndex, this.scaleWidgetPlacements(result.widgetPlacements, textureScale));
+          this.sectionLinkRegionsCache.set(layout.sectionId, this.scaleLinkRegions(result.linkRegions, textureScale));
+          this.sectionWidgetPlacementsCache.set(layout.sectionId, this.scaleWidgetPlacements(result.widgetPlacements, textureScale));
         }
         continue;
       }
@@ -7972,8 +8987,8 @@ ${exportVars}
         }
       }
 
-      this.sectionLinkRegionsCache.set(layout.sectionIndex, this.scaleLinkRegions(result.linkRegions, textureScale));
-      this.sectionWidgetPlacementsCache.set(layout.sectionIndex, this.scaleWidgetPlacements(result.widgetPlacements, textureScale));
+      this.sectionLinkRegionsCache.set(layout.sectionId, this.scaleLinkRegions(result.linkRegions, textureScale));
+      this.sectionWidgetPlacementsCache.set(layout.sectionId, this.scaleWidgetPlacements(result.widgetPlacements, textureScale));
 
       // Replay ops into UI renderer and render into this section texture.
       ui.clearCommands();
@@ -8014,7 +9029,7 @@ ${exportVars}
       ui.flushTo(texture, textureWidthPx, textureHeightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
 
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionIndex, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
+      this.sectionTextureCache.set(layout.sectionId, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
 
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }
@@ -8033,7 +9048,7 @@ ${exportVars}
     // Best: when we have actual texture dimensions for this section, derive a
     // per-card factor directly from widthPx/heightPx.
     if (layout) {
-      const dims = this.sectionTextureCache.get(layout.sectionIndex);
+      const dims = this.sectionTextureCache.get(layout.sectionId);
       if (dims && dims.width > 0 && dims.height > 0 && layout.width > 0 && layout.height > 0) {
         const pixelAspect = dims.width / dims.height;
         const logicalAspect = layout.width / layout.height;
@@ -8149,6 +9164,8 @@ ${exportVars}
         this.recordUserHandlerError('update', error);
       }
     }
+
+    this.syncHiddenTextInputBridge(false);
   }
 
   /**
@@ -8341,6 +9358,163 @@ ${exportVars}
     // Ensure canvas can receive keyboard events
     this.canvas.tabIndex = 0;
     this.canvas.focus();
+
+    this.setupHiddenTextInputBridge();
+  }
+
+  private setupHiddenTextInputBridge(): void {
+    if (typeof document === 'undefined' || this.hiddenTextInput) return;
+
+    const input = document.createElement('textarea');
+    input.setAttribute('aria-label', 'Storie hidden text input');
+    input.setAttribute('autocorrect', 'off');
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('autocapitalize', 'none');
+    input.wrap = 'off';
+    input.rows = 1;
+    input.spellcheck = false;
+    input.tabIndex = -1;
+    input.style.position = 'fixed';
+    input.style.left = '0';
+    input.style.top = '0';
+    input.style.width = '1px';
+    input.style.height = '1px';
+    input.style.opacity = '0';
+    input.style.padding = '0';
+    input.style.border = '0';
+    input.style.margin = '0';
+    input.style.fontSize = '16px';
+    input.style.pointerEvents = 'none';
+    input.style.resize = 'none';
+    input.style.zIndex = '-1';
+
+    input.addEventListener('keydown', (e) => {
+      const target = this.getFocusedGUITextInput();
+      if (!target) return;
+      if (this.shouldDispatchHiddenTextInputKeyEvent(e, target)) {
+        this.handleKeyEvent(e, 'press');
+        this.syncHiddenTextInputBridge(false);
+      }
+    });
+
+    input.addEventListener('keyup', (e) => {
+      const target = this.getFocusedGUITextInput();
+      if (!target) return;
+      if (this.shouldDispatchHiddenTextInputKeyEvent(e, target)) {
+        this.handleKeyEvent(e, 'release');
+      }
+    });
+
+    input.addEventListener('input', () => {
+      this.handleHiddenTextInputValueChange();
+    });
+
+    document.body.appendChild(input);
+    this.hiddenTextInput = input;
+  }
+
+  private getFocusedGUITextInput(): TextInputCapable | null {
+    const guiAPI = (this.api as any)?.gui;
+    const system = guiAPI?.getSystem?.();
+    return system && typeof system.getFocusedTextInput === 'function'
+      ? system.getFocusedTextInput()
+      : null;
+  }
+
+  private shouldDispatchHiddenTextInputKeyEvent(e: KeyboardEvent, target: TextInputCapable): boolean {
+    const key = String(e.key ?? '');
+    const lower = key.toLowerCase();
+    const options = target.getTextInputOptions();
+
+    if (e.ctrlKey || e.metaKey || e.altKey) {
+      return lower !== 'c' && lower !== 'v' && lower !== 'x';
+    }
+
+    if (key === 'Enter') {
+      return !options.multiline;
+    }
+
+    return key === 'Tab'
+      || key === 'Escape'
+      || key === 'Home'
+      || key === 'End'
+      || key === 'PageUp'
+      || key === 'PageDown'
+      || key === 'ArrowLeft'
+      || key === 'ArrowRight'
+      || key === 'ArrowUp'
+      || key === 'ArrowDown';
+  }
+
+  private handleHiddenTextInputValueChange(): void {
+    if (this.hiddenTextInputSyncing) return;
+    const input = this.hiddenTextInput;
+    const target = this.getFocusedGUITextInput();
+    if (!input || !target) return;
+
+    const options = target.getTextInputOptions();
+    const nextValue = options.multiline
+      ? String(input.value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+      : normalizeSingleLineText(input.value ?? '');
+    const currentValue = target.getValue();
+
+    if (nextValue !== currentValue) {
+      target.replaceTextRange(0, currentValue.length, nextValue);
+    }
+
+    const selectionStart = Number.isFinite(input.selectionStart as number) ? (input.selectionStart ?? nextValue.length) : nextValue.length;
+    const selectionEnd = Number.isFinite(input.selectionEnd as number) ? (input.selectionEnd ?? selectionStart) : selectionStart;
+    const direction = (input.selectionDirection === 'forward' || input.selectionDirection === 'backward')
+      ? input.selectionDirection
+      : 'none';
+    target.setSelectionRange(selectionStart, selectionEnd, direction);
+    this.syncHiddenTextInputBridge(false);
+  }
+
+  private syncHiddenTextInputBridge(preferFocus: boolean = false): void {
+    const input = this.hiddenTextInput;
+    if (!input || typeof document === 'undefined') return;
+
+    const target = this.getFocusedGUITextInput();
+    if (!target) {
+      if (document.activeElement === input) {
+        input.blur();
+      }
+      return;
+    }
+
+    const options = target.getTextInputOptions();
+    const value = options.multiline ? target.getValue() : normalizeSingleLineText(target.getValue());
+    const selection = target.getSelectionRange();
+
+    this.hiddenTextInputSyncing = true;
+    try {
+      if (input.value !== value) {
+        input.value = value;
+      }
+      input.rows = options.multiline ? 2 : 1;
+      input.spellcheck = options.spellcheck;
+      input.autocapitalize = options.autoCapitalize === 'off' ? 'none' : options.autoCapitalize;
+      input.setAttribute('autocorrect', options.autoCorrect ? 'on' : 'off');
+      (input as any).inputMode = options.inputMode;
+      (input as any).enterKeyHint = options.enterKeyHint;
+
+      const start = Math.max(0, Math.min(value.length, selection.start | 0));
+      const end = Math.max(0, Math.min(value.length, selection.end | 0));
+      if (input.selectionStart !== start || input.selectionEnd !== end || input.selectionDirection !== (selection.direction ?? 'none')) {
+        input.setSelectionRange(start, end, selection.direction ?? 'none');
+      }
+
+      if (preferFocus && document.activeElement !== input) {
+        try {
+          input.focus({ preventScroll: true });
+        } catch {
+          input.focus();
+        }
+      }
+    } finally {
+      this.hiddenTextInputSyncing = false;
+    }
   }
 
   private beginTrustedAudioGesture(): void {
@@ -8534,8 +9708,17 @@ ${exportVars}
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
           if (linkHit) {
             handledBy3D = true;
-            this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
-            this.activate3DLink(linkHit.region.url, picked.layout.sectionIndex, linkHit.linkIndex);
+            this.focused3DLink = {
+              sectionId: picked.layout.sectionId,
+              sectionIndex: picked.layout.sectionIndex,
+              linkIndex: linkHit.linkIndex,
+            };
+            this.activate3DLink(
+              linkHit.region.url,
+              picked.layout.sectionId,
+              picked.layout.sectionIndex,
+              linkHit.linkIndex,
+            );
           } else if (this.worldsConfig.sectionClickFocusEnabled !== false) {
             handledBy3D = true;
             const style = this.lastApplied3DCameraFocus;
@@ -8584,6 +9767,8 @@ ${exportVars}
       }
 
       if (handledBy3D || dispatchedToDoc || this.worldsEnabled) e.preventDefault();
+
+      this.syncHiddenTextInputBridge(action === 'press');
     } finally {
       if (isGesturePress) this.endTrustedAudioGesture();
     }
@@ -8824,6 +10009,8 @@ ${exportVars}
       if (handledBy3D || inlineWidgetHandled || doc?.handlers?.input) {
         e.preventDefault();
       }
+
+      this.syncHiddenTextInputBridge(action === 'press');
     } finally {
       if (isGesturePress) this.endTrustedAudioGesture();
     }
@@ -8873,8 +10060,17 @@ ${exportVars}
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
           if (linkHit) {
-            this.focused3DLink = { sectionIndex: picked.layout.sectionIndex, linkIndex: linkHit.linkIndex };
-            this.activate3DLink(linkHit.region.url);
+            this.focused3DLink = {
+              sectionId: picked.layout.sectionId,
+              sectionIndex: picked.layout.sectionIndex,
+              linkIndex: linkHit.linkIndex,
+            };
+            this.activate3DLink(
+              linkHit.region.url,
+              picked.layout.sectionId,
+              picked.layout.sectionIndex,
+              linkHit.linkIndex,
+            );
           } else if (this.worldsConfig.sectionClickFocusEnabled !== false) {
             // Preserve the caller's preferred focus style and zoom (fill).
             // This makes demo-defined camera framing “sticky” across navigation.
@@ -8930,6 +10126,7 @@ ${exportVars}
       }
 
       e.preventDefault();
+      this.syncHiddenTextInputBridge(action === 'press');
     } finally {
       if (isGesturePress) this.endTrustedAudioGesture();
     }
@@ -9020,8 +10217,10 @@ ${exportVars}
     u: number,
     v: number
   ): { linkIndex: number; region: LinkRegion } | null {
-    const dims = this.sectionTextureCache.get(sectionIndex);
-    const regions = this.sectionLinkRegionsCache.get(sectionIndex);
+    const sectionKey = this.getSectionCacheKey(sectionIndex);
+    if (!sectionKey) return null;
+    const dims = this.sectionTextureCache.get(sectionKey);
+    const regions = this.sectionLinkRegionsCache.get(sectionKey);
     if (!dims || !regions || regions.length === 0) return null;
 
     const xPx = u * dims.width;
@@ -9060,10 +10259,11 @@ ${exportVars}
   private activateFocused3DLink(): void {
     const focused = this.focused3DLink;
     if (!focused) return;
-    const regions = this.sectionLinkRegionsCache.get(focused.sectionIndex);
+    const sectionKey = focused.sectionId;
+    const regions = sectionKey ? this.sectionLinkRegionsCache.get(sectionKey) : null;
     const region = regions ? regions[focused.linkIndex] : undefined;
     if (!region) return;
-    this.activate3DLink(region.url, focused.sectionIndex, focused.linkIndex);
+    this.activate3DLink(region.url, focused.sectionId, focused.sectionIndex, focused.linkIndex);
   }
 
   private move3DLinkFocus(delta: number): void {
@@ -9076,19 +10276,29 @@ ${exportVars}
     const cur = this.focused3DLink;
     let idx = -1;
     if (cur) {
-      idx = links.findIndex(l => l.sectionIndex === cur.sectionIndex && l.linkIndex === cur.linkIndex);
+      idx = links.findIndex(l => l.sectionId === cur.sectionId && l.linkIndex === cur.linkIndex);
     }
 
     const next = ((idx >= 0 ? idx : 0) + delta + links.length) % links.length;
     const sel = links[next];
-    this.focused3DLink = { sectionIndex: sel.sectionIndex, linkIndex: sel.linkIndex };
+    this.focused3DLink = {
+      sectionId: sel.sectionId,
+      sectionIndex: sel.sectionIndex,
+      linkIndex: sel.linkIndex,
+    };
   }
 
-  private activate3DLink(url: string, sectionIndex?: number | null, linkIndex?: number | null): void {
+  private activate3DLink(
+    url: string,
+    sectionId?: string | null,
+    sectionIndex?: number | null,
+    linkIndex?: number | null,
+  ): void {
     if (!url) return;
 
     this.activated3DLinksQueue.push({
       url,
+      sectionId: typeof sectionId === 'string' && sectionId ? sectionId : null,
       sectionIndex: typeof sectionIndex === 'number' ? sectionIndex : null,
       linkIndex: typeof linkIndex === 'number' ? linkIndex : null,
     });
@@ -9230,6 +10440,7 @@ ${exportVars}
     if (req.kind === 'focus') {
       this.lastApplied3DCameraFocus = {
         kind: 'focus',
+        sectionId: layout.sectionId,
         sectionIndex: layout.sectionIndex,
         distance: req.distance,
         ...(keepRotation ? { keepRotation: true } : {}),
@@ -9240,6 +10451,7 @@ ${exportVars}
     } else {
       this.lastApplied3DCameraFocus = {
         kind: 'fit',
+        sectionId: layout.sectionId,
         sectionIndex: layout.sectionIndex,
         fill: req.fill,
         ...(keepRotation ? { keepRotation: true } : {}),
@@ -9289,7 +10501,8 @@ ${exportVars}
         : 'clip';
 
     // Derive markdown content to measure.
-    const markdown = buildWorldsCardMarkdown(layout);
+    const contentOverride = this.getWorldsSectionContentOverride(layout.sectionId);
+    const markdown = buildWorldsCardMarkdown(layout, contentOverride ?? undefined);
     const nodes = parseMarkdownLite(markdown);
 
     // We intentionally mimic the sizing logic in ensure3DSectionTextures*() as
@@ -9416,7 +10629,8 @@ ${exportVars}
     if (!this.worldsEnabled || !this.camera3D) return;
     if (!this.lastApplied3DCameraFocus) return;
 
-    const layout = this.section3DLayouts.find(l => l.sectionIndex === this.lastApplied3DCameraFocus!.sectionIndex);
+    const layout = this.getSectionLayoutById(this.lastApplied3DCameraFocus.sectionId)
+      ?? this.section3DLayouts.find(l => l.sectionIndex === this.lastApplied3DCameraFocus!.sectionIndex);
     if (!layout) return;
 
     if (this.lastApplied3DCameraFocus.kind === 'focus') {
@@ -9469,23 +10683,26 @@ ${exportVars}
   }
 
   private setCurrent3DSection(sectionIndex: number): void {
-    if (this.current3DSectionIndex === sectionIndex) return;
-    const previousSectionIndex = this.current3DSectionIndex;
+    const nextLayout = this.getSectionLayoutByIndex(sectionIndex);
+    if (!nextLayout) return;
+    if (this.current3DSectionId === nextLayout.sectionId) return;
+    const previousSectionIndex = this.getResolvedCurrent3DSectionIndex();
     this.clearWorldsInlineWidgets();
-    this.current3DSectionIndex = sectionIndex;
+    this.current3DSectionId = nextLayout.sectionId;
+    this.current3DSectionIndex = nextLayout.sectionIndex;
 
     if (typeof previousSectionIndex === 'number' && Number.isFinite(previousSectionIndex)) {
       this.invalidate3DSectionTexture(previousSectionIndex);
     }
-    this.invalidate3DSectionTexture(sectionIndex);
+    this.invalidate3DSectionTexture(nextLayout.sectionIndex);
 
     const guiAPI = this.api?.gui as any;
     if (guiAPI && typeof guiAPI.syncSectionBindings === 'function') {
-      guiAPI.syncSectionBindings(sectionIndex);
+      guiAPI.syncSectionBindings(nextLayout.sectionIndex);
     }
 
     // Shared scene state: new section => reset reveal step.
-    this.sceneState.sectionIndex = sectionIndex;
+    this.sceneState.sectionIndex = nextLayout.sectionIndex;
     this.sceneState.revealStep = 0;
 
     // Host: broadcast section changes.
@@ -9493,14 +10710,14 @@ ${exportVars}
     const h = this.hostSync;
     if (h && h.getSessionInfo().role === 'host') {
       const fill = this.lastApplied3DCameraFocus?.kind === 'fit' ? this.lastApplied3DCameraFocus.fill : 0.9;
-      h.sendGotoSectionFit(sectionIndex, fill);
-      h.sendSceneFit(sectionIndex, this.sceneState.revealStep, fill);
+      h.sendGotoSectionFit(nextLayout.sectionIndex, fill);
+      h.sendSceneFit(nextLayout.sectionIndex, this.sceneState.revealStep, fill);
     }
 
-    this.runSectionEnterHandlers(sectionIndex);
+    this.runSectionEnterHandlers(nextLayout.sectionIndex);
 
     if (guiAPI && typeof guiAPI.syncSectionBindings === 'function') {
-      guiAPI.syncSectionBindings(sectionIndex);
+      guiAPI.syncSectionBindings(nextLayout.sectionIndex);
     }
 
     this.syncWorldsInlineWidgets();
@@ -9525,26 +10742,7 @@ ${exportVars}
     if (typeof selector === 'number' && Number.isFinite(selector)) {
       return selector;
     }
-    if (typeof selector !== 'string') return null;
-    const query = selector.trim();
-    if (!query) return null;
-
-    const slugify = (s: string) =>
-      s
-        .toLowerCase()
-        .trim()
-        .replace(/[`*_~]/g, '')
-        .replace(/\{[^}]*\}\s*$/g, '')
-        .replace(/[^a-z0-9\s-]/g, '')
-        .replace(/\s+/g, '-')
-        .replace(/-+/g, '-');
-
-    const want = slugify(query);
-    const exact = this.section3DLayouts.find(l => {
-      const title = (l.displayTitle || l.sectionTitle || '').trim();
-      return slugify(title) === want;
-    });
-    return exact ? exact.sectionIndex : null;
+    return this.resolveRuntimeSectionRef(selector)?.sectionIndex ?? null;
   }
 
   private getOutlineNodes(): OutlineNode[] {
@@ -9577,7 +10775,7 @@ ${exportVars}
       node.lastDescendantIndex = nodes.length - 1;
     };
 
-    const roots: any[] = Array.isArray((d as any).sections) ? (d as any).sections : [];
+    const roots = this.getReadableSectionRoots();
     for (const s of roots) {
       walk(s, null);
     }
@@ -9632,9 +10830,12 @@ ${exportVars}
       }
     };
 
+    const runtimeSections = this.runtimeSectionStore.sections;
     const doc = sections
       ? { sections }
-      : ((this.getActiveDocument() as any)?.sections ? { sections: (this.getActiveDocument() as any).sections } : null);
+      : (runtimeSections.length > 0
+          ? { sections: runtimeSections }
+          : ((this.getActiveDocument() as any)?.sections ? { sections: (this.getActiveDocument() as any).sections } : null));
     if (!doc?.sections) return;
     walk(doc.sections);
 
@@ -9715,6 +10916,7 @@ ${exportVars}
   }
 
   private getVisible3DLinks(): Array<{
+    sectionId: string;
     sectionIndex: number;
     linkIndex: number;
     region: LinkRegion;
@@ -9733,6 +10935,7 @@ ${exportVars}
     const viewProj = mat4Multiply(proj, view);
 
     const out: Array<{
+      sectionId: string;
       sectionIndex: number;
       linkIndex: number;
       region: LinkRegion;
@@ -9744,8 +10947,8 @@ ${exportVars}
       if (!layout.visible || !layout.texture || layout.interactive === false) continue;
       if (!this.is3DCardPossiblyVisible(viewProj, layout)) continue;
 
-      const dims = this.sectionTextureCache.get(layout.sectionIndex);
-      const regions = this.sectionLinkRegionsCache.get(layout.sectionIndex);
+      const dims = this.sectionTextureCache.get(layout.sectionId);
+      const regions = this.sectionLinkRegionsCache.get(layout.sectionId);
       if (!dims || !regions || regions.length === 0) continue;
 
       const model = this.get3DCardModelMatrix(layout);
@@ -9768,7 +10971,14 @@ ${exportVars}
 
         const screenX = (ndcX * 0.5 + 0.5) * canvasW;
         const screenY = (1 - (ndcY * 0.5 + 0.5)) * canvasH;
-        out.push({ sectionIndex: layout.sectionIndex, linkIndex: i, region: r, screenX, screenY });
+        out.push({
+          sectionId: layout.sectionId,
+          sectionIndex: layout.sectionIndex,
+          linkIndex: i,
+          region: r,
+          screenX,
+          screenY,
+        });
       }
     }
 
@@ -9842,6 +11052,7 @@ ${exportVars}
     this.moduleLoader.dispose();
     this.documents.clear();
     this.activeDocumentId = null;
+    this.worldsSectionContentOverridesByDocument.clear();
     
     // Clean up native API resources
     if (this.audioContext.state !== 'closed') {
@@ -9853,6 +11064,11 @@ ${exportVars}
     // Remove Canvas 2D overlay from DOM
     if (this.offscreenCanvas2D && this.offscreenCanvas2D.parentElement) {
       this.offscreenCanvas2D.parentElement.removeChild(this.offscreenCanvas2D);
+    }
+
+    if (this.hiddenTextInput && this.hiddenTextInput.parentElement) {
+      this.hiddenTextInput.parentElement.removeChild(this.hiddenTextInput);
+      this.hiddenTextInput = null;
     }
 
     if (this.safeAreaProbeElement && this.safeAreaProbeElement.parentElement) {

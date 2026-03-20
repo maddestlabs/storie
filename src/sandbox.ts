@@ -61,6 +61,14 @@ import 'ses';
 import type { UserHandlers, InputEvent } from './types.js';
 import type { ThemeColors, NamedStyle } from './types.js';
 import type { CompiledAutomation, EaseSpec, AutomationImpulseEvent } from './automation.js';
+import type {
+  WorldsContentMode,
+  WorldsContentState,
+  WorldsContentStateOptions,
+  WorldsContentTarget,
+  WorldsContentTimedEntry,
+} from './worlds-content.js';
+import type { CompiledWorldsTimeline, WorldsTimelineStateEntry } from './worlds-timeline.js';
 
 // SES adds these to globalThis
 declare const lockdown: any;
@@ -833,6 +841,76 @@ export interface SandboxAPI {
     setSectionTransform: (sectionIndex: number, transform: any) => void;
     setSectionVisible: (sectionIndex: number, visible: boolean) => void;
     getSectionCount: () => number;
+    timeline: {
+      compile: (entries: Array<{ ms: number; text: string }>) => CompiledWorldsTimeline;
+      stateAt: (compiled: CompiledWorldsTimeline, timeSec: number) => WorldsTimelineStateEntry[];
+      apply: (compiled: CompiledWorldsTimeline, timeSec: number) => WorldsTimelineStateEntry[];
+      reset: (compiled: CompiledWorldsTimeline) => void;
+    };
+    content: {
+      get: (selector?: number | string) => {
+        sectionId: string;
+        sectionIndex: number;
+        baseTitle: string;
+        baseContent: string;
+        overrideTitle?: string;
+        overrideContent?: string;
+        effectiveTitle: string;
+        effectiveContent: string;
+      } | null;
+      set: (selector: number | string, patch: { title?: string | null; content?: string | null }) => boolean;
+      clear: (selector?: number | string, target?: 'title' | 'content' | 'all') => boolean;
+      clearAll: () => void;
+      stateAt: (entries: WorldsContentTimedEntry[], timeSec: number, options?: WorldsContentStateOptions) => WorldsContentState;
+      applyTimed: (
+        selector: number | string,
+        entries: WorldsContentTimedEntry[],
+        timeSec: number,
+        options?: {
+          mode?: WorldsContentMode;
+          target?: WorldsContentTarget;
+          separator?: string;
+          maxEntries?: number;
+          clearWhenEmpty?: boolean;
+        }
+      ) => WorldsContentState | null;
+    };
+    sections: {
+      list: () => Array<{
+        sectionId: string;
+        sectionIndex: number;
+        parentId: string | null;
+        parentIndex: number | null;
+        title: string;
+        level: number;
+        content: string;
+        childCount: number;
+        timedMs?: number;
+        directive?: Record<string, any>;
+      }>;
+      get: (selector: number | string) => {
+        sectionId: string;
+        sectionIndex: number;
+        parentId: string | null;
+        parentIndex: number | null;
+        title: string;
+        level: number;
+        content: string;
+        childCount: number;
+        timedMs?: number;
+        directive?: Record<string, any>;
+      } | null;
+      insert: (
+        section: any,
+        options?: { parent?: number | string | null; index?: number }
+      ) => { sectionId: string; sectionIndex: number } | null;
+      update: (selector: number | string, patch: any) => boolean;
+      remove: (selector: number | string) => boolean;
+      move: (
+        selector: number | string,
+        options?: { parent?: number | string | null; index?: number }
+      ) => { sectionId: string; sectionIndex: number } | null;
+    };
     config: {
       setDefaults: (config: any) => void;
       getDefaults: () => any;

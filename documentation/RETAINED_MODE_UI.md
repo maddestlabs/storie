@@ -4,6 +4,8 @@
 
 Storie provides a robust **retained-mode UI framework** inspired by tStorie's `tui.nim` module. The system offers a clean separation between core UI abstractions and rendering backends, supporting both **TUI (Terminal UI)** and **GUI (Graphical UI)** implementations.
 
+For current GUI authoring guidance, prefer [documentation/UI.md](documentation/UI.md). This page focuses on the retained-mode architecture shared by both systems.
+
 ## Architecture
 
 ```
@@ -23,7 +25,7 @@ Storie provides a robust **retained-mode UI framework** inspired by tStorie's `t
 ┌──────────────────┐  ┌──────────────────────┐
 │   TUI System     │  │   GUI System         │
 │   (Terminal)     │  │   (Canvas/WebGPU)    │
-│   ✓ Implemented  │  │   🔨 Coming Soon     │
+│   ✓ Implemented  │  │   ✓ Implemented      │
 └──────────────────┘  └──────────────────────┘
             ↓                   ↓
 ┌──────────────────┐  ┌──────────────────────┐
@@ -336,25 +338,35 @@ function onKey(key, modifiers) {
 }
 ```
 
-## Future: GUI System
+## GUI System
 
-The same architecture will support graphical rendering:
+The same retained-mode architecture already backs the pixel-based GUI system:
 
 ```javascript
-// Coming soon
-const gui = new GUISystem(canvasContext);
+gui.init();
 
 const btn = gui.createButton({
-  id: 'fancy',
   bounds: { x: 100, y: 100, width: 200, height: 50 },
-  label: 'Fancy Button',
-  style: {
-    borderRadius: 8,
-    gradient: true,
-    font: '16px Arial'
-  }
+  label: 'Fancy Button'
 });
+
+const panel = gui.createResponsivePanel({
+  bounds: { x: 0, y: 0, width: 420, height: 1 },
+  maxWidth: 520,
+  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content' }
+});
+
+panel.add(btn);
+panel.fitToViewport(gui.getViewportRect(), {
+  inset: 16,
+  safeArea: true,
+  anchorX: 'end',
+  anchorY: 'start'
+});
+panel.layout();
 ```
+
+The GUI layer now includes buttons, labels, checkboxes, sliders, text fields, text editors, markdown views, layout containers, responsive panels, and specialized widgets like the piano keyboard demo control.
 
 ## Benefits Over Immediate Mode
 

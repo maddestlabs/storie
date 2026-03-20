@@ -510,6 +510,7 @@ export function createGUIAPI(
         createLabel: (config: any) => api.createLabel(withGroup(config)),
         createCheckbox: (config: any) => api.createCheckbox(withGroup(config)),
         createSlider: (config: any) => api.createSlider(withGroup(config)),
+        createPianoKeyboard: (config: any) => api.createPianoKeyboard(withGroup(config)),
         createTextField: (config: any) => api.createTextField(withGroup(config)),
         createTextEditor: (config: any) => api.createTextEditor(withGroup(config)),
         createMarkdownView: (config: any) => api.createMarkdownView(withGroup(config)),
@@ -545,6 +546,14 @@ export function createGUIAPI(
       if (typeof next.columnGap === 'number') next.columnGap = scaleLength(next.columnGap);
       if (typeof next.maxWidth === 'number') next.maxWidth = scaleLength(next.maxWidth);
       if (typeof next.maxHeight === 'number') next.maxHeight = scaleLength(next.maxHeight);
+      if (next.pianoStyle && typeof next.pianoStyle === 'object') {
+        next.pianoStyle = { ...next.pianoStyle };
+        if (typeof next.pianoStyle.borderWidth === 'number') next.pianoStyle.borderWidth = scaleLength(next.pianoStyle.borderWidth);
+        if (typeof next.pianoStyle.railThickness === 'number') next.pianoStyle.railThickness = scaleLength(next.pianoStyle.railThickness);
+        if (typeof next.pianoStyle.railPadding === 'number') next.pianoStyle.railPadding = scaleLength(next.pianoStyle.railPadding);
+        if (typeof next.pianoStyle.labelInset === 'number') next.pianoStyle.labelInset = scaleLength(next.pianoStyle.labelInset);
+        if (typeof next.pianoStyle.minThumbLength === 'number') next.pianoStyle.minThumbLength = scaleLength(next.pianoStyle.minThumbLength);
+      }
       return next;
     },
     
@@ -687,6 +696,16 @@ export function createGUIAPI(
         throw new Error('GUI system not initialized. Call gui.init() first.');
       }
       return this._system.createSlider(this._normalizeConfig(config));
+    },
+
+    /**
+     * Create a piano keyboard widget
+     */
+    createPianoKeyboard(config: any) {
+      if (!this._system) {
+        throw new Error('GUI system not initialized. Call gui.init() first.');
+      }
+      return this._system.createPianoKeyboard(this._normalizeConfig(config));
     },
 
     /**

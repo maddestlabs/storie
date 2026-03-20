@@ -56,11 +56,13 @@ export class GUILayoutContainer {
   public columns: number;
   public maxWidth: number | null;
   public includeHidden: boolean;
+  private baseBounds: Bounds;
 
   private children: LayoutChild[] = [];
 
   constructor(config: GUILayoutContainerConfig) {
     this.bounds = { ...config.bounds };
+    this.baseBounds = { ...config.bounds };
     this.layoutHints = { ...(config.layout || {}) };
     this.padding = config.padding ?? 0;
     this.gap = config.gap ?? 0;
@@ -125,6 +127,7 @@ export class GUILayoutContainer {
 
   setBounds(bounds: Bounds, relayout: boolean = true): void {
     this.bounds = { ...bounds };
+    this.baseBounds = { ...bounds };
     if (relayout) this.layout();
   }
 
@@ -158,14 +161,22 @@ export class GUILayoutContainer {
     const availableH = Math.max(0, viewport.height - insetTop - insetBottom);
 
     const measured = this.measureLayout();
+    const explicitWidth = Number.isFinite(options?.width) ? Number(options?.width) : null;
+    const explicitHeight = Number.isFinite(options?.height) ? Number(options?.height) : null;
     const currentWidth = Number.isFinite(this.bounds.width) && this.bounds.width > 1
       ? Number(this.bounds.width)
       : measured.width;
     const currentHeight = Number.isFinite(this.bounds.height) && this.bounds.height > 1
       ? Number(this.bounds.height)
       : measured.height;
-    const desiredW = Number.isFinite(options?.width) ? Number(options?.width) : currentWidth;
-    const desiredH = Number.isFinite(options?.height) ? Number(options?.height) : currentHeight;
+    const baseWidth = Number.isFinite(this.baseBounds.width) && this.baseBounds.width > 1
+      ? Number(this.baseBounds.width)
+      : measured.width;
+    const baseHeight = Number.isFinite(this.baseBounds.height) && this.baseBounds.height > 1
+      ? Number(this.baseBounds.height)
+      : measured.height;
+    const desiredW = explicitWidth ?? Math.max(measured.width, currentWidth, baseWidth);
+    const desiredH = explicitHeight ?? Math.max(measured.height, currentHeight, baseHeight);
     const maxW = Number.isFinite(options?.maxWidth) ? Number(options?.maxWidth) : availableW;
     const maxH = Number.isFinite(options?.maxHeight) ? Number(options?.maxHeight) : availableH;
     const width = Math.max(0, Math.min(availableW, maxW, desiredW));

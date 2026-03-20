@@ -38,6 +38,7 @@ let state = {
   selectedId: null,
 
   widgets: null,
+  layouts: null,
   statusText: 'Ready',
 
   lastEditorText: '',
@@ -284,9 +285,71 @@ function paramTargetPoint(layout, toId, param) {
   return { x: portX, y: baseY + slot * hStep };
 }
 
+function layoutPanels() {
+  if (!state.layouts) return;
+
+  const tokens = gui.getTokens();
+  const viewport = gui.getViewportRect();
+  const info = gui.getResponsiveInfo({ width: viewport.width, height: viewport.height });
+  const outerInset = info.breakpoint === 'xs' ? tokens.spacing.sm : tokens.spacing.lg;
+  const panelGap = info.breakpoint === 'xs' ? tokens.spacing.sm : tokens.spacing.md;
+  const leftWidth = info.breakpoint === 'xs' ? 260 : 320;
+  const rightWidth = info.breakpoint === 'xs' ? Math.min(380, Math.max(280, viewport.width - leftWidth - panelGap * 3)) : 520;
+
+  state.layouts.left.padding = info.breakpoint === 'xs' ? tokens.spacing.sm : tokens.spacing.md;
+  state.layouts.left.gap = info.breakpoint === 'xs' ? tokens.spacing.xs : tokens.spacing.sm;
+  state.layouts.left.rowGap = state.layouts.left.gap;
+  state.layouts.left.columnGap = state.layouts.left.gap;
+  state.layouts.left.fitToViewport(viewport, {
+    insetTop: outerInset,
+    insetRight: outerInset,
+    insetBottom: outerInset,
+    insetLeft: outerInset,
+    safeArea: true,
+    width: leftWidth,
+    height: Math.max(320, viewport.height - outerInset * 2),
+    maxWidth: leftWidth,
+    anchorX: 'start',
+    anchorY: 'start'
+  }, false);
+
+  state.layouts.right.padding = info.breakpoint === 'xs' ? tokens.spacing.sm : tokens.spacing.md;
+  state.layouts.right.gap = info.breakpoint === 'xs' ? tokens.spacing.sm : tokens.spacing.md;
+  state.layouts.right.rowGap = state.layouts.right.gap;
+  state.layouts.right.columnGap = state.layouts.right.gap;
+  state.layouts.right.fitToViewport(viewport, {
+    insetTop: outerInset,
+    insetRight: outerInset,
+    insetBottom: outerInset,
+    insetLeft: outerInset,
+    safeArea: true,
+    width: rightWidth,
+    height: Math.max(360, viewport.height - outerInset * 2),
+    maxWidth: rightWidth,
+    anchorX: 'end',
+    anchorY: 'start'
+  }, false);
+
+  state.layouts.left.layout();
+  state.layouts.right.layout();
+}
+
 function graphBounds() {
   const W = ui.metrics.canvasWidth || 1280;
   const H = ui.metrics.canvasHeight || 720;
+
+  if (state.layouts?.left && state.layouts?.right) {
+    const left = state.layouts.left.bounds;
+    const right = state.layouts.right.bounds;
+    const gap = 20;
+    const x = left.x + left.width + gap;
+    const y = Math.max(12, Math.min(left.y, right.y));
+    const rightEdge = right.x - gap;
+    const h = Math.max(240, Math.min(left.height, right.height));
+    return {
+      graph: { x, y, w: Math.max(240, rightEdge - x), h }
+    };
+  }
 
   const leftW = 320;
   const rightW = 520;
@@ -536,44 +599,6 @@ function inspectorSchemaForNode(node) {
   }
 }
 
-function layoutRightPane() {
-  const W = ui.metrics.canvasWidth || 1280;
-  const H = ui.metrics.canvasHeight || 720;
-
-  const rightPaneW = 520;
-  const rightX = W - rightPaneW + 20;
-  const innerW = rightPaneW - 40;
-
-  const inspectorH = Math.min(320, Math.max(190, Math.floor(H * 0.33)));
-  const inspectorY = 20;
-
-  if (state.widgets?.inspectorTitle) {
-    state.widgets.inspectorTitle.bounds.x = rightX;
-    state.widgets.inspectorTitle.bounds.y = inspectorY;
-    state.widgets.inspectorTitle.bounds.width = innerW;
-  }
-
-  if (state.widgets?.inspectorLayout?.setBounds) {
-    state.widgets.inspectorLayout.setBounds({ x: rightX, y: inspectorY + 28, width: innerW, height: Math.max(120, inspectorH - 28) }, true);
-  }
-
-  const editorTitleY = inspectorY + inspectorH + 12;
-  const editorY = editorTitleY + 28;
-  const editorH = Math.max(220, H - editorY - 40);
-
-  if (state.widgets?.editorTitle) {
-    state.widgets.editorTitle.bounds.x = rightX;
-    state.widgets.editorTitle.bounds.y = editorTitleY;
-    state.widgets.editorTitle.bounds.width = innerW;
-  }
-  if (state.widgets?.editor) {
-    state.widgets.editor.bounds.x = rightX;
-    state.widgets.editor.bounds.y = editorY;
-    state.widgets.editor.bounds.width = innerW;
-    state.widgets.editor.bounds.height = editorH;
-  }
-}
-
 function currentPresetName() {
   return (state.presetNames && state.presetNames.length)
     ? (state.presetNames[state.presetIndex] || null)
@@ -587,50 +612,60 @@ term.clear();
 
 gui.init();
 
-const title = gui.createLabel({ bounds: { x: 20, y: 20, width: 280, height: 24 }, text: 'STFXR Edit (playPreset)', align: 'left' });
-const presetLbl = gui.createLabel({ bounds: { x: 20, y: 48, width: 280, height: 22 }, text: 'Preset: (none)', align: 'left' });
+const title = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 24 }, text: 'STFXR Edit (playPreset)', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const presetLbl = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 22 }, text: 'Preset: (none)', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const btnPrev = gui.createButton({ bounds: { x: 20, y: 78, width: 130, height: 44 }, label: 'Prev' });
-const btnNext = gui.createButton({ bounds: { x: 170, y: 78, width: 130, height: 44 }, label: 'Next' });
+const btnPrev = gui.createButton({ bounds: { x: 0, y: 0, width: 130, height: 44 }, label: 'Prev', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 110 } });
+const btnNext = gui.createButton({ bounds: { x: 0, y: 0, width: 130, height: 44 }, label: 'Next', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 110 } });
 
-const seedField = gui.createTextField({ bounds: { x: 20, y: 132, width: 280, height: 44 }, value: String(state.seed), placeholder: 'Seed (number or string)' });
-const btnRand = gui.createButton({ bounds: { x: 20, y: 186, width: 280, height: 44 }, label: 'Randomize Seed' });
+const seedField = gui.createTextField({ bounds: { x: 0, y: 0, width: 1, height: 44 }, value: String(state.seed), placeholder: 'Seed (number or string)', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const btnRand = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 44 }, label: 'Randomize Seed', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const vol = gui.createSlider({ bounds: { x: 20, y: 242, width: 280, height: 52 }, label: 'Volume', min: 0, max: 100, value: Math.round(state.volume * 100) });
+const vol = gui.createSlider({ bounds: { x: 0, y: 0, width: 1, height: 52 }, label: 'Volume', min: 0, max: 100, value: Math.round(state.volume * 100), layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const btnPlay = gui.createButton({ bounds: { x: 20, y: 304, width: 280, height: 44 }, label: 'Play Draft (playPreset)' });
-const btnApply = gui.createButton({ bounds: { x: 20, y: 358, width: 280, height: 44 }, label: 'Apply JSON → Draft' });
-const btnRevert = gui.createButton({ bounds: { x: 20, y: 412, width: 280, height: 44 }, label: 'Revert to Base' });
-const btnLayout = gui.createButton({ bounds: { x: 20, y: 466, width: 280, height: 44 }, label: 'Auto Layout' });
-const btnResetView = gui.createButton({ bounds: { x: 20, y: 520, width: 280, height: 44 }, label: 'Reset View' });
+const btnPlay = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 44 }, label: 'Play Draft (playPreset)', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const btnApply = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 44 }, label: 'Apply JSON → Draft', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const btnRevert = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 44 }, label: 'Revert to Base', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const btnLayout = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 44 }, label: 'Auto Layout', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const btnResetView = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 44 }, label: 'Reset View', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const status = gui.createLabel({ bounds: { x: 20, y: 574, width: 280, height: 44 }, text: state.statusText, align: 'left' });
+const status = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 44 }, text: state.statusText, align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const inspectorTitle = gui.createLabel({ bounds: { x: 20, y: 20, width: 480, height: 22 }, text: 'Selected Node', align: 'left' });
-const inspectorHeader = gui.createLabel({ bounds: { x: 20, y: 48, width: 480, height: 22 }, text: 'Selected: (none)', align: 'left' });
+const inspectorTitle = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 22 }, text: 'Selected Node', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const inspectorHeader = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 22 }, text: 'Selected: (none)', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const p1Label = gui.createLabel({ bounds: { x: 20, y: 80, width: 480, height: 16 }, text: '—', align: 'left', visible: false });
-const p1Field = gui.createTextField({ bounds: { x: 20, y: 98, width: 480, height: 28 }, value: '', placeholder: '', visible: false });
+const p1Label = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 16 }, text: '—', align: 'left', visible: false, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const p1Field = gui.createTextField({ bounds: { x: 0, y: 0, width: 1, height: 28 }, value: '', placeholder: '', visible: false, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const p2Label = gui.createLabel({ bounds: { x: 20, y: 130, width: 480, height: 16 }, text: '—', align: 'left', visible: false });
-const p2Field = gui.createTextField({ bounds: { x: 20, y: 148, width: 480, height: 28 }, value: '', placeholder: '', visible: false });
+const p2Label = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 16 }, text: '—', align: 'left', visible: false, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const p2Field = gui.createTextField({ bounds: { x: 0, y: 0, width: 1, height: 28 }, value: '', placeholder: '', visible: false, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const p3Label = gui.createLabel({ bounds: { x: 20, y: 180, width: 480, height: 16 }, text: '—', align: 'left', visible: false });
-const p3Field = gui.createTextField({ bounds: { x: 20, y: 198, width: 480, height: 28 }, value: '', placeholder: '', visible: false });
+const p3Label = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 16 }, text: '—', align: 'left', visible: false, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const p3Field = gui.createTextField({ bounds: { x: 0, y: 0, width: 1, height: 28 }, value: '', placeholder: '', visible: false, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const p4Label = gui.createLabel({ bounds: { x: 20, y: 230, width: 480, height: 16 }, text: '—', align: 'left', visible: false });
-const p4Field = gui.createTextField({ bounds: { x: 20, y: 248, width: 480, height: 28 }, value: '', placeholder: '', visible: false });
+const p4Label = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 16 }, text: '—', align: 'left', visible: false, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const p4Field = gui.createTextField({ bounds: { x: 0, y: 0, width: 1, height: 28 }, value: '', placeholder: '', visible: false, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const inspectorLayout = gui.createContainer({ bounds: { x: 20, y: 48, width: 480, height: 240 }, padding: 0, gap: 4, alignX: 'stretch' });
+const inspectorLayout = gui.createContainer({ bounds: { x: 0, y: 0, width: 1, height: 240 }, padding: 0, gap: 4, alignX: 'stretch', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 inspectorLayout.addMany([inspectorHeader, p1Label, p1Field, p2Label, p2Field, p3Label, p3Field, p4Label, p4Field]);
 inspectorLayout.layout();
 
-const editorTitle = gui.createLabel({ bounds: { x: 20, y: 320, width: 480, height: 22 }, text: 'Preset JSON (draft)', align: 'left' });
+const editorTitle = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 22 }, text: 'Preset JSON (draft)', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 const editor = gui.createTextEditor({
-  bounds: { x: 20, y: 348, width: 480, height: 260 },
+  bounds: { x: 0, y: 0, width: 1, height: 260 },
   value: '',
-  placeholder: '{ "nodes": [...], "edges": [...] }'
+  placeholder: '{ "nodes": [...], "edges": [...] }',
+  layout: { widthPolicy: 'fill', heightPolicy: 'fill', minWidth: 0, minHeight: 220 }
 });
+
+const navRow = gui.createContainer({ bounds: { x: 0, y: 0, width: 1, height: 1 }, mode: 'row', gap: 10, alignX: 'stretch', alignY: 'center', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+navRow.addMany([btnPrev, btnNext]);
+
+const leftPanel = gui.createContainer({ bounds: { x: 0, y: 0, width: 320, height: 1 }, padding: 12, gap: 10, alignX: 'stretch', layout: { widthPolicy: 'fixed', heightPolicy: 'fill', minWidth: 0, minHeight: 320 } });
+leftPanel.addMany([title, presetLbl, navRow, seedField, btnRand, vol, btnPlay, btnApply, btnRevert, btnLayout, btnResetView, status]);
+
+const rightPanel = gui.createContainer({ bounds: { x: 0, y: 0, width: 520, height: 1 }, padding: 12, gap: 12, alignX: 'stretch', layout: { widthPolicy: 'fixed', heightPolicy: 'fill', minWidth: 0, minHeight: 360 } });
+rightPanel.addMany([inspectorTitle, inspectorLayout, editorTitle, editor]);
 
 state.widgets = {
   title,
@@ -659,7 +694,13 @@ state.widgets = {
   editor
 };
 
-layoutRightPane();
+state.layouts = {
+  left: leftPanel,
+  right: rightPanel,
+  navRow
+};
+
+layoutPanels();
 
 {
   const listed = stfxr.list();
@@ -764,10 +805,8 @@ if (event.type === 'mouse_move') {
 ```js on:update
 if (!state.widgets) return;
 
+layoutPanels();
 gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);
-
-// Keep right-pane bounds in sync with resize.
-layoutRightPane();
 
 // Update labels
 const presetName = currentPresetName();

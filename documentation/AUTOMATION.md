@@ -82,6 +82,80 @@ You can preview an easing curve by calling:
 For cubic beziers:
 - `sys.automation.ease(u, { type: 'cubicBezier', x1, y1, x2, y2 })`
 
+## Worlds timelines
+
+For export-safe Worlds authoring, prefer a deterministic section-state track over
+ad hoc per-frame mutation. Keep using a normal global ```timed block, but make
+each line JSON that targets a section.
+
+Example:
+
+```timed name:worlds-edit
+0|{"section":"intro","content":"Opening title","visible":true}
+1000|{"section":"intro","title":"Act I"}
+2000|{"section":"intro","position":{"x":20,"y":0,"z":-80}}
+3000|{"section":"chorus","visible":true}
+```
+
+Compile once, then sample/apply from time:
+
+```js
+let track;
+
+init = () => {
+  track = worlds.timeline.compile(doc.timedBlock('worlds-edit'));
+};
+
+export = () => {
+  worlds.timeline.reset(track);
+};
+
+update = () => {
+  worlds.timeline.apply(track, getTime());
+};
+```
+
+This model is safer for video export and future scrubbing because state is
+derived from the selected time instead of relying only on forward-moving edge
+triggers.
+
+## Worlds section content
+
+For lyric-style or caption-style content inside a Worlds card, prefer the
+same-card content override path instead of repeatedly mutating the runtime
+section store.
+
+Example:
+
+```js
+const lyricsTrack = doc.timedBlock('lyrics');
+
+update = () => {
+  worlds.content.applyTimed('current', lyricsTrack, getTime(), {
+    target: 'content',
+    mode: 'replace'
+  });
+};
+```
+
+`worlds.content.applyTimed()` samples timed entries at the requested time and
+updates only the rendered card content for that section. This keeps the change
+inside the existing Worlds card render path and avoids using section CRUD for
+high-frequency content changes.
+
+For custom composition, sample without applying:
+
+```js
+const sampled = worlds.content.stateAt(doc.timedBlock('lyrics'), getTime(), {
+  mode: 'append',
+  separator: '\n'
+});
+
+worlds.content.set('chorus', {
+  content: `Now singing:\n\n${sampled.text}`
+});
+```
+
 ## Synthetic input
 
 `sys.input.emit(event)`:

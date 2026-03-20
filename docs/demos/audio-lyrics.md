@@ -407,27 +407,34 @@ term.layerID = 'default';
 computeLyricSectionIndices();
 
 gui.init();
+const tokens = gui.getTokens();
 
-// Top-right panel (kept pinned each frame in on:update)
-const panel = gui.createContainer({ bounds: { x: 0, y: 0, width: 420, height: 420 }, padding: 12, gap: 8, alignX: 'stretch' });
+const panel = gui.createResponsivePanel({
+  bounds: { x: 0, y: 0, width: 420, height: 1 },
+  padding: tokens.spacing.md,
+  gap: tokens.spacing.sm,
+  maxWidth: 420,
+  alignX: 'stretch',
+  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content' }
+});
 
-const title = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 30 }, text: 'Audio Beats → Lyric Sections', align: 'left' });
-const hint = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: 'Drop an .mp3. Play. Downbeats focus sections (WebGPU required).', align: 'left' });
-const file = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: 'File: (none)', align: 'left' });
-const status = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: state.statusText, align: 'left' });
+const title = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 30 }, text: 'Audio Beats → Lyric Sections', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const hint = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 24 }, text: 'Drop an .mp3. Play. Downbeats focus sections (WebGPU required).', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const file = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 24 }, text: 'File: (none)', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const status = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 24 }, text: state.statusText, align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const chkExportStart = gui.createCheckbox({ bounds: { x: 0, y: 0, width: 420, height: 30 }, label: 'Start on Export', checked: false });
-const btnPlay = gui.createButton({ bounds: { x: 0, y: 0, width: 420, height: 44 }, label: 'Play' });
-const btnPause = gui.createButton({ bounds: { x: 0, y: 0, width: 420, height: 44 }, label: 'Pause' });
+const chkExportStart = gui.createCheckbox({ bounds: { x: 0, y: 0, width: 1, height: 30 }, label: 'Start on Export', checked: false, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const btnPlay = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 44 }, label: 'Play', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const btnPause = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 44 }, label: 'Pause', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const time = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: 'Time: --:-- / --:--', align: 'left' });
-const seek = gui.createSlider({ bounds: { x: 0, y: 0, width: 420, height: 52 }, label: 'Seek (sec)', min: 0, max: 1, value: 0, step: 0.01 });
+const time = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 24 }, text: 'Time: --:-- / --:--', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const seek = gui.createSlider({ bounds: { x: 0, y: 0, width: 1, height: 52 }, label: 'Seek (sec)', min: 0, max: 1, value: 0, step: 0.01, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const bpmLbl = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: 'BPM: --', align: 'left' });
-const clockLbl = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: 'Bar: --  Beat: --  Phase: --', align: 'left' });
+const bpmLbl = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 24 }, text: 'BPM: --', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const clockLbl = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 24 }, text: 'Bar: --  Beat: --  Phase: --', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
-const section   = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 24 }, text: 'Section: (none)', align: 'left' });
-const lyricBody = gui.createLabel({ bounds: { x: 0, y: 0, width: 420, height: 80 }, text: '', align: 'left' });
+const section   = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 24 }, text: 'Section: (none)', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
+const lyricBody = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 80 }, text: '', align: 'left', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 
 panel
   .add(title)
@@ -545,14 +552,27 @@ if (event.type === 'mouse_move') {
 ```js on:update
 if (!state.widgets) return;
 
-// Keep panel pinned top-right
 if (state.panel) {
-  const margin = 20;
-  const w = 420;
-  const h = 420;
-  const x = Math.max(margin, ui.metrics.canvasWidth - w - margin);
-  const y = margin;
-  state.panel.setBounds({ x, y, width: w, height: h }, true);
+  const tokens = gui.getTokens();
+  const viewport = gui.getViewportRect();
+  const info = gui.getResponsiveInfo({ width: viewport.width, height: viewport.height });
+  const inset = info.breakpoint === 'xs' ? tokens.spacing.sm : tokens.spacing.lg;
+  const maxWidth = info.breakpoint === 'xs' ? 360 : 420;
+
+  state.panel.container.padding = info.breakpoint === 'xs' ? tokens.spacing.sm : tokens.spacing.md;
+  state.panel.container.gap = info.breakpoint === 'xs' ? tokens.spacing.xs : tokens.spacing.sm;
+  state.panel.setMaxWidth(maxWidth, false);
+  state.panel.fitToViewport(viewport, {
+    insetTop: inset,
+    insetRight: inset,
+    insetBottom: inset,
+    insetLeft: inset,
+    safeArea: true,
+    maxWidth: maxWidth,
+    anchorX: 'end',
+    anchorY: 'start'
+  }, false);
+  state.panel.layout();
 }
 
 gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);

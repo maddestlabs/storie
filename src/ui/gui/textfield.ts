@@ -1,4 +1,13 @@
 import { BaseWidget, type WidgetConfig } from '../core/base-widget.js';
+import {
+  createTextInputOptions,
+  normalizeSingleLineText,
+  normalizeTextSelectionRange
+} from '../core/text-input.js';
+import type {
+  TextInputOptions,
+  TextSelectionDirection
+} from '../core/types.js';
 import type { Color } from '../../types.js';
 import { createDefaultGUITokens, type GUITypographyRole } from './tokens.js';
 
@@ -10,6 +19,7 @@ export interface GUITextFieldConfig extends WidgetConfig {
   value?: string;
   placeholder?: string;
   align?: GUITextAlign;
+  textInput?: Partial<TextInputOptions>;
   textFieldStyle?: {
     fg?: Color;
     bg?: Color;
@@ -34,6 +44,7 @@ type KeyModifiers = { shift?: boolean; ctrl?: boolean; alt?: boolean };
 export class GUITextField extends BaseWidget {
   public placeholder: string;
   public align: GUITextAlign;
+  public textInput: TextInputOptions;
   public textFieldStyle: {
     fg?: Color;
     bg?: Color;
@@ -50,6 +61,9 @@ export class GUITextField extends BaseWidget {
 
   private value: string;
   private cursorPos: number;
+  private selectionStart: number;
+  private selectionEnd: number;
+  private selectionDirection: TextSelectionDirection = 'none';
   private scrollOffset: number;
   private changedThisFrame: boolean = false;
   private charWidth: number = 10;
@@ -57,11 +71,17 @@ export class GUITextField extends BaseWidget {
   constructor(config: GUITextFieldConfig) {
     super(config);
 
-    this.value = config.value ?? '';
+    this.value = normalizeSingleLineText(config.value ?? '');
     this.cursorPos = this.value.length;
+    this.selectionStart = this.cursorPos;
+    this.selectionEnd = this.cursorPos;
     this.scrollOffset = 0;
     this.placeholder = config.placeholder ?? '';
     this.align = config.align ?? 'left';
+    this.textInput = createTextInputOptions(config.textInput, {
+      multiline: false,
+      enterKeyHint: 'done'
+    });
 
     this.textFieldStyle = {
       fg: config.textFieldStyle?.fg,
@@ -92,7 +112,7 @@ export class GUITextField extends BaseWidget {
       const relPx = Math.max(0, Math.min(innerW, clickX - textStartX));
       const relChars = Math.floor(relPx / Math.max(1, this.charWidth));
       const target = this.scrollOffset + relChars;
-      this.cursorPos = Math.max(0, Math.min(this.value.length, target));
+      this.setSelectionRange(target, target);
     });
   }
 
@@ -107,9 +127,50 @@ export class GUITextField extends BaseWidget {
   }
 
   setValue(next: string): void {
-    this.value = next ?? '';
+    this.value = normalizeSingleLineText(next ?? '');
     this.cursorPos = Math.max(0, Math.min(this.cursorPos, this.value.length));
+    this.selectionStart = this.cursorPos;
+    this.selectionEnd = this.cursorPos;
+    this.selectionDirection = 'none';
     this.scrollOffset = 0;
+  }
+
+  getSelectionRange() {
+    return {
+      start: this.selectionStart,
+      end: this.selectionEnd,
+      direction: this.selectionDirection
+    };
+  }
+
+  setSelectionRange(start: number, end: number = start, direction: TextSelectionDirection = 'none'): boolean {
+    const next = normalizeTextSelectionRange(this.value.length, start, end, direction);
+    const changed = next.start !== this.selectionStart
+      || next.end !== this.selectionEnd
+      || next.direction !== this.selectionDirection;
+    this.selectionStart = next.start;
+    this.selectionEnd = next.end;
+    this.selectionDirection = next.direction ?? 'none';
+    this.cursorPos = this.selectionEnd;
+    return changed;
+  }
+
+  replaceTextRange(start: number, end: number, text: string): boolean {
+    const range = normalizeTextSelectionRange(this.value.length, start, end);
+    const insert = normalizeSingleLineText(text ?? '');
+    const nextValue = this.value.slice(0, range.start) + insert + this.value.slice(range.end);
+    const changed = nextValue !== this.value;
+    this.value = nextValue;
+    const nextCaret = range.start + insert.length;
+    this.setSelectionRange(nextCaret, nextCaret);
+    if (changed) {
+      this.markChanged();
+    }
+    return changed;
+  }
+
+  getTextInputOptions(): TextInputOptions {
+    return { ...this.textInput };
   }
 
   wasChanged(): boolean {
@@ -123,11 +184,7 @@ export class GUITextField extends BaseWidget {
     if (!this.state.focused) return false;
     if (!text) return false;
 
-    const before = this.value.slice(0, this.cursorPos);
-    const after = this.value.slice(this.cursorPos);
-    this.value = before + text + after;
-    this.cursorPos += text.length;
-    this.markChanged();
+    this.replaceTextRange(this.selectionStart, this.selectionEnd, text);
     return true;
   }
 
@@ -140,28 +197,37 @@ export class GUITextField extends BaseWidget {
 
     switch (key) {
       case 'ArrowLeft':
-        if (this.cursorPos > 0) this.cursorPos -= 1;
+        if (this.selectionStart !== this.selectionEnd) {
+          this.setSelectionRange(this.selectionStart, this.selectionStart);
+        } else if (this.cursorPos > 0) {
+          this.setSelectionRange(this.cursorPos - 1, this.cursorPos - 1);
+        }
         return true;
       case 'ArrowRight':
-        if (this.cursorPos < this.value.length) this.cursorPos += 1;
+        if (this.selectionStart !== this.selectionEnd) {
+          this.setSelectionRange(this.selectionEnd, this.selectionEnd);
+        } else if (this.cursorPos < this.value.length) {
+          this.setSelectionRange(this.cursorPos + 1, this.cursorPos + 1);
+        }
         return true;
       case 'Home':
-        this.cursorPos = 0;
+        this.setSelectionRange(0, 0);
         return true;
       case 'End':
-        this.cursorPos = this.value.length;
+        this.setSelectionRange(this.value.length, this.value.length);
         return true;
       case 'Backspace':
-        if (this.cursorPos > 0) {
-          this.value = this.value.slice(0, this.cursorPos - 1) + this.value.slice(this.cursorPos);
-          this.cursorPos -= 1;
-          this.markChanged();
+        if (this.selectionStart !== this.selectionEnd) {
+          this.replaceTextRange(this.selectionStart, this.selectionEnd, '');
+        } else if (this.cursorPos > 0) {
+          this.replaceTextRange(this.cursorPos - 1, this.cursorPos, '');
         }
         return true;
       case 'Delete':
-        if (this.cursorPos < this.value.length) {
-          this.value = this.value.slice(0, this.cursorPos) + this.value.slice(this.cursorPos + 1);
-          this.markChanged();
+        if (this.selectionStart !== this.selectionEnd) {
+          this.replaceTextRange(this.selectionStart, this.selectionEnd, '');
+        } else if (this.cursorPos < this.value.length) {
+          this.replaceTextRange(this.cursorPos, this.cursorPos + 1, '');
         }
         return true;
       case 'Enter':
@@ -169,11 +235,7 @@ export class GUITextField extends BaseWidget {
       default:
         // Printable fallback for keydown-only environments.
         if (!ctrl && !alt && key.length === 1) {
-          const before = this.value.slice(0, this.cursorPos);
-          const after = this.value.slice(this.cursorPos);
-          this.value = before + key + after;
-          this.cursorPos += 1;
-          this.markChanged();
+          this.replaceTextRange(this.selectionStart, this.selectionEnd, key);
           return true;
         }
         return false;

@@ -14,6 +14,49 @@ interface HeadingMatch {
   line: number;
 }
 
+function slugifySectionIdPart(value: string): string {
+  const slug = String(value ?? '')
+    .toLowerCase()
+    .trim()
+    .replace(/[`*_~]/g, '')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'section';
+}
+
+export function ensureSectionIds(sections: Section[]): Section[] {
+  const used = new Set<string>();
+
+  const assign = (list: Section[]) => {
+    for (const section of list) {
+      const existing = typeof section.id === 'string' ? section.id.trim() : '';
+      if (existing && !used.has(existing)) {
+        section.id = existing;
+        used.add(existing);
+      } else {
+        const lineSuffix = Number.isFinite(section.startLine) ? `-${section.startLine + 1}` : '';
+        const base = `${slugifySectionIdPart(section.title)}${lineSuffix}`;
+        let candidate = base;
+        let suffix = 2;
+        while (used.has(candidate)) {
+          candidate = `${base}-${suffix++}`;
+        }
+        section.id = candidate;
+        used.add(candidate);
+      }
+
+      if (section.children.length > 0) {
+        assign(section.children);
+      }
+    }
+  };
+
+  assign(sections);
+  return sections;
+}
+
 export async function parseMarkdown(source: string): Promise<MarkdownDocument> {
   // Normalize line endings so parsing behaves consistently across platforms.
   // On Windows, fetched files often contain CRLF, and downstream parsing logic
@@ -556,6 +599,7 @@ function extractSections(source: string): Section[] {
 
     const { displayTitle, directive, timedMs } = _parseHeadingDirective(heading.title);
     const section: Section = {
+      id: undefined,
       title: displayTitle,
       level: heading.level,
       content,
@@ -582,7 +626,7 @@ function extractSections(source: string): Section[] {
     stack.push({ section, level: heading.level });
   }
 
-  return rootSections;
+  return ensureSectionIds(rootSections);
 }
 
 /**

@@ -367,6 +367,27 @@ Focus helpers:
 - `worlds.setSectionVisible(sectionIndex, visible)`
 - `worlds.getSectionCount()`
 
+Experimental runtime section store helpers:
+- `worlds.sections.list()`
+- `worlds.sections.get(sectionIndexOrIdOrTitle)`
+- `worlds.sections.insert(section, { parent?, index? })`
+- `worlds.sections.update(sectionIndexOrIdOrTitle, patch)`
+- `worlds.sections.remove(sectionIndexOrIdOrTitle)`
+- `worlds.sections.move(sectionIndexOrIdOrTitle, { parent?, index? })`
+
+Same-card render-content helpers:
+- `worlds.content.get(sectionIndexOrIdOrTitle?)`
+- `worlds.content.set(sectionIndexOrIdOrTitle, { title?, content? })`
+- `worlds.content.clear(sectionIndexOrIdOrTitle?, target?)`
+- `worlds.content.clearAll()`
+- `worlds.content.stateAt(entries, timeSec, { mode?, separator?, maxEntries? })`
+- `worlds.content.applyTimed(sectionIndexOrIdOrTitle, entries, timeSec, { target?, mode?, separator?, maxEntries?, clearWhenEmpty? })`
+
+String selectors now resolve by stable section id first, then by heading title slug.
+`insert()` and `move()` use sibling indices within the selected parent; omit `parent` to operate at the root level.
+
+`worlds.content.*` updates the rendered markdown for the existing card in-place. It does not create a second overlay card and it does not mutate the runtime section store unless you explicitly use `worlds.sections.update(...)`.
+
 `getSectionLayout()` also exposes `opacity`, `interactive`, and `renderMode`.
 
 Rotation passed to `setSectionTransform` is in degrees.
