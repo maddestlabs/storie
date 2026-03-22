@@ -102,6 +102,11 @@ export interface WorldsConfig {
   defaultDepth: number;
   defaultSectionWidth: number;
   defaultSectionHeight: number;
+  /**
+   * Default card composition for sections that do not declare `render` in
+   * heading metadata.
+   */
+  sectionRender?: SectionRenderMode;
 
   /**
    * Whether clicking/tapping a non-link area of a Worlds card should focus

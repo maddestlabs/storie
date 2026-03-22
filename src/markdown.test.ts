@@ -47,6 +47,34 @@ describe('heading directives', () => {
     expect(layout.renderMode).toBe('content');
   });
 
+  it('uses config sectionRender as the default render mode', async () => {
+    const doc = await parseMarkdown([
+      '# Card One',
+      '',
+      'Body'
+    ].join('\n'));
+
+    const layout = parseTransform3D(doc.sections[0], 0, {
+      ...getDefaultWorldsConfig(),
+      sectionRender: 'content'
+    });
+    expect(layout.renderMode).toBe('content');
+  });
+
+  it('lets section render metadata override config sectionRender', async () => {
+    const doc = await parseMarkdown([
+      '# Card One {render: heading}',
+      '',
+      'Body'
+    ].join('\n'));
+
+    const layout = parseTransform3D(doc.sections[0], 0, {
+      ...getDefaultWorldsConfig(),
+      sectionRender: 'content'
+    });
+    expect(layout.renderMode).toBe('heading');
+  });
+
   it('falls back to render all for unknown render modes', async () => {
     const doc = await parseMarkdown([
       '# Card One {render: mystery}',

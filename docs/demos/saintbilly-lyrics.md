@@ -1,20 +1,27 @@
 ---
-title: "Depths Beckon"
+name: "Saint Billy"
+title: "Saint Billy"
 author: "Maddest Labs"
 theme: "saintbilly"
 shaders: "blurgradual+lightvignette"
 font: "Rye"
 ---
 
-This variant showcases timed lyric content moving across multiple Worlds sections.
+This Saint Billy variant turns the demo into a song board instead of a dungeon crawl.
 
-- A synthetic transport drives deterministic timed state.
-- Selected story sections carry `timed` heading directives.
-- The active section keeps its authored prose and gains a rolling in-card lyric block.
+- The full-quality track now loads from the local asset at `docs/assets/audio/saintbilly.wav` instead of an embedded blob.
+- The `lyrics` block keeps the original line-level timestamps from `lyrics.json`.
+- The `lyricWords` block estimates individual word timing inside the second section so the hook can reveal word by word.
+- Timed section headings break the track into large visual beats that the Worlds camera can follow.
 
 ```javascript
 var state = {
-  isPlaying: true,
+  audioBuffer: null,
+  audioLoadPromise: null,
+  source: null,
+  gain: null,
+  playRequested: false,
+  isPlaying: false,
   startTime: 0,
   pauseOffset: 0,
   wasSeeking: false,
@@ -27,11 +34,13 @@ var state = {
   panel: null,
   widgets: null,
   mouseDownLeft: false,
+  statusText: 'Loading local WAV asset...',
 };
 
-const DEMO_DURATION_SEC = 30;
 const WORLDS_LYRIC_WINDOW = 3;
 const WORLDS_SECTION_FILL = 0.9;
+const WORD_REVEAL_SECTION = 'Saint Billy Rides In';
+const LOCAL_AUDIO_URL = 'assets/audio/saintbilly.wav';
 
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
@@ -63,37 +72,117 @@ function sectionAtMs(posMs) {
 }
 
 function getDemoTimeSec() {
-  if (!state.isPlaying) return clamp(state.pauseOffset, 0, DEMO_DURATION_SEC);
-  const elapsed = Math.max(0, getTime() - state.startTime);
-  return elapsed % DEMO_DURATION_SEC;
-}
-
-function setDemoTimeSec(nextSec) {
-  const clamped = clamp(nextSec, 0, DEMO_DURATION_SEC);
-  state.pauseOffset = clamped;
-  if (state.isPlaying) {
-    state.startTime = getTime() - clamped;
-  }
-}
-
-function playDemo() {
-  state.startTime = getTime() - state.pauseOffset;
-  state.isPlaying = true;
-}
-
-function pauseDemo() {
-  state.pauseOffset = getDemoTimeSec();
-  state.isPlaying = false;
+  if (!state.audioBuffer) return 0;
+  if (!state.isPlaying) return clamp(state.pauseOffset, 0, state.audioBuffer.duration);
+  return clamp(audio.currentTime - state.startTime, 0, state.audioBuffer.duration);
 }
 
 function resetDemo(autoplay) {
+  stopAudio({ keepOffset: false });
   state.pauseOffset = 0;
-  state.startTime = getTime();
-  state.isPlaying = autoplay !== false;
   worlds.content?.clearAll?.();
   state.currentSectionId = null;
   state.currentSection = '';
   state.currentLine = '';
+  if (state.widgets?.seek) state.widgets.seek.setValue(0);
+  if (state.widgets?.time) {
+    const total = state.audioBuffer ? fmtTime(state.audioBuffer.duration) : '--:--';
+    state.widgets.time.setText(`Time: 0:00 / ${total}`);
+  }
+  if (autoplay !== false && state.audioBuffer) playFrom(0);
+}
+
+function stopAudio({ keepOffset } = { keepOffset: true }) {
+  if (!state.source) return;
+  try {
+    if (keepOffset) {
+      state.pauseOffset = clamp(audio.currentTime - state.startTime, 0, state.audioBuffer?.duration ?? 0);
+    } else {
+      state.pauseOffset = 0;
+    }
+    state.source.onended = null;
+    state.source.stop();
+  } catch { /* ignore */ }
+  try { state.source.disconnect(); } catch { /* ignore */ }
+  state.source = null;
+  state.isPlaying = false;
+}
+
+function playFrom(offsetSec) {
+  if (!state.audioBuffer) return;
+  stopAudio({ keepOffset: false });
+  const offset = clamp(offsetSec, 0, state.audioBuffer.duration);
+  state.pauseOffset = offset;
+  const src = audio.createBufferSource();
+  src.buffer = state.audioBuffer;
+  src.connect(state.gain ?? audio.destination);
+  state.startTime = audio.currentTime - offset;
+  state.isPlaying = true;
+  src.onended = () => {
+    if (state.source === src) {
+      state.source = null;
+      state.isPlaying = false;
+      state.pauseOffset = clamp(audio.currentTime - state.startTime, 0, state.audioBuffer.duration);
+    }
+  };
+  state.source = src;
+  try {
+    src.start(0, offset);
+  } catch {
+    src.start();
+  }
+}
+
+function setStatus(text) {
+  state.statusText = text;
+  if (state.widgets?.status) state.widgets.status.setText(text);
+}
+
+function loadLocalAudio() {
+  if (state.audioBuffer) return Promise.resolve(state.audioBuffer);
+  if (state.audioLoadPromise) return state.audioLoadPromise;
+
+  setStatus('Loading local WAV asset...');
+
+  state.audioLoadPromise = (async () => {
+    try {
+      audio.context.resume().catch(() => {});
+      const buffer = await audio.loadSound(LOCAL_AUDIO_URL);
+      if (!buffer) throw new Error('Local asset decode failed');
+
+      state.audioBuffer = buffer;
+      state.pauseOffset = 0;
+      state.widgets.seek.min = 0;
+      state.widgets.seek.max = Math.max(0.01, buffer.duration);
+      state.widgets.seek.step = 0.01;
+      state.widgets.seek.setValue(0);
+      state.widgets.time.setText(`Time: 0:00 / ${fmtTime(buffer.duration)}`);
+
+      const firstSection = sectionAtMs(0);
+      if (firstSection) {
+        state.currentSection = firstSection.title;
+        worlds.camera.focusOnSectionFit(firstSection.index, WORLDS_SECTION_FILL, { keepRotation: true });
+        syncWorldsSectionContent(firstSection, 0);
+      }
+
+      if (state.playRequested) {
+        state.playRequested = false;
+        playFrom(state.pauseOffset);
+      }
+
+      setStatus(`Track ready from local asset - ${fmtTime(buffer.duration)}. Press Play to start.`);
+      return buffer;
+    } catch (e) {
+      console.warn('[saintbilly-lyrics] local audio load failed:', e);
+      state.playRequested = false;
+      setStatus('Local WAV failed to load. Press Play to retry.');
+      return null;
+    } finally {
+      state.audioLoadPromise = null;
+    }
+  })();
+
+  return state.audioLoadPromise;
 }
 
 function lineAtTime(timeSec) {
@@ -101,8 +190,8 @@ function lineAtTime(timeSec) {
   return entry ? entry.text : '';
 }
 
-function getLyricEntries() {
-  return doc.timedBlock('lyrics');
+function getTimedEntries(name) {
+  return doc.timedBlock(name) || [];
 }
 
 function getSectionWindow(section) {
@@ -116,10 +205,10 @@ function getSectionWindow(section) {
   return { startMs, endMs };
 }
 
-function entriesForSection(section) {
+function entriesForSection(section, name) {
   const window = getSectionWindow(section);
   if (!window) return [];
-  return getLyricEntries().filter((entry) => {
+  return getTimedEntries(name).filter((entry) => {
     if (!Number.isFinite(entry.ms)) return false;
     if (entry.ms < window.startMs) return false;
     if (window.endMs !== null && entry.ms >= window.endMs) return false;
@@ -127,19 +216,58 @@ function entriesForSection(section) {
   });
 }
 
+function isWordRevealSection(section) {
+  if (!section) return false;
+  if (typeof WORD_REVEAL_SECTION === 'number' && Number.isFinite(WORD_REVEAL_SECTION)) {
+    return section.index === Math.floor(WORD_REVEAL_SECTION);
+  }
+  if (typeof WORD_REVEAL_SECTION !== 'string') return false;
+
+  const wanted = WORD_REVEAL_SECTION.trim();
+  if (!wanted) return false;
+  if (section.title === wanted) return true;
+
+  const layout = worlds.getSectionLayout?.(section.index);
+  return layout?.sectionId === wanted;
+}
+
+function sampleWordsForSection(section, posSec) {
+  const nowMs = Math.max(0, Math.round(Number(posSec) * 1000));
+  const entries = entriesForSection(section, 'lyricWords').filter((entry) => entry.ms <= nowMs);
+  if (!entries.length) return '';
+
+  const renderedLines = [];
+  let currentWords = [];
+  for (const entry of entries) {
+    const token = String(entry?.text || '').trim();
+    if (!token) continue;
+    if (token === '__BREAK__') {
+      if (currentWords.length) {
+        renderedLines.push(currentWords.join(' '));
+        currentWords = [];
+      }
+      continue;
+    }
+    currentWords.push(token);
+  }
+
+  if (currentWords.length) renderedLines.push(currentWords.join(' '));
+  return renderedLines.join('\n');
+}
+
 function composeWorldsSectionContent(baseContent, sampledText) {
   const base = String(baseContent || '').trim();
   const lyrics = String(sampledText || '').trim();
   if (!lyrics) return base;
   if (!base) return lyrics;
-  return ['### Live Lyrics', '', lyrics, '', '---', '', base].join('\n');
+  return [lyrics, '', base].join('\n');
 }
 
 function composeWorldsSectionTitle(baseTitle, sampledText) {
   const title = String(baseTitle || '').trim();
   const lyrics = String(sampledText || '').trim();
   if (!lyrics) return title;
-  return `♪ ${title}`;
+  return `${title}`;
 }
 
 function syncWorldsSectionContent(section, posSec) {
@@ -157,24 +285,26 @@ function syncWorldsSectionContent(section, posSec) {
     return '';
   }
 
-  const sectionEntries = entriesForSection(section);
-  const sampled = worlds.content.stateAt(sectionEntries, posSec, {
-    mode: 'append',
-    separator: '\n',
-    maxEntries: WORLDS_LYRIC_WINDOW,
-  });
+  const sectionEntries = entriesForSection(section, 'lyrics');
+  const sampledText = isWordRevealSection(section)
+    ? sampleWordsForSection(section, posSec)
+    : worlds.content.stateAt(sectionEntries, posSec, {
+        mode: 'append',
+        separator: '\n',
+        maxEntries: WORLDS_LYRIC_WINDOW,
+      }).text;
 
-  if (!sampled.text) {
+  if (!sampledText) {
     worlds.content.clear(nextSectionId, 'all');
     state.currentSectionId = nextSectionId;
     return '';
   }
 
   const existing = worlds.content.get(nextSectionId);
-  if (!existing) return sampled.text;
+  if (!existing) return sampledText;
 
-  const composedTitle = composeWorldsSectionTitle(existing.baseTitle, sampled.text);
-  const composedContent = composeWorldsSectionContent(existing.baseContent, sampled.text);
+  const composedTitle = composeWorldsSectionTitle(existing.baseTitle, sampledText);
+  const composedContent = composeWorldsSectionContent(existing.baseContent, sampledText);
   const sameTitle = existing.overrideTitle === composedTitle || existing.effectiveTitle === composedTitle;
   const sameContent = existing.overrideContent === composedContent || existing.effectiveContent === composedContent;
   if (!sameTitle || !sameContent) {
@@ -185,16 +315,16 @@ function syncWorldsSectionContent(section, posSec) {
   }
 
   state.currentSectionId = nextSectionId;
-  return sampled.text;
+  return sampledText;
 }
 ```
 
 ```javascript on:init
-// Camera styling helpers
 const deg = d => d * Math.PI / 180;
-const CAMERA_BASE_ROT = { x: deg(0), y: deg(0), z: 0 };
+const CAMERA_BASE_ROT = { x: deg(-4), y: deg(4), z: 0 };
 worlds.enable();
 worlds.config.setDefaults({
+  sectionRender: 'content',
   keepRotation: true,
   straightenOnFocus: true,
   screenSpaceRecenter: true,
@@ -202,34 +332,26 @@ worlds.config.setDefaults({
   sectionSizeUnits: 'px',
   sectionOverflow: 'fit-y',
   sectionContentAlign: 'center',
-  defaultSectionWidth: 900,
+  defaultSectionWidth: 600,
   defaultSectionHeight: 520,
   autoLayoutSpacing: 2,
   sectionBorderEnabled: false,
   sectionBackground: 'shader:saintbilly',
 });
 
-// “Looking down” at an infinite canvas feel:
 worlds.camera.setPosition(0, 55, 320);
 worlds.camera.setRotation(CAMERA_BASE_ROT.x, CAMERA_BASE_ROT.y, CAMERA_BASE_ROT.z);
-// Optional: narrower FOV reads as a touch more “zoomed” / cinematic.
 worlds.camera.setFOV(deg(42));
 worlds.camera.setEaseSpeed(0.18, 0.12);
 
-// Handheld camera motion (implemented in Worlds camera, avoids shader warp artifacts)
 worlds.camera.shake.setParams({
-  // overall intensity (0..2 typical)
   strength: 1.0,
-  // motion speed
   rate: 0.20,
-  // translation is in camera-local world units
   translate: { x: 1.2, y: 0.9, z: 0.4 },
-  // rotation is radians
   rotate: { x: deg(0.55), y: deg(0.65), z: 0 },
 });
 worlds.camera.shake.setEnabled(true);
 
-// Navigate to the first section, but keep our camera tilt.
 worlds.camera.focusOnSectionFit(0, WORLDS_SECTION_FILL, { keepRotation: true });
 
 gui.init();
@@ -237,94 +359,51 @@ buildTimedSections();
 
 const tokens = gui.getTokens();
 const panel = gui.createResponsivePanel({
-  bounds: { x: 0, y: 0, width: 420, height: 520 },
-  padding: tokens.spacing.lg,
-  gap: tokens.spacing.sm,
-  maxWidth: 460,
+  bounds: { x: 0, y: 0, width: 200, height: 180 },
+  padding: tokens.spacing.md,
+  gap: tokens.spacing.xs,
+  maxWidth: 200,
   layout: { widthPolicy: 'fill', heightPolicy: 'fit-content' }
-});
-
-const heading = gui.createLabel({
-  bounds: { x: 0, y: 0, width: 1, height: 28 },
-  text: 'Depths Beckon',
-  align: 'left',
-  labelStyle: { typographyRole: 'title' },
-  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-});
-
-const status = gui.createLabel({
-  bounds: { x: 0, y: 0, width: 1, height: 20 },
-  text: 'Synthetic transport running.',
-  align: 'left',
-  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-});
-
-const section = gui.createLabel({
-  bounds: { x: 0, y: 0, width: 1, height: 24 },
-  text: 'Section: Somehweres in the New West',
-  align: 'left',
-  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-});
-
-const lyricLine = gui.createLabel({
-  bounds: { x: 0, y: 0, width: 1, height: 24 },
-  text: '',
-  align: 'left',
-  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
 });
 
 const time = gui.createLabel({
   bounds: { x: 0, y: 0, width: 1, height: 20 },
-  text: 'Time: 0:00 / 0:30',
+  text: '--:-- / --:--',
   align: 'left',
   layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
 });
 
 const seek = gui.createSlider({
-  bounds: { x: 0, y: 0, width: 1, height: 48 },
-  label: 'Scrub',
+  bounds: { x: 0, y: 0, width: 1, height: 40 },
+  label: '',
   min: 0,
-  max: DEMO_DURATION_SEC,
+  max: 1,
   value: 0,
   step: 0.1,
   layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
 });
 
-const btnPlay = gui.createButton({
+const btnPlayPause = gui.createButton({
   bounds: { x: 0, y: 0, width: 1, height: 40 },
-  label: 'Play',
-  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-});
-
-const btnPause = gui.createButton({
-  bounds: { x: 0, y: 0, width: 1, height: 40 },
-  label: 'Pause',
-  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-});
-
-const btnReset = gui.createButton({
-  bounds: { x: 0, y: 0, width: 1, height: 40 },
-  label: 'Reset',
+  label: 'Play/Pause',
   layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
 });
 
 panel
-  .add(heading)
-  .add(status)
-  .add(section)
-  .add(lyricLine)
   .add(time)
   .add(seek)
-  .add(btnPlay)
-  .add(btnPause)
-  .add(btnReset);
+  .add(btnPlayPause);
 
 panel.layout();
 
 state.panel = panel;
-state.widgets = { heading, status, section, lyricLine, time, seek, btnPlay, btnPause, btnReset };
-state.startTime = getTime();
+state.widgets = { time, seek, btnPlayPause };
+state.gain = audio.createGain();
+state.gain.gain.value = 1;
+state.gain.connect(audio.destination);
+audio.context.resume().catch(() => {});
 worlds.content?.clearAll?.();
+void loadLocalAudio();
 ```
 
 ```javascript on:input
@@ -354,18 +433,16 @@ if (state.panel) {
   const tokens = gui.getTokens();
   const compact = info.breakpoint === 'xs';
   const inset = compact ? tokens.spacing.sm : tokens.spacing.lg;
-  const maxWidth = compact
-    ? Math.max(300, Math.min(380, info.usableWidth || viewport.width))
-    : Math.max(380, Math.min(460, info.usableWidth || viewport.width));
+  const maxWidth = Math.min(200, Math.max(160, (info.usableWidth || viewport.width) - inset * 2));
 
-  state.panel.container.padding = compact ? tokens.spacing.md : tokens.spacing.lg;
+  state.panel.container.padding = compact ? tokens.spacing.sm : tokens.spacing.md;
   state.panel.container.gap = compact ? tokens.spacing.xs : tokens.spacing.sm;
   state.panel.setMaxWidth(maxWidth, false);
   state.panel.fitToViewport(viewport, {
     inset,
     safeArea: true,
     maxWidth,
-    anchorX: 'start',
+    anchorX: 'end',
     anchorY: 'start'
   }, false);
   state.panel.layout();
@@ -373,25 +450,42 @@ if (state.panel) {
 
 gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);
 
-if (state.widgets.btnPlay.wasClicked()) playDemo();
-if (state.widgets.btnPause.wasClicked()) pauseDemo();
-if (state.widgets.btnReset.wasClicked()) resetDemo(true);
+if (state.widgets.btnPlayPause.wasClicked()) {
+  if (state.isPlaying) {
+    state.playRequested = false;
+    stopAudio({ keepOffset: true });
+  } else {
+    audio.context.resume().catch(() => {});
+    state.playRequested = true;
+    if (state.audioBuffer) {
+      playFrom(state.pauseOffset);
+      state.playRequested = false;
+    }
+    else {
+      void loadLocalAudio();
+      setStatus('Loading local WAV asset...');
+    }
+  }
+}
 
 const dragging = state.widgets.seek.isDragging?.() ?? false;
 const livePos = getDemoTimeSec();
-const previewPos = dragging ? clamp(state.widgets.seek.getValue(), 0, DEMO_DURATION_SEC) : livePos;
+const maxSeek = state.audioBuffer ? state.audioBuffer.duration : 0;
+const previewPos = dragging ? clamp(state.widgets.seek.getValue(), 0, maxSeek) : livePos;
 
-if (!dragging && state.wasSeeking) {
-  setDemoTimeSec(clamp(state.widgets.seek.getValue(), 0, DEMO_DURATION_SEC));
+if (state.audioBuffer && !dragging && state.wasSeeking) {
+  const target = clamp(state.widgets.seek.getValue(), 0, state.audioBuffer.duration);
+  state.pauseOffset = target;
+  if (state.isPlaying) playFrom(target);
 }
-if (!dragging) state.widgets.seek.setValue(livePos);
+if (state.audioBuffer && !dragging) state.widgets.seek.setValue(livePos);
+
 state.wasSeeking = dragging;
 
 const sec = sectionAtMs(previewPos * 1000);
 const secTitle = sec ? sec.title : '';
 if (secTitle !== state.currentSection) {
   state.currentSection = secTitle;
-  state.widgets.section.setText(`Section: ${secTitle || '(none)'}`);
   if (sec) {
     worlds.camera.focusOnSectionFit(sec.index, WORLDS_SECTION_FILL, { keepRotation: true });
   }
@@ -400,322 +494,205 @@ if (secTitle !== state.currentSection) {
 const newLine = lineAtTime(previewPos);
 if (newLine !== state.currentLine) {
   state.currentLine = newLine;
-  state.widgets.lyricLine.setText(newLine ? `Line: ${newLine}` : 'Line: (none)');
 }
 
 syncWorldsSectionContent(sec, previewPos);
 
-state.widgets.time.setText(`${dragging ? 'Preview' : 'Time'}: ${fmtTime(previewPos)} / ${fmtTime(DEMO_DURATION_SEC)}`);
-state.widgets.status.setText(
-  dragging
-    ? `Scrubbing ${fmtTime(previewPos)} — timed content should move cleanly between sections.`
-    : (state.isPlaying ? 'Synthetic transport running.' : 'Paused — drag the scrubber or press Play.')
-);
+const total = state.audioBuffer ? fmtTime(state.audioBuffer.duration) : '--:--';
+state.widgets.time.setText(`${fmtTime(previewPos)} / ${total}`);
+if (dragging && state.audioBuffer) {
+  setStatus(`Scrubbing ${fmtTime(previewPos)} - lyric and section sync are following the local WAV asset.`);
+} else if (state.audioBuffer) {
+  setStatus(state.isPlaying ? 'Playing synced local audio.' : 'Paused - drag the scrubber or press Play.');
+}
+state.widgets.btnPlayPause.setLabel(state.isPlaying ? 'Pause' : 'Play');
 ```
 
 ```timed name:lyrics
 # ms|text
-0|Dust rolls across the western road.
-2000|A warning waits above the ruined gate.
-4000|The dark keeps breathing just beyond the stone.
-6000|The statues turn their hollow gaze toward you.
-8000|Three silent sentries hold the hall in place.
-10000|Blue crystal light begins to stain the dark.
-12000|The chamber answers with a colder song.
-14000|Ancient light gathers in the amulet and the walls.
-16000|Far below, the guardian chamber starts to wake.
-18000|Stone remembers every step that brought you here.
-20000|The vault opens only after wisdom bends the blade.
-22000|Gold and dust drift through the final room.
-24000|The old legend settles into your hands.
-26000|The newest lines remain while the rest fall away.
-28000|Then the song loops back into the dust.
+0|Somewheres in the wild New West
+27000|Way out West in the Texas Sun
+28600|Outlaws outrun and outgun
+31800|Shoot to kill, they shoot for the giggle and thrill
+35600|They love that blood to spill
+38000|And amidst them standing tall
+41400|Mighty and proud on top of it all
+44600|One man towers without shame
+45000|One man TOWERS without shame
+48140|One man oversees this game
+51700|They call him Billy the Saint
+54780|Saint Billy, that's his name
+56380|One evil, rotten son of a gun
+58980|Does hurt for work
+62140|And hurt for fun
+63780|And when he come round with his gang
+65000|All them hoodlums sing
+68000|Go on Saint Billy, do your thing
+73000|Go on Saint Billy go and bring the pain
+85000|Bring the pain
+92840|Word got rammed by the strange young man Culted inside and sold in hand
+96080|Hunting souls down like a sour bloodhound
+98940|Ain't demons free when they come to town
+102120|They said that he woke the dead then drowned them again
+106000|By the river's edge. Saint Billy
+109000|It's all on you, what ya gonna do
+112000|What ya gonna do with this fool. This West ain't
+115000|Big enough for two outlaws
+117000|Kicking in doors and teeth and more, but you
+122000|You're the vilest sort, bed him down, Billy
+125000|Like you do for sport. Mounted his horse
+129000|With a "Yippee Ki‐Yay", all them hoodlums sing
+68000|Go on Saint Billy, do your thing
+73000|Go on Saint Billy go and bring the pain
+147000|High noon and high eyed on the trail outside of saloon, so pale and frail.
+160000|A preacher man, he spoke so bold, Town folks gather round for the stories
+165340|And then
+167640|Coulda heard a pin drop
+169240|When he called them sinners
+171040|Repent and stop and turn to Jesus
+174400|King of kings
+176040|Bring your filth, he'll make y'all clean
+179040|Slowly the crowd broke up
+182040|But one stood shook
+183960|All trembling and stuff
+185440|They call him Billy the Saint
+188940|Saint Billy, that's his name and when he come round nowadays
+194960|All them choir sing
+68000|Go on Saint Billy, do your thing
+73000|Go on Saint Billy go and ease the pain
+205000|...and so the New West was won.
 ```
 
-# Somehweres in the New West {"timed": "0ms"}
-⠀
-In a small town...
-
-# Entrance Examine {"timed": "4000ms"}
-⠀
-You take a moment to inspect the entrance more carefully. Ancient runes are carved into the archway, worn smooth by centuries of wind and rain. You can barely make out what appears to be a warning:
-⠀
-*"Beware the guardian of the depths. Only the wise may pass."*
-⠀
-Beside the entrance, you notice an old iron sconce. It's empty, but appears functional.
-⠀
-- [Enter the ruins](#hall-of-statues)  
-- [Take the sconce](#take-sconce)  
-- [Go back](#entrance)
-
-# Prepare Torch
-⠀
-You take time to properly prepare your torch, wrapping it with oil-soaked cloth from your pack. The flame burns brighter now, casting long shadows across the ancient stone.
-⠀
-*You feel more confident with better light.*
-⠀
-- [Enter the ruins](#hall-of-statues)  
-- [Return to the entrance](#entrance)
-
-```nim on:enter
-hasTorch = true
-torchQuality = "bright"
+```timed name:lyricWords
+# Estimated per-word timing for the featured hook section.
+# `__BREAK__` ends the current rendered line.
+45000|♪
+45449|One
+45897|man
+46346|towers
+46794|without
+47243|shame
+47691|♪
+48139|__BREAK__
+48140|♪
+48649|One
+49157|man
+49666|oversees
+50174|this
+50683|game
+51191|♪
+51699|__BREAK__
+51700|♪
+52042|They
+52384|call
+52727|him
+53069|Billy
+53753|the
+54096|Saint
+54438|♪
+54779|__BREAK__
+54780|♪
+55009|Saint
+55237|Billy
+55466|that's
+55694|his
+55923|name
+56151|♪
+56379|__BREAK__
+56380|♪
+56751|One
+57123|evil
+57494|rotten
+58609|♪
+58979|__BREAK__
+58980|♪
+59267|Son
+59842|of
+60129|a
+60416|gun
+60704|does
+60991|hurt
+61278|for
+61565|work
+61853|♪
+62139|__BREAK__
+62140|♪
+62413|And
+62687|hurt
+62960|for
+63233|fun
+63507|♪
+63779|__BREAK__
+63780|♪
+63835|And
+63891|when
+63946|he
+64002|come
+64057|round
+64113|with
+64168|his
+64224|gang
+64279|♪
+64999|__BREAK__
+65000|♪
+65500|All
+66000|them
+66500|hoodlums
+67000|sing
+67500|♪
+67999|__BREAK__
+68000|♪
+68625|Go on,
+69250|Saint
+69875|Billy
+70500|do
+71125|your
+71750|thing
+72375|♪
+72999|__BREAK__
+73000|♪
+73500|Go on
+74000|Saint
+74500|Billy
+75000|go
+75500|and
+76000|bring
+76500|the
+77000|pain
+77500|♪
+77999|__BREAK__
+85000|♪
+85940|Bring
+86880|the
+87820|pain
+88760|♪
+89699|__BREAK__
 ```
 
-# Hall of Statues {"timed": "8000ms", "rotate-z": "17"}
-⠀
-You step into a vast hall supported by crumbling pillars. **Three stone statues** stand guard, each depicting a different warrior from a forgotten age. Their hollow eyes seem to follow you as you move.
-⠀
-Passages branch off in three directions:
-- To the **north**, you hear the sound of rushing water
-- To the **east**, a faint blue glow emanates from the darkness  
-- To the **west**, you smell something acrid and unpleasant
-⠀
-The main entrance lies behind you.
-⠀
-- [Go north toward the water](#underground-river)  
-- [Go east toward the blue glow](#crystal-chamber)  
-- [Go west toward the smell](#alchemist-lab)  
-- [Examine the statues](#examine-statues)  
-- [Return to entrance](#entrance)
+# Opening {"timed": "0ms", "render": "content"}
 
-# Examine Statues
-⠀
-You approach the statues carefully. Each warrior is carved in exquisite detail:
-⠀
-The **first statue** holds a sword pointed downward, its face serene.  
-The **second statue** clutches a shield, face twisted in rage.  
-The **third statue** bears a broken chain, face sorrowful.
-⠀
-At the base of the third statue, you notice something glinting in the torchlight.
-⠀
-- [Take the glinting object](#find-key)  
-- [Return to the hall](#hall-of-statues)
+»»——————¤——————««
 
-# Find Key
-⠀
-You reach down and pick up a small, tarnished **brass key**. It's surprisingly heavy for its size, and covered in the same ancient runes you saw at the entrance.
-⠀
-*This might unlock something important.*
-⠀
-[Return to the hall](#hall-of-statues)
+# Saint Billy Rides In {"timed": "44600ms", "rotate-z": "12", "render": "content"}
 
-```nim on:enter
-hasKey = true
-```
+✎﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏
 
-# Underground River
-⠀
-The passage opens into a cavern split by a **rushing underground river**. The water is black as ink and moves with frightening speed. A narrow stone bridge crosses the chasm, but it looks ancient and unstable.
-⠀
-On the far side, you can see a doorway carved into the rock.
-⠀
-- [Cross the bridge carefully](#cross-bridge)  
-- [Search for another way](#search-riverbank)  
-- [Return to the hall](#hall-of-statues)
+# River Talk {"timed": "92840ms", "render": "content"}
 
-# Cross Bridge
-⠀
-You step onto the stone bridge. It groans under your weight, and small chunks of stone crumble into the dark water below. Halfway across, you freeze as a loud **CRACK** echoes through the cavern.
-⠀
-But the bridge holds. Barely.
-⠀
-You make it to the other side, heart pounding.
-⠀
-- [Enter the carved doorway](#treasure-vault)  
-- [Go back across (carefully)](#underground-river)
+‿︵‿︵‿︵‿︵‿︵‿︵
 
-# Search Riverbank
-⠀
-You search along the riverbank, looking for another way across. Behind a fallen column, you discover an old rope tied to an iron ring. Following it up, you see it leads to a natural rock shelf that crosses above the river.
-⠀
-A safer path, if you're willing to climb.
-⠀
-- [Take the high route](#treasure-vault)  
-- [Just use the bridge](#cross-bridge)  
-- [Go back](#underground-river)
+# Two-Outlaw Gospel {"timed": "125000ms", "render": "content"}
 
-# Crystal Chamber {"timed": "12000ms"}
-⠀
-You follow the blue glow into a chamber filled with **luminescent crystals** growing from the walls and ceiling. They pulse with an eerie inner light, casting everything in shades of azure and violet.
-⠀
-In the center of the room stands a stone pedestal. Resting atop it is a beautiful **silver amulet**, set with a matching blue crystal.
-⠀
-The chamber has two other exits: one to the north and one continuing east.
-⠀
-- [Take the amulet](#take-amulet)  
-- [Go north](#library)  
-- [Continue east](#guardian-chamber)  
-- [Return to the hall](#hall-of-statues)
+»»——————¤——————««
 
-# Take Amulet
-⠀
-You reach for the amulet. The moment your fingers touch the cold silver, the crystals around you **flare brilliantly**. You feel a surge of warmth spread through your body.
-⠀
-*The amulet pulses with protective magic.*
-⠀
-- [Go north](#library)  
-- [Continue east](#guardian-chamber)  
-- [Return to crystal chamber](#crystal-chamber)
+# Pulpit Fire {"timed": "160000ms", "render": "content"}
 
-```nim on:enter
-hasAmulet = true
-```
+━◦○◦━◦○◦━◦○◦━◦○◦━◦○◦━◦○◦━
 
-# Library
-⠀
-You enter what must have once been a library. Ancient books line rotting shelves, most crumbling to dust. In the center of the room, a single tome rests on a reading stand, somehow preserved.
-⠀
-You open the book. The pages are filled with riddles and wisdom of the ancients. One passage catches your eye:
-⠀
-*"The guardian seeks not strength, but humility. The warrior who bows is greater than one who strikes."*
-⠀
-- [Study more of the book](#library)  
-- [Go south](#crystal-chamber)  
-- [Go back to the hall](#hall-of-statues)
+# Choir for Saint Billy {"timed": "185440ms", "render": "content"}
 
-```nim on:enter
-visitedLibrary = true
-```
+»»——————¤——————««
 
-# Alchemist Lab
-⠀
-The acrid smell leads you to an old laboratory. Broken glass and ceramic vessels litter the floor. Strange stains mark the walls. Whatever happened here, it wasn't pleasant.
-⠀
-Among the debris, you find a workbench with several intact bottles. One contains a glowing green liquid labeled *"Essence of Light"* in faded script.
-⠀
-- [Take the essence](#take-essence)  
-- [Search the room more carefully](#search-lab)  
-- [Return to the hall](#hall-of-statues)
+# Last Echo {"timed": "205000ms", "render": "content"}
 
-# Take Essence
-⠀
-You carefully pocket the glowing essence. It feels warm through the glass.
-⠀
-*This might prove useful.*
-⠀
-- [Search the room](#search-lab)  
-- [Return to the hall](#hall-of-statues)
-
-```nim on:enter
-hasEssence = true
-```
-
-# Search Lab
-⠀
-Searching more carefully, you find the alchemist's journal beneath some rubble. The final entry reads:
-⠀
-*"My experiments with the guardian have failed. It cannot be destroyed, only understood. I leave this place to whatever fate awaits. May those who follow be wiser than I."*
-⠀
-- [Return to the laboratory](#alchemist-lab)  
-- [Go to the hall](#hall-of-statues)
-
-# Guardian Chamber {"timed": "18000ms"}
-⠀
-You enter a vast circular chamber. At its center stands a towering figure of **living stone**—the Guardian of Khel-Daran. Its eyes glow with ancient intelligence.
-⠀
-The Guardian speaks, its voice like grinding boulders:
-
-*"Who dares disturb my eternal vigil? Prove your worth, or be destroyed!"*
-⠀
-Three pedestals surround the guardian, each marked with a symbol: **Sword**, **Shield**, and **Chains**.
-⠀
-- [Place an offering on the Sword pedestal](#guardian-fail)  
-- [Place an offering on the Shield pedestal](#guardian-fail)  
-- [Place an offering on the Chains pedestal](#guardian-success)  
-- [Attack the guardian](#guardian-attack)  
-- [Try to reason with the guardian](#guardian-reason)
-
-# Guardian Attack
-⠀
-You draw your weapon and charge at the stone guardian. It doesn't even move.
-
-Your blade strikes the living stone and **shatters**. The guardian's fist comes down like a falling boulder. Everything goes dark.
-⠀
-*Perhaps violence wasn't the answer.*
-⠀
-- [Try again?](#guardian-chamber)
-
-# Guardian Reason
-⠀
-You lower your weapon and address the guardian with respect:
-
-"I seek not to conquer, but to understand. I come in peace."
-⠀
-The guardian tilts its massive head, considering. Then it speaks:
-⠀
-*"Wisdom... rare among your kind. But words alone are insufficient. Show me you understand the truth of strength."*
-⠀
-- [Place something on a pedestal](#guardian-chamber)
-
-# Guardian Fail
-⠀
-You place your offering on the pedestal. The guardian's eyes flare **angry red**.
-
-*"You understand nothing! Strength and defense are the tools of the proud. True power lies in freedom and sacrifice!"*
-
-The chamber begins to shake violently.
-⠀
-- [Run back](#crystal-chamber)  
-- [Try a different pedestal](#guardian-chamber)
-
-# Guardian Success
-⠀
-You approach the pedestal marked with broken chains and bow your head. The gesture of **humility and understanding** resonates through the chamber.
-⠀
-The guardian's eyes shift from threatening red to a calm **golden glow**.
-⠀
-*"You comprehend the ancient wisdom. Strength is nothing without the wisdom to bind it. You may pass."*
-⠀
-The guardian steps aside, revealing a passage to the **Treasure Vault**.
-⠀
-- [Enter the vault](#treasure-vault)
-
-```nim on:enter
-if visitedLibrary:
-  draw(0, h-1, 0, w, 1, "Your knowledge from the library helped you understand!", "AlignCenter", "AlignTop", "WrapNone")
-```
-
-- [Enter the vault](#treasure-vault)
-
-# Treasure Vault {"timed": "24000ms"}
-⠀
-You enter the fabled treasure vault of Khel-Daran. Gold coins spill across the floor, gems glitter in the light of your torch, and ancient weapons line the walls.
-⠀
-But your eyes are drawn to the center of the room, where a magnificent **sword** rests on an altar, bathed in a beam of light from above. This is the legendary **Blade of Khel-Daran**, said to have defended these lands centuries ago.
-⠀
-The inscription on the altar reads:
-*"To those who brave the depths with wisdom and courage, this is your reward."*
-⠀
-**Congratulations! You have completed the adventure!**
-⠀
-- [Take the sword and leave](#victory)  
-- [Explore the vault more](#treasure-vault)  
-- [Return to the guardian](#guardian-chamber)
-
-# Victory
-⠀
-You lift the Blade of Khel-Daran from its altar. The weapon feels perfectly balanced in your hand, and seems to **hum with ancient power**.
-⠀
-As you make your way back through the dungeon, you notice the guardian watching you with what might be... respect? The stone colossus bows its head slightly as you pass.
-⠀
-Emerging into the daylight, you shield your eyes against the sun. The ruins of Khel-Daran stand behind you, their secrets revealed.
-⠀
-**Your adventure is complete! You are victorious!**
-⠀
-*The legend of Khel-Daran will be told for generations.*
-⠀
-[Explore more endings?](#hall-of-statues)
-
-# Take Sconce
-⠀
-You remove the iron sconce from the wall. It's heavier than it looks and has a wicked pointed end. In a pinch, this could serve as a makeshift weapon.
-⠀
-*Might be useful in the dark.*
-⠀
-- [Continue to the ruins](#hall-of-statues)  
-- [Go back](#entrance-examine)
-
-```nim on:enter
-hasWeapon = true
-```
+»——————◦•♛•◦——————«

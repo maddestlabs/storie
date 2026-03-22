@@ -342,6 +342,7 @@ export interface SandboxAPI {
     startOnGesture: (start: () => void) => boolean;
     // Helpers
     playTone: (frequency: number, duration: number, volume?: number) => { osc: OscillatorNode; gain: GainNode };
+    loadSound: (url: string) => Promise<AudioBuffer | null>;
     loadSoundFromDrop: () => Promise<AudioBuffer | null>;
     loadSoundFromBlob: (name: string, documentId?: string) => Promise<AudioBuffer | null>;
     playBuffer: (buffer: AudioBuffer, options?: { loop?: boolean; volume?: number; playbackRate?: number }) => AudioBufferSourceNode;

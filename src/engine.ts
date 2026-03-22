@@ -335,6 +335,8 @@ export class StorieEngine {
   
   // Native browser APIs (shared instances)
   private audioContext: AudioContext;
+  private readonly audioUrlBufferCache: Map<string, AudioBuffer> = new Map();
+  private readonly audioUrlInFlightCache: Map<string, Promise<AudioBuffer | null>> = new Map();
   private audioGestureUnlocked: boolean = false;
   private trustedAudioGestureDepth: number = 0;
   private pendingGestureAudioStarts: Array<() => void> = [];
@@ -1249,6 +1251,98 @@ export class StorieEngine {
       }
       throw error;
     }
+  }
+
+  private resolveSandboxAudioUrl(rawUrl: string): string {
+    const trimmed = String(rawUrl ?? '').trim();
+    if (!trimmed) {
+      throw new Error('[audio.loadSound] Missing URL');
+    }
+
+    if (this.untrustedContent) {
+      const allowedPrefix = /^(?:\.\/)?assets\/audio\//;
+      if (!allowedPrefix.test(trimmed) || trimmed.includes('..') || trimmed.startsWith('/') || trimmed.startsWith('\\')) {
+        throw new Error('[audio.loadSound] Untrusted mode allows only relative URLs under "assets/audio/"');
+      }
+      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
+        throw new Error('[audio.loadSound] Untrusted mode blocks URL schemes');
+      }
+    }
+
+    let resolved: URL;
+    try {
+      resolved = new URL(trimmed, globalThis.location?.href ?? 'http://localhost/');
+    } catch (error: any) {
+      throw new Error(`[audio.loadSound] Invalid URL: ${String(error?.message ?? error)}`);
+    }
+
+    const protocol = resolved.protocol.toLowerCase();
+    if (protocol === 'data:' || protocol === 'blob:' || protocol === 'javascript:' || protocol === 'file:') {
+      throw new Error(`[audio.loadSound] Unsupported URL scheme: ${protocol}`);
+    }
+    if (resolved.username || resolved.password) {
+      throw new Error('[audio.loadSound] Credentials in URLs are not supported');
+    }
+
+    const origin = globalThis.location?.origin;
+    if (origin && origin !== 'null' && resolved.origin !== origin) {
+      throw new Error(`[audio.loadSound] Cross-origin audio blocked: ${resolved.origin}`);
+    }
+
+    return resolved.toString();
+  }
+
+  private async loadSoundFromUrl(rawUrl: string): Promise<AudioBuffer | null> {
+    const MAX_AUDIO_URL_BYTES = 128 * 1024 * 1024;
+
+    let resolvedUrl: string;
+    try {
+      resolvedUrl = this.resolveSandboxAudioUrl(rawUrl);
+    } catch (error) {
+      console.warn(error);
+      return null;
+    }
+
+    const cached = this.audioUrlBufferCache.get(resolvedUrl);
+    if (cached) return cached;
+
+    const inFlight = this.audioUrlInFlightCache.get(resolvedUrl);
+    if (inFlight) return await inFlight;
+
+    const promise = (async () => {
+      try {
+        const response = await fetch(resolvedUrl, {
+          mode: 'same-origin',
+          credentials: 'same-origin',
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} ${response.statusText}`);
+        }
+
+        const contentLength = Number(response.headers.get('content-length'));
+        if (Number.isFinite(contentLength) && contentLength > MAX_AUDIO_URL_BYTES) {
+          throw new Error(`Refusing audio larger than ${MAX_AUDIO_URL_BYTES} bytes (server reported ${contentLength})`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        if (arrayBuffer.byteLength > MAX_AUDIO_URL_BYTES) {
+          throw new Error(`Refusing audio larger than ${MAX_AUDIO_URL_BYTES} bytes (downloaded ${arrayBuffer.byteLength})`);
+        }
+
+        const buffer = await this.audioContext.decodeAudioData(arrayBuffer);
+        this.audioUrlBufferCache.set(resolvedUrl, buffer);
+        return buffer;
+      } catch (error) {
+        console.warn(`[audio.loadSound] Failed to load audio from "${resolvedUrl}":`, error);
+        return null;
+      } finally {
+        this.audioUrlInFlightCache.delete(resolvedUrl);
+      }
+    })();
+
+    this.audioUrlInFlightCache.set(resolvedUrl, promise);
+    return await promise;
   }
 
   private ensureMarkdownBlobImageLoaded(source: string, documentId?: string): MarkdownImageCacheEntry | null {
@@ -3314,6 +3408,14 @@ export class StorieEngine {
         },
         
         /**
+         * Decode a same-origin audio asset through the trusted host.
+         * Sandboxed code cannot fetch directly; this keeps URL validation in the engine.
+         */
+        loadSound: async (url: string): Promise<AudioBuffer | null> => {
+          return await engine.loadSoundFromUrl(url);
+        },
+
+        /**
          * Decode the currently dropped file (if any) into an AudioBuffer.
          * This is a safe alternative to URL loading: no network access.
          */
@@ -5003,6 +5105,7 @@ export class StorieEngine {
         // Configuration
         config: {
           setDefaults: (config: Partial<WorldsConfig>) => {
+            let requiresSectionLayoutRecompile = false;
             if (config.defaultDepth !== undefined) {
               engine.worldsConfig.defaultDepth = config.defaultDepth;
             }
@@ -5011,6 +5114,22 @@ export class StorieEngine {
             }
             if (config.defaultSectionHeight !== undefined) {
               engine.worldsConfig.defaultSectionHeight = config.defaultSectionHeight;
+            }
+            if (config.sectionRender !== undefined) {
+              const prev = engine.worldsConfig.sectionRender;
+              switch (config.sectionRender) {
+                case 'heading':
+                case 'content':
+                case 'none':
+                case 'all':
+                  engine.worldsConfig.sectionRender = config.sectionRender;
+                  break;
+                default:
+                  break;
+              }
+              if (prev !== engine.worldsConfig.sectionRender) {
+                requiresSectionLayoutRecompile = true;
+              }
             }
             if ((config as any).sectionClickFocusEnabled !== undefined) {
               engine.worldsConfig.sectionClickFocusEnabled = !!(config as any).sectionClickFocusEnabled;
@@ -5153,8 +5272,12 @@ export class StorieEngine {
               }
             }
 
-            engine.applyWorldsLayoutCallback();
-            engine.reflowWorldsAutoLayout();
+            if (requiresSectionLayoutRecompile && engine.runtimeSectionStore.sections.length > 0) {
+              engine.compileWorldsLayoutsFromRuntimeSectionStore('config defaults changed');
+            } else {
+              engine.applyWorldsLayoutCallback();
+              engine.reflowWorldsAutoLayout();
+            }
           },
           
           getDefaults: () => {

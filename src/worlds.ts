@@ -910,7 +910,17 @@ export function parseTransform3D(
   const navigable = metaStr('navigable', 'true').trim().toLowerCase() !== 'false';
   const interactive = metaStr('interactive', 'true').trim().toLowerCase() !== 'false';
   const renderMode = (() => {
-    const mode = metaStr('render', 'all').trim().toLowerCase();
+    const defaultMode = (() => {
+      switch ((config.sectionRender ?? 'all').toLowerCase()) {
+        case 'heading':
+        case 'content':
+        case 'none':
+          return config.sectionRender as SectionRenderMode;
+        default:
+          return 'all' as SectionRenderMode;
+      }
+    })();
+    const mode = metaStr('render', defaultMode).trim().toLowerCase();
     switch (mode) {
       case 'heading':
       case 'content':
@@ -1008,6 +1018,7 @@ export function getDefaultWorldsConfig(): WorldsConfig {
     defaultDepth: -100, // Sections start 100 units in front of camera (negative Z)
     defaultSectionWidth: 60,
     defaultSectionHeight: 20,
+    sectionRender: 'all',
     sectionClickFocusEnabled: true,
     sectionSizeUnits: 'text',
     sectionOverflow: 'clip',

@@ -89,6 +89,8 @@ Card content uses the shared lightweight markdown renderer. In addition to headi
 
 ### `worlds` Object
 
+`worlds.config.setDefaults({ sectionRender })` sets the default card composition for the whole document. A section heading with explicit `render: ...` metadata still wins.
+
 Main 3D canvas API exposed to user scripts.
 
 #### Enable/Disable

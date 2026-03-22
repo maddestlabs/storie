@@ -3,13 +3,14 @@ title: "Worlds Markdown Content"
 theme: "nord"
 ---
 
-# Worlds Markdown Showcase {"x":"0","y":"0","z":"0","width":"64","height":"26"}
+# Worlds Markdown Showcase {"x":"0","y":"0","z":"0","width":"64","height":"26","render":"all"}
 
 This demo begins showcasing the expanded static markdown content support inside Worlds cards.
 
 What to look for:
 
 - Lists and internal links still work as before.
+- The document defaults to content-only cards, so most section headings stay hidden.
 - Blockquotes now render with a vertical quote bar.
 - GitHub-style callouts such as `> [!TIP]` now render as framed admonitions.
 - Horizontal rules now render as separators inside cards.
@@ -17,6 +18,7 @@ What to look for:
 - ASCII fenced blocks can still render as visible preformatted content.
 - Section-scoped retained GUI can now be mounted from within a Worlds section.
 - Embedded `gui` fences can now place buttons, sliders, checkboxes, and labels directly in card flow.
+- The intro card overrides the document default so its heading remains visible.
 
 - [Lists and links](#lists-and-links)
 - [Blockquotes and rules](#blockquotes-and-rules)
@@ -34,6 +36,7 @@ gui.init({ boundsSpace: 'device' });
 worlds.config.setDefaults({
   sectionBackground: 'paper+ruledlines',
   sectionLinkUnderline: true,
+  sectionRender: 'content',
   sectionOverflow: 'fit-y',
   sectionClickFocusEnabled: true,
   defaultSectionWidth: 64,

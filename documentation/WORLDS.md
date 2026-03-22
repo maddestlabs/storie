@@ -20,7 +20,10 @@ This doc covers:
 ```js
 // on:init
 worlds.enable();
-worlds.config.setDefaults({ sectionTextureMode: 'webgpu-ui' });
+worlds.config.setDefaults({
+  sectionTextureMode: 'webgpu-ui',
+  sectionRender: 'content'
+});
 
 worlds.camera.setPosition(0, 0, 260);
 worlds.camera.setRotation(0, 0, 0);
@@ -63,6 +66,7 @@ Notes:
 - Rotations are specified in degrees in metadata but are stored internally as radians.
 - `displayTitle` is the heading text with the JSON suffix stripped.
 - The relaxed form is intended for flat key/value metadata. If you need nested data, strict JSON is the safer choice.
+- `worlds.config.setDefaults({ sectionRender })` sets the document-wide default render mode, and per-section `render` metadata still overrides it.
 
 ## Card Content
 
