@@ -321,7 +321,7 @@ function syncWorldsSectionContent(section, posSec) {
 
 ```javascript on:init
 const deg = d => d * Math.PI / 180;
-const CAMERA_BASE_ROT = { x: deg(-4), y: deg(4), z: 0 };
+const CAMERA_BASE_ROT = { x: deg(-9), y: deg(4), z: 0 };
 worlds.enable();
 worlds.config.setDefaults({
   sectionRender: 'content',
@@ -432,14 +432,19 @@ if (state.panel) {
   const info = gui.getResponsiveInfo({ width: viewport.width, height: viewport.height });
   const tokens = gui.getTokens();
   const compact = info.breakpoint === 'xs';
-  const inset = compact ? tokens.spacing.sm : tokens.spacing.lg;
-  const maxWidth = Math.min(200, Math.max(160, (info.usableWidth || viewport.width) - inset * 2));
+  const insetTop = compact ? tokens.spacing.sm : tokens.spacing.lg;
+  const insetLeft = compact ? tokens.spacing.sm : tokens.spacing.lg;
+  const insetBottom = compact ? tokens.spacing.sm : tokens.spacing.lg;
+  const maxWidth = Math.min(200, Math.max(160, (info.usableWidth || viewport.width) - insetLeft));
 
   state.panel.container.padding = compact ? tokens.spacing.sm : tokens.spacing.md;
   state.panel.container.gap = compact ? tokens.spacing.xs : tokens.spacing.sm;
   state.panel.setMaxWidth(maxWidth, false);
   state.panel.fitToViewport(viewport, {
-    inset,
+    insetTop,
+    insetRight: 0,
+    insetBottom,
+    insetLeft,
     safeArea: true,
     maxWidth,
     anchorX: 'end',
@@ -530,10 +535,10 @@ state.widgets.btnPlayPause.setLabel(state.isPlaying ? 'Pause' : 'Play');
 68000|Go on Saint Billy, do your thing
 73000|Go on Saint Billy go and bring the pain
 85000|Bring the pain
-92840|Word got rammed by the strange young man Culted inside and sold in hand
-96080|Hunting souls down like a sour bloodhound
-98940|Ain't demons free when they come to town
-102120|They said that he woke the dead then drowned them again
+88760|Word got round bout a strange young man, Colt at his side and sword in hand
+96080|Huntin' souls down like a sour bloodhound
+98940|Even demons flee when he come to town
+102120|It's said that he woke the dead then drowned them again
 106000|By the river's edge. Saint Billy
 109000|It's all on you, what ya gonna do
 112000|What ya gonna do with this fool. This West ain't
@@ -566,47 +571,38 @@ state.widgets.btnPlayPause.setLabel(state.isPlaying ? 'Pause' : 'Play');
 ```timed name:lyricWords
 # Estimated per-word timing for the featured hook section.
 # `__BREAK__` ends the current rendered line.
-45000|♪
-45449|One
+45000|One
 45897|man
 46346|towers
 46794|without
 47243|shame
 47691|♪
 48139|__BREAK__
-48140|♪
 48649|One
 49157|man
 49666|oversees
 50174|this
 50683|game
-51191|♪
 51699|__BREAK__
-51700|♪
-52042|They
+51700|They
 52384|call
 52727|him
 53069|Billy
 53753|the
 54096|Saint
-54438|♪
 54779|__BREAK__
-54780|♪
-55009|Saint
+54780|Saint
 55237|Billy
 55466|that's
 55694|his
 55923|name
 56151|♪
 56379|__BREAK__
-56380|♪
-56751|One
+56380|One
 57123|evil
 57494|rotten
-58609|♪
 58979|__BREAK__
-58980|♪
-59267|Son
+58980||Son
 59842|of
 60129|a
 60416|gun
@@ -616,15 +612,12 @@ state.widgets.btnPlayPause.setLabel(state.isPlaying ? 'Pause' : 'Play');
 61565|work
 61853|♪
 62139|__BREAK__
-62140|♪
 62413|And
 62687|hurt
 62960|for
 63233|fun
-63507|♪
 63779|__BREAK__
-63780|♪
-63835|And
+63780|And
 63891|when
 63946|he
 64002|come
@@ -632,17 +625,13 @@ state.widgets.btnPlayPause.setLabel(state.isPlaying ? 'Pause' : 'Play');
 64113|with
 64168|his
 64224|gang
-64279|♪
 64999|__BREAK__
-65000|♪
-65500|All
+65000|All
 66000|them
 66500|hoodlums
 67000|sing
-67500|♪
 67999|__BREAK__
-68000|♪
-68625|Go on,
+68000|Go on,
 69250|Saint
 69875|Billy
 70500|do
@@ -650,8 +639,7 @@ state.widgets.btnPlayPause.setLabel(state.isPlaying ? 'Pause' : 'Play');
 71750|thing
 72375|♪
 72999|__BREAK__
-73000|♪
-73500|Go on
+73000|Go on
 74000|Saint
 74500|Billy
 75000|go
@@ -659,13 +647,6 @@ state.widgets.btnPlayPause.setLabel(state.isPlaying ? 'Pause' : 'Play');
 76000|bring
 76500|the
 77000|pain
-77500|♪
-77999|__BREAK__
-85000|♪
-85940|Bring
-86880|the
-87820|pain
-88760|♪
 89699|__BREAK__
 ```
 

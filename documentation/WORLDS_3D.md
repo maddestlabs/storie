@@ -153,6 +153,26 @@ worlds.camera.focusOnSection(sectionIndex, distance = 50, options?)
 // Focus and fit the whole card in view
 worlds.camera.focusOnSectionFit(sectionIndex, fill = 0.9, options?)
 
+// Frame a set of sections using their real world transforms (no relayout)
+worlds.camera.frameSections(sections?, options?)
+
+// Bird's-eye framing convenience helper for the current scene
+worlds.camera.birdsEye(options?)
+
+// frame/birdsEye options
+// - sections: number | string | Array<number|string>   // optional explicit section selectors
+// - fill: number                                       // viewport fill fraction
+// - padding: number                                    // extra world-space padding around bounds
+// - includeHidden: boolean                             // include hidden sections when no explicit list is provided
+// - includeNonNavigable: boolean                       // include non-navigable sections when no explicit list is provided
+// - rotation: {x,y,z}                                  // for frameSections, explicit camera rotation in radians
+
+// birdsEye-only options
+// - view: 'oblique' | 'top'                            // default: 'oblique'
+// - pitch: number                                      // override default view pitch in radians
+// - yaw: number                                        // override default view yaw in radians
+// - roll: number                                       // override default view roll in radians
+
 // Field of view
 worlds.camera.setFOV(fov)  // fov in radians (default: Math.PI/4)
 

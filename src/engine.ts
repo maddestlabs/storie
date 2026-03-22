@@ -71,6 +71,8 @@ import {
   mat4TransformVec4,
   mat4TransformPoint,
   mat4TransformDirection,
+  vec3Dot,
+  vec3Cross,
   vec3Normalize,
   vec3Sub,
   vec3Add,
@@ -400,6 +402,15 @@ export class StorieEngine {
         positionOffset?: { x: number; y: number; z: number };
         rotationOffset?: { x: number; y: number; z: number };
       }
+    | {
+        kind: 'frame';
+        sectionSelectors?: Array<number | string>;
+        includeHidden?: boolean;
+        includeNonNavigable?: boolean;
+        fill: number;
+        padding: number;
+        rotation?: { x: number; y: number; z: number };
+      }
     | null = null;
 
   // Last focus request that was actually applied (used to re-frame on resize).
@@ -423,6 +434,13 @@ export class StorieEngine {
         straighten?: boolean;
         positionOffset?: { x: number; y: number; z: number };
         rotationOffset?: { x: number; y: number; z: number };
+      }
+    | {
+        kind: 'frame';
+        sectionIds: string[];
+        fill: number;
+        padding: number;
+        rotation: { x: number; y: number; z: number };
       }
     | null = null;
   private worldsConfig: WorldsConfig = getDefaultWorldsConfig();
@@ -4910,6 +4928,86 @@ export class StorieEngine {
               ...(normVec(rotationOffset) ? { rotationOffset: normVec(rotationOffset)! } : {}),
             });
           },
+
+          frameSections: (
+            sections?: number | string | Array<number | string>,
+            options?: {
+              fill?: number;
+              padding?: number;
+              includeHidden?: boolean;
+              includeNonNavigable?: boolean;
+              rotation?: { x: number; y: number; z: number };
+            }
+          ) => {
+            if (!engine.camera3D) return;
+            const normalizeSections = (value: any): Array<number | string> | undefined => {
+              if (value === undefined || value === null) return undefined;
+              const arr = Array.isArray(value) ? value : [value];
+              const normalized = arr.filter((item) => typeof item === 'number' || typeof item === 'string');
+              return normalized.length > 0 ? normalized : undefined;
+            };
+            const normVec = (v: any) => {
+              if (!v || typeof v !== 'object') return undefined;
+              const x = Number(v.x);
+              const y = Number(v.y);
+              const z = Number(v.z);
+              if (![x, y, z].every(Number.isFinite)) return undefined;
+              return { x, y, z };
+            };
+            engine.request3DCameraFocus({
+              kind: 'frame',
+              ...(normalizeSections(sections) ? { sectionSelectors: normalizeSections(sections)! } : {}),
+              fill: typeof options?.fill === 'number' && Number.isFinite(options.fill) ? options.fill : 0.9,
+              padding: typeof options?.padding === 'number' && Number.isFinite(options.padding) ? options.padding : 24,
+              ...(typeof options?.includeHidden === 'boolean' ? { includeHidden: options.includeHidden } : {}),
+              ...(typeof options?.includeNonNavigable === 'boolean' ? { includeNonNavigable: options.includeNonNavigable } : {}),
+              ...(normVec(options?.rotation) ? { rotation: normVec(options?.rotation)! } : {}),
+            });
+          },
+
+          birdsEye: (
+            options?: {
+              sections?: number | string | Array<number | string>;
+              fill?: number;
+              padding?: number;
+              includeHidden?: boolean;
+              includeNonNavigable?: boolean;
+              view?: 'oblique' | 'top';
+              pitch?: number;
+              yaw?: number;
+              roll?: number;
+            }
+          ) => {
+            if (!engine.camera3D) return;
+            const view = options?.view === 'top' ? 'top' : 'oblique';
+            const rotation = {
+              x: typeof options?.pitch === 'number' && Number.isFinite(options.pitch)
+                ? options.pitch
+                : (view === 'top' ? Math.PI / 2 - 0.02 : Math.PI / 3.6),
+              y: typeof options?.yaw === 'number' && Number.isFinite(options.yaw)
+                ? options.yaw
+                : 0,
+              z: typeof options?.roll === 'number' && Number.isFinite(options.roll)
+                ? options.roll
+                : 0,
+            };
+            const sections = options?.sections;
+            const normalizeSections = (value: any): Array<number | string> | undefined => {
+              if (value === undefined || value === null) return undefined;
+              const arr = Array.isArray(value) ? value : [value];
+              const normalized = arr.filter((item) => typeof item === 'number' || typeof item === 'string');
+              return normalized.length > 0 ? normalized : undefined;
+            };
+            engine.request3DCameraFocus({
+              kind: 'frame',
+              ...(normalizeSections(sections) ? { sectionSelectors: normalizeSections(sections)! } : {}),
+              fill: typeof options?.fill === 'number' && Number.isFinite(options.fill) ? options.fill : 0.9,
+              padding: typeof options?.padding === 'number' && Number.isFinite(options.padding) ? options.padding : 40,
+              includeHidden: !!options?.includeHidden,
+              includeNonNavigable: options?.includeNonNavigable !== false,
+              rotation,
+            });
+          },
           
           setFOV: (fov: number) => {
             if (!engine.camera3D) return;
@@ -5592,12 +5690,22 @@ export class StorieEngine {
       .filter((entry) => entry.sectionId === null || entry.sectionIndex !== null);
 
     if (this.lastApplied3DCameraFocus) {
-      const nextIndex = this.getSectionIndexById(this.lastApplied3DCameraFocus.sectionId);
-      if (typeof nextIndex === 'number' && Number.isFinite(nextIndex)) {
+      if (this.lastApplied3DCameraFocus.kind === 'frame') {
         this.lastApplied3DCameraFocus = {
           ...this.lastApplied3DCameraFocus,
-          sectionIndex: nextIndex,
+          sectionIds: this.lastApplied3DCameraFocus.sectionIds.filter((sectionId) => {
+            const nextIndex = this.getSectionIndexById(sectionId);
+            return typeof nextIndex === 'number' && Number.isFinite(nextIndex);
+          }),
         } as any;
+      } else {
+        const nextIndex = this.getSectionIndexById(this.lastApplied3DCameraFocus.sectionId);
+        if (typeof nextIndex === 'number' && Number.isFinite(nextIndex)) {
+          this.lastApplied3DCameraFocus = {
+            ...this.lastApplied3DCameraFocus,
+            sectionIndex: nextIndex,
+          } as any;
+        }
       }
     }
 
@@ -7767,7 +7875,9 @@ ${exportVars}
             }
 
             if (shaderInfo.paperPlaneZMode === 'focus') {
-              const focusedIdx = this.lastApplied3DCameraFocus?.sectionIndex;
+              const focusedIdx = this.lastApplied3DCameraFocus?.kind === 'frame'
+                ? null
+                : this.lastApplied3DCameraFocus?.sectionIndex;
               if (!(typeof focusedIdx === 'number' && Number.isFinite(focusedIdx))) return undefined;
               const focused = this.section3DLayouts.find(l => l.sectionIndex === focusedIdx);
               const z = focused?.transform?.position?.z;
@@ -9846,13 +9956,18 @@ ${exportVars}
             handledBy3D = true;
             const style = this.lastApplied3DCameraFocus;
             const fill = style?.kind === 'fit' ? style.fill : 0.9;
+            const styleOptions = style && style.kind !== 'frame'
+              ? {
+                  ...(style.keepRotation ? { keepRotation: true } : {}),
+                  ...(style.positionOffset ? { positionOffset: style.positionOffset } : {}),
+                  ...(style.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
+                }
+              : {};
             this.request3DCameraFocus({
               kind: 'fit',
               sectionIndex: picked.layout.sectionIndex,
               fill,
-              ...(style?.keepRotation ? { keepRotation: true } : {}),
-              ...(style?.positionOffset ? { positionOffset: style.positionOffset } : {}),
-              ...(style?.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
+              ...styleOptions,
             });
           }
         }
@@ -10199,13 +10314,18 @@ ${exportVars}
             // This makes demo-defined camera framing “sticky” across navigation.
             const style = this.lastApplied3DCameraFocus;
             const fill = style?.kind === 'fit' ? style.fill : 0.9;
+            const styleOptions = style && style.kind !== 'frame'
+              ? {
+                  ...(style.keepRotation ? { keepRotation: true } : {}),
+                  ...(style.positionOffset ? { positionOffset: style.positionOffset } : {}),
+                  ...(style.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
+                }
+              : {};
             this.request3DCameraFocus({
               kind: 'fit',
               sectionIndex: picked.layout.sectionIndex,
               fill,
-              ...(style?.keepRotation ? { keepRotation: true } : {}),
-              ...(style?.positionOffset ? { positionOffset: style.positionOffset } : {}),
-              ...(style?.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
+              ...styleOptions,
             });
           }
         }
@@ -10454,13 +10574,18 @@ ${exportVars}
         // don't accidentally reset camera framing or rotation.
         const style = this.lastApplied3DCameraFocus;
         const fill = style?.kind === 'fit' ? style.fill : 0.9;
+        const styleOptions = style && style.kind !== 'frame'
+          ? {
+              ...(style.keepRotation ? { keepRotation: true } : {}),
+              ...(style.positionOffset ? { positionOffset: style.positionOffset } : {}),
+              ...(style.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
+            }
+          : {};
         this.request3DCameraFocus({
           kind: 'fit',
           sectionIndex: layout.sectionIndex,
           fill,
-          ...(style?.keepRotation ? { keepRotation: true } : {}),
-          ...(style?.positionOffset ? { positionOffset: style.positionOffset } : {}),
-          ...(style?.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
+          ...styleOptions,
         });
       }
       return;
@@ -10491,6 +10616,200 @@ ${exportVars}
     return mat4FromTransform(sectionTransform as any);
   }
 
+  private get3DCardWorldCorners(layout: Section3DLayout): Array<{ x: number; y: number; z: number }> {
+    const model = this.get3DCardModelMatrix(layout);
+    const corners = [
+      { x: -0.5, y: -0.5, z: 0 },
+      { x: 0.5, y: -0.5, z: 0 },
+      { x: 0.5, y: 0.5, z: 0 },
+      { x: -0.5, y: 0.5, z: 0 },
+    ];
+    return corners.map((corner) => mat4TransformPoint(model, corner as any));
+  }
+
+  private getCameraBasisFromRotation(rotation: { x: number; y: number; z: number }): {
+    forward: { x: number; y: number; z: number };
+    right: { x: number; y: number; z: number };
+    up: { x: number; y: number; z: number };
+  } {
+    const forward = vec3Normalize({
+      x: Math.sin(rotation.y) * Math.cos(rotation.x),
+      y: -Math.sin(rotation.x),
+      z: -Math.cos(rotation.y) * Math.cos(rotation.x),
+    });
+
+    const worldUp = Math.abs(forward.y) > 0.98
+      ? { x: 0, y: 0, z: 1 }
+      : { x: 0, y: 1, z: 0 };
+
+    let right = vec3Normalize(vec3Cross(forward as any, worldUp as any));
+    if (vec3Length(right as any) <= 1e-8) {
+      right = { x: 1, y: 0, z: 0 };
+    }
+
+    let up = vec3Normalize(vec3Cross(right as any, forward as any));
+    if (vec3Length(up as any) <= 1e-8) {
+      up = { x: 0, y: 1, z: 0 };
+    }
+
+    const roll = Number.isFinite(rotation.z) ? rotation.z : 0;
+    if (Math.abs(roll) > 1e-8) {
+      const c = Math.cos(roll);
+      const s = Math.sin(roll);
+      const rolledRight = vec3Add(vec3Scale(right as any, c), vec3Scale(up as any, s));
+      const rolledUp = vec3Add(vec3Scale(up as any, c), vec3Scale(right as any, -s));
+      right = vec3Normalize(rolledRight as any);
+      up = vec3Normalize(rolledUp as any);
+    }
+
+    return { forward, right, up };
+  }
+
+  private resolve3DCameraFrameLayouts(
+    sectionSelectors?: Array<number | string>,
+    includeHidden: boolean = false,
+    includeNonNavigable: boolean = true,
+  ): Section3DLayout[] {
+    const seen = new Set<string>();
+    const pushLayout = (layout: Section3DLayout | null, acc: Section3DLayout[]) => {
+      if (!layout) return;
+      if (seen.has(layout.sectionId)) return;
+      seen.add(layout.sectionId);
+      acc.push(layout);
+    };
+
+    const layouts: Section3DLayout[] = [];
+
+    if (Array.isArray(sectionSelectors) && sectionSelectors.length > 0) {
+      for (const selector of sectionSelectors) {
+        pushLayout(this.getSectionLayoutByIndex(this.resolve3DSectionIndex(selector as any)), layouts);
+      }
+      return layouts;
+    }
+
+    for (const layout of this.section3DLayouts) {
+      if (!layout) continue;
+      if (!includeHidden && layout.visible === false) continue;
+      if (!includeNonNavigable && layout.navigable === false) continue;
+      pushLayout(layout, layouts);
+    }
+
+    return layouts;
+  }
+
+  private request3DCameraFrame(req: {
+    sectionSelectors?: Array<number | string>;
+    includeHidden?: boolean;
+    includeNonNavigable?: boolean;
+    fill: number;
+    padding: number;
+    rotation?: { x: number; y: number; z: number };
+  }): void {
+    if (!this.section3DLayouts || this.section3DLayouts.length === 0) {
+      this.pending3DCameraFocus = { kind: 'frame', ...req };
+      return;
+    }
+
+    if (!this.camera3D) return;
+
+    const layouts = this.resolve3DCameraFrameLayouts(
+      req.sectionSelectors,
+      !!req.includeHidden,
+      req.includeNonNavigable !== false,
+    );
+    if (layouts.length === 0) return;
+
+    for (const layout of layouts) {
+      this.premeasure3DCardWorldSize(layout);
+    }
+    this.reflowWorldsAutoLayout();
+
+    const rotation = (() => {
+      const fallback = this.camera3D ? this.camera3D.rotation : { x: 0, y: 0, z: 0 };
+      const raw = req.rotation;
+      const x = Number(raw?.x);
+      const y = Number(raw?.y);
+      const z = Number(raw?.z);
+      return {
+        x: Number.isFinite(x) ? x : fallback.x,
+        y: Number.isFinite(y) ? y : fallback.y,
+        z: Number.isFinite(z) ? z : fallback.z,
+      };
+    })();
+
+    const points: Array<{ x: number; y: number; z: number }> = [];
+    for (const layout of layouts) {
+      points.push(...this.get3DCardWorldCorners(layout));
+    }
+    if (points.length === 0) return;
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    for (const point of points) {
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      minZ = Math.min(minZ, point.z);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
+      maxZ = Math.max(maxZ, point.z);
+    }
+    if (![minX, minY, minZ, maxX, maxY, maxZ].every(Number.isFinite)) return;
+
+    const center = {
+      x: (minX + maxX) / 2,
+      y: (minY + maxY) / 2,
+      z: (minZ + maxZ) / 2,
+    };
+
+    const basis = this.getCameraBasisFromRotation(rotation);
+    const safeFill = Math.max(0.05, Math.min(0.99, Number.isFinite(req.fill) ? req.fill : 0.9));
+    const padding = Math.max(0, Number.isFinite(req.padding) ? req.padding : 0);
+    const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? (this.canvas.width / this.canvas.height) : 1;
+    const vFov = this.camera3D.fov;
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * Math.max(1e-6, aspect));
+    const halfPad = padding / 2;
+
+    let distance = 1;
+    for (const point of points) {
+      const rel = vec3Sub(point as any, center as any);
+      const xCam = vec3Dot(rel as any, basis.right as any);
+      const yCam = vec3Dot(rel as any, basis.up as any);
+      const zCam = vec3Dot(rel as any, basis.forward as any);
+      distance = Math.max(distance, -zCam + 1);
+      distance = Math.max(distance, ((Math.abs(xCam) + halfPad) / (Math.tan(hFov / 2) * safeFill)) - zCam);
+      distance = Math.max(distance, ((Math.abs(yCam) + halfPad) / (Math.tan(vFov / 2) * safeFill)) - zCam);
+    }
+
+    const target = vec3Sub(center as any, vec3Scale(basis.forward as any, distance));
+
+    // Expand the far clip automatically for wide scene framing. Worlds' default
+    // far plane (1000) is fine for per-card focus but too small for large,
+    // impress.js-like canvases viewed from a bird's-eye vantage point.
+    let requiredFar = 1;
+    for (const point of points) {
+      const camToPoint = vec3Sub(point as any, target as any);
+      const depth = vec3Dot(camToPoint as any, basis.forward as any);
+      if (Number.isFinite(depth)) {
+        requiredFar = Math.max(requiredFar, depth);
+      }
+    }
+    this.camera3D.far = Math.max(this.camera3D.far, requiredFar + Math.max(100, padding));
+
+    setCameraTarget(this.camera3D, target as any, rotation as any);
+
+    this.lastApplied3DCameraFocus = {
+      kind: 'frame',
+      sectionIds: layouts.map((layout) => layout.sectionId),
+      fill: safeFill,
+      padding,
+      rotation,
+    };
+  }
+
   private request3DCameraFocus(
     req:
       | {
@@ -10509,7 +10828,21 @@ ${exportVars}
           positionOffset?: { x: number; y: number; z: number };
           rotationOffset?: { x: number; y: number; z: number };
         }
+      | {
+          kind: 'frame';
+          sectionSelectors?: Array<number | string>;
+          includeHidden?: boolean;
+          includeNonNavigable?: boolean;
+          fill: number;
+          padding: number;
+          rotation?: { x: number; y: number; z: number };
+        }
   ): void {
+    if (req.kind === 'frame') {
+      this.request3DCameraFrame(req);
+      return;
+    }
+
     // If layouts aren’t ready yet (common during on:init), remember the intent
     // and apply it once parsing/layout generation completes.
     if (!this.section3DLayouts || this.section3DLayouts.length === 0) {
@@ -10572,16 +10905,18 @@ ${exportVars}
         ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
       };
     } else {
-      this.lastApplied3DCameraFocus = {
-        kind: 'fit',
-        sectionId: layout.sectionId,
-        sectionIndex: layout.sectionIndex,
-        fill: req.fill,
-        ...(keepRotation ? { keepRotation: true } : {}),
-        ...(straighten ? { straighten: true } : {}),
-        ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
-        ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
-      };
+      if (req.kind === 'fit') {
+        this.lastApplied3DCameraFocus = {
+          kind: 'fit',
+          sectionId: layout.sectionId,
+          sectionIndex: layout.sectionIndex,
+          fill: req.fill,
+          ...(keepRotation ? { keepRotation: true } : {}),
+          ...(straighten ? { straighten: true } : {}),
+          ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
+          ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
+        };
+      }
     }
 
     // Now that lastApplied is updated, navigation + host sync can use the
@@ -10752,26 +11087,40 @@ ${exportVars}
     if (!this.worldsEnabled || !this.camera3D) return;
     if (!this.lastApplied3DCameraFocus) return;
 
-    const layout = this.getSectionLayoutById(this.lastApplied3DCameraFocus.sectionId)
-      ?? this.section3DLayouts.find(l => l.sectionIndex === this.lastApplied3DCameraFocus!.sectionIndex);
+    if (this.lastApplied3DCameraFocus.kind === 'frame') {
+      this.request3DCameraFrame({
+        sectionSelectors: this.lastApplied3DCameraFocus.sectionIds,
+        fill: this.lastApplied3DCameraFocus.fill,
+        padding: this.lastApplied3DCameraFocus.padding,
+        rotation: this.lastApplied3DCameraFocus.rotation,
+        includeHidden: true,
+        includeNonNavigable: true,
+      });
+      return;
+    }
+
+    const lastFocus = this.lastApplied3DCameraFocus;
+
+    const layout = this.getSectionLayoutById(lastFocus.sectionId)
+      ?? this.section3DLayouts.find(l => l.sectionIndex === lastFocus.sectionIndex);
     if (!layout) return;
 
-    if (this.lastApplied3DCameraFocus.kind === 'focus') {
+    if (lastFocus.kind === 'focus') {
       const cfg: any = this.worldsConfig as any;
       const hasDefaultRecenter = (cfg as any).screenSpaceRecenter !== undefined;
       const defaultRecenter = !!cfg.screenSpaceRecenter;
       const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
-      const recenterOpts = this.lastApplied3DCameraFocus.keepRotation && hasDefaultRecenter
+      const recenterOpts = lastFocus.keepRotation && hasDefaultRecenter
         ? {
             screenSpaceRecenter: defaultRecenter,
             ...(defaultRecenter ? { screenSpaceRecenterIters: defaultRecenterIters } : {}),
           }
         : {};
-      focusOnSection(this.camera3D, layout, this.lastApplied3DCameraFocus.distance, {
-        ...(this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {}),
-        ...(this.lastApplied3DCameraFocus.straighten ? { straighten: true } : {}),
-        ...(this.lastApplied3DCameraFocus.positionOffset ? { positionOffset: this.lastApplied3DCameraFocus.positionOffset } : {}),
-        ...(this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {}),
+      focusOnSection(this.camera3D, layout, lastFocus.distance, {
+        ...(lastFocus.keepRotation ? { keepRotation: true } : {}),
+        ...(lastFocus.straighten ? { straighten: true } : {}),
+        ...(lastFocus.positionOffset ? { positionOffset: lastFocus.positionOffset } : {}),
+        ...(lastFocus.rotationOffset ? { rotationOffset: lastFocus.rotationOffset } : {}),
         ...recenterOpts,
       });
     } else {
@@ -10782,17 +11131,17 @@ ${exportVars}
       const hasDefaultRecenter = (cfg as any).screenSpaceRecenter !== undefined;
       const defaultRecenter = !!cfg.screenSpaceRecenter;
       const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
-      const recenterOpts = this.lastApplied3DCameraFocus.keepRotation && hasDefaultRecenter
+      const recenterOpts = lastFocus.keepRotation && hasDefaultRecenter
         ? {
             screenSpaceRecenter: defaultRecenter,
             ...(defaultRecenter ? { screenSpaceRecenterIters: defaultRecenterIters } : {}),
           }
         : {};
-      focusOnSectionFit(this.camera3D, layout, aspect, this.lastApplied3DCameraFocus.fill, {}, {
-        ...(this.lastApplied3DCameraFocus.keepRotation ? { keepRotation: true } : {}),
-        ...(this.lastApplied3DCameraFocus.straighten ? { straighten: true } : {}),
-        ...(this.lastApplied3DCameraFocus.positionOffset ? { positionOffset: this.lastApplied3DCameraFocus.positionOffset } : {}),
-        ...(this.lastApplied3DCameraFocus.rotationOffset ? { rotationOffset: this.lastApplied3DCameraFocus.rotationOffset } : {}),
+      focusOnSectionFit(this.camera3D, layout, aspect, lastFocus.fill, {}, {
+        ...(lastFocus.keepRotation ? { keepRotation: true } : {}),
+        ...(lastFocus.straighten ? { straighten: true } : {}),
+        ...(lastFocus.positionOffset ? { positionOffset: lastFocus.positionOffset } : {}),
+        ...(lastFocus.rotationOffset ? { rotationOffset: lastFocus.rotationOffset } : {}),
         ...recenterOpts,
       });
     }
@@ -10808,7 +11157,10 @@ ${exportVars}
   private setCurrent3DSection(sectionIndex: number): void {
     const nextLayout = this.getSectionLayoutByIndex(sectionIndex);
     if (!nextLayout) return;
-    if (this.current3DSectionId === nextLayout.sectionId) return;
+    if (this.current3DSectionId === nextLayout.sectionId) {
+      this.current3DSectionIndex = nextLayout.sectionIndex;
+      return;
+    }
     const previousSectionIndex = this.getResolvedCurrent3DSectionIndex();
     this.clearWorldsInlineWidgets();
     this.current3DSectionId = nextLayout.sectionId;

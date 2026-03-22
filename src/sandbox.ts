@@ -833,6 +833,27 @@ export interface SandboxAPI {
           rotationOffset?: { x: number; y: number; z: number };
         }
       ) => void;
+      frameSections: (
+        sections?: number | string | Array<number | string>,
+        options?: {
+          fill?: number;
+          padding?: number;
+          includeHidden?: boolean;
+          includeNonNavigable?: boolean;
+          rotation?: { x: number; y: number; z: number };
+        }
+      ) => void;
+      birdsEye: (options?: {
+        sections?: number | string | Array<number | string>;
+        fill?: number;
+        padding?: number;
+        includeHidden?: boolean;
+        includeNonNavigable?: boolean;
+        view?: 'oblique' | 'top';
+        pitch?: number;
+        yaw?: number;
+        roll?: number;
+      }) => void;
       setFOV: (fov: number) => void;
       setEaseSpeed: (position: number, rotation: number) => void;
       getPosition: () => { x: number; y: number; z: number };
