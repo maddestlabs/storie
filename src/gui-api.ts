@@ -310,16 +310,6 @@ export function createGUIAPI(
     return ['x', 'y', 'width', 'height'].every((key) => Number.isFinite(Number((value as any)[key])));
   };
 
-  const isCanvasViewportRect = (viewport: any): boolean => {
-    if (!isFiniteViewportRect(viewport)) return false;
-    const canvasViewport = safeGetViewportRect();
-    const epsilon = 0.5;
-    return Math.abs(Number(viewport.x) - canvasViewport.x) <= epsilon
-      && Math.abs(Number(viewport.y) - canvasViewport.y) <= epsilon
-      && Math.abs(Number(viewport.width) - canvasViewport.width) <= epsilon
-      && Math.abs(Number(viewport.height) - canvasViewport.height) <= epsilon;
-  };
-
   const toBreakpoint = (width: number, thresholds?: any) => {
     const t = {
       sm: Number(thresholds?.sm ?? defaultBreakpointThresholds.sm),
@@ -813,13 +803,8 @@ export function createGUIAPI(
         fitToViewport: (viewport: any, options?: any, relayout: boolean = true) => {
           const v = isFiniteViewportRect(viewport) ? { ...viewport } : safeGetViewportRect();
           const o = options && typeof options === 'object' ? { ...options } : {};
-          if (o.safeArea && !isCanvasViewportRect(v)) {
-            const insets = safeGetSafeAreaInsets();
-            o.insetTop = Number(o.insetTop ?? 0) + insets.top;
-            o.insetRight = Number(o.insetRight ?? 0) + insets.right;
-            o.insetBottom = Number(o.insetBottom ?? 0) + insets.bottom;
-            o.insetLeft = Number(o.insetLeft ?? 0) + insets.left;
-          }
+          // GUI viewports already come from the canvas' safe-area-correct bounds.
+          // Reapplying safe area here double-insets derived sub-rects.
           delete o.safeArea;
           return container.fitToViewport(v, o, relayout);
         },

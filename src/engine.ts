@@ -82,6 +82,7 @@ import {
   type Section3DLayout,
   type WorldsConfig
 } from './worlds.js';
+import { getWorldsPreset, listWorldsPresetNames } from './worlds-presets.js';
 import type { ModuleResolverConfig } from './modules/types.js';
 import type { UserScript, Section, Color, InputEvent, ThemeColors, ThemeStyleSheet, NamedStyle, DroppedFile, SafeAreaInsets } from './types.js';
 import { detectPeaksFromAudioBuffer, type PeakDetectionOptions, type PeakDetectionResult } from './audio/peaks.js';
@@ -472,6 +473,13 @@ export class StorieEngine {
   private mouseLookActive: boolean = false;
   private mouseLookLastX: number = 0;
   private mouseLookLastY: number = 0;
+  private middlePanActive: boolean = false;
+  private middlePanLastX: number = 0;
+  private middlePanLastY: number = 0;
+  private freeFlyLeftPanActive: boolean = false;
+  private freeFlyLeftDragSectionIndex: number | null = null;
+  private freeFlyLeftLastX: number = 0;
+  private freeFlyLeftLastY: number = 0;
 
   // 3D link-centric interaction (canvas.nim parity)
   private hovered3DLink: { sectionId: string; sectionIndex: number; linkIndex: number } | null = null;
@@ -1654,6 +1662,221 @@ export class StorieEngine {
       return (doc && doc._timedStore) ? (doc._timedStore as Map<string, any>) : null;
     };
 
+    const applyWorldsConfigDefaults = (config: Partial<WorldsConfig>) => {
+      let requiresSectionLayoutRecompile = false;
+      if (config.defaultDepth !== undefined) {
+        engine.worldsConfig.defaultDepth = config.defaultDepth;
+      }
+      if (config.defaultSectionWidth !== undefined) {
+        engine.worldsConfig.defaultSectionWidth = config.defaultSectionWidth;
+      }
+      if (config.defaultSectionHeight !== undefined) {
+        engine.worldsConfig.defaultSectionHeight = config.defaultSectionHeight;
+      }
+      if (config.sectionRender !== undefined) {
+        const prev = engine.worldsConfig.sectionRender;
+        switch (config.sectionRender) {
+          case 'heading':
+          case 'content':
+          case 'none':
+          case 'all':
+            engine.worldsConfig.sectionRender = config.sectionRender;
+            break;
+          default:
+            break;
+        }
+        if (prev !== engine.worldsConfig.sectionRender) {
+          requiresSectionLayoutRecompile = true;
+        }
+      }
+      if ((config as any).sectionClickFocusEnabled !== undefined) {
+        engine.worldsConfig.sectionClickFocusEnabled = !!(config as any).sectionClickFocusEnabled;
+      }
+      if ((config as any).sectionSizeUnits !== undefined) {
+        const next = (config as any).sectionSizeUnits;
+        if (next === 'text' || next === 'px') {
+          const prev = (engine.worldsConfig as any).sectionSizeUnits;
+          (engine.worldsConfig as any).sectionSizeUnits = next;
+          if (prev !== next) {
+            engine.clear3DSectionTextures();
+          }
+        }
+      }
+
+      if ((config as any).sectionOverflow !== undefined) {
+        const next = (config as any).sectionOverflow;
+        if (next === 'clip' || next === 'expand' || next === 'expand-y' || next === 'fit' || next === 'fit-y') {
+          const prev = (engine.worldsConfig as any).sectionOverflow;
+          (engine.worldsConfig as any).sectionOverflow = next;
+          if (prev !== next) {
+            engine.clear3DSectionTextures();
+          }
+        }
+      }
+      if (config.cameraFov !== undefined) {
+        engine.worldsConfig.cameraFov = config.cameraFov;
+      }
+      if (config.cameraNear !== undefined) {
+        engine.worldsConfig.cameraNear = config.cameraNear;
+      }
+      if (config.cameraFar !== undefined) {
+        engine.worldsConfig.cameraFar = config.cameraFar;
+      }
+      if (config.positionEaseSpeed !== undefined) {
+        engine.worldsConfig.positionEaseSpeed = config.positionEaseSpeed;
+      }
+      if (config.rotationEaseSpeed !== undefined) {
+        engine.worldsConfig.rotationEaseSpeed = config.rotationEaseSpeed;
+      }
+
+      if ((config as any).keepRotation !== undefined) {
+        (engine.worldsConfig as any).keepRotation = !!(config as any).keepRotation;
+      }
+
+      if ((config as any).straightenOnFocus !== undefined) {
+        (engine.worldsConfig as any).straightenOnFocus = !!(config as any).straightenOnFocus;
+      }
+      if ((config as any).screenSpaceRecenter !== undefined) {
+        (engine.worldsConfig as any).screenSpaceRecenter = !!(config as any).screenSpaceRecenter;
+      }
+      if ((config as any).screenSpaceRecenterIters !== undefined) {
+        const v = Number((config as any).screenSpaceRecenterIters);
+        if (Number.isFinite(v)) {
+          (engine.worldsConfig as any).screenSpaceRecenterIters = Math.max(1, Math.min(12, Math.floor(v)));
+        }
+      }
+      if (config.autoLayoutEnabled !== undefined) {
+        engine.worldsConfig.autoLayoutEnabled = config.autoLayoutEnabled;
+      }
+      if (config.autoLayoutColumns !== undefined) {
+        engine.worldsConfig.autoLayoutColumns = config.autoLayoutColumns;
+      }
+      if (config.autoLayoutSpacing !== undefined) {
+        engine.worldsConfig.autoLayoutSpacing = config.autoLayoutSpacing;
+      }
+      if (config.sectionTextureMode !== undefined) {
+        const prev = engine.worldsConfig.sectionTextureMode;
+        engine.worldsConfig.sectionTextureMode = config.sectionTextureMode;
+        if (prev !== config.sectionTextureMode) {
+          engine.clear3DSectionTextures();
+        }
+      }
+
+      if (config.sectionBorderEnabled !== undefined) {
+        const prev = engine.worldsConfig.sectionBorderEnabled;
+        engine.worldsConfig.sectionBorderEnabled = config.sectionBorderEnabled;
+        if (prev !== config.sectionBorderEnabled) {
+          engine.clear3DSectionTextures();
+        }
+      }
+      if (config.sectionBorderWidth !== undefined) {
+        const prev = engine.worldsConfig.sectionBorderWidth;
+        engine.worldsConfig.sectionBorderWidth = config.sectionBorderWidth;
+        if (prev !== config.sectionBorderWidth) {
+          engine.clear3DSectionTextures();
+        }
+      }
+
+      if ((config as any).sectionBackground !== undefined) {
+        const prev = (engine.worldsConfig as any).sectionBackground;
+        (engine.worldsConfig as any).sectionBackground = (config as any).sectionBackground;
+        if (prev !== (config as any).sectionBackground) {
+          engine.clear3DSectionTextures();
+        }
+      }
+
+      if (config.sectionBackgroundPaperNoiseStrength !== undefined) {
+        const v = config.sectionBackgroundPaperNoiseStrength;
+        if (Number.isFinite(v as any)) {
+          engine.worldsConfig.sectionBackgroundPaperNoiseStrength = Math.max(0, Math.min(1, v as number));
+        }
+      }
+
+      if (config.sectionLinkUnderline !== undefined) {
+        const prev = engine.worldsConfig.sectionLinkUnderline;
+        engine.worldsConfig.sectionLinkUnderline = !!config.sectionLinkUnderline;
+        if (prev !== engine.worldsConfig.sectionLinkUnderline) {
+          engine.clear3DSectionTextures();
+        }
+      }
+
+      if ((config as any).sectionListMarker !== undefined) {
+        const prev = engine.worldsConfig.sectionListMarker;
+        engine.worldsConfig.sectionListMarker = (config as any).sectionListMarker;
+        if (prev !== engine.worldsConfig.sectionListMarker) {
+          engine.clear3DSectionTextures();
+        }
+      }
+
+      if ((config as any).sectionListMarkerGapPx !== undefined) {
+        const prev = engine.worldsConfig.sectionListMarkerGapPx;
+        const next = Number((config as any).sectionListMarkerGapPx);
+        if (Number.isFinite(next)) {
+          engine.worldsConfig.sectionListMarkerGapPx = Math.max(0, next);
+          if (prev !== engine.worldsConfig.sectionListMarkerGapPx) {
+            engine.clear3DSectionTextures();
+          }
+        }
+      }
+
+      if ((config as any).sectionListHangIndentPx !== undefined) {
+        const prev = engine.worldsConfig.sectionListHangIndentPx;
+        const next = Number((config as any).sectionListHangIndentPx);
+        if (Number.isFinite(next)) {
+          engine.worldsConfig.sectionListHangIndentPx = Math.max(0, next);
+          if (prev !== engine.worldsConfig.sectionListHangIndentPx) {
+            engine.clear3DSectionTextures();
+          }
+        }
+      }
+
+      if (requiresSectionLayoutRecompile && engine.runtimeSectionStore.sections.length > 0) {
+        engine.compileWorldsLayoutsFromRuntimeSectionStore('config defaults changed');
+      } else {
+        engine.applyWorldsLayoutCallback();
+        engine.reflowWorldsAutoLayout();
+      }
+    };
+
+    const applyWorldsPreset = (name: string) => {
+      const preset = getWorldsPreset(name);
+      if (!preset) return null;
+
+      engine.worldsEnabled = true;
+      if (engine.compositor?.layers.get('3d')) {
+        engine.compositor.updateLayer('3d', { enabled: true });
+      }
+      engine.updateAudienceViewLayers();
+
+      applyWorldsConfigDefaults(preset.defaults);
+
+      if (engine.camera3D) {
+        engine.camera3D.position = { ...preset.camera.position };
+        engine.camera3D.rotation = { ...preset.camera.rotation };
+        engine.camera3D.target = null;
+        engine.camera3D.targetRotation = null;
+        engine.camera3D.fov = preset.camera.fov;
+        engine.camera3D.positionEaseSpeed = preset.camera.easeSpeed.position;
+        engine.camera3D.rotationEaseSpeed = preset.camera.easeSpeed.rotation;
+        if (preset.camera.shake) {
+          engine.camera3D.shake = {
+            enabled: !!preset.camera.shake.enabled,
+            strength: preset.camera.shake.strength,
+            seed: engine.camera3D.shake?.seed ?? 0,
+            rate: preset.camera.shake.rate,
+            translate: { ...preset.camera.shake.translate },
+            rotate: { ...preset.camera.shake.rotate },
+          };
+          engine.camera3D._shakeState = undefined;
+        } else if (engine.camera3D.shake) {
+          engine.camera3D.shake.enabled = false;
+          engine.camera3D._shakeState = undefined;
+        }
+      }
+
+      return preset;
+    };
+
     type StfxrBakedEntry = {
       id: string;
       name: string;
@@ -1682,16 +1905,18 @@ export class StorieEngine {
       return doc._stfxrBakedStore as Map<string, StfxrBakedEntry>;
     };
 
-    const sanitizePlayOptions = (options?: { volume?: number; when?: number }): { volume?: number; when?: number } => {
-      const out: { volume?: number; when?: number } = {};
+    const sanitizePlayOptions = (options?: { volume?: number; when?: number; output?: AudioNode }): { volume?: number; when?: number; output?: AudioNode } => {
+      const out: { volume?: number; when?: number; output?: AudioNode } = {};
       const v = Number(options?.volume);
       if (Number.isFinite(v)) out.volume = Math.max(0, Math.min(2, v));
       const w = Number(options?.when);
       if (Number.isFinite(w) && w >= 0) out.when = Math.min(60, w);
+      const output = (options as any)?.output;
+      if (output && typeof output === 'object' && typeof (output as any).connect === 'function') out.output = output;
       return out;
     };
 
-    const playPresetInternal = (presetIn: unknown, seed?: number | string, options?: { volume?: number; when?: number }) => {
+    const playPresetInternal = (presetIn: unknown, seed?: number | string, options?: { volume?: number; when?: number; output?: AudioNode }) => {
       let preset: SfxGraphPreset;
       try {
         preset = parseSfxGraphPreset(presetIn);
@@ -2002,7 +2227,7 @@ export class StorieEngine {
       // Layer API
       layer: {
         create: (id: string, width?: number, height?: number) => {
-          this.layers.create(id, width, height);
+          this.layers.create(id, width ?? this.width, height ?? this.height);
         },
         show: (id: string) => {
           this.layers.show(id);
@@ -2578,16 +2803,16 @@ export class StorieEngine {
             play: (
               name: string,
               seed?: number | string,
-              options?: { volume?: number; when?: number }
+              options?: { volume?: number; when?: number; output?: AudioNode }
             ) => {
               const store = getStfxrStore(docId);
               const entry = store?.get(String(name));
               if (!entry) return { stop: () => {} };
               engine.audioContext.resume().catch(() => {});
               const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
-              return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, options);
+              return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, sanitizePlayOptions(options));
             },
-            playPreset: (preset: any, seed?: number | string, options?: { volume?: number; when?: number }) => {
+            playPreset: (preset: any, seed?: number | string, options?: { volume?: number; when?: number; output?: AudioNode }) => {
               return playPresetInternal(preset, seed, options);
             },
             bake: async (
@@ -2689,15 +2914,15 @@ export class StorieEngine {
           if (!entry) return null;
           return clonePreset(entry.preset);
         },
-        play: (name: string, seed?: number | string, options?: { volume?: number; when?: number }) => {
+        play: (name: string, seed?: number | string, options?: { volume?: number; when?: number; output?: AudioNode }) => {
           const store = getStfxrStore();
           const entry = store?.get(String(name));
           if (!entry) return { stop: () => {} };
           engine.audioContext.resume().catch(() => {});
           const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
-          return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, options);
+          return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, sanitizePlayOptions(options));
         },
-        playPreset: (preset: any, seed?: number | string, options?: { volume?: number; when?: number }) => {
+        playPreset: (preset: any, seed?: number | string, options?: { volume?: number; when?: number; output?: AudioNode }) => {
           return playPresetInternal(preset, seed, options);
         },
         bake: async (name: string, seed?: number | string, options?: { id?: string; seconds?: number; maxSeconds?: number }) => {
@@ -4520,6 +4745,18 @@ export class StorieEngine {
           }
         },
 
+        presets: {
+          list: () => {
+            return listWorldsPresetNames();
+          },
+          get: (name: string) => {
+            return getWorldsPreset(name);
+          },
+          apply: (name: string) => {
+            return applyWorldsPreset(name);
+          }
+        },
+
         widgets: {
           popEvent: () => {
             return engine.worldsInlineWidgetEventsQueue.shift() ?? null;
@@ -5203,179 +5440,7 @@ export class StorieEngine {
         // Configuration
         config: {
           setDefaults: (config: Partial<WorldsConfig>) => {
-            let requiresSectionLayoutRecompile = false;
-            if (config.defaultDepth !== undefined) {
-              engine.worldsConfig.defaultDepth = config.defaultDepth;
-            }
-            if (config.defaultSectionWidth !== undefined) {
-              engine.worldsConfig.defaultSectionWidth = config.defaultSectionWidth;
-            }
-            if (config.defaultSectionHeight !== undefined) {
-              engine.worldsConfig.defaultSectionHeight = config.defaultSectionHeight;
-            }
-            if (config.sectionRender !== undefined) {
-              const prev = engine.worldsConfig.sectionRender;
-              switch (config.sectionRender) {
-                case 'heading':
-                case 'content':
-                case 'none':
-                case 'all':
-                  engine.worldsConfig.sectionRender = config.sectionRender;
-                  break;
-                default:
-                  break;
-              }
-              if (prev !== engine.worldsConfig.sectionRender) {
-                requiresSectionLayoutRecompile = true;
-              }
-            }
-            if ((config as any).sectionClickFocusEnabled !== undefined) {
-              engine.worldsConfig.sectionClickFocusEnabled = !!(config as any).sectionClickFocusEnabled;
-            }
-            if ((config as any).sectionSizeUnits !== undefined) {
-              const next = (config as any).sectionSizeUnits;
-              if (next === 'text' || next === 'px') {
-                const prev = (engine.worldsConfig as any).sectionSizeUnits;
-                (engine.worldsConfig as any).sectionSizeUnits = next;
-                if (prev !== next) {
-                  engine.clear3DSectionTextures();
-                }
-              }
-            }
-
-            if ((config as any).sectionOverflow !== undefined) {
-              const next = (config as any).sectionOverflow;
-              if (next === 'clip' || next === 'expand' || next === 'expand-y' || next === 'fit' || next === 'fit-y') {
-                const prev = (engine.worldsConfig as any).sectionOverflow;
-                (engine.worldsConfig as any).sectionOverflow = next;
-                if (prev !== next) {
-                  engine.clear3DSectionTextures();
-                }
-              }
-            }
-            if (config.cameraFov !== undefined) {
-              engine.worldsConfig.cameraFov = config.cameraFov;
-            }
-            if (config.cameraNear !== undefined) {
-              engine.worldsConfig.cameraNear = config.cameraNear;
-            }
-            if (config.cameraFar !== undefined) {
-              engine.worldsConfig.cameraFar = config.cameraFar;
-            }
-            if (config.positionEaseSpeed !== undefined) {
-              engine.worldsConfig.positionEaseSpeed = config.positionEaseSpeed;
-            }
-            if (config.rotationEaseSpeed !== undefined) {
-              engine.worldsConfig.rotationEaseSpeed = config.rotationEaseSpeed;
-            }
-
-            if ((config as any).keepRotation !== undefined) {
-              (engine.worldsConfig as any).keepRotation = !!(config as any).keepRotation;
-            }
-
-            if ((config as any).straightenOnFocus !== undefined) {
-              (engine.worldsConfig as any).straightenOnFocus = !!(config as any).straightenOnFocus;
-            }
-            if ((config as any).screenSpaceRecenter !== undefined) {
-              (engine.worldsConfig as any).screenSpaceRecenter = !!(config as any).screenSpaceRecenter;
-            }
-            if ((config as any).screenSpaceRecenterIters !== undefined) {
-              const v = Number((config as any).screenSpaceRecenterIters);
-              if (Number.isFinite(v)) {
-                (engine.worldsConfig as any).screenSpaceRecenterIters = Math.max(1, Math.min(12, Math.floor(v)));
-              }
-            }
-            if (config.autoLayoutEnabled !== undefined) {
-              engine.worldsConfig.autoLayoutEnabled = config.autoLayoutEnabled;
-            }
-            if (config.autoLayoutColumns !== undefined) {
-              engine.worldsConfig.autoLayoutColumns = config.autoLayoutColumns;
-            }
-            if (config.autoLayoutSpacing !== undefined) {
-              engine.worldsConfig.autoLayoutSpacing = config.autoLayoutSpacing;
-            }
-            if (config.sectionTextureMode !== undefined) {
-              const prev = engine.worldsConfig.sectionTextureMode;
-              engine.worldsConfig.sectionTextureMode = config.sectionTextureMode;
-              if (prev !== config.sectionTextureMode) {
-                engine.clear3DSectionTextures();
-              }
-            }
-
-            if (config.sectionBorderEnabled !== undefined) {
-              const prev = engine.worldsConfig.sectionBorderEnabled;
-              engine.worldsConfig.sectionBorderEnabled = config.sectionBorderEnabled;
-              if (prev !== config.sectionBorderEnabled) {
-                engine.clear3DSectionTextures();
-              }
-            }
-            if (config.sectionBorderWidth !== undefined) {
-              const prev = engine.worldsConfig.sectionBorderWidth;
-              engine.worldsConfig.sectionBorderWidth = config.sectionBorderWidth;
-              if (prev !== config.sectionBorderWidth) {
-                engine.clear3DSectionTextures();
-              }
-            }
-
-            if ((config as any).sectionBackground !== undefined) {
-              const prev = (engine.worldsConfig as any).sectionBackground;
-              (engine.worldsConfig as any).sectionBackground = (config as any).sectionBackground;
-              if (prev !== (config as any).sectionBackground) {
-                engine.clear3DSectionTextures();
-              }
-            }
-
-            if (config.sectionBackgroundPaperNoiseStrength !== undefined) {
-              const v = config.sectionBackgroundPaperNoiseStrength;
-              if (Number.isFinite(v as any)) {
-                engine.worldsConfig.sectionBackgroundPaperNoiseStrength = Math.max(0, Math.min(1, v as number));
-              }
-            }
-
-            if (config.sectionLinkUnderline !== undefined) {
-              const prev = engine.worldsConfig.sectionLinkUnderline;
-              engine.worldsConfig.sectionLinkUnderline = !!config.sectionLinkUnderline;
-              if (prev !== engine.worldsConfig.sectionLinkUnderline) {
-                engine.clear3DSectionTextures();
-              }
-            }
-
-            if ((config as any).sectionListMarker !== undefined) {
-              const prev = engine.worldsConfig.sectionListMarker;
-              engine.worldsConfig.sectionListMarker = (config as any).sectionListMarker;
-              if (prev !== engine.worldsConfig.sectionListMarker) {
-                engine.clear3DSectionTextures();
-              }
-            }
-
-            if ((config as any).sectionListMarkerGapPx !== undefined) {
-              const prev = engine.worldsConfig.sectionListMarkerGapPx;
-              const next = Number((config as any).sectionListMarkerGapPx);
-              if (Number.isFinite(next)) {
-                engine.worldsConfig.sectionListMarkerGapPx = Math.max(0, next);
-                if (prev !== engine.worldsConfig.sectionListMarkerGapPx) {
-                  engine.clear3DSectionTextures();
-                }
-              }
-            }
-
-            if ((config as any).sectionListHangIndentPx !== undefined) {
-              const prev = engine.worldsConfig.sectionListHangIndentPx;
-              const next = Number((config as any).sectionListHangIndentPx);
-              if (Number.isFinite(next)) {
-                engine.worldsConfig.sectionListHangIndentPx = Math.max(0, next);
-                if (prev !== engine.worldsConfig.sectionListHangIndentPx) {
-                  engine.clear3DSectionTextures();
-                }
-              }
-            }
-
-            if (requiresSectionLayoutRecompile && engine.runtimeSectionStore.sections.length > 0) {
-              engine.compileWorldsLayoutsFromRuntimeSectionStore('config defaults changed');
-            } else {
-              engine.applyWorldsLayoutCallback();
-              engine.reflowWorldsAutoLayout();
-            }
+            applyWorldsConfigDefaults(config);
           },
           
           getDefaults: () => {
@@ -9319,37 +9384,31 @@ ${exportVars}
       const dt = this.deltaTime;
       const moveSpeed = 120; // world units / second
       const lookSpeed = 1.6; // radians / second
+      const textInputFocused = !!this.getFocusedGUITextInput();
 
       const applyMove = (dx: number, dy: number, dz: number) => {
-        this.camera3D!.position.x += dx;
-        this.camera3D!.position.y += dy;
-        this.camera3D!.position.z += dz;
-        if (this.camera3D!.target) {
-          this.camera3D!.target.x += dx;
-          this.camera3D!.target.y += dy;
-          this.camera3D!.target.z += dz;
-        }
+        this.applyWorldsCameraTranslation(dx, dy, dz);
       };
 
       // Movement in XY plane: WASD (arrow keys reserved for link navigation)
-      if (this.input.isKeyDown('w') || this.input.isKeyDown('W')) {
+      if (!textInputFocused && (this.input.isKeyDown('w') || this.input.isKeyDown('W'))) {
         applyMove(0, moveSpeed * dt, 0);
       }
-      if (this.input.isKeyDown('s') || this.input.isKeyDown('S')) {
+      if (!textInputFocused && (this.input.isKeyDown('s') || this.input.isKeyDown('S'))) {
         applyMove(0, -moveSpeed * dt, 0);
       }
-      if (this.input.isKeyDown('a') || this.input.isKeyDown('A')) {
+      if (!textInputFocused && (this.input.isKeyDown('a') || this.input.isKeyDown('A'))) {
         applyMove(-moveSpeed * dt, 0, 0);
       }
-      if (this.input.isKeyDown('d') || this.input.isKeyDown('D')) {
+      if (!textInputFocused && (this.input.isKeyDown('d') || this.input.isKeyDown('D'))) {
         applyMove(moveSpeed * dt, 0, 0);
       }
 
       // QE = look left/right (yaw)
-      if (this.input.isKeyDown('q') || this.input.isKeyDown('Q')) {
+      if (!textInputFocused && (this.input.isKeyDown('q') || this.input.isKeyDown('Q'))) {
         this.camera3D.rotation.y -= lookSpeed * dt;
       }
-      if (this.input.isKeyDown('e') || this.input.isKeyDown('E')) {
+      if (!textInputFocused && (this.input.isKeyDown('e') || this.input.isKeyDown('E'))) {
         this.camera3D.rotation.y += lookSpeed * dt;
       }
 
@@ -9582,6 +9641,7 @@ ${exportVars}
     this.canvas.addEventListener('mousedown', (e) => this.handleMouseEvent(e, 'press'));
     this.canvas.addEventListener('mouseup', (e) => this.handleMouseEvent(e, 'release'));
     this.canvas.addEventListener('mousemove', (e) => this.handleMouseMoveEvent(e));
+    this.canvas.addEventListener('wheel', (e) => this.handleWheelEvent(e), { passive: false });
     this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     this.canvas.addEventListener('touchstart', (e) => this.handleTouchEvent(e, 'press'), { passive: false });
     this.canvas.addEventListener('touchmove', (e) => this.handleTouchMoveEvent(e), { passive: false });
@@ -9652,6 +9712,222 @@ ${exportVars}
     return system && typeof system.getFocusedTextInput === 'function'
       ? system.getFocusedTextInput()
       : null;
+  }
+
+  private isPointOverVisibleGUIWidget(pixelX: number, pixelY: number): boolean {
+    const guiAPI = (this.api as any)?.gui;
+    const system = guiAPI?.getSystem?.();
+    const manager = system?.getWidgetManager?.();
+    const widgets = manager && typeof manager.getVisible === 'function'
+      ? manager.getVisible()
+      : (system && typeof system.getWidgets === 'function' ? system.getWidgets() : []);
+
+    if (!Array.isArray(widgets) || widgets.length === 0) return false;
+
+    const charWidth = this.width > 0 ? (this.canvas.width / this.width) : 1;
+    const charHeight = this.height > 0 ? (this.canvas.height / this.height) : 1;
+    const coord = {
+      x: pixelX,
+      y: pixelY,
+      cellX: Math.floor(pixelX / Math.max(1, charWidth)),
+      cellY: Math.floor(pixelY / Math.max(1, charHeight))
+    };
+
+    return widgets.some((widget: any) => {
+      if (!widget?.state?.visible) return false;
+      return typeof widget.containsPoint === 'function' && widget.containsPoint(coord);
+    });
+  }
+
+  private getWorldsCameraBasis(rotation: { x: number; y: number; z: number }): {
+    forward: { x: number; y: number; z: number };
+    right: { x: number; y: number; z: number };
+    up: { x: number; y: number; z: number };
+  } {
+    const forward = {
+      x: Math.sin(rotation.y) * Math.cos(rotation.x),
+      y: -Math.sin(rotation.x),
+      z: -Math.cos(rotation.y) * Math.cos(rotation.x)
+    };
+
+    const zAxis = vec3Normalize(vec3Scale(forward, -1));
+    let right = vec3Normalize({ x: zAxis.z, y: 0, z: -zAxis.x });
+    if (vec3Length(right) <= 1e-8) right = { x: 1, y: 0, z: 0 };
+    let up = {
+      x: zAxis.y * right.z - zAxis.z * right.y,
+      y: zAxis.z * right.x - zAxis.x * right.z,
+      z: zAxis.x * right.y - zAxis.y * right.x,
+    };
+
+    const roll = Number.isFinite(rotation.z) ? rotation.z : 0;
+    if (roll) {
+      const c = Math.cos(roll);
+      const s = Math.sin(roll);
+      const rolledRight = vec3Add(vec3Scale(right, c), vec3Scale(up, s));
+      const rolledUp = vec3Add(vec3Scale(up, c), vec3Scale(right, -s));
+      right = rolledRight;
+      up = rolledUp;
+    }
+
+    return { forward, right, up };
+  }
+
+  private applyWorldsCameraTranslation(dx: number, dy: number, dz: number): void {
+    if (!this.camera3D) return;
+    this.camera3D.position.x += dx;
+    this.camera3D.position.y += dy;
+    this.camera3D.position.z += dz;
+    if (this.camera3D.target) {
+      this.camera3D.target.x += dx;
+      this.camera3D.target.y += dy;
+      this.camera3D.target.z += dz;
+    }
+  }
+
+  private estimateWorldsNavigationDistance(): number {
+    if (!this.camera3D) return 120;
+    const cameraPos = this.camera3D.effectivePosition ?? this.camera3D.position;
+
+    if (this.camera3D.target) {
+      const dist = vec3Length(vec3Sub(this.camera3D.target, cameraPos));
+      if (Number.isFinite(dist) && dist > 1) return dist;
+    }
+
+    const currentLayout = this.getCurrent3DSectionLayout();
+    if (currentLayout) {
+      const dist = vec3Length(vec3Sub(currentLayout.transform.position, cameraPos));
+      if (Number.isFinite(dist) && dist > 1) return dist;
+    }
+
+    const fallback = Math.abs(cameraPos.z);
+    return Number.isFinite(fallback) && fallback > 1 ? fallback : 120;
+  }
+
+  private applyWorldsCameraPanDelta(dx: number, dy: number): boolean {
+    if (!this.worldsEnabled || !this.camera3D) return false;
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || (dx === 0 && dy === 0)) {
+      return true;
+    }
+
+    const rotation = this.camera3D.effectiveRotation ?? this.camera3D.rotation;
+    const basis = this.getWorldsCameraBasis(rotation);
+    const distance = this.estimateWorldsNavigationDistance();
+    const canvasH = Math.max(1, this.canvas.height);
+    const worldPerPixel = (2 * Math.tan((this.camera3D.fov || (Math.PI / 4)) * 0.5) * distance) / canvasH;
+
+    const move = vec3Add(
+      vec3Scale(basis.right, -dx * worldPerPixel),
+      vec3Scale(basis.up, dy * worldPerPixel)
+    );
+    this.applyWorldsCameraTranslation(move.x, move.y, move.z);
+    return true;
+  }
+
+  private handleWorldsMiddlePanMove(pixelX: number, pixelY: number): boolean {
+    if (!this.middlePanActive || !this.worldsEnabled || !this.camera3D) return false;
+
+    const dx = pixelX - this.middlePanLastX;
+    const dy = pixelY - this.middlePanLastY;
+    this.middlePanLastX = pixelX;
+    this.middlePanLastY = pixelY;
+
+    return this.applyWorldsCameraPanDelta(dx, dy);
+  }
+
+  private handleWorldsWheelEvent(e: WheelEvent): boolean {
+    if (!this.worldsEnabled || !this.camera3D) return false;
+
+    const rect = this.canvas.getBoundingClientRect();
+    const pixelX = (e.clientX - rect.left) * (this.canvas.width / rect.width);
+    const pixelY = (e.clientY - rect.top) * (this.canvas.height / rect.height);
+
+    if (this.isPointOverVisibleGUIWidget(pixelX, pixelY)) {
+      return false;
+    }
+
+    let deltaY = Number(e.deltaY);
+    if (!Number.isFinite(deltaY) || deltaY === 0) return false;
+    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) deltaY *= 16;
+    else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) deltaY *= Math.max(1, this.canvas.height);
+
+    const speedScale = e.shiftKey ? 2.25 : e.altKey ? 0.35 : 1;
+    const distance = this.estimateWorldsNavigationDistance();
+    const dolly = -deltaY * 0.0015 * Math.max(24, distance) * speedScale;
+    const rotation = this.camera3D.effectiveRotation ?? this.camera3D.rotation;
+    const basis = this.getWorldsCameraBasis(rotation);
+    this.applyWorldsCameraTranslation(
+      basis.forward.x * dolly,
+      basis.forward.y * dolly,
+      basis.forward.z * dolly,
+    );
+    return true;
+  }
+
+  private startFreeFlyLeftDrag(pixelX: number, pixelY: number): boolean {
+    if (!this.worldsEnabled || !this.camera3D || !this.worldsControlsEnabled) return false;
+    if (this.isPointOverVisibleGUIWidget(pixelX, pixelY)) return false;
+
+    const picked = this.pick3DAt(pixelX, pixelY);
+    this.freeFlyLeftLastX = pixelX;
+    this.freeFlyLeftLastY = pixelY;
+
+    if (picked?.layout) {
+      this.freeFlyLeftDragSectionIndex = picked.layout.sectionIndex;
+      this.freeFlyLeftPanActive = false;
+      return true;
+    }
+
+    this.freeFlyLeftPanActive = true;
+    this.freeFlyLeftDragSectionIndex = null;
+    return true;
+  }
+
+  private stopFreeFlyLeftDrag(): boolean {
+    const wasActive = this.freeFlyLeftPanActive || this.freeFlyLeftDragSectionIndex !== null;
+    this.freeFlyLeftPanActive = false;
+    this.freeFlyLeftDragSectionIndex = null;
+    return wasActive;
+  }
+
+  private handleFreeFlyLeftDragMove(pixelX: number, pixelY: number): boolean {
+    if (!this.worldsEnabled || !this.camera3D || !this.worldsControlsEnabled) return false;
+    if (!this.freeFlyLeftPanActive && this.freeFlyLeftDragSectionIndex === null) return false;
+
+    const dx = pixelX - this.freeFlyLeftLastX;
+    const dy = pixelY - this.freeFlyLeftLastY;
+    this.freeFlyLeftLastX = pixelX;
+    this.freeFlyLeftLastY = pixelY;
+
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || (dx === 0 && dy === 0)) return true;
+
+    if (this.freeFlyLeftPanActive) {
+      return this.applyWorldsCameraPanDelta(dx, dy);
+    }
+
+    const sectionIndex = this.freeFlyLeftDragSectionIndex;
+    if (!(typeof sectionIndex === 'number' && Number.isFinite(sectionIndex))) return false;
+    const layout = this.section3DLayouts[sectionIndex];
+    if (!layout) return false;
+
+    const rotation = this.camera3D.effectiveRotation ?? this.camera3D.rotation;
+    const basis = this.getWorldsCameraBasis(rotation);
+    const distance = this.estimateWorldsNavigationDistance();
+    const canvasH = Math.max(1, this.canvas.height);
+    const worldPerPixel = (2 * Math.tan((this.camera3D.fov || (Math.PI / 4)) * 0.5) * distance) / canvasH;
+    const right2 = { x: basis.right.x, y: basis.right.y };
+    const up2 = { x: basis.up.x, y: basis.up.y };
+    const moveX = (dx * right2.x - dy * up2.x) * worldPerPixel;
+    const moveY = (dx * right2.y - dy * up2.y) * worldPerPixel;
+    const nextPosition = {
+      x: layout.transform.position.x + moveX,
+      y: layout.transform.position.y + moveY,
+      z: layout.transform.position.z,
+    };
+
+    layout.transform.position = nextPosition;
+    layout.autoPositioned = false;
+    this.getOrCreateSectionRuntimeOverride(layout.sectionId).position = { ...nextPosition };
+    return true;
   }
 
   private shouldDispatchHiddenTextInputKeyEvent(e: KeyboardEvent, target: TextInputCapable): boolean {
@@ -9870,6 +10146,11 @@ ${exportVars}
     this.input.updateMousePosition(pixelX, pixelY);
     this.input.applySyntheticEvent({ type: 'mouse_move', x: pixelX, y: pixelY });
 
+    if (this.handleFreeFlyLeftDragMove(pixelX, pixelY)) {
+      e.preventDefault();
+      return;
+    }
+
     if (this.worldsInlineWidgetInstances.length > 0) {
       this.handleWorldsInlineWidgetMouse(pixelX, pixelY, this.input.isMouseDown(0));
     }
@@ -9930,12 +10211,25 @@ ${exportVars}
       const { pixelX, pixelY } = this.touchToPixelXY(t);
       this.input.updateMousePosition(pixelX, pixelY);
 
+      if (this.worldsControlsEnabled) {
+        this.input.applySyntheticEvent({ type: 'mouse', action, button: 'left', x: pixelX, y: pixelY });
+        if (action === 'press') {
+          if (this.startFreeFlyLeftDrag(pixelX, pixelY)) {
+            e.preventDefault();
+            return;
+          }
+        } else if (this.stopFreeFlyLeftDrag()) {
+          e.preventDefault();
+          return;
+        }
+      }
+
       const inlineWidgetConsumed = this.handleWorldsInlineWidgetMouse(pixelX, pixelY, action === 'press');
 
       this.input.applySyntheticEvent({ type: 'mouse', action, button: 'left', x: pixelX, y: pixelY });
 
       let handledBy3D = false;
-      if (!inlineWidgetConsumed && action === 'press') {
+      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && action === 'press') {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
@@ -10287,13 +10581,65 @@ ${exportVars}
       // Update InputManager's mouse position so mouseX/mouseY globals reflect click position
       this.input.updateMousePosition(pixelX, pixelY);
 
+      const buttonName = e.button === 1 ? 'middle' : e.button === 2 ? 'right' : 'left';
+
+      if (e.button === 0 && this.worldsControlsEnabled) {
+        this.input.applySyntheticEvent({
+          type: 'mouse',
+          action,
+          button: buttonName,
+          x: pixelX,
+          y: pixelY,
+        });
+
+        if (action === 'press') {
+          if (this.startFreeFlyLeftDrag(pixelX, pixelY)) {
+            e.preventDefault();
+            this.syncHiddenTextInputBridge(false);
+            return;
+          }
+        } else if (this.stopFreeFlyLeftDrag()) {
+          e.preventDefault();
+          this.syncHiddenTextInputBridge(false);
+          return;
+        }
+      }
+
+      if (e.button === 1) {
+        this.input.applySyntheticEvent({
+          type: 'mouse',
+          action,
+          button: buttonName,
+          x: pixelX,
+          y: pixelY,
+        });
+
+        if (action === 'press') {
+          const startedOverGUI = this.isPointOverVisibleGUIWidget(pixelX, pixelY);
+          const startedOverCard = !!this.pick3DAt(pixelX, pixelY);
+          if (this.worldsEnabled && this.camera3D && !startedOverGUI && !startedOverCard) {
+            this.middlePanActive = true;
+            this.middlePanLastX = pixelX;
+            this.middlePanLastY = pixelY;
+            e.preventDefault();
+            this.syncHiddenTextInputBridge(false);
+            return;
+          }
+        } else if (this.middlePanActive) {
+          this.middlePanActive = false;
+          e.preventDefault();
+          this.syncHiddenTextInputBridge(false);
+          return;
+        }
+      }
+
       const inlineWidgetConsumed = e.button === 0
         ? this.handleWorldsInlineWidgetMouse(pixelX, pixelY, action === 'press')
         : false;
 
       // Built-in 3D picking/navigation: click a section card to focus camera.
       // This runs even if the document doesn't define an on:input handler.
-      if (!inlineWidgetConsumed && action === 'press' && e.button === 0) {
+      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && action === 'press' && e.button === 0) {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
@@ -10335,7 +10681,7 @@ ${exportVars}
       this.input.applySyntheticEvent({
         type: 'mouse',
         action,
-        button: e.button === 1 ? 'middle' : e.button === 2 ? 'right' : 'left',
+        button: buttonName,
         x: pixelX,
         y: pixelY,
       });
@@ -10349,7 +10695,7 @@ ${exportVars}
         const event: InputEvent = {
           type: 'mouse',
           action,
-          button: e.button === 1 ? 'middle' : e.button === 2 ? 'right' : 'left',
+          button: buttonName,
           x: pixelX,
           y: pixelY,
           cellX,
@@ -11485,6 +11831,16 @@ ${exportVars}
     // Update InputManager's mouse position for mouseX/mouseY globals
     this.input.updateMousePosition(pixelX, pixelY);
 
+    if (this.handleFreeFlyLeftDragMove(pixelX, pixelY)) {
+      e.preventDefault();
+      return;
+    }
+
+    if (this.middlePanActive && this.handleWorldsMiddlePanMove(pixelX, pixelY)) {
+      e.preventDefault();
+      return;
+    }
+
     if (this.worldsInlineWidgetInstances.length > 0) {
       this.handleWorldsInlineWidgetMouse(pixelX, pixelY, this.input.isMouseDown(0));
     }
@@ -11515,6 +11871,22 @@ ${exportVars}
       }
     } catch (error) {
       console.error('Error in input handler:', error);
+    }
+  }
+
+  private handleWheelEvent(e: WheelEvent): void {
+    if (Date.now() - this.lastTouchEventAt < 750) {
+      e.preventDefault();
+      return;
+    }
+
+    if (this.hostAudienceView) {
+      e.preventDefault();
+      return;
+    }
+
+    if (this.handleWorldsWheelEvent(e)) {
+      e.preventDefault();
     }
   }
   

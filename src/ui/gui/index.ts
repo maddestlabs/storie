@@ -696,28 +696,50 @@ export class GUISystem {
     const scaledKnobHeight = slider.getRenderPixels(knobHeight);
     const scaledValueGap = slider.getRenderPixels(valueGap);
 
+    if (slider.orientation === 'vertical') {
+      let trackTopY = y;
+      if (slider.label) {
+        ui.text(slider.label, x, y, fg);
+        trackTopY += charH + scaledLabelGap;
+      }
+      const valueReserve = slider.showValue ? charH + scaledValueGap : 0;
+      const trackAreaH = Math.max(0, height - (slider.label ? charH + scaledLabelGap : 0) - valueReserve);
+      const trackX = x + Math.max(0, (width - scaledTrackHeight) / 2);
+      ui.rect(trackX, trackTopY, scaledTrackHeight, trackAreaH, trackColor);
+
+      const actualKnobWidth = Math.min(width, scaledKnobWidth);
+      const actualKnobHeight = Math.min(trackAreaH, scaledKnobHeight);
+      const range = slider.max - slider.min;
+      const ratio = range > 0 ? (slider.value - slider.min) / range : 0;
+      const knobTravel = Math.max(0, trackAreaH - actualKnobHeight);
+      const knobY = trackTopY + (1 - ratio) * knobTravel;
+      const knobX = x + Math.max(0, (width - actualKnobWidth) / 2);
+      const knobCol = slider.isDragging() ? knobActiveColor : (slider.state.hovered ? knobHoverColor : knobColor);
+      ui.rect(knobX, knobY, actualKnobWidth, actualKnobHeight, knobCol);
+
+      if (slider.showValue) {
+        const valueText = `${Math.round(slider.value)}`;
+        const valueY = trackTopY + trackAreaH + scaledValueGap;
+        ui.text(valueText, x + Math.max(0, Math.floor((width - valueText.length * (_charW || 8)) / 2)), valueY, fg);
+      }
+      return;
+    }
+
     let trackY = y;
     if (slider.label) {
       ui.text(slider.label, x, y, fg);
       trackY += charH + scaledLabelGap;
     }
     const trackAreaH = Math.max(0, height - (slider.label ? charH + scaledLabelGap : 0));
-    
-    // Track
     const trackYPos = trackY + Math.max(0, (trackAreaH - scaledTrackHeight) / 2);
     ui.rect(x, trackYPos, width, scaledTrackHeight, trackColor);
-    
-    // Knob
     const actualKnobHeight = Math.min(trackAreaH, scaledKnobHeight);
     const range = slider.max - slider.min;
     const ratio = range > 0 ? (slider.value - slider.min) / range : 0;
     const knobX = x + ratio * (width - scaledKnobWidth);
     const knobY = trackY + Math.max(0, (trackAreaH - actualKnobHeight) / 2);
-    
     const knobCol = slider.isDragging() ? knobActiveColor : (slider.state.hovered ? knobHoverColor : knobColor);
     ui.rect(knobX, knobY, scaledKnobWidth, actualKnobHeight, knobCol);
-    
-    // Value text
     if (slider.showValue) {
       const valueText = `${Math.round(slider.value)}`;
       ui.text(valueText, x + width + scaledValueGap, y + Math.max(0, Math.floor((height - charH) / 2)), fg);

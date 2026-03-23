@@ -11,6 +11,7 @@ export type SfxPresetName =
 export interface PlaySfxOptions {
   volume?: number;
   when?: number; // seconds from now
+  output?: AudioNode;
 }
 
 export interface SfxHandle {

@@ -8,42 +8,7 @@ shaders: "blurgradual+lightvignette"
 ---
 
 ```javascript on:init
-// Camera styling helpers
-const deg = d => d * Math.PI / 180;
-const CAMERA_BASE_ROT = { x: deg(-4), y: deg(4), z: 0 };
-
-worlds.enable();
-console.log('✓ 3D Canvas enabled!');
-worlds.config.setDefaults({
-  keepRotation: true,
-  straightenOnFocus: true,
-  screenSpaceRecenter: true,
-  screenSpaceRecenterIters: 5,
-  defaultSectionWidth: 70,        // Default width
-  defaultSectionHeight: 24,       // Default height
-  autoLayoutSpacing: 50,         // Spacing between auto-laid-out sections (world units)
-  sectionBorderEnabled: false,     // Draw a border around each section card
-  sectionBackground: 'shader:ruledlines;paperPlaneZ=focus',
-});
-
-// “Looking down” at an infinite canvas feel:
-worlds.camera.setPosition(0, 55, 320);
-worlds.camera.setRotation(CAMERA_BASE_ROT.x, CAMERA_BASE_ROT.y, CAMERA_BASE_ROT.z);
-// Optional: narrower FOV reads as a touch more “zoomed” / cinematic.
-worlds.camera.setFOV(deg(42));
-worlds.camera.setEaseSpeed(0.18, 0.12);
-
-worlds.camera.shake.setParams({
-  // overall intensity (0..2 typical)
-  strength: 1.0,
-  // motion speed
-  rate: 0.20,
-  // translation is in camera-local world units
-  translate: { x: 1.2, y: 0.9, z: 0.4 },
-  // rotation is radians
-  rotate: { x: deg(0.55), y: deg(0.65), z: 0 },
-});
-worlds.camera.shake.setEnabled(true);
+worlds.presets.apply('story');
 
 // Navigate to the first section, but keep our camera tilt.
 worlds.camera.focusOnSectionFit(0, 0.9, { keepRotation: true });

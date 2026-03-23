@@ -69,6 +69,7 @@ import type {
   WorldsContentTimedEntry,
 } from './worlds-content.js';
 import type { CompiledWorldsTimeline, WorldsTimelineStateEntry } from './worlds-timeline.js';
+import type { WorldsPreset, WorldsPresetName } from './worlds-presets.js';
 
 // SES adds these to globalThis
 declare const lockdown: any;
@@ -737,6 +738,12 @@ export interface SandboxAPI {
       setKeyHandlingEnabled: (enabled: boolean) => void;
       keyHandlingEnabled: boolean;
       popActivated: () => { url: string; sectionIndex: number | null; linkIndex: number | null } | null;
+    };
+
+    presets: {
+      list: () => WorldsPresetName[];
+      get: (name: string) => WorldsPreset | null;
+      apply: (name: string) => WorldsPreset | null;
     };
 
     widgets: {

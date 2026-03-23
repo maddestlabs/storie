@@ -350,55 +350,162 @@ function seedExamplePattern() {
 function layoutWidgets() {
   if (!state.widgets) return;
   const viewport = gui.getViewportRect();
-  const width = Math.max(960, Math.floor(viewport.width));
-  const height = Math.max(780, Math.floor(viewport.height));
-  if (width === state.layoutSize.width && height === state.layoutSize.height) return;
-  state.layoutSize = { width: width, height: height };
+  const responsive = gui.getResponsiveInfo(viewport);
+  const safeArea = responsive.safeAreaInsets || { top: 0, right: 0, bottom: 0, left: 0 };
+  const deviceWidth = Math.max(1, Number(ui.metrics.canvasWidth || 0));
+  const deviceHeight = Math.max(1, Number(ui.metrics.canvasHeight || 0));
+  const scaleX = viewport.width > 0 ? deviceWidth / viewport.width : 1;
+  const scaleY = viewport.height > 0 ? deviceHeight / viewport.height : 1;
+  const width = Math.max(320, Math.floor(responsive.usableWidth || viewport.width));
+  const height = Math.max(360, Math.floor(responsive.usableHeight || viewport.height));
+  const compact = responsive.breakpoint === 'xs' || responsive.breakpoint === 'sm';
+  const stacked = compact || width < 980 || height < 720 || (responsive.orientation === 'portrait' && width < 1280);
+  const mode = stacked ? 'stacked' : 'split';
 
-  const pad = 18;
-  const gap = 12;
-  const leftWidth = Math.max(300, Math.floor(width * 0.28));
-  const rightX = pad + leftWidth + gap;
-  const rightWidth = width - rightX - pad;
-  const topY = pad;
-  const controlsBottom = 320;
-  const pianoHeight = 180;
-  const graphHeight = height - pad - (topY + controlsBottom + pianoHeight + gap * 2);
+  if (width === state.layoutSize.width && height === state.layoutSize.height && state.layoutSize.mode === mode) return;
+  state.layoutSize = { width: width, height: height, mode: mode };
 
-  state.widgets.title.setBounds({ x: pad, y: topY, width: leftWidth, height: 28 });
-  state.widgets.status.setBounds({ x: pad, y: topY + 30, width: leftWidth, height: 52 });
-  state.widgets.transport.setBounds({ x: pad, y: topY + 84, width: leftWidth, height: 24 });
+  const pad = compact ? 10 : width < 1200 ? 14 : 18;
+  const gap = compact ? 8 : 12;
+  const leftX = Math.floor(safeArea.left + pad);
+  const topY = Math.floor(safeArea.top + pad);
+  const contentWidth = Math.max(240, width - pad * 2);
+  const contentHeight = Math.max(240, height - pad * 2);
+  const leftWidth = stacked
+    ? contentWidth
+    : clamp(Math.floor(contentWidth * (width >= 1440 ? 0.27 : 0.30)), 280, 380);
+  const rightX = leftX + leftWidth + gap;
+  const rightWidth = stacked ? contentWidth : Math.max(240, contentWidth - leftWidth - gap);
+  const bottomY = topY + contentHeight;
+  const buttonColumns = leftWidth >= 320 ? 2 : 1;
+  const buttonWidth = buttonColumns === 2 ? Math.floor((leftWidth - gap) / 2) : leftWidth;
+  const buttonRowHeight = buttonColumns === 2 ? 40 : (40 * 2) + gap;
+  const toDeviceRect = (bounds) => ({
+    x: Math.round(bounds.x * scaleX),
+    y: Math.round(bounds.y * scaleY),
+    w: Math.max(1, Math.round(bounds.w * scaleX)),
+    h: Math.max(1, Math.round(bounds.h * scaleY)),
+    headerH: Math.max(1, Math.round(bounds.headerH * scaleY)),
+    labelW: Math.max(1, Math.round(bounds.labelW * scaleX))
+  });
 
-  const buttonY = topY + 118;
-  const buttonW = Math.floor((leftWidth - gap) / 2);
-  state.widgets.playButton.setBounds({ x: pad, y: buttonY, width: buttonW, height: 40 });
-  state.widgets.stopButton.setBounds({ x: pad + buttonW + gap, y: buttonY, width: buttonW, height: 40 });
+  let y = topY;
+  state.widgets.title.setBounds({ x: leftX, y: y, width: leftWidth, height: 28 });
+  y += 30;
+  state.widgets.status.setBounds({ x: leftX, y: y, width: leftWidth, height: 52 });
+  y += 54;
+  state.widgets.transport.setBounds({ x: leftX, y: y, width: leftWidth, height: 24 });
+  y += 34;
 
-  state.widgets.tempo.setBounds({ x: pad, y: buttonY + 48, width: leftWidth, height: 42 });
-  state.widgets.master.setBounds({ x: pad, y: buttonY + 96, width: leftWidth, height: 42 });
-  state.widgets.clearButton.setBounds({ x: pad, y: buttonY + 148, width: buttonW, height: 40 });
-  state.widgets.exampleButton.setBounds({ x: pad + buttonW + gap, y: buttonY + 148, width: buttonW, height: 40 });
+  if (buttonColumns === 2) {
+    state.widgets.playButton.setBounds({ x: leftX, y: y, width: buttonWidth, height: 40 });
+    state.widgets.stopButton.setBounds({ x: leftX + buttonWidth + gap, y: y, width: buttonWidth, height: 40 });
+  } else {
+    state.widgets.playButton.setBounds({ x: leftX, y: y, width: buttonWidth, height: 40 });
+    state.widgets.stopButton.setBounds({ x: leftX, y: y + 40 + gap, width: buttonWidth, height: 40 });
+  }
+  y += buttonRowHeight + gap;
 
-  const pianoY = topY + controlsBottom;
-  state.widgets.pianoLabel.setBounds({ x: pad, y: pianoY, width: leftWidth, height: 24 });
-  state.widgets.nowPlaying.setBounds({ x: pad, y: pianoY + 24, width: leftWidth, height: 24 });
-  state.widgets.piano.setBounds({ x: pad, y: pianoY + 54, width: leftWidth, height: pianoHeight - 54 });
+  state.widgets.tempo.setBounds({ x: leftX, y: y, width: leftWidth, height: 42 });
+  y += 50;
+  state.widgets.master.setBounds({ x: leftX, y: y, width: leftWidth, height: 42 });
+  y += 50;
 
-  const graphY = pianoY + pianoHeight + gap;
-  state.widgets.graphLabel.setBounds({ x: pad, y: graphY, width: leftWidth, height: 24 });
-  state.widgets.graphStatus.setBounds({ x: pad, y: graphY + 24, width: leftWidth, height: 44 });
-  state.widgets.graphEditor.setBounds({ x: pad, y: graphY + 72, width: leftWidth, height: Math.max(160, graphHeight - 120) });
-  state.widgets.applyGraph.setBounds({ x: pad, y: height - pad - 40, width: buttonW, height: 40 });
-  state.widgets.resetGraph.setBounds({ x: pad + buttonW + gap, y: height - pad - 40, width: buttonW, height: 40 });
+  if (buttonColumns === 2) {
+    state.widgets.clearButton.setBounds({ x: leftX, y: y, width: buttonWidth, height: 40 });
+    state.widgets.exampleButton.setBounds({ x: leftX + buttonWidth + gap, y: y, width: buttonWidth, height: 40 });
+  } else {
+    state.widgets.clearButton.setBounds({ x: leftX, y: y, width: buttonWidth, height: 40 });
+    state.widgets.exampleButton.setBounds({ x: leftX, y: y + 40 + gap, width: buttonWidth, height: 40 });
+  }
+  y += buttonRowHeight + gap;
 
-  state.gridBounds = {
-    x: rightX,
-    y: topY,
-    w: rightWidth,
-    h: height - pad * 2,
-    headerH: 28,
-    labelW: 54
-  };
+  const pianoWidgetHeight = compact ? 72 : 104;
+  state.widgets.piano.setVisibleWhiteKeys(compact ? 8 : 10, 0.5, false);
+  state.widgets.pianoLabel.setBounds({ x: leftX, y: y, width: leftWidth, height: 24 });
+  state.widgets.nowPlaying.setBounds({ x: leftX, y: y + 24, width: leftWidth, height: 24 });
+  state.widgets.piano.setBounds({ x: leftX, y: y + 54, width: leftWidth, height: pianoWidgetHeight });
+  y += 54 + pianoWidgetHeight + gap;
+
+  if (stacked) {
+    const graphButtonsHeight = buttonRowHeight;
+    const graphEditorMinHeight = compact ? 88 : 110;
+    const graphEditorIdealHeight = compact ? 96 : 132;
+    const gridMinHeight = compact ? 140 : 200;
+    const remainingHeight = Math.max(160, bottomY - y);
+    const graphBlockMinHeight = 72 + graphEditorMinHeight + gap + graphButtonsHeight;
+    const graphBlockIdealHeight = 72 + graphEditorIdealHeight + gap + graphButtonsHeight;
+    const graphBlockHeight = Math.min(
+      graphBlockIdealHeight,
+      Math.max(graphBlockMinHeight, remainingHeight - gap - gridMinHeight)
+    );
+    const gridHeight = Math.max(120, remainingHeight - gap - graphBlockHeight);
+    const graphY = y + gridHeight + gap;
+    const graphButtonsY = bottomY - graphButtonsHeight;
+    const graphEditorY = graphY + 72;
+    const graphEditorHeight = Math.max(graphEditorMinHeight, graphButtonsY - gap - graphEditorY);
+
+    state.gridBounds = toDeviceRect({
+      x: leftX,
+      y: y,
+      w: contentWidth,
+      h: gridHeight,
+      headerH: 28,
+      labelW: compact ? 46 : 54
+    });
+
+    state.widgets.graphLabel.setBounds({ x: leftX, y: graphY, width: leftWidth, height: 24 });
+    state.widgets.graphStatus.setBounds({ x: leftX, y: graphY + 24, width: leftWidth, height: 44 });
+    state.widgets.graphEditor.setBounds({ x: leftX, y: graphEditorY, width: leftWidth, height: graphEditorHeight });
+
+    if (buttonColumns === 2) {
+      state.widgets.applyGraph.setBounds({ x: leftX, y: graphButtonsY, width: buttonWidth, height: 40 });
+      state.widgets.resetGraph.setBounds({ x: leftX + buttonWidth + gap, y: graphButtonsY, width: buttonWidth, height: 40 });
+    } else {
+      state.widgets.applyGraph.setBounds({ x: leftX, y: graphButtonsY, width: buttonWidth, height: 40 });
+      state.widgets.resetGraph.setBounds({ x: leftX, y: graphButtonsY + 40 + gap, width: buttonWidth, height: 40 });
+    }
+  } else {
+    const graphButtonsY = bottomY - buttonRowHeight;
+    const graphEditorY = y + 72;
+    const graphEditorHeight = Math.max(compact ? 96 : 120, graphButtonsY - gap - graphEditorY);
+
+    state.widgets.graphLabel.setBounds({ x: leftX, y: y, width: leftWidth, height: 24 });
+    state.widgets.graphStatus.setBounds({ x: leftX, y: y + 24, width: leftWidth, height: 44 });
+    state.widgets.graphEditor.setBounds({ x: leftX, y: graphEditorY, width: leftWidth, height: graphEditorHeight });
+
+    if (buttonColumns === 2) {
+      state.widgets.applyGraph.setBounds({ x: leftX, y: graphButtonsY, width: buttonWidth, height: 40 });
+      state.widgets.resetGraph.setBounds({ x: leftX + buttonWidth + gap, y: graphButtonsY, width: buttonWidth, height: 40 });
+    } else {
+      state.widgets.applyGraph.setBounds({ x: leftX, y: graphButtonsY, width: buttonWidth, height: 40 });
+      state.widgets.resetGraph.setBounds({ x: leftX, y: graphButtonsY + 40 + gap, width: buttonWidth, height: 40 });
+    }
+
+    state.gridBounds = toDeviceRect({
+      x: rightX,
+      y: topY,
+      w: rightWidth,
+      h: contentHeight,
+      headerH: 28,
+      labelW: 54
+    });
+  }
+
+  const innerGridWidth = Math.max(1, state.gridBounds.w - state.gridBounds.labelW);
+  const innerGridHeight = Math.max(1, state.gridBounds.h - state.gridBounds.headerH);
+  state.visibleStepCount = clamp(
+    compact ? (innerGridWidth < 420 ? 8 : 12) : (innerGridWidth < 640 ? 12 : 16),
+    8,
+    16
+  );
+  state.visibleRowCount = clamp(
+    innerGridHeight < 220 ? 8 : (innerGridHeight < 300 ? 12 : 16),
+    8,
+    16
+  );
+  state.viewStartStep = clamp(state.viewStartStep, 0, Math.max(0, state.totalSteps - state.visibleStepCount));
+  state.viewRowOffset = clamp(state.viewRowOffset, 0, Math.max(0, state.totalRows - state.visibleRowCount));
 }
 
 function gridMetrics() {

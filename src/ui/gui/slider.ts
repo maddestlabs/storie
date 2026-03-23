@@ -1,10 +1,12 @@
 import { BaseWidget, type WidgetConfig } from '../core/base-widget.js';
+import type { Direction } from '../core/types.js';
 import type { Color } from '../../types.js';
 import { createDefaultGUITokens, type GUITypographyRole } from './tokens.js';
 
 const defaultTokens = createDefaultGUITokens();
 
 export interface GUISliderConfig extends WidgetConfig {
+  orientation?: Direction;
   label?: string;
   min?: number;
   max?: number;
@@ -29,6 +31,7 @@ export interface GUISliderConfig extends WidgetConfig {
  * Slider widget with draggable knob and graphical rendering
  */
 export class GUISlider extends BaseWidget {
+  public orientation: Direction;
   public label: string;
   public min:number;
   public max: number;
@@ -49,10 +52,11 @@ export class GUISlider extends BaseWidget {
     typographyRole: GUITypographyRole;
   };
 
-  private dragOffsetX: number = 0;
+  private dragOffsetMain: number = 0;
   
   constructor(config: GUISliderConfig) {
     super(config);
+    this.orientation = config.orientation ?? 'horizontal';
     this.label = config.label ?? '';
     this.min = config.min ?? 0;
     this.max = config.max ?? 100;
@@ -77,43 +81,22 @@ export class GUISlider extends BaseWidget {
   handleDrag(mouseX: number, mouseY: number, mouseDown: boolean, charHeight: number = 0, renderScale: number = 1): void {
     if (!this.state.visible) return;
     
-    const { x, y, width, height } = this.bounds;
-
-    // Match GUISystem.renderSlider layout: label consumes one charHeight row.
     const scale = Number.isFinite(renderScale) && renderScale > 0 ? renderScale : 1;
-    const scaledLabelGap = this.sliderStyle.labelGap * scale;
-    const scaledKnobWidth = this.sliderStyle.knobWidth * scale;
-    const scaledKnobHeight = this.sliderStyle.knobHeight * scale;
-    const labelH = this.label ? charHeight + scaledLabelGap : 0;
-    const trackTopY = y + labelH;
-    const trackAreaH = Math.max(0, height - labelH);
-    
-    // Calculate knob position and size
-    const knobWidth = scaledKnobWidth;
-    const range = this.max - this.min;
-    const ratio = range > 0 ? (this.value - this.min) / range : 0;
-    const knobX = x + ratio * (width - knobWidth);
-    const knobHeight = Math.min(trackAreaH, scaledKnobHeight);
-    const knobY = trackTopY + Math.max(0, (trackAreaH - knobHeight) / 2);
-    
-    // Check if mouse is over the knob specifically
-    const overKnob = mouseX >= knobX && mouseX < knobX + knobWidth &&
-                     mouseY >= knobY && mouseY < knobY + knobHeight;
-
-    // Also allow click anywhere in the track area to start dragging.
-    // Track area is the slider bounds minus the optional label row.
-    const overTrack = mouseX >= x && mouseX < x + width &&
-              mouseY >= trackTopY && mouseY < trackTopY + trackAreaH;
+    const layout = this.getLayout(charHeight, scale);
+    const knobBounds = layout.knobBounds;
+    const overKnob = mouseX >= knobBounds.x && mouseX < knobBounds.x + knobBounds.width &&
+      mouseY >= knobBounds.y && mouseY < knobBounds.y + knobBounds.height;
+    const overTrack = mouseX >= layout.trackBounds.x && mouseX < layout.trackBounds.x + layout.trackBounds.width &&
+      mouseY >= layout.trackBounds.y && mouseY < layout.trackBounds.y + layout.trackBounds.height;
     
     // Start dragging when clicking on knob OR anywhere on track
     if (mouseDown && (overKnob || overTrack) && !this.dragging) {
       this.dragging = true;
-
-      // Keep knob anchored under pointer during drag
+      const pointerMain = this.orientation === 'horizontal' ? mouseX : mouseY;
       if (overKnob) {
-        this.dragOffsetX = mouseX - knobX;
+        this.dragOffsetMain = pointerMain - layout.knobMainStart;
       } else {
-        this.dragOffsetX = knobWidth / 2;
+        this.dragOffsetMain = layout.knobMainSize / 2;
       }
     }
     
@@ -124,13 +107,67 @@ export class GUISlider extends BaseWidget {
     
     // Update value while dragging
     if (this.dragging) {
-      // Calculate value from mouse position
-      const relativeX = Math.max(0, Math.min(width - knobWidth, mouseX - x - this.dragOffsetX));
-      const newRatio = (width - knobWidth) > 0 ? relativeX / (width - knobWidth) : 0;
+      const pointerMain = this.orientation === 'horizontal' ? mouseX : mouseY;
+      const relativeMain = Math.max(0, Math.min(layout.trackMainSize - layout.knobMainSize, pointerMain - layout.trackMainStart - this.dragOffsetMain));
+      let newRatio = (layout.trackMainSize - layout.knobMainSize) > 0 ? relativeMain / (layout.trackMainSize - layout.knobMainSize) : 0;
+      if (this.orientation === 'vertical') newRatio = 1 - newRatio;
       const rawValue = this.min + newRatio * (this.max - this.min);
       this.value = Math.round(rawValue / this.step) * this.step;
       this.value = Math.max(this.min, Math.min(this.max, this.value));
     }
+  }
+
+  private getLayout(charHeight: number, scale: number): {
+    trackBounds: { x: number; y: number; width: number; height: number };
+    knobBounds: { x: number; y: number; width: number; height: number };
+    trackMainStart: number;
+    trackMainSize: number;
+    knobMainStart: number;
+    knobMainSize: number;
+  } {
+    const { x, y, width, height } = this.bounds;
+    const scaledLabelGap = this.sliderStyle.labelGap * scale;
+    const scaledTrackHeight = this.sliderStyle.trackHeight * scale;
+    const scaledKnobWidth = this.sliderStyle.knobWidth * scale;
+    const scaledKnobHeight = this.sliderStyle.knobHeight * scale;
+    const range = this.max - this.min;
+    const ratio = range > 0 ? (this.value - this.min) / range : 0;
+
+    if (this.orientation === 'horizontal') {
+      const labelH = this.label ? charHeight + scaledLabelGap : 0;
+      const trackAreaH = Math.max(0, height - labelH);
+      const trackY = y + labelH + Math.max(0, (trackAreaH - scaledTrackHeight) / 2);
+      const knobHeight = Math.min(trackAreaH, scaledKnobHeight);
+      const knobX = x + ratio * Math.max(0, width - scaledKnobWidth);
+      const knobY = y + labelH + Math.max(0, (trackAreaH - knobHeight) / 2);
+      return {
+        trackBounds: { x, y: trackY, width, height: scaledTrackHeight },
+        knobBounds: { x: knobX, y: knobY, width: scaledKnobWidth, height: knobHeight },
+        trackMainStart: x,
+        trackMainSize: width,
+        knobMainStart: knobX,
+        knobMainSize: scaledKnobWidth
+      };
+    }
+
+    const labelH = this.label ? charHeight + scaledLabelGap : 0;
+    const valueReserve = this.showValue ? charHeight + this.sliderStyle.valueGap * scale : 0;
+    const trackAreaY = y + labelH;
+    const trackAreaH = Math.max(0, height - labelH - valueReserve);
+    const trackX = x + Math.max(0, (width - scaledTrackHeight) / 2);
+    const knobWidth = Math.min(width, scaledKnobWidth);
+    const knobHeight = Math.min(trackAreaH, scaledKnobHeight);
+    const knobTravel = Math.max(0, trackAreaH - knobHeight);
+    const knobY = trackAreaY + (1 - ratio) * knobTravel;
+    const knobX = x + Math.max(0, (width - knobWidth) / 2);
+    return {
+      trackBounds: { x: trackX, y: trackAreaY, width: scaledTrackHeight, height: trackAreaH },
+      knobBounds: { x: knobX, y: knobY, width: knobWidth, height: knobHeight },
+      trackMainStart: trackAreaY,
+      trackMainSize: trackAreaH,
+      knobMainStart: knobY,
+      knobMainSize: knobHeight
+    };
   }
   
   getValue(): number {
@@ -153,6 +190,15 @@ export class GUISlider extends BaseWidget {
   }
 
   protected getPreferredSize(): { width: number; height: number } {
+    if (this.orientation === 'vertical') {
+      const labelWidth = this.label.length * 10;
+      const contentWidth = Math.max(this.bounds.width, this.sliderStyle.knobWidth, labelWidth);
+      const contentHeight = Math.max(this.bounds.height, 140);
+      return {
+        width: Math.max(contentWidth, defaultTokens.controls.slider.minHeight),
+        height: contentHeight
+      };
+    }
     const labelWidth = this.label.length * 10;
     const trackWidth = Math.max(120, this.bounds.width);
     const contentHeight = this.label

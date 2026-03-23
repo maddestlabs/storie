@@ -72,4 +72,33 @@ describe('GUI piano keyboard', () => {
     expect(formatMidiNoteName(60)).toBe('C4');
     expect(Math.round(midiToHz(69))).toBe(440);
   });
+
+  it('emits combined rail pan and resize gestures with suggested bounds', () => {
+    const piano = new GUIPianoKeyboard({
+      bounds: { x: 0, y: 100, width: 640, height: 140 },
+      minMidi: 48,
+      maxMidi: 84,
+      visibleWhiteKeys: 12,
+      railPlacement: 'leading',
+      railGestureMode: 'scroll-resize',
+      railResizeMinCrossSize: 96,
+      railResizeMaxCrossSize: 220
+    });
+    const events: any[] = [];
+    piano.on('railgesture', (event) => events.push(event));
+
+    const layout = piano.getLayoutSnapshot();
+    const startX = Math.round(layout.railBounds!.x + layout.railBounds!.width / 2);
+    const startY = Math.round(layout.railBounds!.y + layout.railBounds!.height / 2);
+
+    piano.handlePointer(startX, startY, true);
+    piano.handlePointer(startX + 36, startY - 20, true);
+    piano.handlePointer(startX + 36, startY - 20, false);
+
+    expect(events.map((event) => event.data.phase)).toEqual(['start', 'drag', 'end']);
+    expect(events[1].data.suggestedBounds.height).toBe(160);
+    expect(events[1].data.suggestedBounds.y).toBe(80);
+    expect(events[1].data.deltaAlong).toBe(36);
+    expect(events[1].data.deltaCross).toBe(-20);
+  });
 });

@@ -37,6 +37,43 @@ worlds.camera.focusOnSectionFit(0, 0.9);
 // if (!worlds.available) console.warn('3D Canvas not available - WebGPU required');
 ```
 
+## Presets
+
+For common Worlds document setups, use presets instead of repeating the same
+camera and config boilerplate in every doc.
+
+```js
+// Narrative / exploration doc
+worlds.presets.apply('story');
+worlds.camera.focusOnSectionFit(0, 0.9, { keepRotation: true });
+
+// Authoring / editing doc
+worlds.presets.apply('story-editor');
+worlds.camera.focusOnSectionFit(0, 0.9, { keepRotation: true });
+```
+
+Available presets:
+
+- `story` - oblique narrative view similar to `depths.md`, including cinematic camera shake
+- `story-editor` - steadier authoring-oriented view with readable cards and no shake
+
+Preset API:
+
+```js
+const names = worlds.presets.list();
+const preset = worlds.presets.get('story-editor');
+worlds.presets.apply('story');
+```
+
+Presets intentionally cover the repeated document-level setup work:
+
+- `worlds.enable()`
+- common `worlds.config.setDefaults(...)` values
+- default camera position / rotation / FOV / easing
+- optional camera shake
+
+Per-section metadata still works the same way and still overrides document defaults.
+
 ## Section Metadata
 
 Worlds reads a trailing directive object from the end of a heading title.
@@ -258,6 +295,16 @@ If you already have a GUI group, you can bind it directly:
 gui.bindGroupToSection(existingGroup, 'settings');
 gui.bindGroupToSections(sharedGroup, ['title', 'settings']);
 ```
+
+## Authoring Pattern
+
+For text-heavy Worlds docs, the best editing flow is usually hybrid:
+
+- use the Worlds scene for navigation and spatial structure
+- use retained GUI for the actual title / metadata / markdown editors
+- push edits back into the runtime section store with `worlds.sections.update(...)`
+
+See [docs/demos/depths-editor.md](docs/demos/depths-editor.md) for a concrete first-pass story editor built this way.
 
 ## Backgrounds
 

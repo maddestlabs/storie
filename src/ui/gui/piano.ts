@@ -11,6 +11,7 @@ export type GUIPianoLabelMode = 'none' | 'c' | 'white' | 'all';
 export type GUIPianoInteractionMode = 'oneshot' | 'gate';
 export type GUIPianoVelocityMode = 'fixed' | 'axis-cross';
 export type GUIPianoNoteSource = 'pointer' | 'keyboard' | 'api';
+export type GUIPianoRailGestureMode = 'scroll' | 'scroll-resize';
 
 export interface GUIPianoStyle {
   background?: Color;
@@ -44,6 +45,10 @@ export interface GUIPianoKeyboardConfig extends WidgetConfig {
   orientation?: Direction;
   noteFlow?: GUIPianoNoteFlow;
   railPlacement?: GUIPianoRailPlacement;
+  railGestureMode?: GUIPianoRailGestureMode;
+  railResizeMinCrossSize?: number;
+  railResizeMaxCrossSize?: number;
+  railResizeSensitivity?: number;
   minMidi?: number;
   maxMidi?: number;
   visibleWhiteKeys?: number;
@@ -70,6 +75,17 @@ export interface GUIPianoViewportEventData {
   visibleWhiteKeys: number;
   firstVisibleMidi: number | null;
   lastVisibleMidi: number | null;
+}
+
+export interface GUIPianoRailGestureEventData {
+  phase: 'start' | 'drag' | 'end';
+  pointerAlong: number;
+  pointerCross: number;
+  deltaAlong: number;
+  deltaCross: number;
+  startBounds: Bounds;
+  suggestedBounds: Bounds;
+  viewport: GUIPianoViewportEventData;
 }
 
 export interface PianoKeySnapshot {
@@ -282,6 +298,10 @@ export class GUIPianoKeyboard extends BaseWidget {
   public orientation: Direction;
   public noteFlow: GUIPianoNoteFlow;
   public railPlacement: GUIPianoRailPlacement;
+  public railGestureMode: GUIPianoRailGestureMode;
+  public railResizeMinCrossSize: number;
+  public railResizeMaxCrossSize: number;
+  public railResizeSensitivity: number;
   public minMidi: number;
   public maxMidi: number;
   public visibleWhiteKeys: number;
@@ -297,6 +317,9 @@ export class GUIPianoKeyboard extends BaseWidget {
   private pointerDown: boolean = false;
   private pointerMode: 'none' | 'keys' | 'rail' = 'none';
   private railDragOffset: number = 0;
+  private railDragStartAlong: number = 0;
+  private railDragStartCross: number = 0;
+  private railDragStartBounds: Bounds | null = null;
   private hoveredMidi: number | null = null;
   private activeMidi: number | null = null;
 
@@ -305,6 +328,10 @@ export class GUIPianoKeyboard extends BaseWidget {
     this.orientation = config.orientation ?? 'horizontal';
     this.noteFlow = config.noteFlow ?? 'asc';
     this.railPlacement = config.railPlacement ?? 'leading';
+    this.railGestureMode = config.railGestureMode ?? 'scroll';
+    this.railResizeMinCrossSize = Math.max(24, Number(config.railResizeMinCrossSize ?? (this.orientation === 'horizontal' ? 72 : 48)) || 24);
+    this.railResizeMaxCrossSize = Math.max(this.railResizeMinCrossSize, Number(config.railResizeMaxCrossSize ?? Number.POSITIVE_INFINITY));
+    this.railResizeSensitivity = Math.max(0.05, Number(config.railResizeSensitivity ?? 1) || 1);
     this.minMidi = Math.trunc(config.minMidi ?? 36);
     this.maxMidi = Math.trunc(config.maxMidi ?? 96);
     if (this.maxMidi < this.minMidi) {
@@ -444,6 +471,10 @@ export class GUIPianoKeyboard extends BaseWidget {
     this.on('viewportchange', callback);
   }
 
+  onRailGesture(callback: (event: WidgetEvent) => void): void {
+    this.on('railgesture', callback);
+  }
+
   handleKey(key: string, modifiers?: { shift?: boolean; ctrl?: boolean; alt?: boolean }): boolean {
     if (!this.state.enabled) return false;
     if (modifiers?.ctrl || modifiers?.alt) return false;
@@ -479,11 +510,16 @@ export class GUIPianoKeyboard extends BaseWidget {
         this.pointerMode = 'rail';
         const thumb = layout.railThumbBounds;
         const pointerAlong = this.getAlongCoord(mouseX, mouseY);
+        const pointerCross = this.getCrossCoord(mouseX, mouseY);
         this.railDragOffset = thumb ? pointerAlong - this.getAlongStart(thumb) : 0;
+        this.railDragStartAlong = pointerAlong;
+        this.railDragStartCross = pointerCross;
+        this.railDragStartBounds = cloneBounds(this.bounds);
         if (!thumb || !boundsContains(thumb, mouseX, mouseY)) {
           this.railDragOffset = thumb ? this.getAlongSize(thumb) / 2 : 0;
         }
         this.updateViewportFromRail(layout, pointerAlong);
+        this.emitRailGesture('start', pointerAlong, pointerCross);
       } else if (hit) {
         this.pointerMode = 'keys';
         this.triggerPointerNote(hit.midi, mouseX, mouseY, true);
@@ -492,7 +528,10 @@ export class GUIPianoKeyboard extends BaseWidget {
       }
     } else if (mouseDown) {
       if (this.pointerMode === 'rail') {
-        this.updateViewportFromRail(layout, this.getAlongCoord(mouseX, mouseY));
+        const pointerAlong = this.getAlongCoord(mouseX, mouseY);
+        const pointerCross = this.getCrossCoord(mouseX, mouseY);
+        this.updateViewportFromRail(layout, pointerAlong);
+        this.emitRailGesture('drag', pointerAlong, pointerCross);
       } else if (this.pointerMode === 'keys') {
         if (hit) {
           this.triggerPointerNote(hit.midi, mouseX, mouseY, false);
@@ -503,11 +542,17 @@ export class GUIPianoKeyboard extends BaseWidget {
     }
 
     if (justReleased) {
+      if (this.pointerMode === 'rail') {
+        this.emitRailGesture('end', this.getAlongCoord(mouseX, mouseY), this.getCrossCoord(mouseX, mouseY));
+      }
       if (this.pointerMode === 'keys' && this.interactionMode === 'gate' && this.activeMidi != null) {
         this.noteOff(this.activeMidi, 0, 'pointer');
       }
       this.pointerMode = 'none';
       this.railDragOffset = 0;
+      this.railDragStartAlong = 0;
+      this.railDragStartCross = 0;
+      this.railDragStartBounds = null;
       if (this.interactionMode !== 'gate') {
         this.activeMidi = null;
       }
@@ -547,12 +592,34 @@ export class GUIPianoKeyboard extends BaseWidget {
     return this.orientation === 'horizontal' ? mouseX : mouseY;
   }
 
+  private getCrossCoord(mouseX: number, mouseY: number): number {
+    return this.orientation === 'horizontal' ? mouseY : mouseX;
+  }
+
   private getAlongStart(bounds: Bounds): number {
     return this.orientation === 'horizontal' ? bounds.x : bounds.y;
   }
 
   private getAlongSize(bounds: Bounds): number {
     return this.orientation === 'horizontal' ? bounds.width : bounds.height;
+  }
+
+  private getCrossStart(bounds: Bounds): number {
+    return this.orientation === 'horizontal' ? bounds.y : bounds.x;
+  }
+
+  private getCrossSize(bounds: Bounds): number {
+    return this.orientation === 'horizontal' ? bounds.height : bounds.width;
+  }
+
+  private setCrossStart(bounds: Bounds, value: number): void {
+    if (this.orientation === 'horizontal') bounds.y = value;
+    else bounds.x = value;
+  }
+
+  private setCrossSize(bounds: Bounds, value: number): void {
+    if (this.orientation === 'horizontal') bounds.height = value;
+    else bounds.width = value;
   }
 
   private computeVelocity(layout: PianoLayoutSnapshot, mouseX: number, mouseY: number): number {
@@ -595,6 +662,50 @@ export class GUIPianoKeyboard extends BaseWidget {
     const thumbAlongStart = clamp(pointerAlong - this.railDragOffset, railStart, railStart + travel);
     const ratio = (thumbAlongStart - railStart) / travel;
     this.setFirstVisibleWhiteKey(Math.round(ratio * maximumStart));
+  }
+
+  private buildRailGestureSuggestedBounds(pointerCross: number): Bounds {
+    const startBounds = cloneBounds(this.railDragStartBounds ?? this.bounds);
+    if (this.railGestureMode !== 'scroll-resize' || this.railPlacement === 'none') return startBounds;
+
+    const startCrossStart = this.getCrossStart(startBounds);
+    const startCrossSize = this.getCrossSize(startBounds);
+    const deltaCross = (pointerCross - this.railDragStartCross) * this.railResizeSensitivity;
+    const minCrossSize = this.railResizeMinCrossSize;
+    const maxCrossSize = this.railResizeMaxCrossSize;
+
+    let nextCrossSize = startCrossSize;
+    let nextCrossStart = startCrossStart;
+    if (this.railPlacement === 'leading') {
+      nextCrossSize = clamp(startCrossSize - deltaCross, minCrossSize, maxCrossSize);
+      nextCrossStart = startCrossStart + (startCrossSize - nextCrossSize);
+    } else {
+      nextCrossSize = clamp(startCrossSize + deltaCross, minCrossSize, maxCrossSize);
+    }
+
+    this.setCrossStart(startBounds, nextCrossStart);
+    this.setCrossSize(startBounds, nextCrossSize);
+    return startBounds;
+  }
+
+  private emitRailGesture(phase: 'start' | 'drag' | 'end', pointerAlong: number, pointerCross: number): void {
+    const startBounds = cloneBounds(this.railDragStartBounds ?? this.bounds);
+    const data: GUIPianoRailGestureEventData = {
+      phase,
+      pointerAlong,
+      pointerCross,
+      deltaAlong: pointerAlong - this.railDragStartAlong,
+      deltaCross: pointerCross - this.railDragStartCross,
+      startBounds,
+      suggestedBounds: this.buildRailGestureSuggestedBounds(pointerCross),
+      viewport: this.getViewportState()
+    };
+    this.emit({
+      type: 'railgesture',
+      widget: this.id,
+      timestamp: Date.now(),
+      data
+    });
   }
 
   private emitViewportChange(): void {

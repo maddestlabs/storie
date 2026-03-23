@@ -55,7 +55,7 @@ export interface WidgetState {
  * Widget interaction event
  */
 export interface WidgetEvent {
-  type: 'click' | 'hover' | 'focus' | 'blur' | 'change' | 'drag' | 'noteon' | 'noteoff' | 'viewportchange';
+  type: 'click' | 'hover' | 'focus' | 'blur' | 'change' | 'drag' | 'noteon' | 'noteoff' | 'viewportchange' | 'railgesture';
   widget: WidgetId;
   timestamp: number;
   data?: any;

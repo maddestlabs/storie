@@ -680,6 +680,7 @@ export function parseStfxrDefinitionJson(jsonText: string): StfxrDefinition {
 export interface PlaySfxGraphOptions {
   volume?: number;
   when?: number;
+  output?: AudioNode;
 }
 
 export interface BakeSfxGraphOptions {
@@ -1151,10 +1152,11 @@ export function playSfxGraph(
 
   const t0 = ctx.currentTime + (options.when ?? 0);
   const vol = clamp(options.volume ?? 0.8, 0, 2);
+  const outputNode = options.output ?? ctx.destination;
 
   const outGain = ctx.createGain();
   outGain.gain.value = vol;
-  safeConnect(outGain, ctx.destination);
+  safeConnect(outGain, outputNode);
 
   const nodes: Map<string, RuntimeNode> = new Map();
   nodes.set('out', { id: 'out', kind: 'out', input: outGain, output: outGain, params: { gain: outGain.gain } });

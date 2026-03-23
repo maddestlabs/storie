@@ -14560,6 +14560,7 @@ class GUISlider extends BaseWidget {
   constructor(config) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     super(config);
+    __publicField(this, "orientation");
     __publicField(this, "label");
     __publicField(this, "min");
     __publicField(this, "max");
@@ -14568,7 +14569,8 @@ class GUISlider extends BaseWidget {
     __publicField(this, "showValue");
     __publicField(this, "dragging", false);
     __publicField(this, "sliderStyle");
-    __publicField(this, "dragOffsetX", 0);
+    __publicField(this, "dragOffsetMain", 0);
+    this.orientation = config.orientation ?? "horizontal";
     this.label = config.label ?? "";
     this.min = config.min ?? 0;
     this.max = config.max ?? 100;
@@ -14590,40 +14592,75 @@ class GUISlider extends BaseWidget {
   }
   handleDrag(mouseX, mouseY, mouseDown, charHeight = 0, renderScale = 1) {
     if (!this.state.visible) return;
-    const { x, y, width, height } = this.bounds;
     const scale = Number.isFinite(renderScale) && renderScale > 0 ? renderScale : 1;
-    const scaledLabelGap = this.sliderStyle.labelGap * scale;
-    const scaledKnobWidth = this.sliderStyle.knobWidth * scale;
-    const scaledKnobHeight = this.sliderStyle.knobHeight * scale;
-    const labelH = this.label ? charHeight + scaledLabelGap : 0;
-    const trackTopY = y + labelH;
-    const trackAreaH = Math.max(0, height - labelH);
-    const knobWidth = scaledKnobWidth;
-    const range = this.max - this.min;
-    const ratio = range > 0 ? (this.value - this.min) / range : 0;
-    const knobX = x + ratio * (width - knobWidth);
-    const knobHeight = Math.min(trackAreaH, scaledKnobHeight);
-    const knobY = trackTopY + Math.max(0, (trackAreaH - knobHeight) / 2);
-    const overKnob = mouseX >= knobX && mouseX < knobX + knobWidth && mouseY >= knobY && mouseY < knobY + knobHeight;
-    const overTrack = mouseX >= x && mouseX < x + width && mouseY >= trackTopY && mouseY < trackTopY + trackAreaH;
+    const layout = this.getLayout(charHeight, scale);
+    const knobBounds = layout.knobBounds;
+    const overKnob = mouseX >= knobBounds.x && mouseX < knobBounds.x + knobBounds.width && mouseY >= knobBounds.y && mouseY < knobBounds.y + knobBounds.height;
+    const overTrack = mouseX >= layout.trackBounds.x && mouseX < layout.trackBounds.x + layout.trackBounds.width && mouseY >= layout.trackBounds.y && mouseY < layout.trackBounds.y + layout.trackBounds.height;
     if (mouseDown && (overKnob || overTrack) && !this.dragging) {
       this.dragging = true;
+      const pointerMain = this.orientation === "horizontal" ? mouseX : mouseY;
       if (overKnob) {
-        this.dragOffsetX = mouseX - knobX;
+        this.dragOffsetMain = pointerMain - layout.knobMainStart;
       } else {
-        this.dragOffsetX = knobWidth / 2;
+        this.dragOffsetMain = layout.knobMainSize / 2;
       }
     }
     if (!mouseDown) {
       this.dragging = false;
     }
     if (this.dragging) {
-      const relativeX = Math.max(0, Math.min(width - knobWidth, mouseX - x - this.dragOffsetX));
-      const newRatio = width - knobWidth > 0 ? relativeX / (width - knobWidth) : 0;
+      const pointerMain = this.orientation === "horizontal" ? mouseX : mouseY;
+      const relativeMain = Math.max(0, Math.min(layout.trackMainSize - layout.knobMainSize, pointerMain - layout.trackMainStart - this.dragOffsetMain));
+      let newRatio = layout.trackMainSize - layout.knobMainSize > 0 ? relativeMain / (layout.trackMainSize - layout.knobMainSize) : 0;
+      if (this.orientation === "vertical") newRatio = 1 - newRatio;
       const rawValue = this.min + newRatio * (this.max - this.min);
       this.value = Math.round(rawValue / this.step) * this.step;
       this.value = Math.max(this.min, Math.min(this.max, this.value));
     }
+  }
+  getLayout(charHeight, scale) {
+    const { x, y, width, height } = this.bounds;
+    const scaledLabelGap = this.sliderStyle.labelGap * scale;
+    const scaledTrackHeight = this.sliderStyle.trackHeight * scale;
+    const scaledKnobWidth = this.sliderStyle.knobWidth * scale;
+    const scaledKnobHeight = this.sliderStyle.knobHeight * scale;
+    const range = this.max - this.min;
+    const ratio = range > 0 ? (this.value - this.min) / range : 0;
+    if (this.orientation === "horizontal") {
+      const labelH2 = this.label ? charHeight + scaledLabelGap : 0;
+      const trackAreaH2 = Math.max(0, height - labelH2);
+      const trackY = y + labelH2 + Math.max(0, (trackAreaH2 - scaledTrackHeight) / 2);
+      const knobHeight2 = Math.min(trackAreaH2, scaledKnobHeight);
+      const knobX2 = x + ratio * Math.max(0, width - scaledKnobWidth);
+      const knobY2 = y + labelH2 + Math.max(0, (trackAreaH2 - knobHeight2) / 2);
+      return {
+        trackBounds: { x, y: trackY, width, height: scaledTrackHeight },
+        knobBounds: { x: knobX2, y: knobY2, width: scaledKnobWidth, height: knobHeight2 },
+        trackMainStart: x,
+        trackMainSize: width,
+        knobMainStart: knobX2,
+        knobMainSize: scaledKnobWidth
+      };
+    }
+    const labelH = this.label ? charHeight + scaledLabelGap : 0;
+    const valueReserve = this.showValue ? charHeight + this.sliderStyle.valueGap * scale : 0;
+    const trackAreaY = y + labelH;
+    const trackAreaH = Math.max(0, height - labelH - valueReserve);
+    const trackX = x + Math.max(0, (width - scaledTrackHeight) / 2);
+    const knobWidth = Math.min(width, scaledKnobWidth);
+    const knobHeight = Math.min(trackAreaH, scaledKnobHeight);
+    const knobTravel = Math.max(0, trackAreaH - knobHeight);
+    const knobY = trackAreaY + (1 - ratio) * knobTravel;
+    const knobX = x + Math.max(0, (width - knobWidth) / 2);
+    return {
+      trackBounds: { x: trackX, y: trackAreaY, width: scaledTrackHeight, height: trackAreaH },
+      knobBounds: { x: knobX, y: knobY, width: knobWidth, height: knobHeight },
+      trackMainStart: trackAreaY,
+      trackMainSize: trackAreaH,
+      knobMainStart: knobY,
+      knobMainSize: knobHeight
+    };
   }
   getValue() {
     return this.value;
@@ -14640,6 +14677,15 @@ class GUISlider extends BaseWidget {
   render() {
   }
   getPreferredSize() {
+    if (this.orientation === "vertical") {
+      const labelWidth2 = this.label.length * 10;
+      const contentWidth = Math.max(this.bounds.width, this.sliderStyle.knobWidth, labelWidth2);
+      const contentHeight2 = Math.max(this.bounds.height, 140);
+      return {
+        width: Math.max(contentWidth, defaultTokens$2.controls.slider.minHeight),
+        height: contentHeight2
+      };
+    }
     const labelWidth = this.label.length * 10;
     const trackWidth = Math.max(120, this.bounds.width);
     const contentHeight = this.label ? 18 + this.sliderStyle.labelGap + this.sliderStyle.knobHeight : this.sliderStyle.knobHeight;
@@ -14798,6 +14844,10 @@ class GUIPianoKeyboard extends BaseWidget {
     __publicField(this, "orientation");
     __publicField(this, "noteFlow");
     __publicField(this, "railPlacement");
+    __publicField(this, "railGestureMode");
+    __publicField(this, "railResizeMinCrossSize");
+    __publicField(this, "railResizeMaxCrossSize");
+    __publicField(this, "railResizeSensitivity");
     __publicField(this, "minMidi");
     __publicField(this, "maxMidi");
     __publicField(this, "visibleWhiteKeys");
@@ -14812,11 +14862,18 @@ class GUIPianoKeyboard extends BaseWidget {
     __publicField(this, "pointerDown", false);
     __publicField(this, "pointerMode", "none");
     __publicField(this, "railDragOffset", 0);
+    __publicField(this, "railDragStartAlong", 0);
+    __publicField(this, "railDragStartCross", 0);
+    __publicField(this, "railDragStartBounds", null);
     __publicField(this, "hoveredMidi", null);
     __publicField(this, "activeMidi", null);
     this.orientation = config.orientation ?? "horizontal";
     this.noteFlow = config.noteFlow ?? "asc";
     this.railPlacement = config.railPlacement ?? "leading";
+    this.railGestureMode = config.railGestureMode ?? "scroll";
+    this.railResizeMinCrossSize = Math.max(24, Number(config.railResizeMinCrossSize ?? (this.orientation === "horizontal" ? 72 : 48)) || 24);
+    this.railResizeMaxCrossSize = Math.max(this.railResizeMinCrossSize, Number(config.railResizeMaxCrossSize ?? Number.POSITIVE_INFINITY));
+    this.railResizeSensitivity = Math.max(0.05, Number(config.railResizeSensitivity ?? 1) || 1);
     this.minMidi = Math.trunc(config.minMidi ?? 36);
     this.maxMidi = Math.trunc(config.maxMidi ?? 96);
     if (this.maxMidi < this.minMidi) {
@@ -14942,6 +14999,9 @@ class GUIPianoKeyboard extends BaseWidget {
   onViewportChange(callback) {
     this.on("viewportchange", callback);
   }
+  onRailGesture(callback) {
+    this.on("railgesture", callback);
+  }
   handleKey(key, modifiers) {
     if (!this.state.enabled) return false;
     if ((modifiers == null ? void 0 : modifiers.ctrl) || (modifiers == null ? void 0 : modifiers.alt)) return false;
@@ -14974,11 +15034,16 @@ class GUIPianoKeyboard extends BaseWidget {
         this.pointerMode = "rail";
         const thumb = layout.railThumbBounds;
         const pointerAlong = this.getAlongCoord(mouseX, mouseY);
+        const pointerCross = this.getCrossCoord(mouseX, mouseY);
         this.railDragOffset = thumb ? pointerAlong - this.getAlongStart(thumb) : 0;
+        this.railDragStartAlong = pointerAlong;
+        this.railDragStartCross = pointerCross;
+        this.railDragStartBounds = cloneBounds(this.bounds);
         if (!thumb || !boundsContains(thumb, mouseX, mouseY)) {
           this.railDragOffset = thumb ? this.getAlongSize(thumb) / 2 : 0;
         }
         this.updateViewportFromRail(layout, pointerAlong);
+        this.emitRailGesture("start", pointerAlong, pointerCross);
       } else if (hit) {
         this.pointerMode = "keys";
         this.triggerPointerNote(hit.midi, mouseX, mouseY, true);
@@ -14987,7 +15052,10 @@ class GUIPianoKeyboard extends BaseWidget {
       }
     } else if (mouseDown) {
       if (this.pointerMode === "rail") {
-        this.updateViewportFromRail(layout, this.getAlongCoord(mouseX, mouseY));
+        const pointerAlong = this.getAlongCoord(mouseX, mouseY);
+        const pointerCross = this.getCrossCoord(mouseX, mouseY);
+        this.updateViewportFromRail(layout, pointerAlong);
+        this.emitRailGesture("drag", pointerAlong, pointerCross);
       } else if (this.pointerMode === "keys") {
         if (hit) {
           this.triggerPointerNote(hit.midi, mouseX, mouseY, false);
@@ -14997,11 +15065,17 @@ class GUIPianoKeyboard extends BaseWidget {
       }
     }
     if (justReleased) {
+      if (this.pointerMode === "rail") {
+        this.emitRailGesture("end", this.getAlongCoord(mouseX, mouseY), this.getCrossCoord(mouseX, mouseY));
+      }
       if (this.pointerMode === "keys" && this.interactionMode === "gate" && this.activeMidi != null) {
         this.noteOff(this.activeMidi, 0, "pointer");
       }
       this.pointerMode = "none";
       this.railDragOffset = 0;
+      this.railDragStartAlong = 0;
+      this.railDragStartCross = 0;
+      this.railDragStartBounds = null;
       if (this.interactionMode !== "gate") {
         this.activeMidi = null;
       }
@@ -15034,11 +15108,28 @@ class GUIPianoKeyboard extends BaseWidget {
   getAlongCoord(mouseX, mouseY) {
     return this.orientation === "horizontal" ? mouseX : mouseY;
   }
+  getCrossCoord(mouseX, mouseY) {
+    return this.orientation === "horizontal" ? mouseY : mouseX;
+  }
   getAlongStart(bounds) {
     return this.orientation === "horizontal" ? bounds.x : bounds.y;
   }
   getAlongSize(bounds) {
     return this.orientation === "horizontal" ? bounds.width : bounds.height;
+  }
+  getCrossStart(bounds) {
+    return this.orientation === "horizontal" ? bounds.y : bounds.x;
+  }
+  getCrossSize(bounds) {
+    return this.orientation === "horizontal" ? bounds.height : bounds.width;
+  }
+  setCrossStart(bounds, value) {
+    if (this.orientation === "horizontal") bounds.y = value;
+    else bounds.x = value;
+  }
+  setCrossSize(bounds, value) {
+    if (this.orientation === "horizontal") bounds.height = value;
+    else bounds.width = value;
   }
   computeVelocity(layout, mouseX, mouseY) {
     if (this.velocityMode === "fixed") return this.fixedVelocity;
@@ -15075,6 +15166,45 @@ class GUIPianoKeyboard extends BaseWidget {
     const thumbAlongStart = clamp$4(pointerAlong - this.railDragOffset, railStart, railStart + travel);
     const ratio = (thumbAlongStart - railStart) / travel;
     this.setFirstVisibleWhiteKey(Math.round(ratio * maximumStart));
+  }
+  buildRailGestureSuggestedBounds(pointerCross) {
+    const startBounds = cloneBounds(this.railDragStartBounds ?? this.bounds);
+    if (this.railGestureMode !== "scroll-resize" || this.railPlacement === "none") return startBounds;
+    const startCrossStart = this.getCrossStart(startBounds);
+    const startCrossSize = this.getCrossSize(startBounds);
+    const deltaCross = (pointerCross - this.railDragStartCross) * this.railResizeSensitivity;
+    const minCrossSize = this.railResizeMinCrossSize;
+    const maxCrossSize = this.railResizeMaxCrossSize;
+    let nextCrossSize = startCrossSize;
+    let nextCrossStart = startCrossStart;
+    if (this.railPlacement === "leading") {
+      nextCrossSize = clamp$4(startCrossSize - deltaCross, minCrossSize, maxCrossSize);
+      nextCrossStart = startCrossStart + (startCrossSize - nextCrossSize);
+    } else {
+      nextCrossSize = clamp$4(startCrossSize + deltaCross, minCrossSize, maxCrossSize);
+    }
+    this.setCrossStart(startBounds, nextCrossStart);
+    this.setCrossSize(startBounds, nextCrossSize);
+    return startBounds;
+  }
+  emitRailGesture(phase, pointerAlong, pointerCross) {
+    const startBounds = cloneBounds(this.railDragStartBounds ?? this.bounds);
+    const data = {
+      phase,
+      pointerAlong,
+      pointerCross,
+      deltaAlong: pointerAlong - this.railDragStartAlong,
+      deltaCross: pointerCross - this.railDragStartCross,
+      startBounds,
+      suggestedBounds: this.buildRailGestureSuggestedBounds(pointerCross),
+      viewport: this.getViewportState()
+    };
+    this.emit({
+      type: "railgesture",
+      widget: this.id,
+      timestamp: Date.now(),
+      data
+    });
   }
   emitViewportChange() {
     const viewport = this.getViewportState();
@@ -17788,6 +17918,32 @@ class GUISystem {
     const scaledKnobWidth = slider.getRenderPixels(knobWidth);
     const scaledKnobHeight = slider.getRenderPixels(knobHeight);
     const scaledValueGap = slider.getRenderPixels(valueGap);
+    if (slider.orientation === "vertical") {
+      let trackTopY = y;
+      if (slider.label) {
+        ui.text(slider.label, x, y, fg);
+        trackTopY += charH + scaledLabelGap;
+      }
+      const valueReserve = slider.showValue ? charH + scaledValueGap : 0;
+      const trackAreaH2 = Math.max(0, height - (slider.label ? charH + scaledLabelGap : 0) - valueReserve);
+      const trackX = x + Math.max(0, (width - scaledTrackHeight) / 2);
+      ui.rect(trackX, trackTopY, scaledTrackHeight, trackAreaH2, trackColor);
+      const actualKnobWidth = Math.min(width, scaledKnobWidth);
+      const actualKnobHeight2 = Math.min(trackAreaH2, scaledKnobHeight);
+      const range2 = slider.max - slider.min;
+      const ratio2 = range2 > 0 ? (slider.value - slider.min) / range2 : 0;
+      const knobTravel = Math.max(0, trackAreaH2 - actualKnobHeight2);
+      const knobY2 = trackTopY + (1 - ratio2) * knobTravel;
+      const knobX2 = x + Math.max(0, (width - actualKnobWidth) / 2);
+      const knobCol2 = slider.isDragging() ? knobActiveColor : slider.state.hovered ? knobHoverColor : knobColor;
+      ui.rect(knobX2, knobY2, actualKnobWidth, actualKnobHeight2, knobCol2);
+      if (slider.showValue) {
+        const valueText = `${Math.round(slider.value)}`;
+        const valueY = trackTopY + trackAreaH2 + scaledValueGap;
+        ui.text(valueText, x + Math.max(0, Math.floor((width - valueText.length * (_charW || 8)) / 2)), valueY, fg);
+      }
+      return;
+    }
     let trackY = y;
     if (slider.label) {
       ui.text(slider.label, x, y, fg);
@@ -18229,12 +18385,6 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
     if (!value || typeof value !== "object") return false;
     return ["x", "y", "width", "height"].every((key) => Number.isFinite(Number(value[key])));
   };
-  const isCanvasViewportRect = (viewport) => {
-    if (!isFiniteViewportRect(viewport)) return false;
-    const canvasViewport = safeGetViewportRect();
-    const epsilon = 0.5;
-    return Math.abs(Number(viewport.x) - canvasViewport.x) <= epsilon && Math.abs(Number(viewport.y) - canvasViewport.y) <= epsilon && Math.abs(Number(viewport.width) - canvasViewport.width) <= epsilon && Math.abs(Number(viewport.height) - canvasViewport.height) <= epsilon;
-  };
   const toBreakpoint = (width, thresholds) => {
     const t = {
       sm: Number((thresholds == null ? void 0 : thresholds.sm) ?? defaultBreakpointThresholds.sm),
@@ -18661,13 +18811,6 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
         fitToViewport: (viewport, options, relayout = true) => {
           const v2 = isFiniteViewportRect(viewport) ? { ...viewport } : safeGetViewportRect();
           const o = options && typeof options === "object" ? { ...options } : {};
-          if (o.safeArea && !isCanvasViewportRect(v2)) {
-            const insets = safeGetSafeAreaInsets();
-            o.insetTop = Number(o.insetTop ?? 0) + insets.top;
-            o.insetRight = Number(o.insetRight ?? 0) + insets.right;
-            o.insetBottom = Number(o.insetBottom ?? 0) + insets.bottom;
-            o.insetLeft = Number(o.insetLeft ?? 0) + insets.left;
-          }
           delete o.safeArea;
           return container.fitToViewport(v2, o, relayout);
         },
@@ -23157,6 +23300,96 @@ function parseAnsiToRuns(text, opts) {
   }
   return { lines, width, height: lines.length };
 }
+function deg(value) {
+  return value * Math.PI / 180;
+}
+function clonePreset(preset) {
+  return {
+    name: preset.name,
+    label: preset.label,
+    description: preset.description,
+    defaults: {
+      ...preset.defaults
+    },
+    camera: {
+      position: { ...preset.camera.position },
+      rotation: { ...preset.camera.rotation },
+      fov: preset.camera.fov,
+      easeSpeed: { ...preset.camera.easeSpeed },
+      ...preset.camera.shake ? {
+        shake: {
+          enabled: preset.camera.shake.enabled,
+          strength: preset.camera.shake.strength,
+          rate: preset.camera.shake.rate,
+          translate: { ...preset.camera.shake.translate },
+          rotate: { ...preset.camera.shake.rotate }
+        }
+      } : {}
+    }
+  };
+}
+const PRESETS = {
+  story: {
+    name: "story",
+    label: "Story",
+    description: "Oblique Worlds presentation tuned for immersive narrative docs.",
+    defaults: {
+      keepRotation: true,
+      straightenOnFocus: true,
+      screenSpaceRecenter: true,
+      screenSpaceRecenterIters: 5,
+      defaultSectionWidth: 70,
+      defaultSectionHeight: 24,
+      autoLayoutSpacing: 50,
+      sectionBorderEnabled: false,
+      sectionBackground: "shader:ruledlines;paperPlaneZ=focus"
+    },
+    camera: {
+      position: { x: 0, y: 55, z: 320 },
+      rotation: { x: deg(-4), y: deg(4), z: 0 },
+      fov: deg(42),
+      easeSpeed: { position: 0.18, rotation: 0.12 },
+      shake: {
+        enabled: true,
+        strength: 1,
+        rate: 0.2,
+        translate: { x: 1.2, y: 0.9, z: 0.4 },
+        rotate: { x: deg(0.55), y: deg(0.65), z: 0 }
+      }
+    }
+  },
+  "story-editor": {
+    name: "story-editor",
+    label: "Story Editor",
+    description: "Stable Worlds authoring view with readable cards and no camera shake.",
+    defaults: {
+      keepRotation: true,
+      straightenOnFocus: true,
+      screenSpaceRecenter: true,
+      screenSpaceRecenterIters: 5,
+      defaultSectionWidth: 78,
+      defaultSectionHeight: 26,
+      autoLayoutSpacing: 60,
+      sectionBorderEnabled: true,
+      sectionBorderWidth: 2,
+      sectionBackground: "surface"
+    },
+    camera: {
+      position: { x: 0, y: 38, z: 300 },
+      rotation: { x: deg(-2.5), y: 0, z: 0 },
+      fov: deg(48),
+      easeSpeed: { position: 0.2, rotation: 0.14 }
+    }
+  }
+};
+function listWorldsPresetNames() {
+  return Object.keys(PRESETS);
+}
+function getWorldsPreset(name) {
+  const key = String(name ?? "").trim().toLowerCase();
+  const preset = PRESETS[key];
+  return preset ? clonePreset(preset) : null;
+}
 const clamp$2 = (v2, lo, hi) => Math.max(lo, Math.min(hi, v2));
 function mean(arr) {
   let s = 0;
@@ -24599,9 +24832,10 @@ function playSfxGraph(ctx, preset, seed, options = {}) {
   const evalr = new ExprEvaluator(rng, preset.vars);
   const t0 = ctx.currentTime + (options.when ?? 0);
   const vol = clamp(options.volume ?? 0.8, 0, 2);
+  const outputNode = options.output ?? ctx.destination;
   const outGain = ctx.createGain();
   outGain.gain.value = vol;
-  safeConnect(outGain, ctx.destination);
+  safeConnect(outGain, outputNode);
   const nodes = /* @__PURE__ */ new Map();
   nodes.set("out", { id: "out", kind: "out", input: outGain, output: outGain, params: { gain: outGain.gain } });
   const stoppables = [];
@@ -25491,6 +25725,13 @@ class StorieEngine {
     __publicField(this, "mouseLookActive", false);
     __publicField(this, "mouseLookLastX", 0);
     __publicField(this, "mouseLookLastY", 0);
+    __publicField(this, "middlePanActive", false);
+    __publicField(this, "middlePanLastX", 0);
+    __publicField(this, "middlePanLastY", 0);
+    __publicField(this, "freeFlyLeftPanActive", false);
+    __publicField(this, "freeFlyLeftDragSectionIndex", null);
+    __publicField(this, "freeFlyLeftLastX", 0);
+    __publicField(this, "freeFlyLeftLastY", 0);
     // 3D link-centric interaction (canvas.nim parity)
     __publicField(this, "hovered3DLink", null);
     __publicField(this, "focused3DLink", null);
@@ -26406,6 +26647,203 @@ class StorieEngine {
       const doc = engine.documents.get(docId);
       return doc && doc._timedStore ? doc._timedStore : null;
     };
+    const applyWorldsConfigDefaults = (config) => {
+      let requiresSectionLayoutRecompile = false;
+      if (config.defaultDepth !== void 0) {
+        engine.worldsConfig.defaultDepth = config.defaultDepth;
+      }
+      if (config.defaultSectionWidth !== void 0) {
+        engine.worldsConfig.defaultSectionWidth = config.defaultSectionWidth;
+      }
+      if (config.defaultSectionHeight !== void 0) {
+        engine.worldsConfig.defaultSectionHeight = config.defaultSectionHeight;
+      }
+      if (config.sectionRender !== void 0) {
+        const prev = engine.worldsConfig.sectionRender;
+        switch (config.sectionRender) {
+          case "heading":
+          case "content":
+          case "none":
+          case "all":
+            engine.worldsConfig.sectionRender = config.sectionRender;
+            break;
+        }
+        if (prev !== engine.worldsConfig.sectionRender) {
+          requiresSectionLayoutRecompile = true;
+        }
+      }
+      if (config.sectionClickFocusEnabled !== void 0) {
+        engine.worldsConfig.sectionClickFocusEnabled = !!config.sectionClickFocusEnabled;
+      }
+      if (config.sectionSizeUnits !== void 0) {
+        const next = config.sectionSizeUnits;
+        if (next === "text" || next === "px") {
+          const prev = engine.worldsConfig.sectionSizeUnits;
+          engine.worldsConfig.sectionSizeUnits = next;
+          if (prev !== next) {
+            engine.clear3DSectionTextures();
+          }
+        }
+      }
+      if (config.sectionOverflow !== void 0) {
+        const next = config.sectionOverflow;
+        if (next === "clip" || next === "expand" || next === "expand-y" || next === "fit" || next === "fit-y") {
+          const prev = engine.worldsConfig.sectionOverflow;
+          engine.worldsConfig.sectionOverflow = next;
+          if (prev !== next) {
+            engine.clear3DSectionTextures();
+          }
+        }
+      }
+      if (config.cameraFov !== void 0) {
+        engine.worldsConfig.cameraFov = config.cameraFov;
+      }
+      if (config.cameraNear !== void 0) {
+        engine.worldsConfig.cameraNear = config.cameraNear;
+      }
+      if (config.cameraFar !== void 0) {
+        engine.worldsConfig.cameraFar = config.cameraFar;
+      }
+      if (config.positionEaseSpeed !== void 0) {
+        engine.worldsConfig.positionEaseSpeed = config.positionEaseSpeed;
+      }
+      if (config.rotationEaseSpeed !== void 0) {
+        engine.worldsConfig.rotationEaseSpeed = config.rotationEaseSpeed;
+      }
+      if (config.keepRotation !== void 0) {
+        engine.worldsConfig.keepRotation = !!config.keepRotation;
+      }
+      if (config.straightenOnFocus !== void 0) {
+        engine.worldsConfig.straightenOnFocus = !!config.straightenOnFocus;
+      }
+      if (config.screenSpaceRecenter !== void 0) {
+        engine.worldsConfig.screenSpaceRecenter = !!config.screenSpaceRecenter;
+      }
+      if (config.screenSpaceRecenterIters !== void 0) {
+        const v2 = Number(config.screenSpaceRecenterIters);
+        if (Number.isFinite(v2)) {
+          engine.worldsConfig.screenSpaceRecenterIters = Math.max(1, Math.min(12, Math.floor(v2)));
+        }
+      }
+      if (config.autoLayoutEnabled !== void 0) {
+        engine.worldsConfig.autoLayoutEnabled = config.autoLayoutEnabled;
+      }
+      if (config.autoLayoutColumns !== void 0) {
+        engine.worldsConfig.autoLayoutColumns = config.autoLayoutColumns;
+      }
+      if (config.autoLayoutSpacing !== void 0) {
+        engine.worldsConfig.autoLayoutSpacing = config.autoLayoutSpacing;
+      }
+      if (config.sectionTextureMode !== void 0) {
+        const prev = engine.worldsConfig.sectionTextureMode;
+        engine.worldsConfig.sectionTextureMode = config.sectionTextureMode;
+        if (prev !== config.sectionTextureMode) {
+          engine.clear3DSectionTextures();
+        }
+      }
+      if (config.sectionBorderEnabled !== void 0) {
+        const prev = engine.worldsConfig.sectionBorderEnabled;
+        engine.worldsConfig.sectionBorderEnabled = config.sectionBorderEnabled;
+        if (prev !== config.sectionBorderEnabled) {
+          engine.clear3DSectionTextures();
+        }
+      }
+      if (config.sectionBorderWidth !== void 0) {
+        const prev = engine.worldsConfig.sectionBorderWidth;
+        engine.worldsConfig.sectionBorderWidth = config.sectionBorderWidth;
+        if (prev !== config.sectionBorderWidth) {
+          engine.clear3DSectionTextures();
+        }
+      }
+      if (config.sectionBackground !== void 0) {
+        const prev = engine.worldsConfig.sectionBackground;
+        engine.worldsConfig.sectionBackground = config.sectionBackground;
+        if (prev !== config.sectionBackground) {
+          engine.clear3DSectionTextures();
+        }
+      }
+      if (config.sectionBackgroundPaperNoiseStrength !== void 0) {
+        const v2 = config.sectionBackgroundPaperNoiseStrength;
+        if (Number.isFinite(v2)) {
+          engine.worldsConfig.sectionBackgroundPaperNoiseStrength = Math.max(0, Math.min(1, v2));
+        }
+      }
+      if (config.sectionLinkUnderline !== void 0) {
+        const prev = engine.worldsConfig.sectionLinkUnderline;
+        engine.worldsConfig.sectionLinkUnderline = !!config.sectionLinkUnderline;
+        if (prev !== engine.worldsConfig.sectionLinkUnderline) {
+          engine.clear3DSectionTextures();
+        }
+      }
+      if (config.sectionListMarker !== void 0) {
+        const prev = engine.worldsConfig.sectionListMarker;
+        engine.worldsConfig.sectionListMarker = config.sectionListMarker;
+        if (prev !== engine.worldsConfig.sectionListMarker) {
+          engine.clear3DSectionTextures();
+        }
+      }
+      if (config.sectionListMarkerGapPx !== void 0) {
+        const prev = engine.worldsConfig.sectionListMarkerGapPx;
+        const next = Number(config.sectionListMarkerGapPx);
+        if (Number.isFinite(next)) {
+          engine.worldsConfig.sectionListMarkerGapPx = Math.max(0, next);
+          if (prev !== engine.worldsConfig.sectionListMarkerGapPx) {
+            engine.clear3DSectionTextures();
+          }
+        }
+      }
+      if (config.sectionListHangIndentPx !== void 0) {
+        const prev = engine.worldsConfig.sectionListHangIndentPx;
+        const next = Number(config.sectionListHangIndentPx);
+        if (Number.isFinite(next)) {
+          engine.worldsConfig.sectionListHangIndentPx = Math.max(0, next);
+          if (prev !== engine.worldsConfig.sectionListHangIndentPx) {
+            engine.clear3DSectionTextures();
+          }
+        }
+      }
+      if (requiresSectionLayoutRecompile && engine.runtimeSectionStore.sections.length > 0) {
+        engine.compileWorldsLayoutsFromRuntimeSectionStore("config defaults changed");
+      } else {
+        engine.applyWorldsLayoutCallback();
+        engine.reflowWorldsAutoLayout();
+      }
+    };
+    const applyWorldsPreset = (name) => {
+      var _a, _b;
+      const preset = getWorldsPreset(name);
+      if (!preset) return null;
+      engine.worldsEnabled = true;
+      if ((_a = engine.compositor) == null ? void 0 : _a.layers.get("3d")) {
+        engine.compositor.updateLayer("3d", { enabled: true });
+      }
+      engine.updateAudienceViewLayers();
+      applyWorldsConfigDefaults(preset.defaults);
+      if (engine.camera3D) {
+        engine.camera3D.position = { ...preset.camera.position };
+        engine.camera3D.rotation = { ...preset.camera.rotation };
+        engine.camera3D.target = null;
+        engine.camera3D.targetRotation = null;
+        engine.camera3D.fov = preset.camera.fov;
+        engine.camera3D.positionEaseSpeed = preset.camera.easeSpeed.position;
+        engine.camera3D.rotationEaseSpeed = preset.camera.easeSpeed.rotation;
+        if (preset.camera.shake) {
+          engine.camera3D.shake = {
+            enabled: !!preset.camera.shake.enabled,
+            strength: preset.camera.shake.strength,
+            seed: ((_b = engine.camera3D.shake) == null ? void 0 : _b.seed) ?? 0,
+            rate: preset.camera.shake.rate,
+            translate: { ...preset.camera.shake.translate },
+            rotate: { ...preset.camera.shake.rotate }
+          };
+          engine.camera3D._shakeState = void 0;
+        } else if (engine.camera3D.shake) {
+          engine.camera3D.shake.enabled = false;
+          engine.camera3D._shakeState = void 0;
+        }
+      }
+      return preset;
+    };
     const MAX_STFXR_BAKED_BYTES = 16 * 1024 * 1024;
     const estimateAudioBufferBytes2 = (buffer) => {
       const frames = buffer.length;
@@ -26426,6 +26864,8 @@ class StorieEngine {
       if (Number.isFinite(v2)) out.volume = Math.max(0, Math.min(2, v2));
       const w = Number(options == null ? void 0 : options.when);
       if (Number.isFinite(w) && w >= 0) out.when = Math.min(60, w);
+      const output = options == null ? void 0 : options.output;
+      if (output && typeof output === "object" && typeof output.connect === "function") out.output = output;
       return out;
     };
     const playPresetInternal = (presetIn, seed, options) => {
@@ -26466,7 +26906,7 @@ class StorieEngine {
         if (oldest) total -= oldest.bytes;
       }
     };
-    const clonePreset = (preset) => {
+    const clonePreset2 = (preset) => {
       try {
         if (typeof structuredClone === "function") return structuredClone(preset);
       } catch {
@@ -26683,7 +27123,7 @@ class StorieEngine {
       // Layer API
       layer: {
         create: (id, width, height) => {
-          this.layers.create(id, width, height);
+          this.layers.create(id, width ?? this.width, height ?? this.height);
         },
         show: (id) => {
           this.layers.show(id);
@@ -27238,7 +27678,7 @@ class StorieEngine {
               if (!store) return null;
               const entry = store.get(String(name));
               if (!entry) return null;
-              return clonePreset(entry.preset);
+              return clonePreset2(entry.preset);
             },
             play: (name, seed, options) => {
               const store = getStfxrStore(docId);
@@ -27248,7 +27688,7 @@ class StorieEngine {
               engine.audioContext.resume().catch(() => {
               });
               const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
-              return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, options);
+              return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, sanitizePlayOptions(options));
             },
             playPreset: (preset, seed, options) => {
               return playPresetInternal(preset, seed, options);
@@ -27338,7 +27778,7 @@ class StorieEngine {
           if (!store) return null;
           const entry = store.get(String(name));
           if (!entry) return null;
-          return clonePreset(entry.preset);
+          return clonePreset2(entry.preset);
         },
         play: (name, seed, options) => {
           const store = getStfxrStore();
@@ -27348,7 +27788,7 @@ class StorieEngine {
           engine.audioContext.resume().catch(() => {
           });
           const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
-          return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, options);
+          return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, sanitizePlayOptions(options));
         },
         playPreset: (preset, seed, options) => {
           return playPresetInternal(preset, seed, options);
@@ -28960,6 +29400,17 @@ class StorieEngine {
             return engine.activated3DLinksQueue.shift() ?? null;
           }
         },
+        presets: {
+          list: () => {
+            return listWorldsPresetNames();
+          },
+          get: (name) => {
+            return getWorldsPreset(name);
+          },
+          apply: (name) => {
+            return applyWorldsPreset(name);
+          }
+        },
         widgets: {
           popEvent: () => {
             return engine.worldsInlineWidgetEventsQueue.shift() ?? null;
@@ -29505,166 +29956,7 @@ class StorieEngine {
         // Configuration
         config: {
           setDefaults: (config) => {
-            let requiresSectionLayoutRecompile = false;
-            if (config.defaultDepth !== void 0) {
-              engine.worldsConfig.defaultDepth = config.defaultDepth;
-            }
-            if (config.defaultSectionWidth !== void 0) {
-              engine.worldsConfig.defaultSectionWidth = config.defaultSectionWidth;
-            }
-            if (config.defaultSectionHeight !== void 0) {
-              engine.worldsConfig.defaultSectionHeight = config.defaultSectionHeight;
-            }
-            if (config.sectionRender !== void 0) {
-              const prev = engine.worldsConfig.sectionRender;
-              switch (config.sectionRender) {
-                case "heading":
-                case "content":
-                case "none":
-                case "all":
-                  engine.worldsConfig.sectionRender = config.sectionRender;
-                  break;
-              }
-              if (prev !== engine.worldsConfig.sectionRender) {
-                requiresSectionLayoutRecompile = true;
-              }
-            }
-            if (config.sectionClickFocusEnabled !== void 0) {
-              engine.worldsConfig.sectionClickFocusEnabled = !!config.sectionClickFocusEnabled;
-            }
-            if (config.sectionSizeUnits !== void 0) {
-              const next = config.sectionSizeUnits;
-              if (next === "text" || next === "px") {
-                const prev = engine.worldsConfig.sectionSizeUnits;
-                engine.worldsConfig.sectionSizeUnits = next;
-                if (prev !== next) {
-                  engine.clear3DSectionTextures();
-                }
-              }
-            }
-            if (config.sectionOverflow !== void 0) {
-              const next = config.sectionOverflow;
-              if (next === "clip" || next === "expand" || next === "expand-y" || next === "fit" || next === "fit-y") {
-                const prev = engine.worldsConfig.sectionOverflow;
-                engine.worldsConfig.sectionOverflow = next;
-                if (prev !== next) {
-                  engine.clear3DSectionTextures();
-                }
-              }
-            }
-            if (config.cameraFov !== void 0) {
-              engine.worldsConfig.cameraFov = config.cameraFov;
-            }
-            if (config.cameraNear !== void 0) {
-              engine.worldsConfig.cameraNear = config.cameraNear;
-            }
-            if (config.cameraFar !== void 0) {
-              engine.worldsConfig.cameraFar = config.cameraFar;
-            }
-            if (config.positionEaseSpeed !== void 0) {
-              engine.worldsConfig.positionEaseSpeed = config.positionEaseSpeed;
-            }
-            if (config.rotationEaseSpeed !== void 0) {
-              engine.worldsConfig.rotationEaseSpeed = config.rotationEaseSpeed;
-            }
-            if (config.keepRotation !== void 0) {
-              engine.worldsConfig.keepRotation = !!config.keepRotation;
-            }
-            if (config.straightenOnFocus !== void 0) {
-              engine.worldsConfig.straightenOnFocus = !!config.straightenOnFocus;
-            }
-            if (config.screenSpaceRecenter !== void 0) {
-              engine.worldsConfig.screenSpaceRecenter = !!config.screenSpaceRecenter;
-            }
-            if (config.screenSpaceRecenterIters !== void 0) {
-              const v2 = Number(config.screenSpaceRecenterIters);
-              if (Number.isFinite(v2)) {
-                engine.worldsConfig.screenSpaceRecenterIters = Math.max(1, Math.min(12, Math.floor(v2)));
-              }
-            }
-            if (config.autoLayoutEnabled !== void 0) {
-              engine.worldsConfig.autoLayoutEnabled = config.autoLayoutEnabled;
-            }
-            if (config.autoLayoutColumns !== void 0) {
-              engine.worldsConfig.autoLayoutColumns = config.autoLayoutColumns;
-            }
-            if (config.autoLayoutSpacing !== void 0) {
-              engine.worldsConfig.autoLayoutSpacing = config.autoLayoutSpacing;
-            }
-            if (config.sectionTextureMode !== void 0) {
-              const prev = engine.worldsConfig.sectionTextureMode;
-              engine.worldsConfig.sectionTextureMode = config.sectionTextureMode;
-              if (prev !== config.sectionTextureMode) {
-                engine.clear3DSectionTextures();
-              }
-            }
-            if (config.sectionBorderEnabled !== void 0) {
-              const prev = engine.worldsConfig.sectionBorderEnabled;
-              engine.worldsConfig.sectionBorderEnabled = config.sectionBorderEnabled;
-              if (prev !== config.sectionBorderEnabled) {
-                engine.clear3DSectionTextures();
-              }
-            }
-            if (config.sectionBorderWidth !== void 0) {
-              const prev = engine.worldsConfig.sectionBorderWidth;
-              engine.worldsConfig.sectionBorderWidth = config.sectionBorderWidth;
-              if (prev !== config.sectionBorderWidth) {
-                engine.clear3DSectionTextures();
-              }
-            }
-            if (config.sectionBackground !== void 0) {
-              const prev = engine.worldsConfig.sectionBackground;
-              engine.worldsConfig.sectionBackground = config.sectionBackground;
-              if (prev !== config.sectionBackground) {
-                engine.clear3DSectionTextures();
-              }
-            }
-            if (config.sectionBackgroundPaperNoiseStrength !== void 0) {
-              const v2 = config.sectionBackgroundPaperNoiseStrength;
-              if (Number.isFinite(v2)) {
-                engine.worldsConfig.sectionBackgroundPaperNoiseStrength = Math.max(0, Math.min(1, v2));
-              }
-            }
-            if (config.sectionLinkUnderline !== void 0) {
-              const prev = engine.worldsConfig.sectionLinkUnderline;
-              engine.worldsConfig.sectionLinkUnderline = !!config.sectionLinkUnderline;
-              if (prev !== engine.worldsConfig.sectionLinkUnderline) {
-                engine.clear3DSectionTextures();
-              }
-            }
-            if (config.sectionListMarker !== void 0) {
-              const prev = engine.worldsConfig.sectionListMarker;
-              engine.worldsConfig.sectionListMarker = config.sectionListMarker;
-              if (prev !== engine.worldsConfig.sectionListMarker) {
-                engine.clear3DSectionTextures();
-              }
-            }
-            if (config.sectionListMarkerGapPx !== void 0) {
-              const prev = engine.worldsConfig.sectionListMarkerGapPx;
-              const next = Number(config.sectionListMarkerGapPx);
-              if (Number.isFinite(next)) {
-                engine.worldsConfig.sectionListMarkerGapPx = Math.max(0, next);
-                if (prev !== engine.worldsConfig.sectionListMarkerGapPx) {
-                  engine.clear3DSectionTextures();
-                }
-              }
-            }
-            if (config.sectionListHangIndentPx !== void 0) {
-              const prev = engine.worldsConfig.sectionListHangIndentPx;
-              const next = Number(config.sectionListHangIndentPx);
-              if (Number.isFinite(next)) {
-                engine.worldsConfig.sectionListHangIndentPx = Math.max(0, next);
-                if (prev !== engine.worldsConfig.sectionListHangIndentPx) {
-                  engine.clear3DSectionTextures();
-                }
-              }
-            }
-            if (requiresSectionLayoutRecompile && engine.runtimeSectionStore.sections.length > 0) {
-              engine.compileWorldsLayoutsFromRuntimeSectionStore("config defaults changed");
-            } else {
-              engine.applyWorldsLayoutCallback();
-              engine.reflowWorldsAutoLayout();
-            }
+            applyWorldsConfigDefaults(config);
           },
           getDefaults: () => {
             return { ...engine.worldsConfig };
@@ -30452,7 +30744,7 @@ class StorieEngine {
           continue;
         }
       }
-      const clonePreset = (preset) => {
+      const clonePreset2 = (preset) => {
         try {
           if (typeof structuredClone === "function") return structuredClone(preset);
         } catch {
@@ -30473,7 +30765,7 @@ class StorieEngine {
           for (const [name, pending] of Array.from(stfxrPending.entries())) {
             const basePreset = resolveBasePreset(pending.base);
             if (!basePreset) continue;
-            const base = clonePreset(basePreset);
+            const base = clonePreset2(basePreset);
             const patch = pending.patch ?? {};
             if (patch.vars) {
               base.vars = { ...base.vars ?? {}, ...patch.vars ?? {} };
@@ -32656,32 +32948,26 @@ ${exportVars}
       const dt = this.deltaTime;
       const moveSpeed = 120;
       const lookSpeed = 1.6;
+      const textInputFocused = !!this.getFocusedGUITextInput();
       const applyMove = (dx, dy, dz) => {
-        this.camera3D.position.x += dx;
-        this.camera3D.position.y += dy;
-        this.camera3D.position.z += dz;
-        if (this.camera3D.target) {
-          this.camera3D.target.x += dx;
-          this.camera3D.target.y += dy;
-          this.camera3D.target.z += dz;
-        }
+        this.applyWorldsCameraTranslation(dx, dy, dz);
       };
-      if (this.input.isKeyDown("w") || this.input.isKeyDown("W")) {
+      if (!textInputFocused && (this.input.isKeyDown("w") || this.input.isKeyDown("W"))) {
         applyMove(0, moveSpeed * dt, 0);
       }
-      if (this.input.isKeyDown("s") || this.input.isKeyDown("S")) {
+      if (!textInputFocused && (this.input.isKeyDown("s") || this.input.isKeyDown("S"))) {
         applyMove(0, -moveSpeed * dt, 0);
       }
-      if (this.input.isKeyDown("a") || this.input.isKeyDown("A")) {
+      if (!textInputFocused && (this.input.isKeyDown("a") || this.input.isKeyDown("A"))) {
         applyMove(-moveSpeed * dt, 0, 0);
       }
-      if (this.input.isKeyDown("d") || this.input.isKeyDown("D")) {
+      if (!textInputFocused && (this.input.isKeyDown("d") || this.input.isKeyDown("D"))) {
         applyMove(moveSpeed * dt, 0, 0);
       }
-      if (this.input.isKeyDown("q") || this.input.isKeyDown("Q")) {
+      if (!textInputFocused && (this.input.isKeyDown("q") || this.input.isKeyDown("Q"))) {
         this.camera3D.rotation.y -= lookSpeed * dt;
       }
-      if (this.input.isKeyDown("e") || this.input.isKeyDown("E")) {
+      if (!textInputFocused && (this.input.isKeyDown("e") || this.input.isKeyDown("E"))) {
         this.camera3D.rotation.y += lookSpeed * dt;
       }
       const rmbDown = this.input.isMouseDown(2);
@@ -32866,6 +33152,7 @@ ${exportVars}
     this.canvas.addEventListener("mousedown", (e) => this.handleMouseEvent(e, "press"));
     this.canvas.addEventListener("mouseup", (e) => this.handleMouseEvent(e, "release"));
     this.canvas.addEventListener("mousemove", (e) => this.handleMouseMoveEvent(e));
+    this.canvas.addEventListener("wheel", (e) => this.handleWheelEvent(e), { passive: false });
     this.canvas.addEventListener("contextmenu", (e) => e.preventDefault());
     this.canvas.addEventListener("touchstart", (e) => this.handleTouchEvent(e, "press"), { passive: false });
     this.canvas.addEventListener("touchmove", (e) => this.handleTouchMoveEvent(e), { passive: false });
@@ -32925,6 +33212,182 @@ ${exportVars}
     const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
     const system = (_b = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _b.call(guiAPI);
     return system && typeof system.getFocusedTextInput === "function" ? system.getFocusedTextInput() : null;
+  }
+  isPointOverVisibleGUIWidget(pixelX, pixelY) {
+    var _a, _b, _c;
+    const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
+    const system = (_b = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _b.call(guiAPI);
+    const manager = (_c = system == null ? void 0 : system.getWidgetManager) == null ? void 0 : _c.call(system);
+    const widgets = manager && typeof manager.getVisible === "function" ? manager.getVisible() : system && typeof system.getWidgets === "function" ? system.getWidgets() : [];
+    if (!Array.isArray(widgets) || widgets.length === 0) return false;
+    const charWidth = this.width > 0 ? this.canvas.width / this.width : 1;
+    const charHeight = this.height > 0 ? this.canvas.height / this.height : 1;
+    const coord = {
+      x: pixelX,
+      y: pixelY,
+      cellX: Math.floor(pixelX / Math.max(1, charWidth)),
+      cellY: Math.floor(pixelY / Math.max(1, charHeight))
+    };
+    return widgets.some((widget) => {
+      var _a2;
+      if (!((_a2 = widget == null ? void 0 : widget.state) == null ? void 0 : _a2.visible)) return false;
+      return typeof widget.containsPoint === "function" && widget.containsPoint(coord);
+    });
+  }
+  getWorldsCameraBasis(rotation) {
+    const forward = {
+      x: Math.sin(rotation.y) * Math.cos(rotation.x),
+      y: -Math.sin(rotation.x),
+      z: -Math.cos(rotation.y) * Math.cos(rotation.x)
+    };
+    const zAxis = vec3Normalize(vec3Scale(forward, -1));
+    let right = vec3Normalize({ x: zAxis.z, y: 0, z: -zAxis.x });
+    if (vec3Length(right) <= 1e-8) right = { x: 1, y: 0, z: 0 };
+    let up = {
+      x: zAxis.y * right.z - zAxis.z * right.y,
+      y: zAxis.z * right.x - zAxis.x * right.z,
+      z: zAxis.x * right.y - zAxis.y * right.x
+    };
+    const roll = Number.isFinite(rotation.z) ? rotation.z : 0;
+    if (roll) {
+      const c2 = Math.cos(roll);
+      const s = Math.sin(roll);
+      const rolledRight = vec3Add(vec3Scale(right, c2), vec3Scale(up, s));
+      const rolledUp = vec3Add(vec3Scale(up, c2), vec3Scale(right, -s));
+      right = rolledRight;
+      up = rolledUp;
+    }
+    return { forward, right, up };
+  }
+  applyWorldsCameraTranslation(dx, dy, dz) {
+    if (!this.camera3D) return;
+    this.camera3D.position.x += dx;
+    this.camera3D.position.y += dy;
+    this.camera3D.position.z += dz;
+    if (this.camera3D.target) {
+      this.camera3D.target.x += dx;
+      this.camera3D.target.y += dy;
+      this.camera3D.target.z += dz;
+    }
+  }
+  estimateWorldsNavigationDistance() {
+    if (!this.camera3D) return 120;
+    const cameraPos = this.camera3D.effectivePosition ?? this.camera3D.position;
+    if (this.camera3D.target) {
+      const dist = vec3Length(vec3Sub(this.camera3D.target, cameraPos));
+      if (Number.isFinite(dist) && dist > 1) return dist;
+    }
+    const currentLayout = this.getCurrent3DSectionLayout();
+    if (currentLayout) {
+      const dist = vec3Length(vec3Sub(currentLayout.transform.position, cameraPos));
+      if (Number.isFinite(dist) && dist > 1) return dist;
+    }
+    const fallback = Math.abs(cameraPos.z);
+    return Number.isFinite(fallback) && fallback > 1 ? fallback : 120;
+  }
+  applyWorldsCameraPanDelta(dx, dy) {
+    if (!this.worldsEnabled || !this.camera3D) return false;
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || dx === 0 && dy === 0) {
+      return true;
+    }
+    const rotation = this.camera3D.effectiveRotation ?? this.camera3D.rotation;
+    const basis = this.getWorldsCameraBasis(rotation);
+    const distance2 = this.estimateWorldsNavigationDistance();
+    const canvasH = Math.max(1, this.canvas.height);
+    const worldPerPixel = 2 * Math.tan((this.camera3D.fov || Math.PI / 4) * 0.5) * distance2 / canvasH;
+    const move = vec3Add(
+      vec3Scale(basis.right, -dx * worldPerPixel),
+      vec3Scale(basis.up, dy * worldPerPixel)
+    );
+    this.applyWorldsCameraTranslation(move.x, move.y, move.z);
+    return true;
+  }
+  handleWorldsMiddlePanMove(pixelX, pixelY) {
+    if (!this.middlePanActive || !this.worldsEnabled || !this.camera3D) return false;
+    const dx = pixelX - this.middlePanLastX;
+    const dy = pixelY - this.middlePanLastY;
+    this.middlePanLastX = pixelX;
+    this.middlePanLastY = pixelY;
+    return this.applyWorldsCameraPanDelta(dx, dy);
+  }
+  handleWorldsWheelEvent(e) {
+    if (!this.worldsEnabled || !this.camera3D) return false;
+    const rect = this.canvas.getBoundingClientRect();
+    const pixelX = (e.clientX - rect.left) * (this.canvas.width / rect.width);
+    const pixelY = (e.clientY - rect.top) * (this.canvas.height / rect.height);
+    if (this.isPointOverVisibleGUIWidget(pixelX, pixelY)) {
+      return false;
+    }
+    let deltaY = Number(e.deltaY);
+    if (!Number.isFinite(deltaY) || deltaY === 0) return false;
+    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) deltaY *= 16;
+    else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) deltaY *= Math.max(1, this.canvas.height);
+    const speedScale = e.shiftKey ? 2.25 : e.altKey ? 0.35 : 1;
+    const distance2 = this.estimateWorldsNavigationDistance();
+    const dolly = -deltaY * 15e-4 * Math.max(24, distance2) * speedScale;
+    const rotation = this.camera3D.effectiveRotation ?? this.camera3D.rotation;
+    const basis = this.getWorldsCameraBasis(rotation);
+    this.applyWorldsCameraTranslation(
+      basis.forward.x * dolly,
+      basis.forward.y * dolly,
+      basis.forward.z * dolly
+    );
+    return true;
+  }
+  startFreeFlyLeftDrag(pixelX, pixelY) {
+    if (!this.worldsEnabled || !this.camera3D || !this.worldsControlsEnabled) return false;
+    if (this.isPointOverVisibleGUIWidget(pixelX, pixelY)) return false;
+    const picked = this.pick3DAt(pixelX, pixelY);
+    this.freeFlyLeftLastX = pixelX;
+    this.freeFlyLeftLastY = pixelY;
+    if (picked == null ? void 0 : picked.layout) {
+      this.freeFlyLeftDragSectionIndex = picked.layout.sectionIndex;
+      this.freeFlyLeftPanActive = false;
+      return true;
+    }
+    this.freeFlyLeftPanActive = true;
+    this.freeFlyLeftDragSectionIndex = null;
+    return true;
+  }
+  stopFreeFlyLeftDrag() {
+    const wasActive = this.freeFlyLeftPanActive || this.freeFlyLeftDragSectionIndex !== null;
+    this.freeFlyLeftPanActive = false;
+    this.freeFlyLeftDragSectionIndex = null;
+    return wasActive;
+  }
+  handleFreeFlyLeftDragMove(pixelX, pixelY) {
+    if (!this.worldsEnabled || !this.camera3D || !this.worldsControlsEnabled) return false;
+    if (!this.freeFlyLeftPanActive && this.freeFlyLeftDragSectionIndex === null) return false;
+    const dx = pixelX - this.freeFlyLeftLastX;
+    const dy = pixelY - this.freeFlyLeftLastY;
+    this.freeFlyLeftLastX = pixelX;
+    this.freeFlyLeftLastY = pixelY;
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || dx === 0 && dy === 0) return true;
+    if (this.freeFlyLeftPanActive) {
+      return this.applyWorldsCameraPanDelta(dx, dy);
+    }
+    const sectionIndex = this.freeFlyLeftDragSectionIndex;
+    if (!(typeof sectionIndex === "number" && Number.isFinite(sectionIndex))) return false;
+    const layout = this.section3DLayouts[sectionIndex];
+    if (!layout) return false;
+    const rotation = this.camera3D.effectiveRotation ?? this.camera3D.rotation;
+    const basis = this.getWorldsCameraBasis(rotation);
+    const distance2 = this.estimateWorldsNavigationDistance();
+    const canvasH = Math.max(1, this.canvas.height);
+    const worldPerPixel = 2 * Math.tan((this.camera3D.fov || Math.PI / 4) * 0.5) * distance2 / canvasH;
+    const right2 = { x: basis.right.x, y: basis.right.y };
+    const up2 = { x: basis.up.x, y: basis.up.y };
+    const moveX = (dx * right2.x - dy * up2.x) * worldPerPixel;
+    const moveY = (dx * right2.y - dy * up2.y) * worldPerPixel;
+    const nextPosition = {
+      x: layout.transform.position.x + moveX,
+      y: layout.transform.position.y + moveY,
+      z: layout.transform.position.z
+    };
+    layout.transform.position = nextPosition;
+    layout.autoPositioned = false;
+    this.getOrCreateSectionRuntimeOverride(layout.sectionId).position = { ...nextPosition };
+    return true;
   }
   shouldDispatchHiddenTextInputKeyEvent(e, target) {
     const key = String(e.key ?? "");
@@ -33091,6 +33554,10 @@ ${exportVars}
     const { pixelX, pixelY } = this.touchToPixelXY(t);
     this.input.updateMousePosition(pixelX, pixelY);
     this.input.applySyntheticEvent({ type: "mouse_move", x: pixelX, y: pixelY });
+    if (this.handleFreeFlyLeftDragMove(pixelX, pixelY)) {
+      e.preventDefault();
+      return;
+    }
     if (this.worldsInlineWidgetInstances.length > 0) {
       this.handleWorldsInlineWidgetMouse(pixelX, pixelY, this.input.isMouseDown(0));
     }
@@ -33139,10 +33606,22 @@ ${exportVars}
       this.lastTouchEventAt = Date.now();
       const { pixelX, pixelY } = this.touchToPixelXY(t);
       this.input.updateMousePosition(pixelX, pixelY);
+      if (this.worldsControlsEnabled) {
+        this.input.applySyntheticEvent({ type: "mouse", action, button: "left", x: pixelX, y: pixelY });
+        if (action === "press") {
+          if (this.startFreeFlyLeftDrag(pixelX, pixelY)) {
+            e.preventDefault();
+            return;
+          }
+        } else if (this.stopFreeFlyLeftDrag()) {
+          e.preventDefault();
+          return;
+        }
+      }
       const inlineWidgetConsumed = this.handleWorldsInlineWidgetMouse(pixelX, pixelY, action === "press");
       this.input.applySyntheticEvent({ type: "mouse", action, button: "left", x: pixelX, y: pixelY });
       let handledBy3D = false;
-      if (!inlineWidgetConsumed && action === "press") {
+      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && action === "press") {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
@@ -33416,8 +33895,55 @@ ${exportVars}
       const pixelX = cssX * (this.canvas.width / rect.width);
       const pixelY = cssY * (this.canvas.height / rect.height);
       this.input.updateMousePosition(pixelX, pixelY);
+      const buttonName = e.button === 1 ? "middle" : e.button === 2 ? "right" : "left";
+      if (e.button === 0 && this.worldsControlsEnabled) {
+        this.input.applySyntheticEvent({
+          type: "mouse",
+          action,
+          button: buttonName,
+          x: pixelX,
+          y: pixelY
+        });
+        if (action === "press") {
+          if (this.startFreeFlyLeftDrag(pixelX, pixelY)) {
+            e.preventDefault();
+            this.syncHiddenTextInputBridge(false);
+            return;
+          }
+        } else if (this.stopFreeFlyLeftDrag()) {
+          e.preventDefault();
+          this.syncHiddenTextInputBridge(false);
+          return;
+        }
+      }
+      if (e.button === 1) {
+        this.input.applySyntheticEvent({
+          type: "mouse",
+          action,
+          button: buttonName,
+          x: pixelX,
+          y: pixelY
+        });
+        if (action === "press") {
+          const startedOverGUI = this.isPointOverVisibleGUIWidget(pixelX, pixelY);
+          const startedOverCard = !!this.pick3DAt(pixelX, pixelY);
+          if (this.worldsEnabled && this.camera3D && !startedOverGUI && !startedOverCard) {
+            this.middlePanActive = true;
+            this.middlePanLastX = pixelX;
+            this.middlePanLastY = pixelY;
+            e.preventDefault();
+            this.syncHiddenTextInputBridge(false);
+            return;
+          }
+        } else if (this.middlePanActive) {
+          this.middlePanActive = false;
+          e.preventDefault();
+          this.syncHiddenTextInputBridge(false);
+          return;
+        }
+      }
       const inlineWidgetConsumed = e.button === 0 ? this.handleWorldsInlineWidgetMouse(pixelX, pixelY, action === "press") : false;
-      if (!inlineWidgetConsumed && action === "press" && e.button === 0) {
+      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && action === "press" && e.button === 0) {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
@@ -33453,7 +33979,7 @@ ${exportVars}
       this.input.applySyntheticEvent({
         type: "mouse",
         action,
-        button: e.button === 1 ? "middle" : e.button === 2 ? "right" : "left",
+        button: buttonName,
         x: pixelX,
         y: pixelY
       });
@@ -33465,7 +33991,7 @@ ${exportVars}
         const event = {
           type: "mouse",
           action,
-          button: e.button === 1 ? "middle" : e.button === 2 ? "right" : "left",
+          button: buttonName,
           x: pixelX,
           y: pixelY,
           cellX,
@@ -34288,6 +34814,14 @@ ${exportVars}
     const pixelX = cssX * (this.canvas.width / rect.width);
     const pixelY = cssY * (this.canvas.height / rect.height);
     this.input.updateMousePosition(pixelX, pixelY);
+    if (this.handleFreeFlyLeftDragMove(pixelX, pixelY)) {
+      e.preventDefault();
+      return;
+    }
+    if (this.middlePanActive && this.handleWorldsMiddlePanMove(pixelX, pixelY)) {
+      e.preventDefault();
+      return;
+    }
     if (this.worldsInlineWidgetInstances.length > 0) {
       this.handleWorldsInlineWidgetMouse(pixelX, pixelY, this.input.isMouseDown(0));
     }
@@ -34314,6 +34848,19 @@ ${exportVars}
       }
     } catch (error) {
       console.error("Error in input handler:", error);
+    }
+  }
+  handleWheelEvent(e) {
+    if (Date.now() - this.lastTouchEventAt < 750) {
+      e.preventDefault();
+      return;
+    }
+    if (this.hostAudienceView) {
+      e.preventDefault();
+      return;
+    }
+    if (this.handleWorldsWheelEvent(e)) {
+      e.preventDefault();
     }
   }
   /**
