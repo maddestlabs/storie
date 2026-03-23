@@ -729,6 +729,7 @@ export interface SandboxAPI {
     enabled: boolean;
     available: boolean;
     currentSection: number | null;
+    selectedSection: number | null;
     controls: {
       setEnabled: (enabled: boolean) => void;
       enabled: boolean;

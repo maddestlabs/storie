@@ -213,6 +213,16 @@ function updateHintLabel() {
   state.widgets.hintLabel.setText(`${selectedTitle} | ${dirty} | ${mode} | ${scaleText} | ${status}`);
 }
 
+function updateModeButtonStyles() {
+  if (!state.widgets?.btnToggleControls) return;
+  const enabled = !!worlds.controls.enabled;
+  state.widgets.btnToggleControls.buttonStyle.fg = enabled ? ui.colors.rgba(18, 18, 18, 255) : undefined;
+  state.widgets.btnToggleControls.buttonStyle.bg = enabled ? ui.colors.rgba(244, 238, 224, 255) : undefined;
+  state.widgets.btnToggleControls.buttonStyle.hoverBg = enabled ? ui.colors.rgba(255, 246, 232, 255) : undefined;
+  state.widgets.btnToggleControls.buttonStyle.activeBg = enabled ? ui.colors.rgba(226, 214, 192, 255) : undefined;
+  state.widgets.btnToggleControls.buttonStyle.borderColor = enabled ? ui.colors.rgba(255, 246, 232, 255) : undefined;
+}
+
 function refreshSections() {
   state.sections = worlds.sections.list();
 }
@@ -311,8 +321,9 @@ function resetView() {
 
 function toggleBuiltInControls() {
   worlds.controls.setEnabled(!worlds.controls.enabled);
+  updateModeButtonStyles();
   setStatus(worlds.controls.enabled
-    ? 'Free-fly edit mode enabled. Left-drag empty canvas to pan or drag a section to move it.'
+    ? 'Free-fly edit mode enabled. Click sections to select, or left-drag to pan and reposition them.'
     : 'Free-fly edit mode disabled. Section clicks focus/navigate again.');
 }
 
@@ -413,7 +424,8 @@ refreshSections();
 layoutPanels();
 loadSection(0, false);
 worlds.camera.focusOnSectionFit(0, 0.9, { keepRotation: true });
-setStatus('Drag the top bar to move. Drag the lower-right corner to scale. Wheel zooms.');
+updateModeButtonStyles();
+setStatus('Drag the top bar to move. Drag the lower-right corner to scale. Wheel zooms. Two-finger pinch zooms and pans.');
 ```
 
 ```js on:input
@@ -528,7 +540,7 @@ if (state.widgets.btnRevert.wasClicked()) {
   revertDraft();
 }
 
-const current = worlds.currentSection;
+const current = typeof worlds.selectedSection === 'number' ? worlds.selectedSection : worlds.currentSection;
 if (typeof current === 'number' && current !== state.lastWorldSection) {
   selectSection(current, false);
 }

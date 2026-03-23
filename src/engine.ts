@@ -476,6 +476,10 @@ export class StorieEngine {
   private middlePanActive: boolean = false;
   private middlePanLastX: number = 0;
   private middlePanLastY: number = 0;
+  private pinchZoomActive: boolean = false;
+  private pinchZoomLastDistance: number = 0;
+  private pinchZoomLastCenterX: number = 0;
+  private pinchZoomLastCenterY: number = 0;
   private freeFlyLeftPanActive: boolean = false;
   private freeFlyLeftDragSectionIndex: number | null = null;
   private freeFlyLeftLastX: number = 0;
@@ -486,6 +490,8 @@ export class StorieEngine {
   private focused3DLink: { sectionId: string; sectionIndex: number; linkIndex: number } | null = null;
   private current3DSectionId: string | null = null;
   private current3DSectionIndex: number | null = null;
+  private selected3DSectionId: string | null = null;
+  private selected3DSectionIndex: number | null = null;
   private activated3DLinksQueue: Array<{ url: string; sectionId: string | null; sectionIndex: number | null; linkIndex: number | null }> = [];
 
   // 3D section texture rasterization cache
@@ -5271,6 +5277,10 @@ export class StorieEngine {
         get currentSection(): number | null {
           return engine.getResolvedCurrent3DSectionIndex();
         },
+
+        get selectedSection(): number | null {
+          return engine.getResolvedSelected3DSectionIndex();
+        },
         
         // Section layout access
         getSectionLayout: (sectionIndex: number) => {
@@ -5723,6 +5733,14 @@ export class StorieEngine {
       : null;
   }
 
+  private getResolvedSelected3DSectionIndex(): number | null {
+    const byId = this.getSectionIndexById(this.selected3DSectionId);
+    if (typeof byId === 'number' && Number.isFinite(byId)) return byId;
+    return typeof this.selected3DSectionIndex === 'number' && Number.isFinite(this.selected3DSectionIndex)
+      ? this.selected3DSectionIndex
+      : null;
+  }
+
   private getCurrent3DSectionLayout(): Section3DLayout | null {
     const byId = this.getSectionLayoutById(this.current3DSectionId);
     if (byId) return byId;
@@ -5731,6 +5749,7 @@ export class StorieEngine {
 
   private rebind3DStateToRuntimeSectionStore(): void {
     this.current3DSectionIndex = this.getSectionIndexById(this.current3DSectionId);
+    this.selected3DSectionIndex = this.getSectionIndexById(this.selected3DSectionId);
 
     const rebindLink = (
       entry: { sectionId: string; sectionIndex: number; linkIndex: number } | null
@@ -5775,6 +5794,17 @@ export class StorieEngine {
     }
 
     this.sceneState.sectionIndex = this.current3DSectionIndex;
+  }
+
+  private setSelected3DSection(sectionIndex: number | null): void {
+    const nextLayout = this.getSectionLayoutByIndex(sectionIndex);
+    if (!nextLayout) {
+      this.selected3DSectionId = null;
+      this.selected3DSectionIndex = null;
+      return;
+    }
+    this.selected3DSectionId = nextLayout.sectionId;
+    this.selected3DSectionIndex = nextLayout.sectionIndex;
   }
 
   private getSectionCacheKey(layoutOrIndex: Section3DLayout | number | null | undefined): string | null {
@@ -9872,6 +9902,7 @@ ${exportVars}
     this.freeFlyLeftLastY = pixelY;
 
     if (picked?.layout) {
+      this.setSelected3DSection(picked.layout.sectionIndex);
       this.freeFlyLeftDragSectionIndex = picked.layout.sectionIndex;
       this.freeFlyLeftPanActive = false;
       return true;
@@ -9980,6 +10011,18 @@ ${exportVars}
     this.syncHiddenTextInputBridge(false);
   }
 
+  private focusCanvasWithoutScroll(): void {
+    if (typeof document === 'undefined' || document.activeElement === this.canvas) {
+      return;
+    }
+
+    try {
+      this.canvas.focus({ preventScroll: true });
+    } catch {
+      this.canvas.focus();
+    }
+  }
+
   private syncHiddenTextInputBridge(preferFocus: boolean = false): void {
     const input = this.hiddenTextInput;
     if (!input || typeof document === 'undefined') return;
@@ -9995,6 +10038,15 @@ ${exportVars}
     const options = target.getTextInputOptions();
     const value = options.multiline ? target.getValue() : normalizeSingleLineText(target.getValue());
     const selection = target.getSelectionRange();
+
+    if (!options.showSoftKeyboard) {
+      if (document.activeElement === input) {
+        input.blur();
+      }
+      if (preferFocus) {
+        this.focusCanvasWithoutScroll();
+      }
+    }
 
     this.hiddenTextInputSyncing = true;
     try {
@@ -10014,7 +10066,7 @@ ${exportVars}
         input.setSelectionRange(start, end, selection.direction ?? 'none');
       }
 
-      if (preferFocus && document.activeElement !== input) {
+      if (options.showSoftKeyboard && preferFocus && document.activeElement !== input) {
         try {
           input.focus({ preventScroll: true });
         } catch {
@@ -10127,10 +10179,99 @@ ${exportVars}
     return { pixelX, pixelY };
   }
 
+  private resetWorldsPinchZoom(): void {
+    this.pinchZoomActive = false;
+    this.pinchZoomLastDistance = 0;
+    this.pinchZoomLastCenterX = 0;
+    this.pinchZoomLastCenterY = 0;
+  }
+
+  private handleWorldsPinchTouchMove(e: TouchEvent): boolean {
+    if (!this.worldsEnabled || !this.camera3D) {
+      this.resetWorldsPinchZoom();
+      return false;
+    }
+    if (!e.touches || e.touches.length < 2) {
+      this.resetWorldsPinchZoom();
+      return false;
+    }
+
+    const first = e.touches[0];
+    const second = e.touches[1];
+    if (!first || !second) {
+      this.resetWorldsPinchZoom();
+      return false;
+    }
+
+    const a = this.touchToPixelXY(first);
+    const b = this.touchToPixelXY(second);
+    const centerX = (a.pixelX + b.pixelX) * 0.5;
+    const centerY = (a.pixelY + b.pixelY) * 0.5;
+    if (this.isPointOverVisibleGUIWidget(centerX, centerY)) {
+      this.resetWorldsPinchZoom();
+      return false;
+    }
+
+    const dx = b.pixelX - a.pixelX;
+    const dy = b.pixelY - a.pixelY;
+    const distancePixels = Math.hypot(dx, dy);
+    if (!Number.isFinite(distancePixels) || distancePixels <= 0) {
+      this.resetWorldsPinchZoom();
+      return false;
+    }
+
+    this.lastTouchEventAt = Date.now();
+    this.input.updateMousePosition(centerX, centerY);
+    this.input.applySyntheticEvent({ type: 'mouse_move', x: centerX, y: centerY });
+
+    if (!this.pinchZoomActive) {
+      this.pinchZoomActive = true;
+      this.pinchZoomLastDistance = distancePixels;
+      this.pinchZoomLastCenterX = centerX;
+      this.pinchZoomLastCenterY = centerY;
+      this.stopFreeFlyLeftDrag();
+      return true;
+    }
+
+    const deltaCenterX = centerX - this.pinchZoomLastCenterX;
+    const deltaCenterY = centerY - this.pinchZoomLastCenterY;
+    this.pinchZoomLastCenterX = centerX;
+    this.pinchZoomLastCenterY = centerY;
+
+    const deltaDistance = distancePixels - this.pinchZoomLastDistance;
+    this.pinchZoomLastDistance = distancePixels;
+
+    if (Number.isFinite(deltaCenterX) && Number.isFinite(deltaCenterY) && (deltaCenterX !== 0 || deltaCenterY !== 0)) {
+      this.applyWorldsCameraPanDelta(deltaCenterX, deltaCenterY);
+    }
+
+    if (!Number.isFinite(deltaDistance) || deltaDistance === 0) return true;
+
+    const distance = this.estimateWorldsNavigationDistance();
+    const dolly = deltaDistance * 0.002 * Math.max(24, distance);
+    const rotation = this.camera3D.effectiveRotation ?? this.camera3D.rotation;
+    const basis = this.getWorldsCameraBasis(rotation);
+    this.applyWorldsCameraTranslation(
+      basis.forward.x * dolly,
+      basis.forward.y * dolly,
+      basis.forward.z * dolly,
+    );
+    return true;
+  }
+
   private handleTouchMoveEvent(e: TouchEvent): void {
     if (this.hostAudienceView) {
       e.preventDefault();
       return;
+    }
+
+    if (e.touches && e.touches.length >= 2) {
+      if (this.handleWorldsPinchTouchMove(e)) {
+        e.preventDefault();
+        return;
+      }
+    } else if (this.pinchZoomActive) {
+      this.resetWorldsPinchZoom();
     }
 
     const doc = this.getActiveDocument();
@@ -10191,6 +10332,10 @@ ${exportVars}
     if (this.hostAudienceView) {
       e.preventDefault();
       return;
+    }
+
+    if (action === 'release' && (!e.touches || e.touches.length < 2)) {
+      this.resetWorldsPinchZoom();
     }
 
     const isGesturePress = action === 'press';
@@ -11500,13 +11645,15 @@ ${exportVars}
     this.request3DCameraFocus(req);
   }
 
-  private setCurrent3DSection(sectionIndex: number): void {
+  private setCurrent3DSection(sectionIndex: number, options?: { navigationSideEffects?: boolean }): void {
     const nextLayout = this.getSectionLayoutByIndex(sectionIndex);
     if (!nextLayout) return;
+    this.setSelected3DSection(sectionIndex);
     if (this.current3DSectionId === nextLayout.sectionId) {
       this.current3DSectionIndex = nextLayout.sectionIndex;
       return;
     }
+    const navigationSideEffects = options?.navigationSideEffects !== false;
     const previousSectionIndex = this.getResolvedCurrent3DSectionIndex();
     this.clearWorldsInlineWidgets();
     this.current3DSectionId = nextLayout.sectionId;
@@ -11523,19 +11670,23 @@ ${exportVars}
     }
 
     // Shared scene state: new section => reset reveal step.
-    this.sceneState.sectionIndex = nextLayout.sectionIndex;
-    this.sceneState.revealStep = 0;
+    if (navigationSideEffects) {
+      this.sceneState.sectionIndex = nextLayout.sectionIndex;
+      this.sceneState.revealStep = 0;
+    }
 
     // Host: broadcast section changes.
     // Keep this narrowly scoped to navigation only (no arbitrary messaging).
     const h = this.hostSync;
-    if (h && h.getSessionInfo().role === 'host') {
+    if (navigationSideEffects && h && h.getSessionInfo().role === 'host') {
       const fill = this.lastApplied3DCameraFocus?.kind === 'fit' ? this.lastApplied3DCameraFocus.fill : 0.9;
       h.sendGotoSectionFit(nextLayout.sectionIndex, fill);
       h.sendSceneFit(nextLayout.sectionIndex, this.sceneState.revealStep, fill);
     }
 
-    this.runSectionEnterHandlers(nextLayout.sectionIndex);
+    if (navigationSideEffects) {
+      this.runSectionEnterHandlers(nextLayout.sectionIndex);
+    }
 
     if (guiAPI && typeof guiAPI.syncSectionBindings === 'function') {
       guiAPI.syncSectionBindings(nextLayout.sectionIndex);

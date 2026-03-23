@@ -152,6 +152,7 @@ export interface TextInputOptions {
   autoCorrect: boolean;
   spellcheck: boolean;
   secure: boolean;
+  showSoftKeyboard: boolean;
 }
 
 export interface TextInputCapable {

@@ -12,7 +12,8 @@ const DEFAULT_TEXT_INPUT_OPTIONS: TextInputOptions = {
   autoCapitalize: 'none',
   autoCorrect: false,
   spellcheck: false,
-  secure: false
+  secure: false,
+  showSoftKeyboard: true
 };
 
 export function createTextInputOptions(
@@ -29,7 +30,8 @@ export function createTextInputOptions(
     multiline: overrides?.multiline ?? defaults?.multiline ?? base.multiline,
     autoCorrect: overrides?.autoCorrect ?? defaults?.autoCorrect ?? base.autoCorrect,
     spellcheck: overrides?.spellcheck ?? defaults?.spellcheck ?? base.spellcheck,
-    secure: overrides?.secure ?? defaults?.secure ?? base.secure
+    secure: overrides?.secure ?? defaults?.secure ?? base.secure,
+    showSoftKeyboard: overrides?.showSoftKeyboard ?? defaults?.showSoftKeyboard ?? base.showSoftKeyboard
   };
 }
 
