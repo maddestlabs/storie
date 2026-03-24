@@ -97,6 +97,8 @@ Supported keys:
 - Alpha: `opacity` (`0..1`)
 - Dimensions: `width`, `height`
 - Card composition: `render: "all" | "heading" | "content" | "none"`
+- Content block alignment: `contentAlign: "start" | "center"`
+- Wrapped text alignment: `textAlign: "left" | "center" | "right"`
 - Flags: `hidden: "true"` (visibility), `navigable: "false"`, `interactive: "false"`
 
 Notes:
@@ -104,6 +106,7 @@ Notes:
 - `displayTitle` is the heading text with the JSON suffix stripped.
 - The relaxed form is intended for flat key/value metadata. If you need nested data, strict JSON is the safer choice.
 - `worlds.config.setDefaults({ sectionRender })` sets the document-wide default render mode, and per-section `render` metadata still overrides it.
+- `contentAlign` centers the rendered markdown block inside the card. `textAlign` aligns wrapped text lines inside headings, paragraphs, and lists.
 
 ## Card Content
 

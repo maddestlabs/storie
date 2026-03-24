@@ -56,6 +56,7 @@ export interface MarkdownStyle {
   borderFg: Color;
   surfaceBg: Color;
   headingFg: Color;
+  textAlign?: 'left' | 'center' | 'right';
   listMarker?: string | null;
   listMarkerFg?: Color;
   listMarkerGapPx?: number;
@@ -99,6 +100,8 @@ export interface LayoutResult {
   ops: DrawOp[];
   linkRegions: LinkRegion[];
   widgetPlacements: WidgetPlacement[];
+  contentOffsetX: number;
+  contentOffsetY: number;
   contentWidth: number;
   contentHeight: number;
 }

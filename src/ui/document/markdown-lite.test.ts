@@ -10,6 +10,7 @@ const style: MarkdownStyle = {
   borderFg: 0x2a2a2aff,
   surfaceBg: 0x2b2b2bff,
   headingFg: 0x333333ff,
+  textAlign: 'left',
   linkFg: 0x444444ff,
   infoFg: 0x4a90e2ff,
   successFg: 0x3bb273ff,
@@ -244,5 +245,37 @@ describe('layoutMarkdownDocument', () => {
     expect(afterText).toBeTruthy();
     expect(result.widgetPlacements[0].x).toBeGreaterThan((beforeText as { x: number }).x);
     expect((afterText as { x: number }).x).toBeGreaterThan(result.widgetPlacements[0].x + result.widgetPlacements[0].w - 1);
+  });
+
+  it('centers paragraph lines when textAlign is center', () => {
+    const nodes = parseMarkdownLite('Center me');
+    const result = layoutMarkdownDocument(
+      nodes,
+      { x: 0, y: 0, width: 240, height: 120 },
+      { charW: 8, charH: 16 },
+      { ...style, textAlign: 'center' },
+      0,
+      10
+    );
+
+    const textOp = result.ops.find((op) => op.kind === 'text' && op.text === 'Center') as { x: number } | undefined;
+    expect(textOp).toBeTruthy();
+    expect(textOp!.x).toBeGreaterThan(10);
+  });
+
+  it('right-aligns paragraph lines when textAlign is right', () => {
+    const nodes = parseMarkdownLite('Align right');
+    const result = layoutMarkdownDocument(
+      nodes,
+      { x: 0, y: 0, width: 240, height: 120 },
+      { charW: 8, charH: 16 },
+      { ...style, textAlign: 'right' },
+      0,
+      10
+    );
+
+    const textOp = result.ops.find((op) => op.kind === 'text' && op.text === 'Align') as { x: number } | undefined;
+    expect(textOp).toBeTruthy();
+    expect(textOp!.x).toBeGreaterThan(58);
   });
 });

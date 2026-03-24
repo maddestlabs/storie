@@ -530,7 +530,7 @@ Kess looks at you. Something flickers across her face. Not hope exactly. But con
 setRainLevel(RAIN_IDLE_GAIN * 1.2, 0.35);
 ```
 
-# Play {"render": "content"}
+# Play {"render": "content", "contentAlign": "center", "textAlign": "center"}
 
 ```
  00000  0000     0    000    0   0
@@ -546,10 +546,6 @@ Press 0|1 or tap LEFT|RIGHT
 if (typeof worlds.currentSection === 'number') {
   g.playSectionIndex = worlds.currentSection;
 }
-g.playSectionOpacity = PLAY_SECTION_ENTRY_OPACITY;
-g.playSectionFadeTimer = 0;
-g.playSectionAppliedOpacity = 1;
-applyPlaySectionOpacity(g.playSectionOpacity);
 if (g.gameMode === 'play') restartGame();
 else startGame();
 startBackgroundMusicFromTop();
@@ -598,9 +594,7 @@ var WORLDS_CARD_WIDTH = 500;
 var WORLDS_CARD_HEIGHT = 1960;
 var GUI_GROUP_HUD = 1;
 var GUI_GROUP_KEYPAD = 2;
-var PLAY_SECTION_ENTRY_OPACITY = 0.9;
-var PLAY_SECTION_FADE_DURATION = 12.0;
-var PLAY_SECTION_OPACITY_STEP = 0.05;
+var PLAY_HINT_CLEAR_DELAY = 4.0;
 var GAME_OVER_RETURN_DELAY = 1.0;
 var SEED_MAX_DIGITS = 12;
 var SETTINGS_THEME_SLIDER_ID = 'settings-theme-slider';
@@ -639,9 +633,7 @@ var g = {
   themeNames: [],
   themeIndex: 0,
   themeName: 'zerorain',
-  playSectionOpacity: 1,
-  playSectionFadeTimer: PLAY_SECTION_FADE_DURATION,
-  playSectionAppliedOpacity: 1,
+  playHintClearTimer: -1,
   gameOverReturnTimer: -1
   };
 
@@ -672,26 +664,6 @@ function isPlaySectionCurrent() {
     typeof g.playSectionIndex === 'number' &&
     worlds.currentSection === g.playSectionIndex
   );
-}
-
-function quantizePlaySectionOpacity(value) {
-  return clamp(Math.round(value / PLAY_SECTION_OPACITY_STEP) * PLAY_SECTION_OPACITY_STEP, 0, 1);
-}
-
-function applyPlaySectionOpacity(opacity) {
-  if (!worlds || !worlds.sections || typeof worlds.sections.update !== 'function') return;
-  if (typeof g.playSectionIndex !== 'number') return;
-
-  var nextOpacity = quantizePlaySectionOpacity(opacity);
-  if (Math.abs(nextOpacity - g.playSectionAppliedOpacity) < 0.0001) return;
-
-  worlds.sections.update(g.playSectionIndex, {
-    directive: {
-      render: 'content',
-      opacity: nextOpacity
-    }
-  });
-  g.playSectionAppliedOpacity = nextOpacity;
 }
 
 function clearPlaySectionContentOverride() {
@@ -1728,10 +1700,8 @@ function startGame() {
   startRainAudio();
   setRainLevel(RAIN_PLAY_GAIN, 1.2);
   g.firstStartPending = false;
+  g.playHintClearTimer = 0;
   g.gameOverReturnTimer = -1;
-  g.playSectionOpacity = PLAY_SECTION_ENTRY_OPACITY;
-  g.playSectionFadeTimer = 0;
-  g.playSectionAppliedOpacity = 1;
   clearPlaySectionContentOverride();
   g.rng     = random.rng(g.seed);
   g.gameMode = 'play';
@@ -1745,10 +1715,8 @@ function restartGame() {
   stopGameSfx('rain_over');
   startRainAudio();
   setRainLevel(RAIN_PLAY_GAIN, 0.8);
+  g.playHintClearTimer = 0;
   g.gameOverReturnTimer = -1;
-  g.playSectionOpacity = PLAY_SECTION_ENTRY_OPACITY;
-  g.playSectionFadeTimer = 0;
-  g.playSectionAppliedOpacity = 1;
   clearPlaySectionContentOverride();
   g.rng     = random.rng(g.seed);
   g.gameMode = 'play';
@@ -1759,9 +1727,8 @@ function restartGame() {
 
 function doGameOver() {
   g.gameMode = 'gameover';
+  g.playHintClearTimer = -1;
   g.gameOverReturnTimer = 0;
-  g.playSectionOpacity = 1;
-  g.playSectionAppliedOpacity = 1;
   showPlaySectionGameOverContent();
   stopBackgroundMusic();
   setRainLevel(RAIN_IDLE_GAIN, 1.6);
@@ -1973,19 +1940,16 @@ if (g.gameMode === 'play') {
 ```js on:update
 var frameDt = Math.min(getDelta(), 0.05);
 
-if (typeof g.playSectionIndex === 'number') {
-  if (g.gameMode === 'play' && isPlaySectionCurrent()) {
-    g.playSectionFadeTimer = Math.min(PLAY_SECTION_FADE_DURATION, g.playSectionFadeTimer + frameDt);
-    g.playSectionOpacity = clamp(
-      PLAY_SECTION_ENTRY_OPACITY * (1 - (g.playSectionFadeTimer / PLAY_SECTION_FADE_DURATION)),
-      0,
-      PLAY_SECTION_ENTRY_OPACITY
-    );
-  } else {
-    g.playSectionOpacity = 1;
+if (g.gameMode === 'play' && g.playHintClearTimer >= 0) {
+  g.playHintClearTimer += frameDt;
+  if (g.playHintClearTimer >= PLAY_HINT_CLEAR_DELAY) {
+    g.playHintClearTimer = -1;
+    if (worlds && worlds.content && typeof worlds.content.set === 'function' && typeof g.playSectionIndex === 'number') {
+      worlds.content.set(g.playSectionIndex, {
+        content: ''
+      });
+    }
   }
-
-  applyPlaySectionOpacity(g.playSectionOpacity);
 }
 
 if (g.gameMode === 'gameover' && g.gameOverReturnTimer >= 0) {

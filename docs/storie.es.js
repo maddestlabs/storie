@@ -16294,6 +16294,13 @@ function parseMarkdownLite(source, options) {
   }
   return nodes;
 }
+function getLineWidth(line, maxWidthPx, measure, charW, charH) {
+  let width = 0;
+  for (const run of line.runs) {
+    width += getRunWidth(run, maxWidthPx, measure, charW, charH);
+  }
+  return width;
+}
 function tokenizeInlines(inlines) {
   const runs = [];
   for (const inline of inlines) {
@@ -16581,9 +16588,18 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
   ops.push({ kind: "rect", x: x0, y: y0, w: box.width, h: box.height, color: style.bg });
   let cursorY = y0 + padding - scrollY;
   const contentStartX = x0 + padding;
+  const contentStartY = y0 + padding - scrollY;
+  let contentMinX = Number.POSITIVE_INFINITY;
+  let contentMinY = Number.POSITIVE_INFINITY;
   let contentMaxX = contentStartX;
   const bumpMax = (x, y, w, h) => {
-    if (w > 0) contentMaxX = Math.max(contentMaxX, x + w);
+    if (w > 0) {
+      contentMinX = Math.min(contentMinX, x);
+      contentMaxX = Math.max(contentMaxX, x + w);
+    }
+    if (h > 0) {
+      contentMinY = Math.min(contentMinY, y);
+    }
   };
   const emitTextLine = (line, lineX, textY, fgOverride, containerWidth, lineTop, lineHeight) => {
     let cx = lineX;
@@ -16609,19 +16625,19 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
       if (run.kind === "code" && run.text.trim().length > 0) {
         const w = measure ? measure(run.text) : run.text.length * charW;
         ops.push({ kind: "rect", x: cx, y: textY - Math.round(charH * 0.15), w, h: Math.round(charH * 1.15), color: style.codeBg });
-        bumpMax(cx, textY - Math.round(charH * 0.15), w);
+        bumpMax(cx, textY - Math.round(charH * 0.15), w, Math.round(charH * 1.15));
       }
       ops.push({ kind: "text", text: run.text, x: cx, y: textY, color });
       {
         const w = measure ? measure(run.text) : run.text.length * charW;
-        bumpMax(cx, textY, w);
+        bumpMax(cx, textY, w, charH);
       }
       if (run.kind === "link" && run.url && run.text.trim().length > 0) {
         const w = measure ? measure(run.text) : run.text.length * charW;
         linkRegions.push({ x: cx, y: textY, w, h: charH, url: run.url, text: run.text });
         if (linkUnderline) {
           ops.push({ kind: "rect", x: cx, y: textY + charH - 2, w, h: 2, color });
-          bumpMax(cx, textY + charH - 2, w);
+          bumpMax(cx, textY + charH - 2, w, 2);
         }
         linkIndex++;
       }
@@ -16649,7 +16665,7 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
             ops.push({ kind: "text", text: line, x: contentX, y: cursorY, color: fg });
           }
           const w = measure ? measure(line) : line.length * charW;
-          bumpMax(contentX, cursorY, w);
+          bumpMax(contentX, cursorY, w, charH);
           cursorY += baseLineHeight;
         }
         cursorY += paragraphGap;
@@ -16661,8 +16677,10 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
         const lines = measure ? wrapRunsByWidth(runs, localInnerW, measure, charW, charH) : wrapRuns(runs, localMaxChars, charW, charH);
         const fg = style.headingFg;
         for (const ln of lines) {
+          const lineWidth = getLineWidth(ln, localInnerW, measure, charW, charH);
+          const lineX = resolveAlignedX(contentX, localInnerW, lineWidth, style.textAlign);
           const textY = cursorY + (ln.height > charH ? Math.round((ln.height - charH) / 2) : 0);
-          emitTextLine(ln.runs, contentX, textY, fg, localInnerW, cursorY, ln.height);
+          emitTextLine(ln.runs, lineX, textY, fg, localInnerW, cursorY, ln.height);
           cursorY += Math.max(baseLineHeight, ln.height);
         }
         cursorY += Math.round(charH * 0.2);
@@ -16672,8 +16690,10 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
         const runs = tokenizeInlines(node.inlines);
         const lines = measure ? wrapRunsByWidth(runs, localInnerW, measure, charW, charH) : wrapRuns(runs, localMaxChars, charW, charH);
         for (const ln of lines) {
+          const lineWidth = getLineWidth(ln, localInnerW, measure, charW, charH);
+          const lineX = resolveAlignedX(contentX, localInnerW, lineWidth, style.textAlign);
           const textY = cursorY + (ln.height > charH ? Math.round((ln.height - charH) / 2) : 0);
-          emitTextLine(ln.runs, contentX, textY, void 0, localInnerW, cursorY, ln.height);
+          emitTextLine(ln.runs, lineX, textY, void 0, localInnerW, cursorY, ln.height);
           cursorY += Math.max(baseLineHeight, ln.height);
         }
         cursorY += paragraphGap;
@@ -16700,9 +16720,12 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
           for (const ln of lines) {
             if (first && markerText.length > 0) {
               ops.push({ kind: "text", text: markerText, x: contentX, y: cursorY, color: markerColor });
-              bumpMax(contentX, cursorY, markerWidth);
+              bumpMax(contentX, cursorY, markerWidth, charH);
             }
-            const x = contentX + (first ? markerAdvance : hangIndentPx);
+            const availableWidth = first ? listInnerWidth : Math.max(1, localInnerW - hangIndentPx);
+            const baseX = contentX + (first ? markerAdvance : hangIndentPx);
+            const lineWidth = getLineWidth(ln, availableWidth, measure, charW, charH);
+            const x = resolveAlignedX(baseX, availableWidth, lineWidth, style.textAlign);
             const textY = cursorY + (ln.height > charH ? Math.round((ln.height - charH) / 2) : 0);
             emitTextLine(ln.runs, x, textY, void 0, listInnerWidth, cursorY, ln.height);
             cursorY += Math.max(baseLineHeight, ln.height);
@@ -16732,7 +16755,7 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
         ops.push({ kind: "rect", x: outerX, y: outerY, w: outerW, h: outerH, color: style.borderFg });
         ops.push({ kind: "rect", x: innerX, y: innerY, w: innerW2, h: innerH2, color: style.codeBg });
         ops.push({ kind: "image", source: node.source, x: innerX, y: innerY, w: innerW2, h: innerH2, ...node.alt ? { alt: node.alt } : {} });
-        bumpMax(outerX, outerY, outerW);
+        bumpMax(outerX, outerY, outerW, outerH);
         if (!imageInfo) {
           const label = String(node.alt || node.title || node.source || "image").trim();
           if (label.length > 0) {
@@ -16794,7 +16817,7 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
           { kind: "rect", x: calloutX, y: calloutY, w: calloutW, h: calloutH, color: backgroundColor },
           { kind: "rect", x: calloutX, y: calloutY, w: barW, h: calloutH, color: accent }
         );
-        bumpMax(calloutX, calloutY, calloutW);
+        bumpMax(calloutX, calloutY, calloutW, calloutH);
         cursorY = calloutBottom + paragraphGap;
         continue;
       }
@@ -16809,22 +16832,24 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
         const quoteHeight = Math.max(1, quoteBottom - quoteTop);
         const quoteBarY = quoteTop + Math.round(charH * 0.1);
         ops.push({ kind: "rect", x: contentX, y: quoteBarY, w: quoteBarWidth, h: quoteHeight, color: style.borderFg });
-        bumpMax(contentX, quoteBarY, quoteBarWidth);
+        bumpMax(contentX, quoteBarY, quoteBarWidth, quoteHeight);
         continue;
       }
       if (node.kind === "hr") {
         const ruleThickness = Math.max(1, Math.round(charH * 0.12));
         const ruleY = cursorY + Math.round(baseLineHeight * 0.55);
         ops.push({ kind: "rect", x: contentX, y: ruleY, w: localInnerW, h: ruleThickness, color: style.borderFg });
-        bumpMax(contentX, ruleY, localInnerW);
+        bumpMax(contentX, ruleY, localInnerW, ruleThickness);
         cursorY += baseLineHeight;
       }
     }
   };
   renderNodes(nodes, x0 + padding, innerW);
+  const contentOffsetX = Number.isFinite(contentMinX) ? contentMinX : contentStartX;
+  const contentOffsetY = Number.isFinite(contentMinY) ? contentMinY : contentStartY;
   const contentHeight = Math.max(0, cursorY - (y0 + padding - scrollY));
   const contentWidth = Math.max(0, contentMaxX - (x0 + padding));
-  return { ops, linkRegions, widgetPlacements, contentWidth, contentHeight };
+  return { ops, linkRegions, widgetPlacements, contentOffsetX, contentOffsetY, contentWidth, contentHeight };
 }
 class GUIMarkdownView extends BaseWidget {
   constructor(config) {
@@ -21877,6 +21902,17 @@ function parseTransform3D(section, sectionIndex, config) {
     return s.length ? s : fallback;
   };
   const metaHas = (key) => Object.prototype.hasOwnProperty.call(rawMetadata, key);
+  const parseContentAlign = (value) => {
+    const raw = String(value ?? "").trim().toLowerCase();
+    if (raw === "center" || raw === "middle") return "center";
+    return "start";
+  };
+  const parseTextAlign = (value) => {
+    const raw = String(value ?? "").trim().toLowerCase();
+    if (raw === "center" || raw === "middle") return "center";
+    if (raw === "right" || raw === "end") return "right";
+    return "left";
+  };
   const metaTruthy = (key) => {
     const v2 = rawMetadata[key];
     if (v2 === true) return true;
@@ -21910,6 +21946,8 @@ function parseTransform3D(section, sectionIndex, config) {
   const visible = !metaTruthy("hidden");
   const navigable = metaStr("navigable", "true").trim().toLowerCase() !== "false";
   const interactive = metaStr("interactive", "true").trim().toLowerCase() !== "false";
+  const contentAlign = metaHas("contentAlign") ? parseContentAlign(rawMetadata.contentAlign) : parseContentAlign(config.sectionContentAlign ?? "start");
+  const textAlign = metaHas("textAlign") ? parseTextAlign(rawMetadata.textAlign) : parseTextAlign(config.sectionTextAlign ?? "left");
   const renderMode = (() => {
     const defaultMode = (() => {
       switch ((config.sectionRender ?? "all").toLowerCase()) {
@@ -21940,6 +21978,8 @@ function parseTransform3D(section, sectionIndex, config) {
     displayTitle,
     content: section.content,
     renderMode,
+    contentAlign,
+    textAlign,
     transform: {
       position: vec3(x, y, z),
       rotation: vec3(rotX, rotY, rotZ),
@@ -22008,6 +22048,8 @@ function getDefaultWorldsConfig() {
     autoLayoutColumns: 3,
     autoLayoutSpacing: 200,
     sectionTextureMode: "canvas2d",
+    sectionContentAlign: "start",
+    sectionTextAlign: "left",
     sectionBorderEnabled: true,
     sectionBorderWidth: 2,
     sectionLinkUnderline: false,
@@ -22159,14 +22201,18 @@ class WorldsRenderer {
   constructor(device, width, height, shaderManager) {
     __publicField(this, "device");
     __publicField(this, "renderPipeline", null);
+    __publicField(this, "linePipeline", null);
     __publicField(this, "shaderManager");
     // Buffers
     __publicField(this, "vertexBuffer", null);
     __publicField(this, "indexBuffer", null);
     __publicField(this, "uniformBuffer", null);
+    __publicField(this, "lineUniformBuffer", null);
     __publicField(this, "sampler", null);
     __publicField(this, "uniformStride", 256);
     __publicField(this, "uniformCapacity", 0);
+    __publicField(this, "lineUniformStride", 256);
+    __publicField(this, "lineUniformCapacity", 0);
     __publicField(this, "backgroundTexture", null);
     __publicField(this, "backgroundShaderTexture", null);
     __publicField(this, "backgroundShaderMipLevelCount", 1);
@@ -22193,8 +22239,10 @@ class WorldsRenderer {
   async init() {
     await this.shaderManager.init();
     await this.createRenderPipeline(this.format);
+    this.createLinePipeline(this.format);
     this.createGeometryBuffers();
     this.ensureUniformBufferCapacity(64);
+    this.ensureLineUniformBufferCapacity(64);
     this.sampler = this.device.createSampler({
       magFilter: "linear",
       minFilter: "linear",
@@ -22347,6 +22395,124 @@ class WorldsRenderer {
       pass.draw(3);
       pass.end();
     }
+  }
+  ensureLineUniformBufferCapacity(count) {
+    const needed = Math.max(1, count | 0);
+    if (this.lineUniformBuffer && this.lineUniformCapacity >= needed) return;
+    this.lineUniformCapacity = Math.max(needed, this.lineUniformCapacity > 0 ? this.lineUniformCapacity * 2 : 64);
+    if (this.lineUniformBuffer) {
+      this.lineUniformBuffer.destroy();
+    }
+    this.lineUniformBuffer = this.device.createBuffer({
+      size: this.lineUniformStride * this.lineUniformCapacity,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+  }
+  createLinePipeline(format) {
+    const shaderModule = this.device.createShaderModule({
+      label: "Worlds 3D Connector Shader",
+      code: `
+        struct LineUniforms {
+          viewProj: mat4x4<f32>,
+          start: vec4<f32>,
+          end: vec4<f32>,
+          color: vec4<f32>,
+          cameraForward: vec4<f32>,
+          cameraRight: vec4<f32>,
+          params: vec4<f32>,
+        };
+
+        @group(0) @binding(0) var<uniform> uniforms: LineUniforms;
+
+        struct VertexInput {
+          @location(0) position: vec3<f32>,
+          @location(1) uv: vec2<f32>,
+        };
+
+        struct VertexOutput {
+          @builtin(position) position: vec4<f32>,
+          @location(0) color: vec4<f32>,
+        };
+
+        @vertex
+        fn vertexMain(input: VertexInput) -> VertexOutput {
+          let t = input.position.x + 0.5;
+          var dir = uniforms.end.xyz - uniforms.start.xyz;
+          let dirLen = length(dir);
+          if (dirLen > 1e-5) {
+            dir = dir / dirLen;
+          } else {
+            dir = uniforms.cameraRight.xyz;
+          }
+
+          var side = cross(uniforms.cameraForward.xyz, dir);
+          let sideLen = length(side);
+          if (sideLen > 1e-5) {
+            side = side / sideLen;
+          } else {
+            side = uniforms.cameraRight.xyz;
+          }
+
+          let thickness = uniforms.params.x;
+          let point = mix(uniforms.start.xyz, uniforms.end.xyz, t) + side * input.position.y * thickness;
+
+          var output: VertexOutput;
+          output.position = uniforms.viewProj * vec4<f32>(point, 1.0);
+          output.color = uniforms.color;
+          return output;
+        }
+
+        @fragment
+        fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
+          return input.color;
+        }
+      `
+    });
+    this.linePipeline = this.device.createRenderPipeline({
+      label: "Worlds 3D Connector Pipeline",
+      layout: "auto",
+      vertex: {
+        module: shaderModule,
+        entryPoint: "vertexMain",
+        buffers: [{
+          arrayStride: 20,
+          attributes: [
+            { shaderLocation: 0, offset: 0, format: "float32x3" },
+            { shaderLocation: 1, offset: 12, format: "float32x2" }
+          ]
+        }]
+      },
+      fragment: {
+        module: shaderModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format,
+          blend: {
+            color: {
+              srcFactor: "src-alpha",
+              dstFactor: "one-minus-src-alpha",
+              operation: "add"
+            },
+            alpha: {
+              srcFactor: "one",
+              dstFactor: "one-minus-src-alpha",
+              operation: "add"
+            }
+          }
+        }]
+      },
+      primitive: { topology: "triangle-list", cullMode: "none" }
+    });
+  }
+  createBindGroupForLine(uniformOffset) {
+    if (!this.linePipeline || !this.lineUniformBuffer) return null;
+    return this.device.createBindGroup({
+      layout: this.linePipeline.getBindGroupLayout(0),
+      entries: [{
+        binding: 0,
+        resource: { buffer: this.lineUniformBuffer, offset: uniformOffset, size: 160 }
+      }]
+    });
   }
   /**
    * Create the render pipeline with shaders
@@ -22708,7 +22874,7 @@ class WorldsRenderer {
   /**
    * Render all 3D sections
    */
-  render(camera, layouts, hoveredSectionIndex = null, background) {
+  render(camera, layouts, hoveredSectionIndex = null, background, connectors = []) {
     var _a;
     if (!this.renderPipeline || !this.vertexBuffer || !this.indexBuffer || !this.renderTexture) {
       console.warn("WorldsRenderer not fully initialized");
@@ -22716,6 +22882,7 @@ class WorldsRenderer {
     }
     const paperEnabled = !!(background == null ? void 0 : background.enabled);
     this.ensureUniformBufferCapacity(layouts.length + (paperEnabled ? 1 : 0));
+    this.ensureLineUniformBufferCapacity(connectors.length);
     if (!this.uniformBuffer || !this.sampler) {
       console.warn("WorldsRenderer not fully initialized");
       return;
@@ -22920,6 +23087,44 @@ class WorldsRenderer {
       if (!bindGroup) continue;
       pass.setBindGroup(0, bindGroup);
       pass.drawIndexed(6);
+    }
+    if (connectors.length > 0 && this.linePipeline && this.lineUniformBuffer) {
+      pass.setPipeline(this.linePipeline);
+      pass.setVertexBuffer(0, this.vertexBuffer);
+      pass.setIndexBuffer(this.indexBuffer, "uint16");
+      for (let i = 0; i < connectors.length; i++) {
+        const connector = connectors[i];
+        const uniformOffset = i * this.lineUniformStride;
+        const color = ColorUtils.rgbaNorm(connector.color);
+        const lineColor2 = new Float32Array([
+          color[0] ?? 1,
+          color[1] ?? 1,
+          color[2] ?? 1,
+          (color[3] ?? 1) * (Number.isFinite(connector.opacity) ? connector.opacity : 1)
+        ]);
+        this.device.queue.writeBuffer(
+          this.lineUniformBuffer,
+          uniformOffset + 0,
+          viewProjectionMatrix.buffer,
+          viewProjectionMatrix.byteOffset,
+          viewProjectionMatrix.byteLength
+        );
+        this.device.queue.writeBuffer(this.lineUniformBuffer, uniformOffset + 64, new Float32Array([connector.start.x, connector.start.y, connector.start.z, 1]));
+        this.device.queue.writeBuffer(this.lineUniformBuffer, uniformOffset + 80, new Float32Array([connector.end.x, connector.end.y, connector.end.z, 1]));
+        this.device.queue.writeBuffer(this.lineUniformBuffer, uniformOffset + 96, lineColor2);
+        this.device.queue.writeBuffer(this.lineUniformBuffer, uniformOffset + 112, cameraForward);
+        this.device.queue.writeBuffer(this.lineUniformBuffer, uniformOffset + 128, cameraRight);
+        this.device.queue.writeBuffer(this.lineUniformBuffer, uniformOffset + 144, new Float32Array([
+          Number.isFinite(connector.thickness) ? connector.thickness : 1,
+          0,
+          0,
+          0
+        ]));
+        const bindGroup = this.createBindGroupForLine(uniformOffset);
+        if (!bindGroup) continue;
+        pass.setBindGroup(0, bindGroup);
+        pass.drawIndexed(6);
+      }
     }
     pass.end();
     this.device.queue.submit([encoder.finish()]);
@@ -25919,6 +26124,12 @@ class StorieEngine {
     __publicField(this, "current3DSectionIndex", null);
     __publicField(this, "selected3DSectionId", null);
     __publicField(this, "selected3DSectionIndex", null);
+    __publicField(this, "worlds3DRenderedLinkOverlay", {
+      enabled: false,
+      section: null,
+      internalOnly: true,
+      thickness: 0.22
+    });
     __publicField(this, "activated3DLinksQueue", []);
     // 3D section texture rasterization cache
     __publicField(this, "sectionTextureCache", /* @__PURE__ */ new Map());
@@ -26872,6 +27083,26 @@ class StorieEngine {
         if (next === "clip" || next === "expand" || next === "expand-y" || next === "fit" || next === "fit-y") {
           const prev = engine.worldsConfig.sectionOverflow;
           engine.worldsConfig.sectionOverflow = next;
+          if (prev !== next) {
+            engine.clear3DSectionTextures();
+          }
+        }
+      }
+      if (config.sectionContentAlign !== void 0) {
+        const next = config.sectionContentAlign;
+        if (next === "start" || next === "center") {
+          const prev = engine.worldsConfig.sectionContentAlign;
+          engine.worldsConfig.sectionContentAlign = next;
+          if (prev !== next) {
+            engine.clear3DSectionTextures();
+          }
+        }
+      }
+      if (config.sectionTextAlign !== void 0) {
+        const next = config.sectionTextAlign;
+        if (next === "left" || next === "center" || next === "right") {
+          const prev = engine.worldsConfig.sectionTextAlign;
+          engine.worldsConfig.sectionTextAlign = next;
           if (prev !== next) {
             engine.clear3DSectionTextures();
           }
@@ -29580,6 +29811,32 @@ class StorieEngine {
           },
           popActivated: () => {
             return engine.activated3DLinksQueue.shift() ?? null;
+          },
+          setRenderOverlay: (options) => {
+            if (!options) {
+              engine.worlds3DRenderedLinkOverlay.enabled = false;
+              engine.worlds3DRenderedLinkOverlay.section = null;
+              engine.worlds3DRenderedLinkOverlay.internalOnly = true;
+              engine.worlds3DRenderedLinkOverlay.thickness = 0.22;
+              return;
+            }
+            if (typeof options.enabled === "boolean") {
+              engine.worlds3DRenderedLinkOverlay.enabled = options.enabled;
+            } else {
+              engine.worlds3DRenderedLinkOverlay.enabled = true;
+            }
+            if (Object.prototype.hasOwnProperty.call(options, "section")) {
+              engine.worlds3DRenderedLinkOverlay.section = options.section ?? null;
+            }
+            if (typeof options.internalOnly === "boolean") {
+              engine.worlds3DRenderedLinkOverlay.internalOnly = options.internalOnly;
+            }
+            if (typeof options.thickness === "number" && Number.isFinite(options.thickness)) {
+              engine.worlds3DRenderedLinkOverlay.thickness = Math.max(0.01, options.thickness);
+            }
+          },
+          getVisualConnections: (options) => {
+            return engine.getVisual3DLinkConnections(options);
           }
         },
         presets: {
@@ -30503,6 +30760,295 @@ class StorieEngine {
       width: Math.max(1, maxX - minX),
       height: Math.max(1, maxY - minY)
     };
+  }
+  slugifyWorldsAnchor(value) {
+    return value.toLowerCase().trim().replace(/[`*_~]/g, "").replace(/\{[^}]*\}\s*$/g, "").replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-");
+  }
+  resolveWorldsInternalLinkTarget(url) {
+    if (typeof url !== "string" || !url.startsWith("#")) return null;
+    let target = "";
+    try {
+      target = decodeURIComponent(url.slice(1)).trim();
+    } catch {
+      target = url.slice(1).trim();
+    }
+    if (!target) return null;
+    const targetSlug = this.slugifyWorldsAnchor(target);
+    return this.section3DLayouts.find((layout) => {
+      const title = (layout.displayTitle || layout.sectionTitle || "").trim();
+      return this.slugifyWorldsAnchor(title) === targetSlug;
+    }) ?? null;
+  }
+  projectWorldPointToScreen(point, options) {
+    if (!this.camera3D) return null;
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    if (canvasW <= 0 || canvasH <= 0) return null;
+    const aspect = canvasW / canvasH;
+    const view = getCameraViewMatrix(this.camera3D);
+    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+    const viewProj = mat4Multiply(proj, view);
+    const clip = mat4TransformVec4(viewProj, point.x, point.y, point.z, 1);
+    if (clip.w <= 1e-6) return null;
+    const ndcX = clip.x / clip.w;
+    const ndcY = clip.y / clip.w;
+    if (!Number.isFinite(ndcX) || !Number.isFinite(ndcY)) return null;
+    const clampToViewport = (options == null ? void 0 : options.clampToViewport) === true;
+    const allowOffscreen = (options == null ? void 0 : options.allowOffscreen) === true;
+    if (!clampToViewport && !allowOffscreen && (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1)) return null;
+    const screenMarginNdc = 0.94;
+    const finalNdcX = clampToViewport ? Math.max(-screenMarginNdc, Math.min(screenMarginNdc, ndcX)) : ndcX;
+    const finalNdcY = clampToViewport ? Math.max(-screenMarginNdc, Math.min(screenMarginNdc, ndcY)) : ndcY;
+    return {
+      x: (finalNdcX * 0.5 + 0.5) * canvasW,
+      y: (1 - (finalNdcY * 0.5 + 0.5)) * canvasH
+    };
+  }
+  getSectionScreenCenter(layout, options) {
+    const model = this.get3DCardModelMatrix(layout);
+    const center = mat4TransformPoint(model, { x: 0, y: 0, z: 0 });
+    return this.projectWorldPointToScreen(center, options);
+  }
+  project3DCardLocalPointToScreen(layout, localPoint, options) {
+    const model = this.get3DCardModelMatrix(layout);
+    const world = mat4TransformPoint(model, localPoint);
+    return this.projectWorldPointToScreen(world, options);
+  }
+  project3DTexturePointToScreen(layout, point, options) {
+    const dims = this.sectionTextureCache.get(layout.sectionId);
+    if (!dims || dims.width <= 0 || dims.height <= 0) return null;
+    const u = point.x / dims.width;
+    const v2 = point.y / dims.height;
+    return this.project3DCardLocalPointToScreen(
+      layout,
+      { x: u - 0.5, y: 0.5 - v2, z: 0 },
+      options
+    );
+  }
+  project3DTextureRectQuadToScreen(layout, rect, options) {
+    const points = [
+      this.project3DTexturePointToScreen(layout, { x: rect.x, y: rect.y }, options),
+      this.project3DTexturePointToScreen(layout, { x: rect.x + rect.w, y: rect.y }, options),
+      this.project3DTexturePointToScreen(layout, { x: rect.x + rect.w, y: rect.y + rect.h }, options),
+      this.project3DTexturePointToScreen(layout, { x: rect.x, y: rect.y + rect.h }, options)
+    ];
+    return points.every((point) => !!point) ? points : null;
+  }
+  getSectionScreenQuad(layout, options) {
+    const points = [
+      this.project3DCardLocalPointToScreen(layout, { x: -0.5, y: -0.5, z: 0 }, options),
+      this.project3DCardLocalPointToScreen(layout, { x: 0.5, y: -0.5, z: 0 }, options),
+      this.project3DCardLocalPointToScreen(layout, { x: 0.5, y: 0.5, z: 0 }, options),
+      this.project3DCardLocalPointToScreen(layout, { x: -0.5, y: 0.5, z: 0 }, options)
+    ];
+    return points.every((point) => !!point) ? points : null;
+  }
+  getPolygonCenter(points) {
+    if (!points.length) return null;
+    let sumX = 0;
+    let sumY = 0;
+    for (const point of points) {
+      sumX += point.x;
+      sumY += point.y;
+    }
+    return { x: sumX / points.length, y: sumY / points.length };
+  }
+  intersectRayWithSegment2D(origin, dir, a, b) {
+    const seg = { x: b.x - a.x, y: b.y - a.y };
+    const cross = dir.x * seg.y - dir.y * seg.x;
+    if (Math.abs(cross) < 1e-6) return null;
+    const ao = { x: a.x - origin.x, y: a.y - origin.y };
+    const t = (ao.x * seg.y - ao.y * seg.x) / cross;
+    const u = (ao.x * dir.y - ao.y * dir.x) / cross;
+    if (t < 0 || u < 0 || u > 1) return null;
+    return { x: origin.x + dir.x * t, y: origin.y + dir.y * t, t };
+  }
+  getPolygonAttachmentPoint(polygon, towardPoint) {
+    const center = this.getPolygonCenter(polygon);
+    if (!center) return null;
+    if (!towardPoint) return center;
+    const dir = { x: towardPoint.x - center.x, y: towardPoint.y - center.y };
+    const dirLen = Math.hypot(dir.x, dir.y);
+    if (dirLen < 1e-6) return center;
+    dir.x /= dirLen;
+    dir.y /= dirLen;
+    let best = null;
+    for (let i = 0; i < polygon.length; i++) {
+      const a = polygon[i];
+      const b = polygon[(i + 1) % polygon.length];
+      const hit = this.intersectRayWithSegment2D(center, dir, a, b);
+      if (!hit) continue;
+      if (!best || hit.t < best.t) best = hit;
+    }
+    if (best) return { x: best.x, y: best.y };
+    let fallback = polygon[0];
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const point of polygon) {
+      const dx = point.x - towardPoint.x;
+      const dy = point.y - towardPoint.y;
+      const dist = dx * dx + dy * dy;
+      if (dist < bestDist) {
+        fallback = point;
+        bestDist = dist;
+      }
+    }
+    return fallback;
+  }
+  getSectionScreenAttachmentPoint(layout, towardPoint, options) {
+    const candidates = [
+      this.project3DCardLocalPointToScreen(layout, { x: -0.5, y: 0, z: 0 }, options),
+      this.project3DCardLocalPointToScreen(layout, { x: 0.5, y: 0, z: 0 }, options),
+      this.project3DCardLocalPointToScreen(layout, { x: 0, y: 0.5, z: 0 }, options),
+      this.project3DCardLocalPointToScreen(layout, { x: 0, y: -0.5, z: 0 }, options),
+      this.getSectionScreenCenter(layout, options)
+    ].filter((point) => !!point);
+    if (candidates.length === 0) return null;
+    if (!towardPoint) return candidates[candidates.length - 1] ?? null;
+    let best = candidates[0];
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const candidate of candidates) {
+      const dx = candidate.x - towardPoint.x;
+      const dy = candidate.y - towardPoint.y;
+      const dist = dx * dx + dy * dy;
+      if (dist < bestDist) {
+        best = candidate;
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+  getVisual3DLinkConnections(options) {
+    if (!this.worldsEnabled || !this.camera3D) return [];
+    const visibleOnly = (options == null ? void 0 : options.visibleOnly) === true;
+    const internalOnly = (options == null ? void 0 : options.internalOnly) === true;
+    const requested = (options == null ? void 0 : options.section) !== void 0 && (options == null ? void 0 : options.section) !== null ? this.resolveRuntimeSectionRef(options.section) : null;
+    const requestedSectionId = (requested == null ? void 0 : requested.sectionId) ?? null;
+    const out = [];
+    for (const layout of this.section3DLayouts) {
+      if (requestedSectionId && layout.sectionId !== requestedSectionId) continue;
+      if (!layout.texture || !layout.visible || layout.interactive === false) continue;
+      const regions = this.sectionLinkRegionsCache.get(layout.sectionId);
+      if (!regions || regions.length === 0) continue;
+      for (let linkIndex = 0; linkIndex < regions.length; linkIndex++) {
+        const region = regions[linkIndex];
+        const internal = typeof region.url === "string" && region.url.startsWith("#");
+        if (internalOnly && !internal) continue;
+        const targetLayout = internal ? this.resolveWorldsInternalLinkTarget(region.url) : null;
+        const sourceRectScreen = this.project3DTextureRectToScreen(layout, region);
+        const sourceQuadScreen = this.project3DTextureRectQuadToScreen(layout, region);
+        const targetCenterScreen = targetLayout ? this.getSectionScreenCenter(targetLayout, { clampToViewport: true }) : null;
+        const targetQuadScreen = targetLayout ? this.getSectionScreenQuad(targetLayout, { allowOffscreen: true }) : null;
+        const sourcePointScreen = sourceQuadScreen ? this.getPolygonAttachmentPoint(sourceQuadScreen, targetCenterScreen) : null;
+        const targetPointScreen = targetQuadScreen ? this.getPolygonAttachmentPoint(targetQuadScreen, sourcePointScreen) : targetLayout ? this.getSectionScreenAttachmentPoint(targetLayout, sourcePointScreen, { clampToViewport: true }) : null;
+        const isVisible = !!sourcePointScreen && (!internal || !targetLayout || !!targetPointScreen);
+        if (visibleOnly && !isVisible) continue;
+        out.push({
+          sourceSectionId: layout.sectionId,
+          sourceSectionIndex: layout.sectionIndex,
+          sourceTitle: layout.displayTitle || layout.sectionTitle,
+          linkIndex,
+          url: region.url,
+          text: region.text,
+          internal,
+          targetSectionId: (targetLayout == null ? void 0 : targetLayout.sectionId) ?? null,
+          targetSectionIndex: (targetLayout == null ? void 0 : targetLayout.sectionIndex) ?? null,
+          targetTitle: targetLayout ? targetLayout.displayTitle || targetLayout.sectionTitle : null,
+          sourceRectScreen,
+          sourceQuadScreen,
+          sourcePointScreen,
+          targetPointScreen,
+          visible: isVisible
+        });
+      }
+    }
+    return out;
+  }
+  getTextureRectLocalBounds(layout, rect) {
+    const dims = this.sectionTextureCache.get(layout.sectionId);
+    if (!dims || dims.width <= 0 || dims.height <= 0) return null;
+    const uMin = rect.x / dims.width;
+    const uMax = (rect.x + rect.w) / dims.width;
+    const vMin = rect.y / dims.height;
+    const vMax = (rect.y + rect.h) / dims.height;
+    const minX = uMin - 0.5;
+    const maxX = uMax - 0.5;
+    const maxY = 0.5 - vMin;
+    const minY = 0.5 - vMax;
+    return {
+      minX,
+      maxX,
+      minY,
+      maxY,
+      centerX: (minX + maxX) * 0.5,
+      centerY: (minY + maxY) * 0.5
+    };
+  }
+  getRectAttachmentPointLocal(bounds, toward) {
+    const dx = toward.x - bounds.centerX;
+    const dy = toward.y - bounds.centerY;
+    if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) {
+      return { x: bounds.maxX, y: bounds.centerY };
+    }
+    const tx = Math.abs(dx) > 1e-6 ? ((dx > 0 ? bounds.maxX : bounds.minX) - bounds.centerX) / dx : Number.POSITIVE_INFINITY;
+    const ty = Math.abs(dy) > 1e-6 ? ((dy > 0 ? bounds.maxY : bounds.minY) - bounds.centerY) / dy : Number.POSITIVE_INFINITY;
+    const t = Math.min(
+      Number.isFinite(tx) && tx > 0 ? tx : Number.POSITIVE_INFINITY,
+      Number.isFinite(ty) && ty > 0 ? ty : Number.POSITIVE_INFINITY
+    );
+    if (!Number.isFinite(t)) {
+      return { x: bounds.centerX, y: bounds.centerY };
+    }
+    return {
+      x: bounds.centerX + dx * t,
+      y: bounds.centerY + dy * t
+    };
+  }
+  getCardAttachmentPointLocal(toward) {
+    return this.getRectAttachmentPointLocal(
+      { minX: -0.5, maxX: 0.5, minY: -0.5, maxY: 0.5, centerX: 0, centerY: 0 },
+      toward
+    );
+  }
+  getRendered3DLinkConnectors() {
+    if (!this.worlds3DRenderedLinkOverlay.enabled) return [];
+    const requested = this.worlds3DRenderedLinkOverlay.section !== void 0 && this.worlds3DRenderedLinkOverlay.section !== null ? this.resolveRuntimeSectionRef(this.worlds3DRenderedLinkOverlay.section) : null;
+    const fallbackSection = this.getResolvedSelected3DSectionIndex();
+    const sectionIndex = (requested == null ? void 0 : requested.sectionIndex) ?? fallbackSection;
+    if (!(typeof sectionIndex === "number" && Number.isFinite(sectionIndex))) return [];
+    const sourceLayout = this.getSectionLayoutByIndex(sectionIndex);
+    if (!sourceLayout || !sourceLayout.visible || !sourceLayout.texture) return [];
+    const regions = this.sectionLinkRegionsCache.get(sourceLayout.sectionId);
+    if (!regions || regions.length === 0) return [];
+    const sourceModel = this.get3DCardModelMatrix(sourceLayout);
+    const sourceInv = mat4Invert(sourceModel);
+    if (!sourceInv) return [];
+    const connectors = [];
+    for (const region of regions) {
+      const internal = typeof region.url === "string" && region.url.startsWith("#");
+      if (this.worlds3DRenderedLinkOverlay.internalOnly && !internal) continue;
+      const targetLayout = internal ? this.resolveWorldsInternalLinkTarget(region.url) : null;
+      if (!targetLayout || !targetLayout.visible || !targetLayout.texture) continue;
+      const sourceBounds = this.getTextureRectLocalBounds(sourceLayout, region);
+      if (!sourceBounds) continue;
+      const targetModel = this.get3DCardModelMatrix(targetLayout);
+      const targetInv = mat4Invert(targetModel);
+      if (!targetInv) continue;
+      const targetCenterWorld = mat4TransformPoint(targetModel, { x: 0, y: 0, z: 0 });
+      const targetCenterInSource = mat4TransformPoint(sourceInv, targetCenterWorld);
+      const sourceAnchorLocal = this.getRectAttachmentPointLocal(sourceBounds, targetCenterInSource);
+      const sourceAnchorWorld = mat4TransformPoint(sourceModel, { x: sourceAnchorLocal.x, y: sourceAnchorLocal.y, z: 0 });
+      const sourceAnchorInTarget = mat4TransformPoint(targetInv, sourceAnchorWorld);
+      const targetAnchorLocal = this.getCardAttachmentPointLocal(sourceAnchorInTarget);
+      const targetAnchorWorld = mat4TransformPoint(targetModel, { x: targetAnchorLocal.x, y: targetAnchorLocal.y, z: 0 });
+      connectors.push({
+        start: sourceAnchorWorld,
+        end: targetAnchorWorld,
+        color: 3500624895,
+        thickness: this.worlds3DRenderedLinkOverlay.thickness,
+        opacity: 0.92
+      });
+    }
+    return connectors;
   }
   getWorldsInlineWidgetRenderScale(placement, projected) {
     const sx = placement.w > 0 ? projected.width / placement.w : 1;
@@ -32075,7 +32621,8 @@ ${exportVars}
             thickness: 0.06,
             noiseStrength: paperNoiseStrength
           } : void 0;
-          this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig);
+          const linkConnectors = this.getRendered3DLinkConnectors();
+          this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig, linkConnectors);
         }
         if (this.webgpuUIRenderer) {
           this.syncWorldsInlineWidgets();
@@ -32394,7 +32941,11 @@ ${exportVars}
         const shaderBg2 = !!this.parseWorldsSectionBackgroundShader();
         const surfaceBg2 = this.resolveWorldsSectionBackground();
         const mdBg2 = proceduralRuledPaper2 || bakedRuledPaper2 || shaderBg2 ? this.withAlpha(surfaceBg2, 0) : surfaceBg2;
-        const mdStyle2 = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg2 });
+        const mdStyle2 = this.createWorldsMarkdownStyle({
+          activeLinkIndex,
+          background: mdBg2,
+          textAlign: layout.textAlign
+        });
         const measureTextWidth = this.worldsCardFontStack && measureCtx ? (text) => measureCtx.measureText(text).width : void 0;
         const probeWidthPx = overflowMode === "fit" ? maxW : widthPx;
         const probe = layoutMarkdownDocument(
@@ -32468,7 +33019,11 @@ ${exportVars}
       const surfaceBg = this.resolveWorldsSectionBackground();
       const borderStyle = this.getStyle("border");
       const mdBg = proceduralRuledPaper || bakedRuledPaper || shaderBg ? this.withAlpha(surfaceBg, 0) : surfaceBg;
-      const mdStyle = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
+      const mdStyle = this.createWorldsMarkdownStyle({
+        activeLinkIndex,
+        background: mdBg,
+        textAlign: layout.textAlign
+      });
       const result = layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: widthPx, height: heightPx },
@@ -32485,28 +33040,7 @@ ${exportVars}
         texturePadding,
         this.getWorldsWidgetLayoutOptions(layout.sectionIndex, layoutOverflow)
       );
-      if ((this.worldsConfig.sectionContentAlign ?? "start") === "center") {
-        const innerW = Math.max(1, widthPx - texturePadding * 2);
-        const innerH = Math.max(1, heightPx - texturePadding * 2);
-        const dx = Math.max(0, Math.round((innerW - result.contentWidth) / 2));
-        const dy = Math.max(0, Math.round((innerH - result.contentHeight) / 2));
-        if (dx !== 0 || dy !== 0) {
-          let isFirstRect = true;
-          for (const op of result.ops) {
-            if (op.kind === "rect" && isFirstRect) {
-              isFirstRect = false;
-              continue;
-            }
-            op.x = op.x + dx;
-            op.y = op.y + dy;
-          }
-          for (const r2 of result.linkRegions) {
-            r2.x += dx;
-            r2.y += dy;
-          }
-          this.translateWidgetPlacements(result.widgetPlacements, dx, dy);
-        }
-      }
+      this.applyWorldsContentAlignment(result, widthPx, heightPx, texturePadding, layout.contentAlign);
       const scaledLinkRegions = this.scaleLinkRegions(result.linkRegions, textureScale);
       const scaledWidgetPlacements = this.scaleWidgetPlacements(result.widgetPlacements, textureScale);
       ctx.clearRect(0, 0, widthPx, heightPx);
@@ -32891,6 +33425,7 @@ ${exportVars}
       borderFg: border.fg,
       surfaceBg: surface.bg,
       headingFg: heading.fg,
+      textAlign: (options == null ? void 0 : options.textAlign) ?? "left",
       listMarker: this.getWorldsListMarker(),
       listMarkerGapPx: this.getWorldsListMarkerGapPx(),
       listHangIndentPx: this.getWorldsListHangIndentPx(),
@@ -32906,6 +33441,35 @@ ${exportVars}
       codeBg: code.bg,
       bg: (options == null ? void 0 : options.background) ?? surface.bg
     };
+  }
+  applyWorldsContentAlignment(result, widthPx, heightPx, texturePadding, contentAlign) {
+    if (contentAlign !== "center") return;
+    const innerW = Math.max(1, widthPx - texturePadding * 2);
+    const innerH = Math.max(1, heightPx - texturePadding * 2);
+    const xInset = Math.max(0, result.contentOffsetX - texturePadding);
+    const contentWidth = Math.max(0, result.contentWidth - xInset);
+    const contentHeight = result.contentHeight;
+    const currentLeft = result.contentOffsetX;
+    const currentTop = result.contentOffsetY;
+    const targetLeft = texturePadding + Math.max(0, Math.round((innerW - contentWidth) / 2));
+    const targetTop = texturePadding + Math.max(0, Math.round((innerH - contentHeight) / 2));
+    const dx = Math.round(targetLeft - currentLeft);
+    const dy = Math.round(targetTop - currentTop);
+    if (dx === 0 && dy === 0) return;
+    let isFirstRect = true;
+    for (const op of result.ops) {
+      if (op.kind === "rect" && isFirstRect) {
+        isFirstRect = false;
+        continue;
+      }
+      op.x += dx;
+      op.y += dy;
+    }
+    for (const region of result.linkRegions) {
+      region.x += dx;
+      region.y += dy;
+    }
+    this.translateWidgetPlacements(result.widgetPlacements, dx, dy);
   }
   ensure3DSectionTexturesWebGPUUI(device) {
     if (!(this.renderer instanceof WebGPURenderer)) return;
@@ -32958,7 +33522,11 @@ ${exportVars}
       const contentOverride = this.getWorldsSectionContentOverride(layout.sectionId);
       const markdown = buildWorldsCardMarkdown(layout, contentOverride ?? void 0);
       const nodes = parseMarkdownLite(markdown);
-      const style = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
+      const style = this.createWorldsMarkdownStyle({
+        activeLinkIndex,
+        background: mdBg,
+        textAlign: layout.textAlign
+      });
       if (overflowMode === "expand" || overflowMode === "expand-y" || overflowMode === "fit" || overflowMode === "fit-y") {
         const probeWidthPx = overflowMode === "fit" ? maxW : widthPx;
         const probe = layoutMarkdownDocument(
@@ -33001,7 +33569,11 @@ ${exportVars}
       const existing = this.sectionTextureCache.get(layout.sectionId);
       if (existing && existing.width === textureWidthPx && existing.height === textureHeightPx && existing.activeLinkIndex === activeLinkIndex && layout.texture) {
         if (!this.sectionLinkRegionsCache.has(layout.sectionId) || !this.sectionWidgetPlacementsCache.has(layout.sectionId)) {
-          const style2 = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
+          const style2 = this.createWorldsMarkdownStyle({
+            activeLinkIndex,
+            background: mdBg,
+            textAlign: layout.textAlign
+          });
           const result2 = layoutMarkdownDocument(
             nodes,
             { x: 0, y: 0, width: widthPx, height: heightPx },
@@ -33015,17 +33587,7 @@ ${exportVars}
             texturePadding,
             this.getWorldsWidgetLayoutOptions(layout.sectionIndex, layoutOverflow)
           );
-          if ((this.worldsConfig.sectionContentAlign ?? "start") === "center") {
-            const innerW = Math.max(1, widthPx - texturePadding * 2);
-            const innerH = Math.max(1, heightPx - texturePadding * 2);
-            const dx = Math.max(0, Math.round((innerW - result2.contentWidth) / 2));
-            const dy = Math.max(0, Math.round((innerH - result2.contentHeight) / 2));
-            for (const region of result2.linkRegions) {
-              region.x += dx;
-              region.y += dy;
-            }
-            this.translateWidgetPlacements(result2.widgetPlacements, dx, dy);
-          }
+          this.applyWorldsContentAlignment(result2, widthPx, heightPx, texturePadding, layout.contentAlign);
           this.sectionLinkRegionsCache.set(layout.sectionId, this.scaleLinkRegions(result2.linkRegions, textureScale));
           this.sectionWidgetPlacementsCache.set(layout.sectionId, this.scaleWidgetPlacements(result2.widgetPlacements, textureScale));
         }
@@ -33056,28 +33618,7 @@ ${exportVars}
         texturePadding,
         this.getWorldsWidgetLayoutOptions(layout.sectionIndex, layoutOverflow)
       );
-      if ((this.worldsConfig.sectionContentAlign ?? "start") === "center") {
-        const innerW = Math.max(1, widthPx - texturePadding * 2);
-        const innerH = Math.max(1, heightPx - texturePadding * 2);
-        const dx = Math.max(0, Math.round((innerW - result.contentWidth) / 2));
-        const dy = Math.max(0, Math.round((innerH - result.contentHeight) / 2));
-        if (dx !== 0 || dy !== 0) {
-          let isFirstRect = true;
-          for (const op of result.ops) {
-            if (op.kind === "rect" && isFirstRect) {
-              isFirstRect = false;
-              continue;
-            }
-            op.x = op.x + dx;
-            op.y = op.y + dy;
-          }
-          for (const r2 of result.linkRegions) {
-            r2.x += dx;
-            r2.y += dy;
-          }
-          this.translateWidgetPlacements(result.widgetPlacements, dx, dy);
-        }
-      }
+      this.applyWorldsContentAlignment(result, widthPx, heightPx, texturePadding, layout.contentAlign);
       this.sectionLinkRegionsCache.set(layout.sectionId, this.scaleLinkRegions(result.linkRegions, textureScale));
       this.sectionWidgetPlacementsCache.set(layout.sectionId, this.scaleWidgetPlacements(result.widgetPlacements, textureScale));
       ui.clearCommands();
@@ -34452,14 +34993,7 @@ ${exportVars}
       this.activated3DLinksQueue.splice(0, this.activated3DLinksQueue.length - 32);
     }
     if (url.startsWith("#")) {
-      const target = decodeURIComponent(url.slice(1)).trim();
-      if (!target || !this.camera3D) return;
-      const slugify = (s) => s.toLowerCase().trim().replace(/[`*_~]/g, "").replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-");
-      const targetSlug = slugify(target);
-      const layout = this.section3DLayouts.find((l) => {
-        const title = (l.displayTitle || l.sectionTitle || "").trim();
-        return slugify(title) === targetSlug;
-      });
+      const layout = this.resolveWorldsInternalLinkTarget(url);
       if (layout) {
         const style = this.lastApplied3DCameraFocus;
         const fill = (style == null ? void 0 : style.kind) === "fit" ? style.fill : 0.9;

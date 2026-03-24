@@ -258,6 +258,7 @@ function loadSection(selector, focusCamera) {
   state.draft.directiveText = directiveToText(section.directive);
   state.draft.content = String(section.content ?? '');
   state.dirty = false;
+  worlds.links.setRenderOverlay({ enabled: true, section: section.sectionId, internalOnly: true, thickness: 0.12 });
 
   syncWidgetsFromDraft();
   updateHintLabel();
@@ -314,9 +315,18 @@ function selectSection(selector, focusCamera = true) {
 
 function resetView() {
   const current = state.selectedSectionIndex ?? 0;
-  worlds.presets.apply('story-editor');
+  applyEditorPreset();
   worlds.camera.focusOnSectionFit(current, 0.9, { keepRotation: true });
   setStatus('Reset the editor camera to the story-editor preset.');
+}
+
+function applyEditorPreset() {
+  worlds.presets.apply('story-editor');
+  worlds.camera.setRotation(0, 0, 0);
+}
+
+function drawSelectedSectionLinkGuides() {
+  canvas2d.clear('rgba(0, 0, 0, 0)');
 }
 
 function toggleBuiltInControls() {
@@ -369,7 +379,7 @@ function layoutPanels() {
 ```
 
 ```js on:init
-worlds.presets.apply('story-editor');
+applyEditorPreset();
 worlds.links.setKeyHandlingEnabled(false);
 
 gui.init();
@@ -549,6 +559,7 @@ if (typeof current === 'number' && current !== state.lastWorldSection) {
 ```js on:render
 term.layerID = 'default';
 term.clear();
+canvas2d.clear('rgba(0, 0, 0, 0)');
 ```
 
 # Entrance

@@ -861,6 +861,19 @@ export function parseTransform3D(
 
   const metaHas = (key: string): boolean => Object.prototype.hasOwnProperty.call(rawMetadata, key);
 
+  const parseContentAlign = (value: unknown): 'start' | 'center' => {
+    const raw = String(value ?? '').trim().toLowerCase();
+    if (raw === 'center' || raw === 'middle') return 'center';
+    return 'start';
+  };
+
+  const parseTextAlign = (value: unknown): 'left' | 'center' | 'right' => {
+    const raw = String(value ?? '').trim().toLowerCase();
+    if (raw === 'center' || raw === 'middle') return 'center';
+    if (raw === 'right' || raw === 'end') return 'right';
+    return 'left';
+  };
+
   const metaTruthy = (key: string): boolean => {
     const v = (rawMetadata as any)[key];
     if (v === true) return true;
@@ -909,6 +922,12 @@ export function parseTransform3D(
   const visible = !metaTruthy('hidden');
   const navigable = metaStr('navigable', 'true').trim().toLowerCase() !== 'false';
   const interactive = metaStr('interactive', 'true').trim().toLowerCase() !== 'false';
+  const contentAlign = metaHas('contentAlign')
+    ? parseContentAlign((rawMetadata as any).contentAlign)
+    : parseContentAlign(config.sectionContentAlign ?? 'start');
+  const textAlign = metaHas('textAlign')
+    ? parseTextAlign((rawMetadata as any).textAlign)
+    : parseTextAlign(config.sectionTextAlign ?? 'left');
   const renderMode = (() => {
     const defaultMode = (() => {
       switch ((config.sectionRender ?? 'all').toLowerCase()) {
@@ -947,6 +966,8 @@ export function parseTransform3D(
     displayTitle,
     content: section.content,
     renderMode,
+    contentAlign,
+    textAlign,
     transform: {
       position: vec3(x, y, z),
       rotation: vec3(rotX, rotY, rotZ),
@@ -1035,6 +1056,8 @@ export function getDefaultWorldsConfig(): WorldsConfig {
     autoLayoutColumns: 3,
     autoLayoutSpacing: 200,
     sectionTextureMode: 'canvas2d',
+    sectionContentAlign: 'start',
+    sectionTextAlign: 'left',
     sectionBorderEnabled: true,
     sectionBorderWidth: 2,
     sectionLinkUnderline: false,

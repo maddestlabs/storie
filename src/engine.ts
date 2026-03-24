@@ -46,7 +46,7 @@ import { setTUIThemeFromStyles } from './ui/tui/theme.js';
 import { WebGPUUIRenderer } from './ui/webgpu-ui-renderer.js';
 import { parseMarkdownLite } from './ui/document/markdown-lite.js';
 import { layoutMarkdownDocument } from './ui/document/layout.js';
-import type { LinkRegion, MarkdownStyle, WidgetPlacement, LayoutOptions } from './ui/document/types.js';
+import type { DrawOp, LinkRegion, MarkdownStyle, WidgetPlacement, LayoutOptions } from './ui/document/types.js';
 import type { Draw2D } from './ui/draw2d.js';
 import { getHiddenTextInputBridgeAttributes, normalizeSingleLineText } from './ui/core/text-input.js';
 import type { TextInputCapable } from './ui/core/types.js';
@@ -125,6 +125,29 @@ type WorldsSectionRuntimeOverride = {
   rotationDegrees?: { x: number; y: number; z: number };
   scale?: { x: number; y: number; z: number };
   visible?: boolean;
+};
+type WorldsVisualLinkConnection = {
+  sourceSectionId: string;
+  sourceSectionIndex: number;
+  sourceTitle: string;
+  linkIndex: number;
+  url: string;
+  text: string;
+  internal: boolean;
+  targetSectionId: string | null;
+  targetSectionIndex: number | null;
+  targetTitle: string | null;
+  sourceRectScreen: { x: number; y: number; width: number; height: number } | null;
+  sourceQuadScreen: Array<{ x: number; y: number }> | null;
+  sourcePointScreen: { x: number; y: number } | null;
+  targetPointScreen: { x: number; y: number } | null;
+  visible: boolean;
+};
+type Worlds3DRenderedLinkOverlay = {
+  enabled: boolean;
+  section: number | string | null;
+  internalOnly: boolean;
+  thickness: number;
 };
 
 function parseThemeOverride(raw: string): ThemeOverride | null {
@@ -492,6 +515,12 @@ export class StorieEngine {
   private current3DSectionIndex: number | null = null;
   private selected3DSectionId: string | null = null;
   private selected3DSectionIndex: number | null = null;
+  private worlds3DRenderedLinkOverlay: Worlds3DRenderedLinkOverlay = {
+    enabled: false,
+    section: null,
+    internalOnly: true,
+    thickness: 0.22,
+  };
   private activated3DLinksQueue: Array<{ url: string; sectionId: string | null; sectionIndex: number | null; linkIndex: number | null }> = [];
 
   // 3D section texture rasterization cache
@@ -1714,6 +1743,26 @@ export class StorieEngine {
         if (next === 'clip' || next === 'expand' || next === 'expand-y' || next === 'fit' || next === 'fit-y') {
           const prev = (engine.worldsConfig as any).sectionOverflow;
           (engine.worldsConfig as any).sectionOverflow = next;
+          if (prev !== next) {
+            engine.clear3DSectionTextures();
+          }
+        }
+      }
+      if ((config as any).sectionContentAlign !== undefined) {
+        const next = (config as any).sectionContentAlign;
+        if (next === 'start' || next === 'center') {
+          const prev = (engine.worldsConfig as any).sectionContentAlign;
+          (engine.worldsConfig as any).sectionContentAlign = next;
+          if (prev !== next) {
+            engine.clear3DSectionTextures();
+          }
+        }
+      }
+      if ((config as any).sectionTextAlign !== undefined) {
+        const next = (config as any).sectionTextAlign;
+        if (next === 'left' || next === 'center' || next === 'right') {
+          const prev = (engine.worldsConfig as any).sectionTextAlign;
+          (engine.worldsConfig as any).sectionTextAlign = next;
           if (prev !== next) {
             engine.clear3DSectionTextures();
           }
@@ -4748,6 +4797,41 @@ export class StorieEngine {
           },
           popActivated: () => {
             return engine.activated3DLinksQueue.shift() ?? null;
+          },
+          setRenderOverlay: (options?: {
+            enabled?: boolean;
+            section?: number | string | null;
+            internalOnly?: boolean;
+            thickness?: number;
+          }) => {
+            if (!options) {
+              engine.worlds3DRenderedLinkOverlay.enabled = false;
+              engine.worlds3DRenderedLinkOverlay.section = null;
+              engine.worlds3DRenderedLinkOverlay.internalOnly = true;
+              engine.worlds3DRenderedLinkOverlay.thickness = 0.22;
+              return;
+            }
+            if (typeof options.enabled === 'boolean') {
+              engine.worlds3DRenderedLinkOverlay.enabled = options.enabled;
+            } else {
+              engine.worlds3DRenderedLinkOverlay.enabled = true;
+            }
+            if (Object.prototype.hasOwnProperty.call(options, 'section')) {
+              engine.worlds3DRenderedLinkOverlay.section = options.section ?? null;
+            }
+            if (typeof options.internalOnly === 'boolean') {
+              engine.worlds3DRenderedLinkOverlay.internalOnly = options.internalOnly;
+            }
+            if (typeof options.thickness === 'number' && Number.isFinite(options.thickness)) {
+              engine.worlds3DRenderedLinkOverlay.thickness = Math.max(0.01, options.thickness);
+            }
+          },
+          getVisualConnections: (options?: {
+            section?: number | string | null;
+            visibleOnly?: boolean;
+            internalOnly?: boolean;
+          }) => {
+            return engine.getVisual3DLinkConnections(options);
           }
         },
 
@@ -5898,6 +5982,412 @@ export class StorieEngine {
       width: Math.max(1, maxX - minX),
       height: Math.max(1, maxY - minY),
     };
+  }
+
+  private slugifyWorldsAnchor(value: string): string {
+    return value
+      .toLowerCase()
+      .trim()
+      .replace(/[`*_~]/g, '')
+      .replace(/\{[^}]*\}\s*$/g, '')
+      .replace(/[^a-z0-9\s-]/g, '')
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-');
+  }
+
+  private resolveWorldsInternalLinkTarget(url: string): Section3DLayout | null {
+    if (typeof url !== 'string' || !url.startsWith('#')) return null;
+
+    let target = '';
+    try {
+      target = decodeURIComponent(url.slice(1)).trim();
+    } catch {
+      target = url.slice(1).trim();
+    }
+    if (!target) return null;
+
+    const targetSlug = this.slugifyWorldsAnchor(target);
+    return this.section3DLayouts.find((layout) => {
+      const title = (layout.displayTitle || layout.sectionTitle || '').trim();
+      return this.slugifyWorldsAnchor(title) === targetSlug;
+    }) ?? null;
+  }
+
+  private projectWorldPointToScreen(
+    point: { x: number; y: number; z: number },
+    options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+  ): { x: number; y: number } | null {
+    if (!this.camera3D) return null;
+
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    if (canvasW <= 0 || canvasH <= 0) return null;
+
+    const aspect = canvasW / canvasH;
+    const view = getCameraViewMatrix(this.camera3D);
+    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+    const viewProj = mat4Multiply(proj, view);
+    const clip = mat4TransformVec4(viewProj, point.x, point.y, point.z, 1);
+    if (clip.w <= 1e-6) return null;
+
+    const ndcX = clip.x / clip.w;
+    const ndcY = clip.y / clip.w;
+    if (!Number.isFinite(ndcX) || !Number.isFinite(ndcY)) return null;
+
+    const clampToViewport = options?.clampToViewport === true;
+    const allowOffscreen = options?.allowOffscreen === true;
+    if (!clampToViewport && !allowOffscreen && (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1)) return null;
+
+    const screenMarginNdc = 0.94;
+    const finalNdcX = clampToViewport ? Math.max(-screenMarginNdc, Math.min(screenMarginNdc, ndcX)) : ndcX;
+    const finalNdcY = clampToViewport ? Math.max(-screenMarginNdc, Math.min(screenMarginNdc, ndcY)) : ndcY;
+
+    return {
+      x: (finalNdcX * 0.5 + 0.5) * canvasW,
+      y: (1 - (finalNdcY * 0.5 + 0.5)) * canvasH,
+    };
+  }
+
+  private getSectionScreenCenter(
+    layout: Section3DLayout,
+    options?: { clampToViewport?: boolean }
+  ): { x: number; y: number } | null {
+    const model = this.get3DCardModelMatrix(layout);
+    const center = mat4TransformPoint(model, { x: 0, y: 0, z: 0 });
+    return this.projectWorldPointToScreen(center, options);
+  }
+
+  private project3DCardLocalPointToScreen(
+    layout: Section3DLayout,
+    localPoint: { x: number; y: number; z: number },
+    options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+  ): { x: number; y: number } | null {
+    const model = this.get3DCardModelMatrix(layout);
+    const world = mat4TransformPoint(model, localPoint);
+    return this.projectWorldPointToScreen(world, options);
+  }
+
+  private project3DTexturePointToScreen(
+    layout: Section3DLayout,
+    point: { x: number; y: number },
+    options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+  ): { x: number; y: number } | null {
+    const dims = this.sectionTextureCache.get(layout.sectionId);
+    if (!dims || dims.width <= 0 || dims.height <= 0) return null;
+
+    const u = point.x / dims.width;
+    const v = point.y / dims.height;
+    return this.project3DCardLocalPointToScreen(
+      layout,
+      { x: u - 0.5, y: 0.5 - v, z: 0 },
+      options,
+    );
+  }
+
+  private project3DTextureRectQuadToScreen(
+    layout: Section3DLayout,
+    rect: { x: number; y: number; w: number; h: number },
+    options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+  ): Array<{ x: number; y: number }> | null {
+    const points = [
+      this.project3DTexturePointToScreen(layout, { x: rect.x, y: rect.y }, options),
+      this.project3DTexturePointToScreen(layout, { x: rect.x + rect.w, y: rect.y }, options),
+      this.project3DTexturePointToScreen(layout, { x: rect.x + rect.w, y: rect.y + rect.h }, options),
+      this.project3DTexturePointToScreen(layout, { x: rect.x, y: rect.y + rect.h }, options),
+    ];
+    return points.every((point) => !!point) ? (points as Array<{ x: number; y: number }>) : null;
+  }
+
+  private getSectionScreenQuad(
+    layout: Section3DLayout,
+    options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+  ): Array<{ x: number; y: number }> | null {
+    const points = [
+      this.project3DCardLocalPointToScreen(layout, { x: -0.5, y: -0.5, z: 0 }, options),
+      this.project3DCardLocalPointToScreen(layout, { x: 0.5, y: -0.5, z: 0 }, options),
+      this.project3DCardLocalPointToScreen(layout, { x: 0.5, y: 0.5, z: 0 }, options),
+      this.project3DCardLocalPointToScreen(layout, { x: -0.5, y: 0.5, z: 0 }, options),
+    ];
+    return points.every((point) => !!point) ? (points as Array<{ x: number; y: number }>) : null;
+  }
+
+  private getPolygonCenter(points: Array<{ x: number; y: number }>): { x: number; y: number } | null {
+    if (!points.length) return null;
+    let sumX = 0;
+    let sumY = 0;
+    for (const point of points) {
+      sumX += point.x;
+      sumY += point.y;
+    }
+    return { x: sumX / points.length, y: sumY / points.length };
+  }
+
+  private intersectRayWithSegment2D(
+    origin: { x: number; y: number },
+    dir: { x: number; y: number },
+    a: { x: number; y: number },
+    b: { x: number; y: number }
+  ): { x: number; y: number; t: number } | null {
+    const seg = { x: b.x - a.x, y: b.y - a.y };
+    const cross = dir.x * seg.y - dir.y * seg.x;
+    if (Math.abs(cross) < 1e-6) return null;
+
+    const ao = { x: a.x - origin.x, y: a.y - origin.y };
+    const t = (ao.x * seg.y - ao.y * seg.x) / cross;
+    const u = (ao.x * dir.y - ao.y * dir.x) / cross;
+    if (t < 0 || u < 0 || u > 1) return null;
+    return { x: origin.x + dir.x * t, y: origin.y + dir.y * t, t };
+  }
+
+  private getPolygonAttachmentPoint(
+    polygon: Array<{ x: number; y: number }>,
+    towardPoint: { x: number; y: number } | null
+  ): { x: number; y: number } | null {
+    const center = this.getPolygonCenter(polygon);
+    if (!center) return null;
+    if (!towardPoint) return center;
+
+    const dir = { x: towardPoint.x - center.x, y: towardPoint.y - center.y };
+    const dirLen = Math.hypot(dir.x, dir.y);
+    if (dirLen < 1e-6) return center;
+    dir.x /= dirLen;
+    dir.y /= dirLen;
+
+    let best: { x: number; y: number; t: number } | null = null;
+    for (let i = 0; i < polygon.length; i++) {
+      const a = polygon[i];
+      const b = polygon[(i + 1) % polygon.length];
+      const hit = this.intersectRayWithSegment2D(center, dir, a, b);
+      if (!hit) continue;
+      if (!best || hit.t < best.t) best = hit;
+    }
+
+    if (best) return { x: best.x, y: best.y };
+
+    let fallback = polygon[0];
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const point of polygon) {
+      const dx = point.x - towardPoint.x;
+      const dy = point.y - towardPoint.y;
+      const dist = dx * dx + dy * dy;
+      if (dist < bestDist) {
+        fallback = point;
+        bestDist = dist;
+      }
+    }
+    return fallback;
+  }
+
+  private getSectionScreenAttachmentPoint(
+    layout: Section3DLayout,
+    towardPoint: { x: number; y: number } | null,
+    options?: { clampToViewport?: boolean }
+  ): { x: number; y: number } | null {
+    const candidates = [
+      this.project3DCardLocalPointToScreen(layout, { x: -0.5, y: 0, z: 0 }, options),
+      this.project3DCardLocalPointToScreen(layout, { x: 0.5, y: 0, z: 0 }, options),
+      this.project3DCardLocalPointToScreen(layout, { x: 0, y: 0.5, z: 0 }, options),
+      this.project3DCardLocalPointToScreen(layout, { x: 0, y: -0.5, z: 0 }, options),
+      this.getSectionScreenCenter(layout, options),
+    ].filter((point): point is { x: number; y: number } => !!point);
+
+    if (candidates.length === 0) return null;
+    if (!towardPoint) return candidates[candidates.length - 1] ?? null;
+
+    let best = candidates[0];
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const candidate of candidates) {
+      const dx = candidate.x - towardPoint.x;
+      const dy = candidate.y - towardPoint.y;
+      const dist = dx * dx + dy * dy;
+      if (dist < bestDist) {
+        best = candidate;
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+
+  private getVisual3DLinkConnections(options?: {
+    section?: number | string | null;
+    visibleOnly?: boolean;
+    internalOnly?: boolean;
+  }): WorldsVisualLinkConnection[] {
+    if (!this.worldsEnabled || !this.camera3D) return [];
+
+    const visibleOnly = options?.visibleOnly === true;
+    const internalOnly = options?.internalOnly === true;
+    const requested = options?.section !== undefined && options?.section !== null
+      ? this.resolveRuntimeSectionRef(options.section)
+      : null;
+    const requestedSectionId = requested?.sectionId ?? null;
+
+    const out: WorldsVisualLinkConnection[] = [];
+    for (const layout of this.section3DLayouts) {
+      if (requestedSectionId && layout.sectionId !== requestedSectionId) continue;
+      if (!layout.texture || !layout.visible || layout.interactive === false) continue;
+
+      const regions = this.sectionLinkRegionsCache.get(layout.sectionId);
+      if (!regions || regions.length === 0) continue;
+
+      for (let linkIndex = 0; linkIndex < regions.length; linkIndex++) {
+        const region = regions[linkIndex];
+        const internal = typeof region.url === 'string' && region.url.startsWith('#');
+        if (internalOnly && !internal) continue;
+
+        const targetLayout = internal ? this.resolveWorldsInternalLinkTarget(region.url) : null;
+        const sourceRectScreen = this.project3DTextureRectToScreen(layout, region);
+        const sourceQuadScreen = this.project3DTextureRectQuadToScreen(layout, region);
+        const targetCenterScreen = targetLayout ? this.getSectionScreenCenter(targetLayout, { clampToViewport: true }) : null;
+        const targetQuadScreen = targetLayout ? this.getSectionScreenQuad(targetLayout, { allowOffscreen: true }) : null;
+
+        const sourcePointScreen = sourceQuadScreen
+          ? this.getPolygonAttachmentPoint(sourceQuadScreen, targetCenterScreen)
+          : null;
+
+        const targetPointScreen = targetQuadScreen
+          ? this.getPolygonAttachmentPoint(targetQuadScreen, sourcePointScreen)
+          : (targetLayout ? this.getSectionScreenAttachmentPoint(targetLayout, sourcePointScreen, { clampToViewport: true }) : null);
+
+        const isVisible = !!sourcePointScreen && (!internal || !targetLayout || !!targetPointScreen);
+        if (visibleOnly && !isVisible) continue;
+
+        out.push({
+          sourceSectionId: layout.sectionId,
+          sourceSectionIndex: layout.sectionIndex,
+          sourceTitle: layout.displayTitle || layout.sectionTitle,
+          linkIndex,
+          url: region.url,
+          text: region.text,
+          internal,
+          targetSectionId: targetLayout?.sectionId ?? null,
+          targetSectionIndex: targetLayout?.sectionIndex ?? null,
+          targetTitle: targetLayout ? (targetLayout.displayTitle || targetLayout.sectionTitle) : null,
+          sourceRectScreen,
+          sourceQuadScreen,
+          sourcePointScreen,
+          targetPointScreen,
+          visible: isVisible,
+        });
+      }
+    }
+
+    return out;
+  }
+
+  private getTextureRectLocalBounds(layout: Section3DLayout, rect: { x: number; y: number; w: number; h: number }): { minX: number; maxX: number; minY: number; maxY: number; centerX: number; centerY: number } | null {
+    const dims = this.sectionTextureCache.get(layout.sectionId);
+    if (!dims || dims.width <= 0 || dims.height <= 0) return null;
+
+    const uMin = rect.x / dims.width;
+    const uMax = (rect.x + rect.w) / dims.width;
+    const vMin = rect.y / dims.height;
+    const vMax = (rect.y + rect.h) / dims.height;
+
+    const minX = uMin - 0.5;
+    const maxX = uMax - 0.5;
+    const maxY = 0.5 - vMin;
+    const minY = 0.5 - vMax;
+    return {
+      minX,
+      maxX,
+      minY,
+      maxY,
+      centerX: (minX + maxX) * 0.5,
+      centerY: (minY + maxY) * 0.5,
+    };
+  }
+
+  private getRectAttachmentPointLocal(
+    bounds: { minX: number; maxX: number; minY: number; maxY: number; centerX: number; centerY: number },
+    toward: { x: number; y: number }
+  ): { x: number; y: number } {
+    const dx = toward.x - bounds.centerX;
+    const dy = toward.y - bounds.centerY;
+    if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) {
+      return { x: bounds.maxX, y: bounds.centerY };
+    }
+
+    const tx = Math.abs(dx) > 1e-6
+      ? ((dx > 0 ? bounds.maxX : bounds.minX) - bounds.centerX) / dx
+      : Number.POSITIVE_INFINITY;
+    const ty = Math.abs(dy) > 1e-6
+      ? ((dy > 0 ? bounds.maxY : bounds.minY) - bounds.centerY) / dy
+      : Number.POSITIVE_INFINITY;
+    const t = Math.min(
+      Number.isFinite(tx) && tx > 0 ? tx : Number.POSITIVE_INFINITY,
+      Number.isFinite(ty) && ty > 0 ? ty : Number.POSITIVE_INFINITY,
+    );
+    if (!Number.isFinite(t)) {
+      return { x: bounds.centerX, y: bounds.centerY };
+    }
+    return {
+      x: bounds.centerX + dx * t,
+      y: bounds.centerY + dy * t,
+    };
+  }
+
+  private getCardAttachmentPointLocal(toward: { x: number; y: number }): { x: number; y: number } {
+    return this.getRectAttachmentPointLocal(
+      { minX: -0.5, maxX: 0.5, minY: -0.5, maxY: 0.5, centerX: 0, centerY: 0 },
+      toward,
+    );
+  }
+
+  private getRendered3DLinkConnectors(): Array<{ start: { x: number; y: number; z: number }; end: { x: number; y: number; z: number }; color: Color; thickness: number; opacity: number }> {
+    if (!this.worlds3DRenderedLinkOverlay.enabled) return [];
+
+    const requested = this.worlds3DRenderedLinkOverlay.section !== undefined && this.worlds3DRenderedLinkOverlay.section !== null
+      ? this.resolveRuntimeSectionRef(this.worlds3DRenderedLinkOverlay.section)
+      : null;
+    const fallbackSection = this.getResolvedSelected3DSectionIndex();
+    const sectionIndex = requested?.sectionIndex ?? fallbackSection;
+    if (!(typeof sectionIndex === 'number' && Number.isFinite(sectionIndex))) return [];
+
+    const sourceLayout = this.getSectionLayoutByIndex(sectionIndex);
+    if (!sourceLayout || !sourceLayout.visible || !sourceLayout.texture) return [];
+
+    const regions = this.sectionLinkRegionsCache.get(sourceLayout.sectionId);
+    if (!regions || regions.length === 0) return [];
+
+    const sourceModel = this.get3DCardModelMatrix(sourceLayout);
+    const sourceInv = mat4Invert(sourceModel);
+    if (!sourceInv) return [];
+
+    const connectors: Array<{ start: { x: number; y: number; z: number }; end: { x: number; y: number; z: number }; color: Color; thickness: number; opacity: number }> = [];
+    for (const region of regions) {
+      const internal = typeof region.url === 'string' && region.url.startsWith('#');
+      if (this.worlds3DRenderedLinkOverlay.internalOnly && !internal) continue;
+
+      const targetLayout = internal ? this.resolveWorldsInternalLinkTarget(region.url) : null;
+      if (!targetLayout || !targetLayout.visible || !targetLayout.texture) continue;
+
+      const sourceBounds = this.getTextureRectLocalBounds(sourceLayout, region);
+      if (!sourceBounds) continue;
+
+      const targetModel = this.get3DCardModelMatrix(targetLayout);
+      const targetInv = mat4Invert(targetModel);
+      if (!targetInv) continue;
+
+      const targetCenterWorld = mat4TransformPoint(targetModel, { x: 0, y: 0, z: 0 });
+      const targetCenterInSource = mat4TransformPoint(sourceInv, targetCenterWorld);
+      const sourceAnchorLocal = this.getRectAttachmentPointLocal(sourceBounds, targetCenterInSource);
+      const sourceAnchorWorld = mat4TransformPoint(sourceModel, { x: sourceAnchorLocal.x, y: sourceAnchorLocal.y, z: 0 });
+
+      const sourceAnchorInTarget = mat4TransformPoint(targetInv, sourceAnchorWorld);
+      const targetAnchorLocal = this.getCardAttachmentPointLocal(sourceAnchorInTarget);
+      const targetAnchorWorld = mat4TransformPoint(targetModel, { x: targetAnchorLocal.x, y: targetAnchorLocal.y, z: 0 });
+
+      connectors.push({
+        start: sourceAnchorWorld,
+        end: targetAnchorWorld,
+        color: 0xD0A74BFF,
+        thickness: this.worlds3DRenderedLinkOverlay.thickness,
+        opacity: 0.92,
+      });
+    }
+
+    return connectors;
   }
 
   private getWorldsInlineWidgetRenderScale(
@@ -7998,7 +8488,8 @@ ${exportVars}
               }
             : undefined;
 
-          this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig);
+          const linkConnectors = this.getRendered3DLinkConnectors();
+          this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig, linkConnectors);
         }
 
         // Render GPU UI into its own texture (if created)
@@ -8430,7 +8921,11 @@ ${exportVars}
         const surfaceBg = this.resolveWorldsSectionBackground();
 
         const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
-        const mdStyle = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
+        const mdStyle = this.createWorldsMarkdownStyle({
+          activeLinkIndex,
+          background: mdBg,
+          textAlign: layout.textAlign,
+        });
 
         const measureTextWidth = this.worldsCardFontStack && measureCtx
           ? (text: string) => measureCtx.measureText(text).width
@@ -8538,7 +9033,11 @@ ${exportVars}
       // keep the section texture background transparent so paper shows through.
       const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
 
-      const mdStyle = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
+      const mdStyle = this.createWorldsMarkdownStyle({
+        activeLinkIndex,
+        background: mdBg,
+        textAlign: layout.textAlign,
+      });
       const result = layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: widthPx, height: heightPx },
@@ -8558,28 +9057,7 @@ ${exportVars}
 
       // Optional: center the *content block* within the card.
       // This keeps the background/border fixed while shifting text/inline rects.
-      if (((this.worldsConfig as any).sectionContentAlign ?? 'start') === 'center') {
-        const innerW = Math.max(1, widthPx - texturePadding * 2);
-        const innerH = Math.max(1, heightPx - texturePadding * 2);
-        const dx = Math.max(0, Math.round((innerW - result.contentWidth) / 2));
-        const dy = Math.max(0, Math.round((innerH - result.contentHeight) / 2));
-        if (dx !== 0 || dy !== 0) {
-          let isFirstRect = true;
-          for (const op of result.ops) {
-            if (op.kind === 'rect' && isFirstRect) {
-              isFirstRect = false;
-              continue; // background
-            }
-            (op as any).x = (op as any).x + dx;
-            (op as any).y = (op as any).y + dy;
-          }
-          for (const r of result.linkRegions) {
-            r.x += dx;
-            r.y += dy;
-          }
-          this.translateWidgetPlacements(result.widgetPlacements, dx, dy);
-        }
-      }
+      this.applyWorldsContentAlignment(result, widthPx, heightPx, texturePadding, layout.contentAlign);
 
       const scaledLinkRegions = this.scaleLinkRegions(result.linkRegions, textureScale);
       const scaledWidgetPlacements = this.scaleWidgetPlacements(result.widgetPlacements, textureScale);
@@ -9058,6 +9536,7 @@ ${exportVars}
   private createWorldsMarkdownStyle(options?: {
     activeLinkIndex?: number | null;
     background?: Color;
+    textAlign?: 'left' | 'center' | 'right';
   }): MarkdownStyle {
     const base = this.getStyle('default');
     const dim = this.getStyle('dim');
@@ -9078,6 +9557,7 @@ ${exportVars}
       borderFg: border.fg,
       surfaceBg: surface.bg,
       headingFg: heading.fg,
+      textAlign: options?.textAlign ?? 'left',
       listMarker: this.getWorldsListMarker(),
       listMarkerGapPx: this.getWorldsListMarkerGapPx(),
       listHangIndentPx: this.getWorldsListHangIndentPx(),
@@ -9093,6 +9573,44 @@ ${exportVars}
       codeBg: code.bg,
       bg: options?.background ?? surface.bg,
     };
+  }
+
+  private applyWorldsContentAlignment(
+    result: { ops: DrawOp[]; linkRegions: LinkRegion[]; widgetPlacements: WidgetPlacement[]; contentOffsetX: number; contentOffsetY: number; contentWidth: number; contentHeight: number },
+    widthPx: number,
+    heightPx: number,
+    texturePadding: number,
+    contentAlign: 'start' | 'center'
+  ): void {
+    if (contentAlign !== 'center') return;
+
+    const innerW = Math.max(1, widthPx - texturePadding * 2);
+    const innerH = Math.max(1, heightPx - texturePadding * 2);
+    const xInset = Math.max(0, result.contentOffsetX - texturePadding);
+    const contentWidth = Math.max(0, result.contentWidth - xInset);
+    const contentHeight = result.contentHeight;
+    const currentLeft = result.contentOffsetX;
+    const currentTop = result.contentOffsetY;
+    const targetLeft = texturePadding + Math.max(0, Math.round((innerW - contentWidth) / 2));
+    const targetTop = texturePadding + Math.max(0, Math.round((innerH - contentHeight) / 2));
+    const dx = Math.round(targetLeft - currentLeft);
+    const dy = Math.round(targetTop - currentTop);
+    if (dx === 0 && dy === 0) return;
+
+    let isFirstRect = true;
+    for (const op of result.ops) {
+      if (op.kind === 'rect' && isFirstRect) {
+        isFirstRect = false;
+        continue;
+      }
+      (op as DrawOp & { x: number; y: number }).x += dx;
+      (op as DrawOp & { x: number; y: number }).y += dy;
+    }
+    for (const region of result.linkRegions) {
+      region.x += dx;
+      region.y += dy;
+    }
+    this.translateWidgetPlacements(result.widgetPlacements, dx, dy);
   }
 
   private ensure3DSectionTexturesWebGPUUI(device: GPUDevice): void {
@@ -9174,7 +9692,11 @@ ${exportVars}
       const contentOverride = this.getWorldsSectionContentOverride(layout.sectionId);
       const markdown = buildWorldsCardMarkdown(layout, contentOverride ?? undefined);
       const nodes = parseMarkdownLite(markdown);
-      const style = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
+      const style = this.createWorldsMarkdownStyle({
+        activeLinkIndex,
+        background: mdBg,
+        textAlign: layout.textAlign,
+      });
 
       if (overflowMode === 'expand' || overflowMode === 'expand-y' || overflowMode === 'fit' || overflowMode === 'fit-y') {
         const probeWidthPx = overflowMode === 'fit' ? maxW : widthPx;
@@ -9230,7 +9752,11 @@ ${exportVars}
       ) {
         // Texture already matches current size; ensure link regions are present.
         if (!this.sectionLinkRegionsCache.has(layout.sectionId) || !this.sectionWidgetPlacementsCache.has(layout.sectionId)) {
-          const style = this.createWorldsMarkdownStyle({ activeLinkIndex, background: mdBg });
+          const style = this.createWorldsMarkdownStyle({
+            activeLinkIndex,
+            background: mdBg,
+            textAlign: layout.textAlign,
+          });
           const result = layoutMarkdownDocument(
             nodes,
             { x: 0, y: 0, width: widthPx, height: heightPx },
@@ -9244,17 +9770,7 @@ ${exportVars}
             texturePadding,
             this.getWorldsWidgetLayoutOptions(layout.sectionIndex, layoutOverflow)
           );
-          if (((this.worldsConfig as any).sectionContentAlign ?? 'start') === 'center') {
-            const innerW = Math.max(1, widthPx - texturePadding * 2);
-            const innerH = Math.max(1, heightPx - texturePadding * 2);
-            const dx = Math.max(0, Math.round((innerW - result.contentWidth) / 2));
-            const dy = Math.max(0, Math.round((innerH - result.contentHeight) / 2));
-            for (const region of result.linkRegions) {
-              region.x += dx;
-              region.y += dy;
-            }
-            this.translateWidgetPlacements(result.widgetPlacements, dx, dy);
-          }
+          this.applyWorldsContentAlignment(result, widthPx, heightPx, texturePadding, layout.contentAlign);
           this.sectionLinkRegionsCache.set(layout.sectionId, this.scaleLinkRegions(result.linkRegions, textureScale));
           this.sectionWidgetPlacementsCache.set(layout.sectionId, this.scaleWidgetPlacements(result.widgetPlacements, textureScale));
         }
@@ -9292,28 +9808,7 @@ ${exportVars}
       );
 
       // Optional: center the content block within the card.
-      if (((this.worldsConfig as any).sectionContentAlign ?? 'start') === 'center') {
-        const innerW = Math.max(1, widthPx - texturePadding * 2);
-        const innerH = Math.max(1, heightPx - texturePadding * 2);
-        const dx = Math.max(0, Math.round((innerW - result.contentWidth) / 2));
-        const dy = Math.max(0, Math.round((innerH - result.contentHeight) / 2));
-        if (dx !== 0 || dy !== 0) {
-          let isFirstRect = true;
-          for (const op of result.ops) {
-            if (op.kind === 'rect' && isFirstRect) {
-              isFirstRect = false;
-              continue; // background
-            }
-            (op as any).x = (op as any).x + dx;
-            (op as any).y = (op as any).y + dy;
-          }
-          for (const r of result.linkRegions) {
-            r.x += dx;
-            r.y += dy;
-          }
-          this.translateWidgetPlacements(result.widgetPlacements, dx, dy);
-        }
-      }
+      this.applyWorldsContentAlignment(result, widthPx, heightPx, texturePadding, layout.contentAlign);
 
       this.sectionLinkRegionsCache.set(layout.sectionId, this.scaleLinkRegions(result.linkRegions, textureScale));
       this.sectionWidgetPlacementsCache.set(layout.sectionId, this.scaleWidgetPlacements(result.widgetPlacements, textureScale));
@@ -11054,23 +11549,7 @@ ${exportVars}
 
     // Internal link: #anchor
     if (url.startsWith('#')) {
-      const target = decodeURIComponent(url.slice(1)).trim();
-      if (!target || !this.camera3D) return;
-
-      const slugify = (s: string) =>
-        s
-          .toLowerCase()
-          .trim()
-          .replace(/[`*_~]/g, '')
-          .replace(/[^a-z0-9\s-]/g, '')
-          .replace(/\s+/g, '-')
-          .replace(/-+/g, '-');
-
-      const targetSlug = slugify(target);
-      const layout = this.section3DLayouts.find(l => {
-        const title = (l.displayTitle || l.sectionTitle || '').trim();
-        return slugify(title) === targetSlug;
-      });
+      const layout = this.resolveWorldsInternalLinkTarget(url);
 
       if (layout) {
         // Use the engine focus request path so fill/options stay sticky and we

@@ -1,6 +1,6 @@
 ---
 title: "Mine|sweeper"
-theme: "nord"
+theme: "saintbilly"
 fontsize: 20
 width: 1080
 height: 2400
@@ -24,7 +24,7 @@ if (!Array.isArray(game.board) || game.board.length === 0) {
 syncWorldWidgets();
 ```
 
-# Settings {"x":"-58","y":"24","z":"-58","width":"36","height":"30"}
+# Settings {"x":"0","y":"60","z":"0","width":"36","height":"30"}
 
 Change the board size and mobile flagging behavior.
 
@@ -87,7 +87,7 @@ if (typeof worlds.currentSection === 'number') {
 syncWorldWidgets();
 ```
 
-# Help {"x":"58","y":"24","z":"-58","width":"36","height":"30"}
+# Help {"x":"0","y":"120","z":"0","width":"36","height":"30"}
 
 Controls:
 
@@ -669,7 +669,7 @@ function handleWorldLinkActions() {
 function computeToolbarButtons(layout) {
   var specs = [
     { id: 'toolbar-restart', label: '⟳', square: true },
-    { id: 'toolbar-mode', label: game.flagMode ? '⚑' : '⌕', square: true },
+    { id: 'toolbar-mode', label: game.flagMode ? '⚑' : '⚑', square: true },
     { id: 'toolbar-settings', label: '⚙', square: true },
     { id: 'toolbar-help', label: '🛈', square: true }
   ];

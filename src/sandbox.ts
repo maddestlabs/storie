@@ -739,6 +739,33 @@ export interface SandboxAPI {
       setKeyHandlingEnabled: (enabled: boolean) => void;
       keyHandlingEnabled: boolean;
       popActivated: () => { url: string; sectionIndex: number | null; linkIndex: number | null } | null;
+      setRenderOverlay: (options?: {
+        enabled?: boolean;
+        section?: number | string | null;
+        internalOnly?: boolean;
+        thickness?: number;
+      }) => void;
+      getVisualConnections: (options?: {
+        section?: number | string | null;
+        visibleOnly?: boolean;
+        internalOnly?: boolean;
+      }) => Array<{
+        sourceSectionId: string;
+        sourceSectionIndex: number;
+        sourceTitle: string;
+        linkIndex: number;
+        url: string;
+        text: string;
+        internal: boolean;
+        targetSectionId: string | null;
+        targetSectionIndex: number | null;
+        targetTitle: string | null;
+        sourceRectScreen: { x: number; y: number; width: number; height: number } | null;
+        sourceQuadScreen: Array<{ x: number; y: number }> | null;
+        sourcePointScreen: { x: number; y: number } | null;
+        targetPointScreen: { x: number; y: number } | null;
+        visible: boolean;
+      }>;
     };
 
     presets: {

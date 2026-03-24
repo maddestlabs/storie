@@ -43,18 +43,30 @@ type WorldsBackgroundConfig = {
   noiseStrength: number;
 };
 
+type Worlds3DConnector = {
+  start: { x: number; y: number; z: number };
+  end: { x: number; y: number; z: number };
+  color: Color;
+  thickness: number;
+  opacity: number;
+};
+
 export class WorldsRenderer {
   private device: GPUDevice;
   private renderPipeline: GPURenderPipeline | null = null;
+  private linePipeline: GPURenderPipeline | null = null;
   private shaderManager: ShaderManager;
   
   // Buffers
   private vertexBuffer: GPUBuffer | null = null;
   private indexBuffer: GPUBuffer | null = null;
   private uniformBuffer: GPUBuffer | null = null;
+  private lineUniformBuffer: GPUBuffer | null = null;
   private sampler: GPUSampler | null = null;
   private uniformStride: number = 256;
   private uniformCapacity: number = 0;
+  private lineUniformStride: number = 256;
+  private lineUniformCapacity: number = 0;
 
   private backgroundTexture: GPUTexture | null = null;
   private backgroundShaderTexture: GPUTexture | null = null;
@@ -99,12 +111,14 @@ export class WorldsRenderer {
     
     // Create render pipeline
     await this.createRenderPipeline(this.format);
+    this.createLinePipeline(this.format);
     
     // Create geometry buffers
     this.createGeometryBuffers();
     
     // Create uniform buffer
     this.ensureUniformBufferCapacity(64);
+    this.ensureLineUniformBufferCapacity(64);
 
     // Create shared sampler
     this.sampler = this.device.createSampler({
@@ -279,6 +293,129 @@ export class WorldsRenderer {
       pass.draw(3);
       pass.end();
     }
+  }
+
+  private ensureLineUniformBufferCapacity(count: number): void {
+    const needed = Math.max(1, count | 0);
+    if (this.lineUniformBuffer && this.lineUniformCapacity >= needed) return;
+
+    this.lineUniformCapacity = Math.max(needed, this.lineUniformCapacity > 0 ? this.lineUniformCapacity * 2 : 64);
+    if (this.lineUniformBuffer) {
+      this.lineUniformBuffer.destroy();
+    }
+    this.lineUniformBuffer = this.device.createBuffer({
+      size: this.lineUniformStride * this.lineUniformCapacity,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+  }
+
+  private createLinePipeline(format: GPUTextureFormat): void {
+    const shaderModule = this.device.createShaderModule({
+      label: 'Worlds 3D Connector Shader',
+      code: `
+        struct LineUniforms {
+          viewProj: mat4x4<f32>,
+          start: vec4<f32>,
+          end: vec4<f32>,
+          color: vec4<f32>,
+          cameraForward: vec4<f32>,
+          cameraRight: vec4<f32>,
+          params: vec4<f32>,
+        };
+
+        @group(0) @binding(0) var<uniform> uniforms: LineUniforms;
+
+        struct VertexInput {
+          @location(0) position: vec3<f32>,
+          @location(1) uv: vec2<f32>,
+        };
+
+        struct VertexOutput {
+          @builtin(position) position: vec4<f32>,
+          @location(0) color: vec4<f32>,
+        };
+
+        @vertex
+        fn vertexMain(input: VertexInput) -> VertexOutput {
+          let t = input.position.x + 0.5;
+          var dir = uniforms.end.xyz - uniforms.start.xyz;
+          let dirLen = length(dir);
+          if (dirLen > 1e-5) {
+            dir = dir / dirLen;
+          } else {
+            dir = uniforms.cameraRight.xyz;
+          }
+
+          var side = cross(uniforms.cameraForward.xyz, dir);
+          let sideLen = length(side);
+          if (sideLen > 1e-5) {
+            side = side / sideLen;
+          } else {
+            side = uniforms.cameraRight.xyz;
+          }
+
+          let thickness = uniforms.params.x;
+          let point = mix(uniforms.start.xyz, uniforms.end.xyz, t) + side * input.position.y * thickness;
+
+          var output: VertexOutput;
+          output.position = uniforms.viewProj * vec4<f32>(point, 1.0);
+          output.color = uniforms.color;
+          return output;
+        }
+
+        @fragment
+        fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
+          return input.color;
+        }
+      `,
+    });
+
+    this.linePipeline = this.device.createRenderPipeline({
+      label: 'Worlds 3D Connector Pipeline',
+      layout: 'auto',
+      vertex: {
+        module: shaderModule,
+        entryPoint: 'vertexMain',
+        buffers: [{
+          arrayStride: 20,
+          attributes: [
+            { shaderLocation: 0, offset: 0, format: 'float32x3' },
+            { shaderLocation: 1, offset: 12, format: 'float32x2' },
+          ]
+        }]
+      },
+      fragment: {
+        module: shaderModule,
+        entryPoint: 'fragmentMain',
+        targets: [{
+          format,
+          blend: {
+            color: {
+              srcFactor: 'src-alpha',
+              dstFactor: 'one-minus-src-alpha',
+              operation: 'add',
+            },
+            alpha: {
+              srcFactor: 'one',
+              dstFactor: 'one-minus-src-alpha',
+              operation: 'add',
+            },
+          },
+        }]
+      },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+    });
+  }
+
+  private createBindGroupForLine(uniformOffset: number): GPUBindGroup | null {
+    if (!this.linePipeline || !this.lineUniformBuffer) return null;
+    return this.device.createBindGroup({
+      layout: this.linePipeline.getBindGroupLayout(0),
+      entries: [{
+        binding: 0,
+        resource: { buffer: this.lineUniformBuffer, offset: uniformOffset, size: 160 }
+      }]
+    });
   }
 
   /**
@@ -631,7 +768,8 @@ export class WorldsRenderer {
     camera: Camera3D,
     layouts: Section3DLayout[],
     hoveredSectionIndex: number | null = null,
-    background?: WorldsBackgroundConfig
+    background?: WorldsBackgroundConfig,
+    connectors: Worlds3DConnector[] = []
   ): void {
     if (!this.renderPipeline || !this.vertexBuffer || !this.indexBuffer || !this.renderTexture) {
       console.warn('WorldsRenderer not fully initialized');
@@ -640,6 +778,7 @@ export class WorldsRenderer {
 
     const paperEnabled = !!background?.enabled;
     this.ensureUniformBufferCapacity(layouts.length + (paperEnabled ? 1 : 0));
+    this.ensureLineUniformBufferCapacity(connectors.length);
     if (!this.uniformBuffer || !this.sampler) {
       console.warn('WorldsRenderer not fully initialized');
       return;
@@ -924,6 +1063,48 @@ export class WorldsRenderer {
       pass.setBindGroup(0, bindGroup);
       pass.drawIndexed(6); // 6 indices for quad
       drawnCount++;
+    }
+
+    if (connectors.length > 0 && this.linePipeline && this.lineUniformBuffer) {
+      pass.setPipeline(this.linePipeline);
+      pass.setVertexBuffer(0, this.vertexBuffer);
+      pass.setIndexBuffer(this.indexBuffer, 'uint16');
+
+      for (let i = 0; i < connectors.length; i++) {
+        const connector = connectors[i];
+        const uniformOffset = i * this.lineUniformStride;
+        const color = ColorUtils.rgbaNorm(connector.color);
+        const lineColor = new Float32Array([
+          color[0] ?? 1,
+          color[1] ?? 1,
+          color[2] ?? 1,
+          (color[3] ?? 1) * (Number.isFinite(connector.opacity) ? connector.opacity : 1),
+        ]);
+
+        this.device.queue.writeBuffer(
+          this.lineUniformBuffer,
+          uniformOffset + 0,
+          viewProjectionMatrix.buffer,
+          viewProjectionMatrix.byteOffset,
+          viewProjectionMatrix.byteLength,
+        );
+        this.device.queue.writeBuffer(this.lineUniformBuffer, uniformOffset + 64, new Float32Array([connector.start.x, connector.start.y, connector.start.z, 1]));
+        this.device.queue.writeBuffer(this.lineUniformBuffer, uniformOffset + 80, new Float32Array([connector.end.x, connector.end.y, connector.end.z, 1]));
+        this.device.queue.writeBuffer(this.lineUniformBuffer, uniformOffset + 96, lineColor);
+        this.device.queue.writeBuffer(this.lineUniformBuffer, uniformOffset + 112, cameraForward);
+        this.device.queue.writeBuffer(this.lineUniformBuffer, uniformOffset + 128, cameraRight);
+        this.device.queue.writeBuffer(this.lineUniformBuffer, uniformOffset + 144, new Float32Array([
+          Number.isFinite(connector.thickness) ? connector.thickness : 1,
+          0,
+          0,
+          0,
+        ]));
+
+        const bindGroup = this.createBindGroupForLine(uniformOffset);
+        if (!bindGroup) continue;
+        pass.setBindGroup(0, bindGroup);
+        pass.drawIndexed(6);
+      }
     }
     
     pass.end();

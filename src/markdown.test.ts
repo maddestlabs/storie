@@ -86,6 +86,18 @@ describe('heading directives', () => {
     expect(layout.renderMode).toBe('all');
   });
 
+  it('parses per-section content and text alignment metadata', async () => {
+    const doc = await parseMarkdown([
+      '# Card One {render: content, contentAlign: center, textAlign: right}',
+      '',
+      'Body'
+    ].join('\n'));
+
+    const layout = parseTransform3D(doc.sections[0], 0, getDefaultWorldsConfig());
+    expect(layout.contentAlign).toBe('center');
+    expect(layout.textAlign).toBe('right');
+  });
+
   it('assigns unique stable ids to duplicate section titles', async () => {
     const doc = await parseMarkdown([
       '# Card One',

@@ -73,6 +73,8 @@ export interface Section3DLayout {
   displayTitle: string;
   content: string;
   renderMode: SectionRenderMode;
+  contentAlign: 'start' | 'center';
+  textAlign: 'left' | 'center' | 'right';
   transform: Transform3D;
   /** True when x/y was assigned by Worlds auto-layout (no explicit metadata). */
   autoPositioned?: boolean;
@@ -139,6 +141,12 @@ export interface WorldsConfig {
    * - 'center': centers the content block within the card
    */
   sectionContentAlign?: 'start' | 'center';
+
+  /**
+   * Alignment of wrapped text lines inside rendered markdown blocks.
+   * Widgets and images keep their own alignment controls.
+   */
+  sectionTextAlign?: 'left' | 'center' | 'right';
   cameraFov: number;
   cameraNear: number;
   cameraFar: number;

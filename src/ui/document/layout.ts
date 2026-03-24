@@ -10,6 +10,14 @@ interface WrappedLine {
   height: number;
 }
 
+function getLineWidth(line: WrappedLine, maxWidthPx: number, measure: ((text: string) => number) | null, charW: number, charH: number): number {
+  let width = 0;
+  for (const run of line.runs) {
+    width += getRunWidth(run, maxWidthPx, measure, charW, charH);
+  }
+  return width;
+}
+
 function tokenizeInlines(inlines: Inline[]): Run[] {
   const runs: Run[] = [];
   for (const inline of inlines) {
@@ -380,12 +388,20 @@ export function layoutMarkdownDocument(
   // Content bounds for measuring required size (excluding the background rect).
   const contentStartX = x0 + padding;
   const contentStartY = y0 + padding - scrollY;
+  let contentMinX = Number.POSITIVE_INFINITY;
+  let contentMinY = Number.POSITIVE_INFINITY;
   let contentMaxX = contentStartX;
   let contentMaxY = contentStartY;
 
   const bumpMax = (x: number, y: number, w: number, h: number) => {
-    if (w > 0) contentMaxX = Math.max(contentMaxX, x + w);
-    if (h > 0) contentMaxY = Math.max(contentMaxY, y + h);
+    if (w > 0) {
+      contentMinX = Math.min(contentMinX, x);
+      contentMaxX = Math.max(contentMaxX, x + w);
+    }
+    if (h > 0) {
+      contentMinY = Math.min(contentMinY, y);
+      contentMaxY = Math.max(contentMaxY, y + h);
+    }
   };
 
   const emitTextLine = (line: Run[], lineX: number, textY: number, fgOverride: any | undefined, containerWidth: number, lineTop: number, lineHeight: number) => {
@@ -485,8 +501,10 @@ export function layoutMarkdownDocument(
         const fg = style.headingFg;
 
         for (const ln of lines) {
+          const lineWidth = getLineWidth(ln, localInnerW, measure, charW, charH);
+          const lineX = resolveAlignedX(contentX, localInnerW, lineWidth, style.textAlign);
           const textY = cursorY + (ln.height > charH ? Math.round((ln.height - charH) / 2) : 0);
-          emitTextLine(ln.runs, contentX, textY, fg, localInnerW, cursorY, ln.height);
+          emitTextLine(ln.runs, lineX, textY, fg, localInnerW, cursorY, ln.height);
           cursorY += Math.max(baseLineHeight, ln.height);
         }
         cursorY += Math.round(charH * 0.2);
@@ -497,8 +515,10 @@ export function layoutMarkdownDocument(
         const runs = tokenizeInlines(node.inlines);
         const lines = measure ? wrapRunsByWidth(runs, localInnerW, measure, charW, charH) : wrapRuns(runs, localMaxChars, charW, charH);
         for (const ln of lines) {
+          const lineWidth = getLineWidth(ln, localInnerW, measure, charW, charH);
+          const lineX = resolveAlignedX(contentX, localInnerW, lineWidth, style.textAlign);
           const textY = cursorY + (ln.height > charH ? Math.round((ln.height - charH) / 2) : 0);
-          emitTextLine(ln.runs, contentX, textY, undefined, localInnerW, cursorY, ln.height);
+          emitTextLine(ln.runs, lineX, textY, undefined, localInnerW, cursorY, ln.height);
           cursorY += Math.max(baseLineHeight, ln.height);
         }
         cursorY += paragraphGap;
@@ -539,7 +559,10 @@ export function layoutMarkdownDocument(
               ops.push({ kind: 'text', text: markerText, x: contentX, y: cursorY, color: markerColor });
               bumpMax(contentX, cursorY, markerWidth, charH);
             }
-            const x = contentX + (first ? markerAdvance : hangIndentPx);
+            const availableWidth = first ? listInnerWidth : Math.max(1, localInnerW - hangIndentPx);
+            const baseX = contentX + (first ? markerAdvance : hangIndentPx);
+            const lineWidth = getLineWidth(ln, availableWidth, measure, charW, charH);
+            const x = resolveAlignedX(baseX, availableWidth, lineWidth, style.textAlign);
             const textY = cursorY + (ln.height > charH ? Math.round((ln.height - charH) / 2) : 0);
             emitTextLine(ln.runs, x, textY, undefined, listInnerWidth, cursorY, ln.height);
             cursorY += Math.max(baseLineHeight, ln.height);
@@ -681,8 +704,10 @@ export function layoutMarkdownDocument(
 
   renderNodes(nodes, x0 + padding, innerW);
 
+  const contentOffsetX = Number.isFinite(contentMinX) ? contentMinX : contentStartX;
+  const contentOffsetY = Number.isFinite(contentMinY) ? contentMinY : contentStartY;
   const contentHeight = Math.max(0, cursorY - (y0 + padding - scrollY));
   const contentWidth = Math.max(0, contentMaxX - (x0 + padding));
 
-  return { ops, linkRegions, widgetPlacements, contentWidth, contentHeight };
+  return { ops, linkRegions, widgetPlacements, contentOffsetX, contentOffsetY, contentWidth, contentHeight };
 }
