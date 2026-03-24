@@ -288,6 +288,9 @@ function rebuildLayout(force) {
       bounds: { x: 0, y: 0, width: 1, height: 44 },
       value: seedText,
       placeholder: 'Seed',
+      textInput: {
+        showSoftKeyboard: false
+      },
       textFieldStyle: {
         fg: ui.colors.rgba(255, 255, 255, 220),
         drawBorder: false,

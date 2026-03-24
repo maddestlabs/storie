@@ -48,7 +48,7 @@ import { parseMarkdownLite } from './ui/document/markdown-lite.js';
 import { layoutMarkdownDocument } from './ui/document/layout.js';
 import type { LinkRegion, MarkdownStyle, WidgetPlacement, LayoutOptions } from './ui/document/types.js';
 import type { Draw2D } from './ui/draw2d.js';
-import { normalizeSingleLineText } from './ui/core/text-input.js';
+import { getHiddenTextInputBridgeAttributes, normalizeSingleLineText } from './ui/core/text-input.js';
 import type { TextInputCapable } from './ui/core/types.js';
 import { ShaderManager } from './shader-manager.js';
 import { ShaderChainManager } from './shader-chain.js';
@@ -6106,7 +6106,7 @@ export class StorieEngine {
 
     const focused = system.getFocusedWidget?.();
     const focusedIsInline = !!focused && this.worldsInlineWidgetInstances.some((entry) => entry.widget.id === focused.id);
-    const navigatesInline = key === 'Tab' || key === 'ArrowDown' || key === 'ArrowUp' || key === 'ArrowLeft' || key === 'ArrowRight';
+    const navigatesInline = key === 'Tab' || key === 'ArrowLeft' || key === 'ArrowRight';
     const activatesInline = key === 'Enter' || key === ' ';
     if (!focusedIsInline && !navigatesInline) return false;
 
@@ -9693,6 +9693,7 @@ ${exportVars}
     input.setAttribute('autocorrect', 'off');
     input.setAttribute('autocomplete', 'off');
     input.setAttribute('autocapitalize', 'none');
+    input.setAttribute('enterkeyhint', 'done');
     input.wrap = 'off';
     input.rows = 1;
     input.spellcheck = false;
@@ -10038,6 +10039,7 @@ ${exportVars}
     const options = target.getTextInputOptions();
     const value = options.multiline ? target.getValue() : normalizeSingleLineText(target.getValue());
     const selection = target.getSelectionRange();
+    const bridgeAttributes = getHiddenTextInputBridgeAttributes(options);
 
     if (!options.showSoftKeyboard) {
       if (document.activeElement === input) {
@@ -10057,8 +10059,18 @@ ${exportVars}
       input.spellcheck = options.spellcheck;
       input.autocapitalize = options.autoCapitalize === 'off' ? 'none' : options.autoCapitalize;
       input.setAttribute('autocorrect', options.autoCorrect ? 'on' : 'off');
-      (input as any).inputMode = options.inputMode;
+      input.readOnly = bridgeAttributes.readOnly;
+      if (bridgeAttributes.readOnly) {
+        input.setAttribute('readonly', 'readonly');
+      } else {
+        input.removeAttribute('readonly');
+      }
+      (input as any).inputMode = bridgeAttributes.inputMode;
+      input.setAttribute('inputmode', bridgeAttributes.inputMode);
+      (input as any).virtualKeyboardPolicy = bridgeAttributes.virtualKeyboardPolicy;
+      input.setAttribute('virtualkeyboardpolicy', bridgeAttributes.virtualKeyboardPolicy);
       (input as any).enterKeyHint = options.enterKeyHint;
+      input.setAttribute('enterkeyhint', options.enterKeyHint);
 
       const start = Math.max(0, Math.min(value.length, selection.start | 0));
       const end = Math.max(0, Math.min(value.length, selection.end | 0));

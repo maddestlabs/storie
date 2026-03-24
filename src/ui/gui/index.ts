@@ -7,7 +7,7 @@ import { WidgetManager } from '../core/widget-manager.js';
 import { InputRouter } from '../core/input-router.js';
 import { isTextInputCapable } from '../core/text-input.js';
 import type { InputCoordinate } from '../core/types.js';
-import type { TextInputCapable } from '../core/types.js';
+import type { TextInputCapable, WidgetGroup } from '../core/types.js';
 
 import { GUIButton, type GUIButtonConfig } from './button.js';
 import { GUILabel, type GUILabelConfig } from './label.js';
@@ -105,6 +105,90 @@ export class GUISystem {
    */
   setWidgetRenderer(renderer: ((widgetInfo: WidgetDrawInfo, ui: Draw2D) => boolean | void) | null): void {
     this.widgetRenderer = renderer;
+  }
+
+  private getWidgetGroup(widget: any): WidgetGroup {
+    return this.widgetManager.getGroupState(widget.group);
+  }
+
+  private getGroupScale(group: WidgetGroup): number {
+    const scale = Number(group.transform.scale);
+    return Number.isFinite(scale) && scale > 0 ? scale : 1;
+  }
+
+  private getGroupOpacity(group: WidgetGroup): number {
+    const opacity = Number(group.presentation.opacity);
+    if (!Number.isFinite(opacity)) return 1;
+    return Math.max(0, Math.min(1, opacity));
+  }
+
+  private getTransformedBounds(widget: any, group: WidgetGroup) {
+    const scale = this.getGroupScale(group);
+    return {
+      x: group.transform.x + widget.bounds.x * scale,
+      y: group.transform.y + widget.bounds.y * scale,
+      width: widget.bounds.width * scale,
+      height: widget.bounds.height * scale,
+    };
+  }
+
+  private applyOpacityToColor(color: Color, opacity: number): Color {
+    if (opacity >= 0.999) return color;
+    if (opacity <= 0.001) return ColorUtils.rgba(ColorUtils.r(color), ColorUtils.g(color), ColorUtils.b(color), 0);
+    return ColorUtils.rgba(
+      ColorUtils.r(color),
+      ColorUtils.g(color),
+      ColorUtils.b(color),
+      Math.round(ColorUtils.a(color) * opacity),
+    );
+  }
+
+  private withWidgetGroupContext<T>(widget: any, run: (group: WidgetGroup, opacity: number) => T): T {
+    const group = this.getWidgetGroup(widget);
+    const opacity = this.getGroupOpacity(group);
+    const transformedBounds = this.getTransformedBounds(widget, group);
+    const originalBounds = { ...widget.bounds };
+    const originalScale = typeof widget.getRenderScale === 'function' ? widget.getRenderScale() : 1;
+    const groupScale = this.getGroupScale(group);
+
+    widget.bounds = transformedBounds;
+    if (typeof widget.setRenderScale === 'function') {
+      widget.setRenderScale(originalScale * groupScale);
+    }
+
+    try {
+      return run(group, opacity);
+    } finally {
+      widget.bounds = originalBounds;
+      if (typeof widget.setRenderScale === 'function') {
+        widget.setRenderScale(originalScale);
+      }
+    }
+  }
+
+  private createOpacityAdjustedUI(ui: Draw2D, opacity: number): Draw2D {
+    if (opacity >= 0.999) return ui;
+
+    return {
+      rect: (x, y, w, h, color) => ui.rect(x, y, w, h, this.applyOpacityToColor(color, opacity)),
+      text: (text, x, y, color) => ui.text(text, x, y, this.applyOpacityToColor(color, opacity)),
+      measureTextWidth: ui.measureTextWidth ? (text) => ui.measureTextWidth!(text) : undefined,
+      image: ui.image
+        ? (imageId, x, y, w, h, options) => ui.image!(imageId, x, y, w, h, options && options.tint
+            ? { ...options, tint: this.applyOpacityToColor(options.tint, opacity) }
+            : options)
+        : undefined,
+      getImageSize: ui.getImageSize ? (imageId) => ui.getImageSize!(imageId) : undefined,
+      clear: ui.clear ? (color) => ui.clear!(this.applyOpacityToColor(color, opacity)) : undefined,
+      pushClipRect: ui.pushClipRect ? (x, y, w, h) => ui.pushClipRect!(x, y, w, h) : undefined,
+      popClipRect: ui.popClipRect ? () => ui.popClipRect!() : undefined,
+      pushMaskRect: ui.pushMaskRect ? (x, y, w, h) => ui.pushMaskRect!(x, y, w, h) : undefined,
+      pushMaskRoundedRect: ui.pushMaskRoundedRect ? (x, y, w, h, radius) => ui.pushMaskRoundedRect!(x, y, w, h, radius) : undefined,
+      pushMaskPolygon: ui.pushMaskPolygon ? (points) => ui.pushMaskPolygon!(points) : undefined,
+      popMask: ui.popMask ? () => ui.popMask!() : undefined,
+      colors: ui.colors,
+      metrics: ui.metrics,
+    };
   }
 
   private buildWidgetInfo(widget: any, charWidth: number, charHeight: number): WidgetDrawInfo {
@@ -267,27 +351,35 @@ export class GUISystem {
     // Update sliders (for drag behavior)
     const sliders = this.widgetManager.getAll().filter(w => w instanceof GUISlider) as GUISlider[];
     for (const slider of sliders) {
-      const metrics = slider.resolveRenderContext(charWidth, charHeight);
-      slider.handleDrag(mouseX, mouseY, mouseDown, metrics.charHeight, metrics.scale);
+      this.withWidgetGroupContext(slider, () => {
+        const metrics = slider.resolveRenderContext(charWidth, charHeight);
+        slider.handleDrag(mouseX, mouseY, mouseDown, metrics.charHeight, metrics.scale);
+      });
     }
 
     const pianos = this.widgetManager.getAll().filter(w => w instanceof GUIPianoKeyboard) as GUIPianoKeyboard[];
     for (const piano of pianos) {
-      piano.handlePointer(mouseX, mouseY, mouseDown);
+      this.withWidgetGroupContext(piano, () => {
+        piano.handlePointer(mouseX, mouseY, mouseDown);
+      });
     }
 
     // Update text field metrics (for caret placement/scroll)
     const textFields = this.widgetManager.getAll().filter(w => w instanceof GUITextField) as GUITextField[];
     for (const tf of textFields) {
-      const metrics = tf.resolveRenderContext(charWidth, charHeight);
-      tf.updateMetrics(metrics.charWidth, metrics.charHeight);
+      this.withWidgetGroupContext(tf, () => {
+        const metrics = tf.resolveRenderContext(charWidth, charHeight);
+        tf.updateMetrics(metrics.charWidth, metrics.charHeight);
+      });
     }
 
     // Update text editor metrics
     const textEditors = this.widgetManager.getAll().filter(w => w instanceof GUITextEditor) as GUITextEditor[];
     for (const ed of textEditors) {
-      const metrics = ed.resolveRenderContext(charWidth, charHeight);
-      ed.updateMetrics(metrics.charWidth, metrics.charHeight);
+      this.withWidgetGroupContext(ed, () => {
+        const metrics = ed.resolveRenderContext(charWidth, charHeight);
+        ed.updateMetrics(metrics.charWidth, metrics.charHeight);
+      });
     }
   }
 
@@ -364,36 +456,43 @@ export class GUISystem {
     const widgets = this.widgetManager.getVisible();
     
     for (const widget of widgets) {
-      if (this.widgetRenderer) {
-        try {
-          const info = this.buildWidgetInfo(widget, charWidth, charHeight);
-          const handled = this.widgetRenderer(info, uiAPI);
-          if (handled === true) {
-            continue;
+      const handled = this.withWidgetGroupContext(widget, (_group, opacity) => {
+        const widgetUI = this.createOpacityAdjustedUI(uiAPI, opacity);
+
+        if (this.widgetRenderer) {
+          try {
+            const info = this.buildWidgetInfo(widget, charWidth, charHeight);
+            if (this.widgetRenderer(info, widgetUI) === true) {
+              return true;
+            }
+          } catch (err) {
+            // If custom rendering fails, fall back to default drawing.
+            console.warn('gui.setWidgetRenderer callback threw; falling back to default widget rendering.', err);
           }
-        } catch (err) {
-          // If custom rendering fails, fall back to default drawing.
-          console.warn('gui.setWidgetRenderer callback threw; falling back to default widget rendering.', err);
         }
-      }
-      
-      if (widget instanceof GUIButton) {
-        this.renderButton(widget, uiAPI, charWidth, charHeight);
-      } else if (widget instanceof GUILabel) {
-        this.renderLabel(widget, uiAPI, charWidth, charHeight);
-      } else if (widget instanceof GUICheckbox) {
-        this.renderCheckbox(widget, uiAPI, charWidth, charHeight);
-      } else if (widget instanceof GUISlider) {
-        this.renderSlider(widget, uiAPI, charWidth, charHeight);
-      } else if (widget instanceof GUIPianoKeyboard) {
-        this.renderPianoKeyboard(widget, uiAPI, charWidth, charHeight);
-      } else if (widget instanceof GUITextField) {
-        this.renderTextField(widget, uiAPI, charWidth, charHeight);
-      } else if (widget instanceof GUITextEditor) {
-        this.renderTextEditor(widget, uiAPI, charWidth, charHeight);
-      } else if (widget instanceof GUIMarkdownView) {
-        this.renderMarkdownView(widget, uiAPI, charWidth, charHeight);
-      }
+
+        if (widget instanceof GUIButton) {
+          this.renderButton(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUILabel) {
+          this.renderLabel(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUICheckbox) {
+          this.renderCheckbox(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUISlider) {
+          this.renderSlider(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUIPianoKeyboard) {
+          this.renderPianoKeyboard(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUITextField) {
+          this.renderTextField(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUITextEditor) {
+          this.renderTextEditor(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUIMarkdownView) {
+          this.renderMarkdownView(widget, widgetUI, charWidth, charHeight);
+        }
+
+        return false;
+      });
+
+      if (handled === true) continue;
     }
   }
 
@@ -843,8 +942,20 @@ export class GUISystem {
   /**
    * Set visibility for all widgets in a group
    */
-  setGroupVisible(group: number, visible: boolean): void {
+  setGroupVisible(group: string | number, visible: boolean): void {
     this.widgetManager.setGroupVisible(group, visible);
+  }
+
+  setGroupOpacity(group: string | number, opacity: number): void {
+    this.widgetManager.setGroupOpacity(group, opacity);
+  }
+
+  setGroupTransform(group: string | number, transform: { x?: number; y?: number; scale?: number }): void {
+    this.widgetManager.setGroupTransform(group, transform);
+  }
+
+  getGroupState(group: string | number): WidgetGroup {
+    return this.widgetManager.getGroupState(group);
   }
   
   /**

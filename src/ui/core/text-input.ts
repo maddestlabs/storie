@@ -1,5 +1,6 @@
 import type {
   TextInputCapable,
+  HiddenTextInputBridgeAttributes,
   TextInputOptions,
   TextSelectionDirection,
   TextSelectionRange
@@ -53,6 +54,22 @@ export function normalizeTextSelectionRange(
 
 export function normalizeSingleLineText(value: string): string {
   return String(value ?? '').replace(/\r\n/g, ' ').replace(/[\r\n]+/g, ' ');
+}
+
+export function getHiddenTextInputBridgeAttributes(options: TextInputOptions): HiddenTextInputBridgeAttributes {
+  if (!options.showSoftKeyboard) {
+    return {
+      readOnly: true,
+      inputMode: 'none',
+      virtualKeyboardPolicy: 'manual'
+    };
+  }
+
+  return {
+    readOnly: false,
+    inputMode: options.inputMode,
+    virtualKeyboardPolicy: 'auto'
+  };
 }
 
 export function isTextInputCapable(value: unknown): value is TextInputCapable {

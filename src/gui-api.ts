@@ -976,9 +976,25 @@ export function createGUIAPI(
      * gui.setGroupVisible(1, false); // Hide group 1
      * ```
      */
-    setGroupVisible(group: number, visible: boolean) {
+    setGroupVisible(group: string | number, visible: boolean) {
       if (!this._system) return;
       this._system.setGroupVisible(group, visible);
+    },
+
+    /**
+     * Set opacity for all widgets in a group
+     */
+    setGroupOpacity(group: string | number, opacity: number) {
+      if (!this._system) return;
+      this._system.setGroupOpacity(group, opacity);
+    },
+
+    /**
+     * Set translation / scale for all widgets in a group
+     */
+    setGroupTransform(group: string | number, transform: { x?: number; y?: number; scale?: number }) {
+      if (!this._system) return;
+      this._system.setGroupTransform(group, transform);
     },
     
     /**

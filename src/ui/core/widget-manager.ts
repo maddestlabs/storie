@@ -4,7 +4,13 @@
  */
 
 import type { BaseWidget } from './base-widget.js';
-import type { WidgetId, WidgetGroup, NavigationContext } from './types.js';
+import type {
+  WidgetId,
+  WidgetGroup,
+  NavigationContext,
+  WidgetGroupPresentation,
+  WidgetGroupTransform,
+} from './types.js';
 
 export class WidgetManager {
   private widgets: Map<WidgetId, BaseWidget>;
@@ -20,6 +26,42 @@ export class WidgetManager {
       tabOrder: []
     };
   }
+
+  private normalizeGroupScale(scale: number | undefined): number {
+    const value = Number(scale);
+    return Number.isFinite(value) && value > 0 ? value : 1;
+  }
+
+  private normalizeGroupOpacity(opacity: number | undefined): number {
+    const value = Number(opacity);
+    if (!Number.isFinite(value)) return 1;
+    return Math.max(0, Math.min(1, value));
+  }
+
+  private createGroup(groupId: string | number): WidgetGroup {
+    return {
+      id: groupId,
+      visible: true,
+      widgets: new Set(),
+      transform: {
+        x: 0,
+        y: 0,
+        scale: 1,
+      },
+      presentation: {
+        opacity: 1,
+      },
+    };
+  }
+
+  private ensureGroup(groupId: string | number): WidgetGroup {
+    let group = this.groups.get(groupId);
+    if (!group) {
+      group = this.createGroup(groupId);
+      this.groups.set(groupId, group);
+    }
+    return group;
+  }
   
   /**
    * Register a widget
@@ -28,14 +70,7 @@ export class WidgetManager {
     this.widgets.set(widget.id, widget);
     
     // Add to group
-    if (!this.groups.has(widget.group)) {
-      this.groups.set(widget.group, {
-        id: widget.group,
-        visible: true,
-        widgets: new Set()
-      });
-    }
-    this.groups.get(widget.group)!.widgets.add(widget.id);
+    this.ensureGroup(widget.group).widgets.add(widget.id);
     
     // Update focusable list
     if (widget.focusable) {
@@ -104,10 +139,36 @@ export class WidgetManager {
    * Set group visibility
    */
   setGroupVisible(groupId: string | number, visible: boolean): void {
-    const group = this.groups.get(groupId);
-    if (group) {
-      group.visible = visible;
+    this.ensureGroup(groupId).visible = visible;
+  }
+
+  setGroupOpacity(groupId: string | number, opacity: number): void {
+    this.ensureGroup(groupId).presentation.opacity = this.normalizeGroupOpacity(opacity);
+  }
+
+  setGroupTransform(groupId: string | number, transform: Partial<WidgetGroupTransform>): void {
+    const group = this.ensureGroup(groupId);
+    if (transform.x !== undefined && Number.isFinite(Number(transform.x))) {
+      group.transform.x = Number(transform.x);
     }
+    if (transform.y !== undefined && Number.isFinite(Number(transform.y))) {
+      group.transform.y = Number(transform.y);
+    }
+    if (transform.scale !== undefined) {
+      group.transform.scale = this.normalizeGroupScale(transform.scale);
+    }
+  }
+
+  getGroupState(groupId: string | number): WidgetGroup {
+    return this.ensureGroup(groupId);
+  }
+
+  getGroupTransform(groupId: string | number): WidgetGroupTransform {
+    return { ...this.ensureGroup(groupId).transform };
+  }
+
+  getGroupPresentation(groupId: string | number): WidgetGroupPresentation {
+    return { ...this.ensureGroup(groupId).presentation };
   }
   
   /**

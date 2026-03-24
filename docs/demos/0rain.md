@@ -530,20 +530,26 @@ Kess looks at you. Something flickers across her face. Not hope exactly. But con
 setRainLevel(RAIN_IDLE_GAIN * 1.2, 0.35);
 ```
 
-# Play
+# Play {"render": "content"}
 
-```ascii
+```
  00000  0000     0    000    0   0
  0  00  0   0   0 0     0    00  0
  0 0 0  0  0   0   0    0    0 0 0
  00  0  0  0   0   0    0    0  00
  00000  0   0  0   0  00000  0   0
 ```
+To type digits:
+Press 0|1 or tap LEFT|RIGHT
 
 ```js on:enter
 if (typeof worlds.currentSection === 'number') {
   g.playSectionIndex = worlds.currentSection;
 }
+g.playSectionOpacity = PLAY_SECTION_ENTRY_OPACITY;
+g.playSectionFadeTimer = 0;
+g.playSectionAppliedOpacity = 1;
+applyPlaySectionOpacity(g.playSectionOpacity);
 if (g.gameMode === 'play') restartGame();
 else startGame();
 startBackgroundMusicFromTop();
@@ -592,6 +598,10 @@ var WORLDS_CARD_WIDTH = 500;
 var WORLDS_CARD_HEIGHT = 1960;
 var GUI_GROUP_HUD = 1;
 var GUI_GROUP_KEYPAD = 2;
+var PLAY_SECTION_ENTRY_OPACITY = 0.9;
+var PLAY_SECTION_FADE_DURATION = 12.0;
+var PLAY_SECTION_OPACITY_STEP = 0.05;
+var GAME_OVER_RETURN_DELAY = 1.0;
 var SEED_MAX_DIGITS = 12;
 var SETTINGS_THEME_SLIDER_ID = 'settings-theme-slider';
 var SETTINGS_AUDIO_LABEL_ID = 'settings-audio-state';
@@ -600,11 +610,6 @@ var BGM_AUDIO_URL = 'assets/audio/01-dreams-of-her.ogg';
 var BGM_VOLUME = 0.34;
 
 var guiWidgets = null;
-var startHintPanels = null;
-var START_HINT_HOLD_DURATION = 1.0;
-var START_HINT_FADE_OUT_DURATION = 2.0;
-var START_HINT_TOTAL_DURATION = START_HINT_HOLD_DURATION + START_HINT_FADE_OUT_DURATION;
-
 var g = {
     gameMode: 'start',
     score:    0,
@@ -634,10 +639,10 @@ var g = {
   themeNames: [],
   themeIndex: 0,
   themeName: 'zerorain',
-  playSectionHidden: false,
-  startHintFadeTimer: START_HINT_TOTAL_DURATION,
-  startHintVisibleAlpha: 0,
-  startHintPulseTime: 0
+  playSectionOpacity: 1,
+  playSectionFadeTimer: PLAY_SECTION_FADE_DURATION,
+  playSectionAppliedOpacity: 1,
+  gameOverReturnTimer: -1
   };
 
 // ── PRNG helpers (take the raw ()=>number from random.rng) ────────────────
@@ -669,6 +674,40 @@ function isPlaySectionCurrent() {
   );
 }
 
+function quantizePlaySectionOpacity(value) {
+  return clamp(Math.round(value / PLAY_SECTION_OPACITY_STEP) * PLAY_SECTION_OPACITY_STEP, 0, 1);
+}
+
+function applyPlaySectionOpacity(opacity) {
+  if (!worlds || !worlds.sections || typeof worlds.sections.update !== 'function') return;
+  if (typeof g.playSectionIndex !== 'number') return;
+
+  var nextOpacity = quantizePlaySectionOpacity(opacity);
+  if (Math.abs(nextOpacity - g.playSectionAppliedOpacity) < 0.0001) return;
+
+  worlds.sections.update(g.playSectionIndex, {
+    directive: {
+      render: 'content',
+      opacity: nextOpacity
+    }
+  });
+  g.playSectionAppliedOpacity = nextOpacity;
+}
+
+function clearPlaySectionContentOverride() {
+  if (!worlds || !worlds.content || typeof worlds.content.clear !== 'function') return;
+  if (typeof g.playSectionIndex !== 'number') return;
+  worlds.content.clear(g.playSectionIndex, 'content');
+}
+
+function showPlaySectionGameOverContent() {
+  if (!worlds || !worlds.content || typeof worlds.content.set !== 'function') return;
+  if (typeof g.playSectionIndex !== 'number') return;
+  worlds.content.set(g.playSectionIndex, {
+    content: 'GAME OVER'
+  });
+}
+
 function ensureBackgroundMusicBuffer() {
   if (g.bgmBuffer) return Promise.resolve(g.bgmBuffer);
   if (g.bgmLoadPromise) return g.bgmLoadPromise;
@@ -694,8 +733,12 @@ function stopBackgroundMusic() {
   try { source.stop(); } catch (e) {}
 }
 
+function shouldPlayBackgroundMusic() {
+  return !!(g.audioEnabled && g.gameMode === 'play' && isPlaySectionCurrent());
+}
+
 function startBackgroundMusicFromTop() {
-  if (!g.audioEnabled || !isPlaySectionCurrent()) return;
+  if (!shouldPlayBackgroundMusic()) return;
 
   stopBackgroundMusic();
   var startToken = g.bgmStartToken;
@@ -704,7 +747,7 @@ function startBackgroundMusicFromTop() {
   ensureBackgroundMusicBuffer().then(function (buffer) {
     if (!buffer) return;
     if (startToken !== g.bgmStartToken) return;
-    if (!g.audioEnabled || !isPlaySectionCurrent()) return;
+    if (!shouldPlayBackgroundMusic()) return;
 
     var source = audio.playBuffer(buffer, {
       loop: true,
@@ -724,9 +767,11 @@ function startBackgroundMusicFromTop() {
 }
 
 function syncBackgroundMusic() {
-  if (!g.audioEnabled || !isPlaySectionCurrent()) {
-    if (g.bgmSource) stopBackgroundMusic();
+  if (!shouldPlayBackgroundMusic()) {
+    stopBackgroundMusic();
+    return;
   }
+  if (!g.bgmSource) startBackgroundMusicFromTop();
 }
 
 function setAudioEnabled(enabled) {
@@ -981,16 +1026,6 @@ function focusWorldSection(title) {
   worlds.camera.focusOnSectionFit(title, WORLDS_SECTION_FIT, { keepRotation: true });
 }
 
-function syncPlaySectionVisibility() {
-  if (typeof g.playSectionIndex !== 'number') return;
-
-  var shouldHide = worlds.currentSection === g.playSectionIndex;
-  if (g.playSectionHidden === shouldHide) return;
-
-  worlds.setSectionVisible(g.playSectionIndex, !shouldHide);
-  g.playSectionHidden = shouldHide;
-}
-
 function getSettingsWidgetSectionRef() {
   return typeof g.settingsSectionIndex === 'number' ? g.settingsSectionIndex : 'Settings';
 }
@@ -1114,86 +1149,6 @@ function initOverlayGui() {
         fg: ui.colors.rgba(255, 255, 255, 255)
       }
     }),
-    startHintLeftTap: gui.createLabel({
-      group: GUI_GROUP_HUD,
-      focusable: false,
-      align: 'left',
-      bounds: { x: 0, y: 0, width: 160, height: 20 },
-      text: 'Tap',
-      labelStyle: {
-        fg: ui.colors.rgba(255, 255, 255, 150)
-      }
-    }),
-    startHintLeftSide: gui.createLabel({
-      group: GUI_GROUP_HUD,
-      focusable: false,
-      align: 'left',
-      bounds: { x: 0, y: 0, width: 200, height: 20 },
-      text: 'LEFT',
-      labelStyle: {
-        fg: ui.colors.rgba(255, 255, 255, 245)
-      }
-    }),
-    startHintLeftFor: gui.createLabel({
-      group: GUI_GROUP_HUD,
-      focusable: false,
-      align: 'left',
-      bounds: { x: 0, y: 0, width: 160, height: 20 },
-      text: 'for',
-      labelStyle: {
-        fg: ui.colors.rgba(255, 255, 255, 245)
-      }
-    }),
-    startHintLeftDigit: gui.createLabel({
-      group: GUI_GROUP_HUD,
-      focusable: false,
-      align: 'left',
-      bounds: { x: 0, y: 0, width: 120, height: 20 },
-      text: '0',
-      labelStyle: {
-        fg: ui.colors.rgba(255, 255, 255, 255)
-      }
-    }),
-    startHintRightTap: gui.createLabel({
-      group: GUI_GROUP_HUD,
-      focusable: false,
-      align: 'right',
-      bounds: { x: 0, y: 0, width: 160, height: 20 },
-      text: 'Tap',
-      labelStyle: {
-        fg: ui.colors.rgba(255, 255, 255, 150)
-      }
-    }),
-    startHintRightSide: gui.createLabel({
-      group: GUI_GROUP_HUD,
-      focusable: false,
-      align: 'right',
-      bounds: { x: 0, y: 0, width: 200, height: 20 },
-      text: 'RIGHT',
-      labelStyle: {
-        fg: ui.colors.rgba(255, 255, 255, 245)
-      }
-    }),
-    startHintRightFor: gui.createLabel({
-      group: GUI_GROUP_HUD,
-      focusable: false,
-      align: 'right',
-      bounds: { x: 0, y: 0, width: 160, height: 20 },
-      text: 'for',
-      labelStyle: {
-        fg: ui.colors.rgba(255, 255, 255, 245)
-      }
-    }),
-    startHintRightDigit: gui.createLabel({
-      group: GUI_GROUP_HUD,
-      focusable: false,
-      align: 'right',
-      bounds: { x: 0, y: 0, width: 120, height: 20 },
-      text: '1',
-      labelStyle: {
-        fg: ui.colors.rgba(255, 255, 255, 255)
-      }
-    }),
     seedInput: gui.createTextField({
       group: GUI_GROUP_HUD,
       align: 'right',
@@ -1235,12 +1190,6 @@ function initOverlayGui() {
 
   gui.setGroupVisible(GUI_GROUP_HUD, true);
   gui.setGroupVisible(GUI_GROUP_KEYPAD, false);
-
-  startHintPanels = {
-    left: { x: 0, y: 0, width: 0, height: 0 },
-    right: { x: 0, y: 0, width: 0, height: 0 },
-    visible: false
-  };
 }
 
 function layoutOverlayGui() {
@@ -1253,14 +1202,6 @@ function layoutOverlayGui() {
   var hudHeight = Math.max(34, Math.floor(ui.metrics.charHeight * 1.35));
   var seedX = width - inset - hudWidth;
   var seedY = inset;
-  var hintGap = Math.max(18, Math.floor(width * 0.024));
-  var hintWidth = Math.max(220, Math.floor((width - inset * 2 - hintGap) / 2));
-  var hintPadX = Math.max(18, Math.floor(hintWidth * 0.12));
-  var hintPadY = Math.max(16, Math.floor(ui.metrics.charHeight * 0.85));
-  var hintLineHeight = Math.max(18, Math.floor(ui.metrics.charHeight * 1.02));
-  var hintHeight = hintPadY * 2 + hintLineHeight * 4;
-  var hintY = height - inset - hintHeight;
-  var rightHintX = width - inset - hintWidth;
   var keypadGap = Math.max(12, Math.floor(hudHeight * 0.35));
   var keypadColumns = 4;
   var keypadButtonHeight = hudHeight;
@@ -1289,72 +1230,6 @@ function layoutOverlayGui() {
     width: hudWidth,
     height: hudHeight
   });
-  guiWidgets.startHintLeftTap.setBounds({
-    x: inset + hintPadX,
-    y: hintY + hintPadY,
-    width: hintWidth - hintPadX * 2,
-    height: hintLineHeight
-  });
-  guiWidgets.startHintLeftSide.setBounds({
-    x: inset + hintPadX,
-    y: hintY + hintPadY + hintLineHeight,
-    width: hintWidth - hintPadX * 2,
-    height: hintLineHeight
-  });
-  guiWidgets.startHintLeftFor.setBounds({
-    x: inset + hintPadX,
-    y: hintY + hintPadY + hintLineHeight * 2,
-    width: hintWidth - hintPadX * 2,
-    height: hintLineHeight
-  });
-  guiWidgets.startHintLeftDigit.setBounds({
-    x: inset + hintPadX,
-    y: hintY + hintPadY + hintLineHeight * 3,
-    width: hintWidth - hintPadX * 2,
-    height: hintLineHeight
-  });
-  guiWidgets.startHintRightTap.setBounds({
-    x: rightHintX + hintPadX,
-    y: hintY + hintPadY,
-    width: hintWidth - hintPadX * 2,
-    height: hintLineHeight
-  });
-  guiWidgets.startHintRightSide.setBounds({
-    x: rightHintX + hintPadX,
-    y: hintY + hintPadY + hintLineHeight,
-    width: hintWidth - hintPadX * 2,
-    height: hintLineHeight
-  });
-  guiWidgets.startHintRightFor.setBounds({
-    x: rightHintX + hintPadX,
-    y: hintY + hintPadY + hintLineHeight * 2,
-    width: hintWidth - hintPadX * 2,
-    height: hintLineHeight
-  });
-  guiWidgets.startHintRightDigit.setBounds({
-    x: rightHintX + hintPadX,
-    y: hintY + hintPadY + hintLineHeight * 3,
-    width: hintWidth - hintPadX * 2,
-    height: hintLineHeight
-  });
-
-  if (startHintPanels) {
-    startHintPanels.left.x = inset;
-    startHintPanels.left.y = hintY;
-    startHintPanels.left.width = hintWidth;
-    startHintPanels.left.height = hintHeight;
-    startHintPanels.left.padX = hintPadX;
-    startHintPanels.left.padY = hintPadY;
-    startHintPanels.left.lineHeight = hintLineHeight;
-    startHintPanels.right.x = rightHintX;
-    startHintPanels.right.y = hintY;
-    startHintPanels.right.width = hintWidth;
-    startHintPanels.right.height = hintHeight;
-    startHintPanels.right.padX = hintPadX;
-    startHintPanels.right.padY = hintPadY;
-    startHintPanels.right.lineHeight = hintLineHeight;
-  }
-
   for (var i = 0; i < guiWidgets.keypadButtons.length; i++) {
     var keypad = guiWidgets.keypadButtons[i];
     var col = i % keypadColumns;
@@ -1368,57 +1243,16 @@ function layoutOverlayGui() {
   }
 }
 
-function setLabelAlpha(widget, color, alpha) {
-  if (!widget || !widget.labelStyle) return;
-  widget.labelStyle.fg = alphaColor(color, alpha);
-}
-
-function updateStartHintStyles(alpha, pulse) {
-  if (!guiWidgets) return;
-
-  var leftAccent = mixColor(theme.accent3, theme.fg, 0.45 + pulse * 0.18);
-  var rightAccent = mixColor(theme.accent1, theme.fg, 0.45 + pulse * 0.18);
-  var dimAlpha = 0.1 + alpha * 0.46;
-  var sideAlpha = 0.16 + alpha * 0.78;
-  var forAlpha = 0.08 + alpha * 0.38;
-  var digitAlpha = 0.18 + alpha * 0.82;
-
-  setLabelAlpha(guiWidgets.startHintLeftTap, theme.fg, dimAlpha);
-  setLabelAlpha(guiWidgets.startHintLeftSide, leftAccent, sideAlpha);
-  setLabelAlpha(guiWidgets.startHintLeftFor, theme.fgAlt, forAlpha);
-  setLabelAlpha(guiWidgets.startHintLeftDigit, theme.fg, digitAlpha);
-  setLabelAlpha(guiWidgets.startHintRightTap, theme.fg, dimAlpha);
-  setLabelAlpha(guiWidgets.startHintRightSide, rightAccent, sideAlpha);
-  setLabelAlpha(guiWidgets.startHintRightFor, theme.fgAlt, forAlpha);
-  setLabelAlpha(guiWidgets.startHintRightDigit, theme.fg, digitAlpha);
-}
-
-function getStartHintDisplayAlpha() {
-  var onPlay = isPlaySectionCurrent() || g.gameMode === 'play';
-  return onPlay ? clamp(g.startHintVisibleAlpha, 0, 1) : 0;
-}
-
 function updateOverlayHud() {
   if (!guiWidgets) return;
 
   var onTitle = typeof g.titleSectionIndex === 'number' && worlds.currentSection === g.titleSectionIndex;
   var onSettings = typeof g.settingsSectionIndex === 'number' && worlds.currentSection === g.settingsSectionIndex;
-  var onPlay = isPlaySectionCurrent() || g.gameMode === 'play';
   var canEditSeed = onTitle || onSettings;
   var seedFocused = isSeedInputFocused();
   var showKeypad = canEditSeed && seedFocused;
-  var showStartHints = onPlay;
   guiWidgets.seedInput.setEnabled(canEditSeed);
   guiWidgets.seedCaption.setVisible(canEditSeed && !seedFocused);
-  guiWidgets.startHintLeftTap.setVisible(false);
-  guiWidgets.startHintLeftSide.setVisible(false);
-  guiWidgets.startHintLeftFor.setVisible(false);
-  guiWidgets.startHintLeftDigit.setVisible(false);
-  guiWidgets.startHintRightTap.setVisible(false);
-  guiWidgets.startHintRightSide.setVisible(false);
-  guiWidgets.startHintRightFor.setVisible(false);
-  guiWidgets.startHintRightDigit.setVisible(false);
-  if (startHintPanels) startHintPanels.visible = showStartHints;
   gui.setGroupVisible(GUI_GROUP_KEYPAD, showKeypad);
 
   if (!canEditSeed) {
@@ -1443,75 +1277,6 @@ function updateOverlayHud() {
 
   ensureThemeSelectorState();
   syncSettingsWorldWidgets();
-}
-
-function drawStartHintPanel(panel, accent, side) {
-  if (!panel || panel.width <= 0 || panel.height <= 0) return;
-
-  var alpha = getStartHintDisplayAlpha();
-  var pulse = 0.5 + 0.5 * Math.sin(g.startHintPulseTime * 6.2);
-  var fade = alpha;
-  if (fade <= 0.001) return;
-
-  var fill = alphaColor(mixColor(theme.bg, theme.fg, 0.11), (0.18 + pulse * 0.02) * fade);
-  var border = alphaColor(mixColor(accent, theme.fg, 0.38 + pulse * 0.08), (0.18 + pulse * 0.14) * fade);
-  var glow = alphaColor(accent, (0.04 + pulse * 0.08) * fade);
-  var lip = Math.max(4, Math.floor(panel.width * 0.018));
-  var edge = Math.max(2, Math.floor(panel.width * 0.008));
-  var edgeInset = Math.max(10, Math.floor(panel.width * 0.05));
-  var edgeY = panel.y + edgeInset;
-  var edgeHeight = Math.max(10, panel.height - edgeInset * 2);
-
-  ui.rect(panel.x, panel.y, panel.width, panel.height, fill);
-  ui.rect(panel.x, panel.y, panel.width, 1, border);
-  ui.rect(panel.x, panel.y + panel.height - 1, panel.width, 1, border);
-
-  if (side === 'left') {
-    ui.rect(panel.x, panel.y, lip, panel.height, border);
-    ui.rect(panel.x + lip, edgeY, edge, edgeHeight, glow);
-  } else {
-    ui.rect(panel.x + panel.width - lip, panel.y, lip, panel.height, border);
-    ui.rect(panel.x + panel.width - lip - edge, edgeY, edge, edgeHeight, glow);
-  }
-}
-
-function drawStartHintWords(panel, accent, side) {
-  if (!panel || panel.width <= 0 || panel.height <= 0) return;
-
-  var alpha = getStartHintDisplayAlpha();
-  var pulse = 0.5 + 0.5 * Math.sin(g.startHintPulseTime * 6.2);
-  var fade = alpha;
-  if (fade <= 0.001) return;
-
-  var words = side === 'left' ? ['Tap', 'LEFT', 'for', '0'] : ['Tap', 'RIGHT', 'for', '1'];
-  var accentMix = mixColor(accent, theme.fg, 0.45 + pulse * 0.18);
-  var colors = [
-    alphaColor(theme.fg, 0.1 + fade * 0.46),
-    alphaColor(accentMix, 0.16 + fade * 0.78),
-    alphaColor(theme.fgAlt, 0.08 + fade * 0.38),
-    alphaColor(theme.fg, 0.18 + fade * 0.82)
-  ];
-  var charW = Math.max(1, ui.metrics.charWidth || 8);
-  var innerX = panel.x + (panel.padX || 0);
-  var innerWidth = panel.width - (panel.padX || 0) * 2;
-  var topY = panel.y + (panel.padY || 0);
-  var lineHeight = panel.lineHeight || Math.max(18, Math.floor(ui.metrics.charHeight || 18));
-
-  for (var i = 0; i < words.length; i++) {
-    var text = words[i];
-    var textWidth = typeof ui.measureTextWidth === 'function' ? ui.measureTextWidth(text) : text.length * charW;
-    var textX = side === 'left' ? innerX : innerX + Math.max(0, innerWidth - textWidth);
-    var textY = topY + lineHeight * i;
-    ui.text(text, textX, textY, colors[i]);
-  }
-}
-
-function drawStartHintPanels() {
-  if (!startHintPanels) return;
-  drawStartHintPanel(startHintPanels.left, theme.accent3, 'left');
-  drawStartHintPanel(startHintPanels.right, theme.accent1, 'right');
-  drawStartHintWords(startHintPanels.left, theme.accent3, 'left');
-  drawStartHintWords(startHintPanels.right, theme.accent1, 'right');
 }
 
 function getDigitColor(s, i, alpha) {
@@ -1963,9 +1728,11 @@ function startGame() {
   startRainAudio();
   setRainLevel(RAIN_PLAY_GAIN, 1.2);
   g.firstStartPending = false;
-  g.startHintFadeTimer = 0;
-  g.startHintVisibleAlpha = 1;
-  g.startHintPulseTime = 0;
+  g.gameOverReturnTimer = -1;
+  g.playSectionOpacity = PLAY_SECTION_ENTRY_OPACITY;
+  g.playSectionFadeTimer = 0;
+  g.playSectionAppliedOpacity = 1;
+  clearPlaySectionContentOverride();
   g.rng     = random.rng(g.seed);
   g.gameMode = 'play';
   g.score   = 0;
@@ -1978,9 +1745,11 @@ function restartGame() {
   stopGameSfx('rain_over');
   startRainAudio();
   setRainLevel(RAIN_PLAY_GAIN, 0.8);
-  g.startHintFadeTimer = 0;
-  g.startHintVisibleAlpha = 1;
-  g.startHintPulseTime = 0;
+  g.gameOverReturnTimer = -1;
+  g.playSectionOpacity = PLAY_SECTION_ENTRY_OPACITY;
+  g.playSectionFadeTimer = 0;
+  g.playSectionAppliedOpacity = 1;
+  clearPlaySectionContentOverride();
   g.rng     = random.rng(g.seed);
   g.gameMode = 'play';
   g.score   = 0;
@@ -1990,12 +1759,16 @@ function restartGame() {
 
 function doGameOver() {
   g.gameMode = 'gameover';
+  g.gameOverReturnTimer = 0;
+  g.playSectionOpacity = 1;
+  g.playSectionAppliedOpacity = 1;
+  showPlaySectionGameOverContent();
+  stopBackgroundMusic();
   setRainLevel(RAIN_IDLE_GAIN, 1.6);
   playGameBlobSfx('rain_over', 'rain_over_huh', 0.7);
   for (var i = 0; i < g.strains.length; i++) {
     if (g.strains[i].destroyTimer <= 0) g.strains[i].destroyTimer = DESTROY_DUR;
   }
-  focusWorldSection('0RAIN');
 }
 
 // ── Update ────────────────────────────────────────────────────────────────
@@ -2199,36 +1972,46 @@ if (g.gameMode === 'play') {
 
 ```js on:update
 var frameDt = Math.min(getDelta(), 0.05);
-g.startHintPulseTime += frameDt;
-if (g.gameMode === 'play' && g.startHintFadeTimer < START_HINT_TOTAL_DURATION) {
-  g.startHintFadeTimer = Math.min(START_HINT_TOTAL_DURATION, g.startHintFadeTimer + frameDt);
-  if (g.startHintFadeTimer <= START_HINT_HOLD_DURATION) {
-    g.startHintVisibleAlpha = 1;
+
+if (typeof g.playSectionIndex === 'number') {
+  if (g.gameMode === 'play' && isPlaySectionCurrent()) {
+    g.playSectionFadeTimer = Math.min(PLAY_SECTION_FADE_DURATION, g.playSectionFadeTimer + frameDt);
+    g.playSectionOpacity = clamp(
+      PLAY_SECTION_ENTRY_OPACITY * (1 - (g.playSectionFadeTimer / PLAY_SECTION_FADE_DURATION)),
+      0,
+      PLAY_SECTION_ENTRY_OPACITY
+    );
   } else {
-    g.startHintVisibleAlpha = clamp(1 - ((g.startHintFadeTimer - START_HINT_HOLD_DURATION) / START_HINT_FADE_OUT_DURATION), 0, 1);
+    g.playSectionOpacity = 1;
   }
-} else {
-  g.startHintVisibleAlpha = g.gameMode === 'play' ? 0 : g.startHintVisibleAlpha;
+
+  applyPlaySectionOpacity(g.playSectionOpacity);
 }
+
+if (g.gameMode === 'gameover' && g.gameOverReturnTimer >= 0) {
+  g.gameOverReturnTimer += frameDt;
+  if (g.gameOverReturnTimer >= GAME_OVER_RETURN_DELAY) {
+    g.gameOverReturnTimer = -1;
+    focusWorldSection('0RAIN');
+  }
+}
+
 handleWorldLinkActions();
 handleSettingsWorldWidgetEvents();
 gui.update(getMouseX(), getMouseY(), !!g.guiMouseDown);
 layoutOverlayGui();
 updateOverlayHud();
-syncPlaySectionVisibility();
 syncBackgroundMusic();
 ```
 
 ```js on:render
 term.layerID = 'default';
 term.clear();
-drawStartHintPanels();
 ```
 
 ```js on:render section:play
 drawBgDrops();
 drawStrains();
-drawStartHintPanels();
 ```
 
 ```stfxr name:rain_hit

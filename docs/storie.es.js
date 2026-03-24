@@ -12467,19 +12467,44 @@ class WidgetManager {
       tabOrder: []
     };
   }
+  normalizeGroupScale(scale) {
+    const value = Number(scale);
+    return Number.isFinite(value) && value > 0 ? value : 1;
+  }
+  normalizeGroupOpacity(opacity) {
+    const value = Number(opacity);
+    if (!Number.isFinite(value)) return 1;
+    return Math.max(0, Math.min(1, value));
+  }
+  createGroup(groupId) {
+    return {
+      id: groupId,
+      visible: true,
+      widgets: /* @__PURE__ */ new Set(),
+      transform: {
+        x: 0,
+        y: 0,
+        scale: 1
+      },
+      presentation: {
+        opacity: 1
+      }
+    };
+  }
+  ensureGroup(groupId) {
+    let group = this.groups.get(groupId);
+    if (!group) {
+      group = this.createGroup(groupId);
+      this.groups.set(groupId, group);
+    }
+    return group;
+  }
   /**
    * Register a widget
    */
   register(widget) {
     this.widgets.set(widget.id, widget);
-    if (!this.groups.has(widget.group)) {
-      this.groups.set(widget.group, {
-        id: widget.group,
-        visible: true,
-        widgets: /* @__PURE__ */ new Set()
-      });
-    }
-    this.groups.get(widget.group).widgets.add(widget.id);
+    this.ensureGroup(widget.group).widgets.add(widget.id);
     if (widget.focusable) {
       this.navigation.focusableWidgets.push(widget.id);
       this.navigation.tabOrder.push(widget.id);
@@ -12534,10 +12559,31 @@ class WidgetManager {
    * Set group visibility
    */
   setGroupVisible(groupId, visible) {
-    const group = this.groups.get(groupId);
-    if (group) {
-      group.visible = visible;
+    this.ensureGroup(groupId).visible = visible;
+  }
+  setGroupOpacity(groupId, opacity) {
+    this.ensureGroup(groupId).presentation.opacity = this.normalizeGroupOpacity(opacity);
+  }
+  setGroupTransform(groupId, transform) {
+    const group = this.ensureGroup(groupId);
+    if (transform.x !== void 0 && Number.isFinite(Number(transform.x))) {
+      group.transform.x = Number(transform.x);
     }
+    if (transform.y !== void 0 && Number.isFinite(Number(transform.y))) {
+      group.transform.y = Number(transform.y);
+    }
+    if (transform.scale !== void 0) {
+      group.transform.scale = this.normalizeGroupScale(transform.scale);
+    }
+  }
+  getGroupState(groupId) {
+    return this.ensureGroup(groupId);
+  }
+  getGroupTransform(groupId) {
+    return { ...this.ensureGroup(groupId).transform };
+  }
+  getGroupPresentation(groupId) {
+    return { ...this.ensureGroup(groupId).presentation };
   }
   /**
    * Check if group is visible
@@ -12642,6 +12688,15 @@ class InputRouter {
     __publicField(this, "lastPrintableKeydownText", null);
     this.widgetManager = config.widgetManager;
   }
+  isPointWithinWidget(widget, point) {
+    const group = this.widgetManager.getGroupState(widget.group);
+    const scale = Number.isFinite(group.transform.scale) && group.transform.scale > 0 ? group.transform.scale : 1;
+    const x = group.transform.x + widget.bounds.x * scale;
+    const y = group.transform.y + widget.bounds.y * scale;
+    const width = widget.bounds.width * scale;
+    const height = widget.bounds.height * scale;
+    return point.x >= x && point.x < x + width && point.y >= y && point.y < y + height;
+  }
   /**
    * Update input routing
    * Should be called every frame before rendering
@@ -12650,7 +12705,7 @@ class InputRouter {
     const visibleWidgets = this.widgetManager.getVisible().reverse();
     let hoveredWidget = null;
     for (const widget of visibleWidgets) {
-      if (widget.state.enabled && widget.containsPoint(mousePos)) {
+      if (widget.state.enabled && this.isPointWithinWidget(widget, mousePos)) {
         hoveredWidget = widget;
         break;
       }
@@ -14156,7 +14211,8 @@ const DEFAULT_TEXT_INPUT_OPTIONS = {
   autoCapitalize: "none",
   autoCorrect: false,
   spellcheck: false,
-  secure: false
+  secure: false,
+  showSoftKeyboard: true
 };
 function createTextInputOptions(overrides, defaults2) {
   const base = {
@@ -14169,7 +14225,8 @@ function createTextInputOptions(overrides, defaults2) {
     multiline: (overrides == null ? void 0 : overrides.multiline) ?? (defaults2 == null ? void 0 : defaults2.multiline) ?? base.multiline,
     autoCorrect: (overrides == null ? void 0 : overrides.autoCorrect) ?? (defaults2 == null ? void 0 : defaults2.autoCorrect) ?? base.autoCorrect,
     spellcheck: (overrides == null ? void 0 : overrides.spellcheck) ?? (defaults2 == null ? void 0 : defaults2.spellcheck) ?? base.spellcheck,
-    secure: (overrides == null ? void 0 : overrides.secure) ?? (defaults2 == null ? void 0 : defaults2.secure) ?? base.secure
+    secure: (overrides == null ? void 0 : overrides.secure) ?? (defaults2 == null ? void 0 : defaults2.secure) ?? base.secure,
+    showSoftKeyboard: (overrides == null ? void 0 : overrides.showSoftKeyboard) ?? (defaults2 == null ? void 0 : defaults2.showSoftKeyboard) ?? base.showSoftKeyboard
   };
 }
 function normalizeTextSelectionRange(length, start, end, direction = "none") {
@@ -14184,6 +14241,20 @@ function normalizeTextSelectionRange(length, start, end, direction = "none") {
 }
 function normalizeSingleLineText(value) {
   return String(value ?? "").replace(/\r\n/g, " ").replace(/[\r\n]+/g, " ");
+}
+function getHiddenTextInputBridgeAttributes(options) {
+  if (!options.showSoftKeyboard) {
+    return {
+      readOnly: true,
+      inputMode: "none",
+      virtualKeyboardPolicy: "manual"
+    };
+  }
+  return {
+    readOnly: false,
+    inputMode: options.inputMode,
+    virtualKeyboardPolicy: "auto"
+  };
 }
 function isTextInputCapable(value) {
   if (!value || typeof value !== "object") return false;
@@ -17434,6 +17505,76 @@ class GUISystem {
   setWidgetRenderer(renderer) {
     this.widgetRenderer = renderer;
   }
+  getWidgetGroup(widget) {
+    return this.widgetManager.getGroupState(widget.group);
+  }
+  getGroupScale(group) {
+    const scale = Number(group.transform.scale);
+    return Number.isFinite(scale) && scale > 0 ? scale : 1;
+  }
+  getGroupOpacity(group) {
+    const opacity = Number(group.presentation.opacity);
+    if (!Number.isFinite(opacity)) return 1;
+    return Math.max(0, Math.min(1, opacity));
+  }
+  getTransformedBounds(widget, group) {
+    const scale = this.getGroupScale(group);
+    return {
+      x: group.transform.x + widget.bounds.x * scale,
+      y: group.transform.y + widget.bounds.y * scale,
+      width: widget.bounds.width * scale,
+      height: widget.bounds.height * scale
+    };
+  }
+  applyOpacityToColor(color, opacity) {
+    if (opacity >= 0.999) return color;
+    if (opacity <= 1e-3) return ColorUtils.rgba(ColorUtils.r(color), ColorUtils.g(color), ColorUtils.b(color), 0);
+    return ColorUtils.rgba(
+      ColorUtils.r(color),
+      ColorUtils.g(color),
+      ColorUtils.b(color),
+      Math.round(ColorUtils.a(color) * opacity)
+    );
+  }
+  withWidgetGroupContext(widget, run) {
+    const group = this.getWidgetGroup(widget);
+    const opacity = this.getGroupOpacity(group);
+    const transformedBounds = this.getTransformedBounds(widget, group);
+    const originalBounds = { ...widget.bounds };
+    const originalScale = typeof widget.getRenderScale === "function" ? widget.getRenderScale() : 1;
+    const groupScale = this.getGroupScale(group);
+    widget.bounds = transformedBounds;
+    if (typeof widget.setRenderScale === "function") {
+      widget.setRenderScale(originalScale * groupScale);
+    }
+    try {
+      return run(group, opacity);
+    } finally {
+      widget.bounds = originalBounds;
+      if (typeof widget.setRenderScale === "function") {
+        widget.setRenderScale(originalScale);
+      }
+    }
+  }
+  createOpacityAdjustedUI(ui, opacity) {
+    if (opacity >= 0.999) return ui;
+    return {
+      rect: (x, y, w, h, color) => ui.rect(x, y, w, h, this.applyOpacityToColor(color, opacity)),
+      text: (text, x, y, color) => ui.text(text, x, y, this.applyOpacityToColor(color, opacity)),
+      measureTextWidth: ui.measureTextWidth ? (text) => ui.measureTextWidth(text) : void 0,
+      image: ui.image ? (imageId, x, y, w, h, options) => ui.image(imageId, x, y, w, h, options && options.tint ? { ...options, tint: this.applyOpacityToColor(options.tint, opacity) } : options) : void 0,
+      getImageSize: ui.getImageSize ? (imageId) => ui.getImageSize(imageId) : void 0,
+      clear: ui.clear ? (color) => ui.clear(this.applyOpacityToColor(color, opacity)) : void 0,
+      pushClipRect: ui.pushClipRect ? (x, y, w, h) => ui.pushClipRect(x, y, w, h) : void 0,
+      popClipRect: ui.popClipRect ? () => ui.popClipRect() : void 0,
+      pushMaskRect: ui.pushMaskRect ? (x, y, w, h) => ui.pushMaskRect(x, y, w, h) : void 0,
+      pushMaskRoundedRect: ui.pushMaskRoundedRect ? (x, y, w, h, radius) => ui.pushMaskRoundedRect(x, y, w, h, radius) : void 0,
+      pushMaskPolygon: ui.pushMaskPolygon ? (points) => ui.pushMaskPolygon(points) : void 0,
+      popMask: ui.popMask ? () => ui.popMask() : void 0,
+      colors: ui.colors,
+      metrics: ui.metrics
+    };
+  }
   buildWidgetInfo(widget, charWidth, charHeight) {
     const renderContext = typeof widget.resolveRenderContext === "function" ? widget.resolveRenderContext(charWidth, charHeight) : { charWidth, charHeight };
     const base = {
@@ -17571,22 +17712,30 @@ class GUISystem {
     this.inputRouter.update(inputCoord, mouseDown);
     const sliders = this.widgetManager.getAll().filter((w) => w instanceof GUISlider);
     for (const slider of sliders) {
-      const metrics = slider.resolveRenderContext(charWidth, charHeight);
-      slider.handleDrag(mouseX, mouseY, mouseDown, metrics.charHeight, metrics.scale);
+      this.withWidgetGroupContext(slider, () => {
+        const metrics = slider.resolveRenderContext(charWidth, charHeight);
+        slider.handleDrag(mouseX, mouseY, mouseDown, metrics.charHeight, metrics.scale);
+      });
     }
     const pianos = this.widgetManager.getAll().filter((w) => w instanceof GUIPianoKeyboard);
     for (const piano of pianos) {
-      piano.handlePointer(mouseX, mouseY, mouseDown);
+      this.withWidgetGroupContext(piano, () => {
+        piano.handlePointer(mouseX, mouseY, mouseDown);
+      });
     }
     const textFields = this.widgetManager.getAll().filter((w) => w instanceof GUITextField);
     for (const tf of textFields) {
-      const metrics = tf.resolveRenderContext(charWidth, charHeight);
-      tf.updateMetrics(metrics.charWidth, metrics.charHeight);
+      this.withWidgetGroupContext(tf, () => {
+        const metrics = tf.resolveRenderContext(charWidth, charHeight);
+        tf.updateMetrics(metrics.charWidth, metrics.charHeight);
+      });
     }
     const textEditors = this.widgetManager.getAll().filter((w) => w instanceof GUITextEditor);
     for (const ed of textEditors) {
-      const metrics = ed.resolveRenderContext(charWidth, charHeight);
-      ed.updateMetrics(metrics.charWidth, metrics.charHeight);
+      this.withWidgetGroupContext(ed, () => {
+        const metrics = ed.resolveRenderContext(charWidth, charHeight);
+        ed.updateMetrics(metrics.charWidth, metrics.charHeight);
+      });
     }
   }
   /**
@@ -17648,34 +17797,38 @@ class GUISystem {
     if (!uiAPI) return;
     const widgets = this.widgetManager.getVisible();
     for (const widget of widgets) {
-      if (this.widgetRenderer) {
-        try {
-          const info = this.buildWidgetInfo(widget, charWidth, charHeight);
-          const handled = this.widgetRenderer(info, uiAPI);
-          if (handled === true) {
-            continue;
+      const handled = this.withWidgetGroupContext(widget, (_group, opacity) => {
+        const widgetUI = this.createOpacityAdjustedUI(uiAPI, opacity);
+        if (this.widgetRenderer) {
+          try {
+            const info = this.buildWidgetInfo(widget, charWidth, charHeight);
+            if (this.widgetRenderer(info, widgetUI) === true) {
+              return true;
+            }
+          } catch (err2) {
+            console.warn("gui.setWidgetRenderer callback threw; falling back to default widget rendering.", err2);
           }
-        } catch (err2) {
-          console.warn("gui.setWidgetRenderer callback threw; falling back to default widget rendering.", err2);
         }
-      }
-      if (widget instanceof GUIButton) {
-        this.renderButton(widget, uiAPI, charWidth, charHeight);
-      } else if (widget instanceof GUILabel) {
-        this.renderLabel(widget, uiAPI, charWidth, charHeight);
-      } else if (widget instanceof GUICheckbox) {
-        this.renderCheckbox(widget, uiAPI, charWidth, charHeight);
-      } else if (widget instanceof GUISlider) {
-        this.renderSlider(widget, uiAPI, charWidth, charHeight);
-      } else if (widget instanceof GUIPianoKeyboard) {
-        this.renderPianoKeyboard(widget, uiAPI, charWidth, charHeight);
-      } else if (widget instanceof GUITextField) {
-        this.renderTextField(widget, uiAPI, charWidth, charHeight);
-      } else if (widget instanceof GUITextEditor) {
-        this.renderTextEditor(widget, uiAPI, charWidth, charHeight);
-      } else if (widget instanceof GUIMarkdownView) {
-        this.renderMarkdownView(widget, uiAPI, charWidth, charHeight);
-      }
+        if (widget instanceof GUIButton) {
+          this.renderButton(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUILabel) {
+          this.renderLabel(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUICheckbox) {
+          this.renderCheckbox(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUISlider) {
+          this.renderSlider(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUIPianoKeyboard) {
+          this.renderPianoKeyboard(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUITextField) {
+          this.renderTextField(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUITextEditor) {
+          this.renderTextEditor(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUIMarkdownView) {
+          this.renderMarkdownView(widget, widgetUI, charWidth, charHeight);
+        }
+        return false;
+      });
+      if (handled === true) continue;
     }
   }
   renderTextField(tf, ui, charW, charH) {
@@ -18041,6 +18194,15 @@ class GUISystem {
    */
   setGroupVisible(group, visible) {
     this.widgetManager.setGroupVisible(group, visible);
+  }
+  setGroupOpacity(group, opacity) {
+    this.widgetManager.setGroupOpacity(group, opacity);
+  }
+  setGroupTransform(group, transform) {
+    this.widgetManager.setGroupTransform(group, transform);
+  }
+  getGroupState(group) {
+    return this.widgetManager.getGroupState(group);
   }
   /**
    * Get all widgets
@@ -18966,6 +19128,20 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
     setGroupVisible(group, visible) {
       if (!this._system) return;
       this._system.setGroupVisible(group, visible);
+    },
+    /**
+     * Set opacity for all widgets in a group
+     */
+    setGroupOpacity(group, opacity) {
+      if (!this._system) return;
+      this._system.setGroupOpacity(group, opacity);
+    },
+    /**
+     * Set translation / scale for all widgets in a group
+     */
+    setGroupTransform(group, transform) {
+      if (!this._system) return;
+      this._system.setGroupTransform(group, transform);
     },
     /**
      * Color utilities
@@ -30509,7 +30685,7 @@ class StorieEngine {
     if (!system) return false;
     const focused = (_c = system.getFocusedWidget) == null ? void 0 : _c.call(system);
     const focusedIsInline = !!focused && this.worldsInlineWidgetInstances.some((entry) => entry.widget.id === focused.id);
-    const navigatesInline = key === "Tab" || key === "ArrowDown" || key === "ArrowUp" || key === "ArrowLeft" || key === "ArrowRight";
+    const navigatesInline = key === "Tab" || key === "ArrowLeft" || key === "ArrowRight";
     const activatesInline = key === "Enter" || key === " ";
     if (!focusedIsInline && !navigatesInline) return false;
     if (navigatesInline || activatesInline && focusedIsInline) {
@@ -33194,6 +33370,7 @@ ${exportVars}
     input.setAttribute("autocorrect", "off");
     input.setAttribute("autocomplete", "off");
     input.setAttribute("autocapitalize", "none");
+    input.setAttribute("enterkeyhint", "done");
     input.wrap = "off";
     input.rows = 1;
     input.spellcheck = false;
@@ -33444,6 +33621,16 @@ ${exportVars}
     target.setSelectionRange(selectionStart, selectionEnd, direction);
     this.syncHiddenTextInputBridge(false);
   }
+  focusCanvasWithoutScroll() {
+    if (typeof document === "undefined" || document.activeElement === this.canvas) {
+      return;
+    }
+    try {
+      this.canvas.focus({ preventScroll: true });
+    } catch {
+      this.canvas.focus();
+    }
+  }
   syncHiddenTextInputBridge(preferFocus = false) {
     const input = this.hiddenTextInput;
     if (!input || typeof document === "undefined") return;
@@ -33457,6 +33644,15 @@ ${exportVars}
     const options = target.getTextInputOptions();
     const value = options.multiline ? target.getValue() : normalizeSingleLineText(target.getValue());
     const selection = target.getSelectionRange();
+    const bridgeAttributes = getHiddenTextInputBridgeAttributes(options);
+    if (!options.showSoftKeyboard) {
+      if (document.activeElement === input) {
+        input.blur();
+      }
+      if (preferFocus) {
+        this.focusCanvasWithoutScroll();
+      }
+    }
     this.hiddenTextInputSyncing = true;
     try {
       if (input.value !== value) {
@@ -33466,14 +33662,24 @@ ${exportVars}
       input.spellcheck = options.spellcheck;
       input.autocapitalize = options.autoCapitalize === "off" ? "none" : options.autoCapitalize;
       input.setAttribute("autocorrect", options.autoCorrect ? "on" : "off");
-      input.inputMode = options.inputMode;
+      input.readOnly = bridgeAttributes.readOnly;
+      if (bridgeAttributes.readOnly) {
+        input.setAttribute("readonly", "readonly");
+      } else {
+        input.removeAttribute("readonly");
+      }
+      input.inputMode = bridgeAttributes.inputMode;
+      input.setAttribute("inputmode", bridgeAttributes.inputMode);
+      input.virtualKeyboardPolicy = bridgeAttributes.virtualKeyboardPolicy;
+      input.setAttribute("virtualkeyboardpolicy", bridgeAttributes.virtualKeyboardPolicy);
       input.enterKeyHint = options.enterKeyHint;
+      input.setAttribute("enterkeyhint", options.enterKeyHint);
       const start = Math.max(0, Math.min(value.length, selection.start | 0));
       const end = Math.max(0, Math.min(value.length, selection.end | 0));
       if (input.selectionStart !== start || input.selectionEnd !== end || input.selectionDirection !== (selection.direction ?? "none")) {
         input.setSelectionRange(start, end, selection.direction ?? "none");
       }
-      if (preferFocus && document.activeElement !== input) {
+      if (options.showSoftKeyboard && preferFocus && document.activeElement !== input) {
         try {
           input.focus({ preventScroll: true });
         } catch {

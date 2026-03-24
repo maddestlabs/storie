@@ -27,6 +27,24 @@ export class InputRouter {
   constructor(config: InputRouterConfig) {
     this.widgetManager = config.widgetManager;
   }
+
+  private isPointWithinWidget(widget: BaseWidget, point: InputCoordinate): boolean {
+    const group = this.widgetManager.getGroupState(widget.group);
+    const scale = Number.isFinite(group.transform.scale) && group.transform.scale > 0
+      ? group.transform.scale
+      : 1;
+    const x = group.transform.x + widget.bounds.x * scale;
+    const y = group.transform.y + widget.bounds.y * scale;
+    const width = widget.bounds.width * scale;
+    const height = widget.bounds.height * scale;
+
+    return (
+      point.x >= x &&
+      point.x < x + width &&
+      point.y >= y &&
+      point.y < y + height
+    );
+  }
   
   /**
    * Update input routing
@@ -39,7 +57,7 @@ export class InputRouter {
     // Find hovered widget
     let hoveredWidget: BaseWidget | null = null;
     for (const widget of visibleWidgets) {
-      if (widget.state.enabled && widget.containsPoint(mousePos)) {
+      if (widget.state.enabled && this.isPointWithinWidget(widget, mousePos)) {
         hoveredWidget = widget;
         break;
       }

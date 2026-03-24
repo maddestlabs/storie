@@ -96,6 +96,16 @@ export type Alignment = 'start' | 'center' | 'end' | 'stretch';
  */
 export type Direction = 'horizontal' | 'vertical';
 
+export interface WidgetGroupTransform {
+  x: number;
+  y: number;
+  scale: number;
+}
+
+export interface WidgetGroupPresentation {
+  opacity: number;
+}
+
 /**
  * Widget group for visibility/layer management
  */
@@ -103,6 +113,8 @@ export interface WidgetGroup {
   id: string | number;
   visible: boolean;
   widgets: Set<WidgetId>;
+  transform: WidgetGroupTransform;
+  presentation: WidgetGroupPresentation;
 }
 
 /**
@@ -153,6 +165,12 @@ export interface TextInputOptions {
   spellcheck: boolean;
   secure: boolean;
   showSoftKeyboard: boolean;
+}
+
+export interface HiddenTextInputBridgeAttributes {
+  readOnly: boolean;
+  inputMode: TextInputMode | 'none';
+  virtualKeyboardPolicy: 'auto' | 'manual';
 }
 
 export interface TextInputCapable {
