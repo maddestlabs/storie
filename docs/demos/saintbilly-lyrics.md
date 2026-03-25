@@ -336,7 +336,7 @@ worlds.config.setDefaults({
   defaultSectionHeight: 520,
   autoLayoutSpacing: 2,
   sectionBorderEnabled: false,
-  sectionBackground: 'shader:saintbilly',
+  sectionBackground: 'texture:assets/img/paper_seamless_texture_3197.jpg;tilePx=320;blendMode=multiply;paperPlaneZ=focus',
 });
 
 worlds.camera.setPosition(0, 55, 320);
@@ -432,19 +432,14 @@ if (state.panel) {
   const info = gui.getResponsiveInfo({ width: viewport.width, height: viewport.height });
   const tokens = gui.getTokens();
   const compact = info.breakpoint === 'xs';
-  const insetTop = compact ? tokens.spacing.sm : tokens.spacing.lg;
-  const insetLeft = compact ? tokens.spacing.sm : tokens.spacing.lg;
-  const insetBottom = compact ? tokens.spacing.sm : tokens.spacing.lg;
-  const maxWidth = Math.min(200, Math.max(160, (info.usableWidth || viewport.width) - insetLeft));
+  const inset = compact ? tokens.spacing.sm : tokens.spacing.lg;
+  const maxWidth = Math.min(200, Math.max(160, (info.usableWidth || viewport.width) - inset));
 
   state.panel.container.padding = compact ? tokens.spacing.sm : tokens.spacing.md;
   state.panel.container.gap = compact ? tokens.spacing.xs : tokens.spacing.sm;
   state.panel.setMaxWidth(maxWidth, false);
   state.panel.fitToViewport(viewport, {
-    insetTop,
-    insetRight: 0,
-    insetBottom,
-    insetLeft,
+    inset,
     safeArea: true,
     maxWidth,
     anchorX: 'end',

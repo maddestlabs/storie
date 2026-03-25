@@ -22201,6 +22201,9 @@ class WorldsRenderer {
   constructor(device, width, height, shaderManager) {
     __publicField(this, "device");
     __publicField(this, "renderPipeline", null);
+    __publicField(this, "multiplyRenderPipeline", null);
+    __publicField(this, "sharedPipelineLayout", null);
+    __publicField(this, "sharedBindGroupLayout", null);
     __publicField(this, "linePipeline", null);
     __publicField(this, "shaderManager");
     // Buffers
@@ -22216,6 +22219,8 @@ class WorldsRenderer {
     __publicField(this, "backgroundTexture", null);
     __publicField(this, "backgroundShaderTexture", null);
     __publicField(this, "backgroundShaderMipLevelCount", 1);
+    __publicField(this, "backgroundImageTexture", null);
+    __publicField(this, "backgroundImageSource", null);
     // Mipmap generation for backgroundShaderTexture (reduces shimmer under camera motion)
     __publicField(this, "mipmapPipeline", null);
     // Avoid repeatedly fetching/evaluating the same built-in shader.
@@ -22279,6 +22284,39 @@ class WorldsRenderer {
     void this.shaderManager.ensureBuiltinShader(name).finally(() => {
       this.loadingBuiltinShaders.delete(name);
     });
+  }
+  setBackgroundImage(image) {
+    if (this.backgroundImageSource === image) return;
+    this.backgroundImageSource = image;
+    if (this.backgroundImageTexture) {
+      this.backgroundImageTexture.destroy();
+      this.backgroundImageTexture = null;
+    }
+    if (!image) return;
+    const width = Math.max(1, image.width | 0);
+    const height = Math.max(1, image.height | 0);
+    const mipLevelCount = this.calcMipLevelCount(width, height, 12);
+    const texture = this.device.createTexture({
+      size: { width, height },
+      mipLevelCount,
+      format: this.format,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+    try {
+      this.device.queue.copyExternalImageToTexture(
+        { source: image },
+        { texture },
+        { width, height }
+      );
+      const encoder = this.device.createCommandEncoder({ label: "WorldsRenderer Background Image Upload" });
+      this.generateMipmaps(encoder, texture, mipLevelCount, width, height);
+      this.device.queue.submit([encoder.finish()]);
+      this.backgroundImageTexture = texture;
+    } catch (error) {
+      console.warn("[WorldsRenderer] Failed to upload background image texture:", error);
+      texture.destroy();
+      this.backgroundImageSource = null;
+    }
   }
   /**
    * Create offscreen render texture
@@ -22362,13 +22400,13 @@ class WorldsRenderer {
       primitive: { topology: "triangle-list" }
     });
   }
-  generateMipmaps(encoder, texture, mipLevelCount) {
+  generateMipmaps(encoder, texture, mipLevelCount, textureWidth, textureHeight) {
     if (!this.sampler) return;
     if (mipLevelCount <= 1) return;
     this.ensureMipmapPipeline();
     if (!this.mipmapPipeline) return;
-    let mipWidth = this.width;
-    let mipHeight = this.height;
+    let mipWidth = textureWidth ?? this.width;
+    let mipHeight = textureHeight ?? this.height;
     for (let level = 1; level < mipLevelCount; level++) {
       mipWidth = Math.max(1, mipWidth >> 1);
       mipHeight = Math.max(1, mipHeight >> 1);
@@ -22696,7 +22734,7 @@ class WorldsRenderer {
           // transparent background so paper shows through from behind.
           if (isBackground && uniforms.paperParams.w > 0.5) {
             if (uniforms.bgFlags.w > 0.5) {
-              // Use custom shader background texture.
+              // Use a sampled background texture (shader-rendered or uploaded image).
               // params0.y is a mode flag for the background pass:
               //   1 = screen-locked (static in screen space)
               //   0 = world-locked (mapped to a world XY plane)
@@ -22705,10 +22743,13 @@ class WorldsRenderer {
               } else {
                 // World-locked mapping: map the ray/plane intersection coord into a repeatable UV domain.
                 let coord = paperCoordFromScreenUv(input.uv);
-                var uv2 = fract(coord * uniforms.paperParams.x);
+                let coordScaled = coord * uniforms.paperParams.x;
+                let gradX = dpdx(coordScaled);
+                let gradY = dpdy(coordScaled);
+                var uv2 = fract(coordScaled);
                 // Avoid sampling exactly at the clamp edge.
                 uv2 = uv2 * 0.999 + vec2<f32>(0.0005, 0.0005);
-                outColor = textureSample(backgroundShaderTexture, textureSampler, uv2);
+                outColor = textureSampleGrad(backgroundShaderTexture, textureSampler, uv2, gradX, gradY);
               }
             } else {
               // Use procedural background
@@ -22718,6 +22759,78 @@ class WorldsRenderer {
           }
 
           if (!isBackground) {
+            // --- Texture blend effects (sectionBlendMode = 'multiply') ---
+            // Flags: bgFlags.x > 0.5 = effects active; params1.w carries screen width
+            // for reconstructing screen-space UV (needed for world-locked paper sampling).
+            //
+            // Effects:
+            //   1. Paper surface gradient displaces card UV — content appears to
+            //      follow the paper's topography (depth / bas-relief illusion).
+            //   2. Ink bleed: 4-tap soft dilation of dark opaque ink into adjacent
+            //      transparent areas, simulating capillary absorption in paper fibers.
+            //
+            // The actual multiply composite (card * paper) is handled by the
+            // fixed-function blend state (srcFactor='dst') — zero extra passes.
+            if (uniforms.bgFlags.x > 0.5 && uniforms.params1.w > 0.5) {
+              // Reconstruct screen UV from fragment pixel position
+              let screenW = uniforms.params1.w;
+              let screenH = screenW / max(uniforms.params1.x, 0.0001);
+              let screenUv = input.position.xy / vec2f(screenW, screenH);
+
+              // Sample paper texture at the world-locked position for this pixel
+              let wCoord = paperCoordFromScreenUv(screenUv);
+              let wUvRaw = wCoord * uniforms.paperParams.x;
+              let wGX = dpdx(wUvRaw);
+              let wGY = dpdy(wUvRaw);
+              var wUv = fract(wUvRaw) * 0.999 + vec2f(0.0005, 0.0005);
+              let paper = textureSampleGrad(backgroundShaderTexture, textureSampler, wUv, wGX, wGY);
+              let paperLuma = dot(paper.rgb, vec3f(0.299, 0.587, 0.114));
+
+              // Paper surface gradient: bright = raised, dark = depressed.
+              // Displace card UV toward depressed areas so ink appears to settle
+              // into the paper's texture valleys (depth / thickness illusion).
+              // DISABLED (0.0) for diagnostics — suspected source of pixel scatter.
+              let gradVec = vec2f(dpdx(paperLuma), dpdy(paperLuma));
+              let gradLen = length(gradVec);
+              let gradDir = select(vec2f(0.0), gradVec / gradLen, gradLen > 0.0001);
+              let uvPerPx = vec2f(abs(dpdx(input.uv.x)), abs(dpdy(input.uv.y)));
+              let distortedUv = clamp(
+                input.uv - gradDir * uvPerPx * 0.0,
+                vec2f(0.001), vec2f(0.999)
+              );
+
+              // Re-sample card at distorted UV
+              let card = textureSample(textureData, textureSampler, distortedUv);
+
+              // Ink bleed: 4-tap cross — dark opaque neighbors bleed into lighter areas.
+              // Uses screen-pixel-sized steps so bleed is resolution-independent.
+              let uStep = uvPerPx.x * 1.5;
+              let vStep = uvPerPx.y * 1.5;
+              let n0 = textureSample(textureData, textureSampler, distortedUv + vec2f(uStep, 0.0));
+              let n1 = textureSample(textureData, textureSampler, distortedUv - vec2f(uStep, 0.0));
+              let n2 = textureSample(textureData, textureSampler, distortedUv + vec2f(0.0, vStep));
+              let n3 = textureSample(textureData, textureSampler, distortedUv - vec2f(0.0, vStep));
+
+              // Darkness × opacity weight per neighbor (dark ink bleeds most)
+              let lumaW = vec3f(0.299, 0.587, 0.114);
+              let d0 = n0.a * (1.0 - dot(n0.rgb, lumaW));
+              let d1 = n1.a * (1.0 - dot(n1.rgb, lumaW));
+              let d2 = n2.a * (1.0 - dot(n2.rgb, lumaW));
+              let d3 = n3.a * (1.0 - dot(n3.rgb, lumaW));
+              let dSelf = card.a * (1.0 - dot(card.rgb, lumaW));
+
+              let neighborInk = max(d0, max(d1, max(d2, d3)));
+              let bleedIn = clamp((neighborInk - dSelf) * 0.45, 0.0, 0.18);
+
+              let dTotal = max(d0 + d1 + d2 + d3, 0.00001);
+              let bleedRgb = (n0.rgb * d0 + n1.rgb * d1 + n2.rgb * d2 + n3.rgb * d3) / dTotal;
+
+              outColor = vec4f(
+                mix(card.rgb, bleedRgb, bleedIn),
+                clamp(card.a + bleedIn * 0.6, 0.0, 1.0)
+              );
+            }
+
             outColor = vec4<f32>(outColor.rgb, outColor.a * clamp(uniforms.paperParams.w, 0.0, 1.0));
           }
 
@@ -22747,9 +22860,22 @@ class WorldsRenderer {
         }
       ]
     };
+    this.sharedBindGroupLayout = this.device.createBindGroupLayout({
+      label: "3D Canvas Bind Group Layout",
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: "uniform", hasDynamicOffset: false, minBindingSize: 224 } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d", multisampled: false } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d", multisampled: false } }
+      ]
+    });
+    this.sharedPipelineLayout = this.device.createPipelineLayout({
+      label: "3D Canvas Pipeline Layout",
+      bindGroupLayouts: [this.sharedBindGroupLayout]
+    });
     this.renderPipeline = this.device.createRenderPipeline({
       label: "3D Canvas Pipeline",
-      layout: "auto",
+      layout: this.sharedPipelineLayout,
       vertex: {
         module: shaderModule,
         entryPoint: "vertexMain",
@@ -22785,6 +22911,38 @@ class WorldsRenderer {
       //   depthWriteEnabled: true,
       //   depthCompare: 'less'
       // }
+    });
+    this.multiplyRenderPipeline = this.device.createRenderPipeline({
+      label: "3D Canvas Multiply Pipeline",
+      layout: this.sharedPipelineLayout,
+      vertex: {
+        module: shaderModule,
+        entryPoint: "vertexMain",
+        buffers: [vertexBufferLayout]
+      },
+      fragment: {
+        module: shaderModule,
+        entryPoint: "fragmentMain",
+        targets: [{
+          format,
+          blend: {
+            color: {
+              srcFactor: "dst",
+              dstFactor: "one-minus-src-alpha",
+              operation: "add"
+            },
+            alpha: {
+              srcFactor: "one",
+              dstFactor: "one-minus-src-alpha",
+              operation: "add"
+            }
+          }
+        }]
+      },
+      primitive: {
+        topology: "triangle-list",
+        cullMode: "none"
+      }
     });
   }
   /**
@@ -22876,6 +23034,7 @@ class WorldsRenderer {
    */
   render(camera, layouts, hoveredSectionIndex = null, background, connectors = []) {
     var _a;
+    this.setBackgroundImage((background == null ? void 0 : background.image) ?? null);
     if (!this.renderPipeline || !this.vertexBuffer || !this.indexBuffer || !this.renderTexture) {
       console.warn("WorldsRenderer not fully initialized");
       return;
@@ -22931,7 +23090,10 @@ class WorldsRenderer {
       this.requestBuiltinShaderLoad(shaderName);
     }
     const useShaderBackground = paperEnabled && !!shaderName && this.shaderManager.hasShader(shaderName);
-    const bgFlags = paperEnabled ? [hasRuledLines ? 1 : 0, hasPaper ? 1 : 0, noiseStrength, useShaderBackground ? 1 : 0] : [0, 0, 0, 0];
+    const useImageBackground = paperEnabled && !useShaderBackground && !!(background == null ? void 0 : background.image) && !!this.backgroundImageTexture;
+    const useSampledBackground = useShaderBackground || useImageBackground;
+    const bgFlags = paperEnabled ? [hasRuledLines ? 1 : 0, hasPaper ? 1 : 0, noiseStrength, useSampledBackground ? 1 : 0] : [0, 0, 0, 0];
+    const backgroundDetailTexture = useShaderBackground ? this.backgroundShaderTexture : useImageBackground ? this.backgroundImageTexture : null;
     const camPos = camera.effectivePosition ?? camera.position;
     const cameraPos = new Float32Array([
       camPos.x,
@@ -22947,7 +23109,7 @@ class WorldsRenderer {
         console.warn("WorldsRenderer missing backgroundTexture");
       } else {
         const shaderName2 = background.shaderName;
-        if (shaderName2 && this.shaderManager.hasShader(shaderName2) && this.backgroundShaderTexture) {
+        if (useShaderBackground && shaderName2 && this.backgroundShaderTexture) {
           if (background.shaderUniforms) {
             for (const [uniformName, value] of Object.entries(background.shaderUniforms)) {
               if (this.shaderManager.hasUniform(shaderName2, uniformName)) {
@@ -22997,8 +23159,8 @@ class WorldsRenderer {
           0,
           1
         ]);
-        const screenLockRaw = (_a = background.shaderUniforms) == null ? void 0 : _a.screenLock;
-        const screenLock = Number.isFinite(screenLockRaw) ? screenLockRaw > 0.5 : false;
+        const screenLockRaw = (background == null ? void 0 : background.screenLock) ?? ((_a = background.shaderUniforms) == null ? void 0 : _a.screenLock);
+        const screenLock = typeof screenLockRaw === "boolean" ? screenLockRaw : Number.isFinite(screenLockRaw) ? screenLockRaw > 0.5 : false;
         const params0 = new Float32Array([-1, screenLock ? 1 : 0, 0, 0]);
         const planeZOverride = background && Number.isFinite(background.paperPlaneZ) ? background.paperPlaneZ : null;
         const planeZ = planeZOverride !== null ? planeZOverride : (() => {
@@ -23017,12 +23179,18 @@ class WorldsRenderer {
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, cameraForward);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 208, new Float32Array(bgFlags));
-        const bindGroup = this.createBindGroupForTexture(this.backgroundTexture, uniformOffset);
+        const bindGroup = this.createBindGroupForTexture(this.backgroundTexture, uniformOffset, backgroundDetailTexture);
         if (bindGroup) {
           pass.setBindGroup(0, bindGroup);
           pass.drawIndexed(6);
         }
       }
+    }
+    const useMultiply = (background == null ? void 0 : background.sectionBlendMode) === "multiply" && !!this.multiplyRenderPipeline;
+    if (useMultiply) {
+      pass.setPipeline(this.multiplyRenderPipeline);
+      pass.setVertexBuffer(0, this.vertexBuffer);
+      pass.setIndexBuffer(this.indexBuffer, "uint16");
     }
     for (let i = 0; i < layouts.length; i++) {
       const layout = layouts[i];
@@ -23073,17 +23241,24 @@ class WorldsRenderer {
       const highlightEnabled = rect ? 1 : 0;
       const params0 = new Float32Array([baseW, baseH, hover, highlightEnabled]);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
-      const params1 = rect ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax]) : new Float32Array([0, 0, 0, 0]);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 96, new Float32Array(paperColor));
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 112, new Float32Array(lineColor));
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array([0, 0, 0, layout.opacity]));
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array([
+        useMultiply && paperEnabled ? paperParams[0] ?? 0 : 0,
+        0,
+        0,
+        layout.opacity
+      ]));
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, cameraForward);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 208, new Float32Array([0, 0, 0, 0]));
-      const bindGroup = this.createBindGroupForTexture(layout.texture, uniformOffset);
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 208, new Float32Array(
+        useMultiply ? [1, 0, 0, 0] : [0, 0, 0, 0]
+      ));
+      const params1 = useMultiply ? new Float32Array([aspect, Math.tan(camera.fov * 0.5), layout.transform.position.z, this.width]) : rect ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax]) : new Float32Array([0, 0, 0, 0]);
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
+      const bindGroup = this.createBindGroupForTexture(layout.texture, uniformOffset, backgroundDetailTexture);
       if (!bindGroup) continue;
       pass.setBindGroup(0, bindGroup);
       pass.drawIndexed(6);
@@ -23132,12 +23307,12 @@ class WorldsRenderer {
   /**
    * Create bind group for a section (texture sampling)
    */
-  createBindGroupForTexture(texture, uniformOffset) {
-    if (!this.renderPipeline || !this.uniformBuffer || !this.sampler) return null;
-    const shaderBgTexture = this.backgroundShaderTexture ?? this.backgroundTexture;
-    if (!shaderBgTexture) return null;
+  createBindGroupForTexture(texture, uniformOffset, backgroundDetailTexture) {
+    if (!this.sharedBindGroupLayout || !this.uniformBuffer || !this.sampler) return null;
+    const sampledBackgroundTexture = backgroundDetailTexture ?? this.backgroundShaderTexture ?? this.backgroundImageTexture ?? this.backgroundTexture;
+    if (!sampledBackgroundTexture) return null;
     return this.device.createBindGroup({
-      layout: this.renderPipeline.getBindGroupLayout(0),
+      layout: this.sharedBindGroupLayout,
       entries: [
         {
           binding: 0,
@@ -23153,7 +23328,7 @@ class WorldsRenderer {
         },
         {
           binding: 3,
-          resource: shaderBgTexture.createView()
+          resource: sampledBackgroundTexture.createView()
         }
       ]
     });
@@ -23190,7 +23365,7 @@ class WorldsRenderer {
    * Clean up resources
    */
   destroy() {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     (_a = this.vertexBuffer) == null ? void 0 : _a.destroy();
     (_b = this.indexBuffer) == null ? void 0 : _b.destroy();
     (_c = this.uniformBuffer) == null ? void 0 : _c.destroy();
@@ -23198,6 +23373,8 @@ class WorldsRenderer {
     (_e = this.renderTexture) == null ? void 0 : _e.destroy();
     (_f = this.backgroundTexture) == null ? void 0 : _f.destroy();
     (_g = this.backgroundShaderTexture) == null ? void 0 : _g.destroy();
+    (_h = this.backgroundImageTexture) == null ? void 0 : _h.destroy();
+    this.multiplyRenderPipeline = null;
   }
 }
 class LineStream {
@@ -26060,6 +26237,9 @@ class StorieEngine {
     __publicField(this, "audioContext");
     __publicField(this, "audioUrlBufferCache", /* @__PURE__ */ new Map());
     __publicField(this, "audioUrlInFlightCache", /* @__PURE__ */ new Map());
+    __publicField(this, "backgroundImageUrlCache", /* @__PURE__ */ new Map());
+    __publicField(this, "backgroundImageUrlInFlightCache", /* @__PURE__ */ new Map());
+    __publicField(this, "backgroundImageUrlFailures", /* @__PURE__ */ new Set());
     __publicField(this, "audioGestureUnlocked", false);
     __publicField(this, "trustedAudioGestureDepth", 0);
     __publicField(this, "pendingGestureAudioStarts", []);
@@ -26804,6 +26984,100 @@ class StorieEngine {
     })();
     this.audioUrlInFlightCache.set(resolvedUrl, promise);
     return await promise;
+  }
+  resolveWorldsBackgroundImageUrl(rawUrl) {
+    var _a, _b;
+    const trimmed = String(rawUrl ?? "").trim();
+    if (!trimmed) {
+      throw new Error("[worlds.background] Missing texture URL");
+    }
+    if (this.untrustedContent) {
+      const allowedPrefix = /^(?:\.\/)?assets\/img\//;
+      if (!allowedPrefix.test(trimmed) || trimmed.includes("..") || trimmed.startsWith("/") || trimmed.startsWith("\\")) {
+        throw new Error('[worlds.background] Untrusted mode allows only relative URLs under "assets/img/"');
+      }
+      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
+        throw new Error("[worlds.background] Untrusted mode blocks URL schemes");
+      }
+    }
+    let resolved;
+    try {
+      resolved = new URL(trimmed, ((_a = globalThis.location) == null ? void 0 : _a.href) ?? "http://localhost/");
+    } catch (error) {
+      throw new Error(`[worlds.background] Invalid URL: ${String((error == null ? void 0 : error.message) ?? error)}`);
+    }
+    const protocol = resolved.protocol.toLowerCase();
+    if (protocol === "data:" || protocol === "blob:" || protocol === "javascript:" || protocol === "file:") {
+      throw new Error(`[worlds.background] Unsupported URL scheme: ${protocol}`);
+    }
+    if (resolved.username || resolved.password) {
+      throw new Error("[worlds.background] Credentials in URLs are not supported");
+    }
+    const origin = (_b = globalThis.location) == null ? void 0 : _b.origin;
+    if (origin && origin !== "null" && resolved.origin !== origin) {
+      throw new Error(`[worlds.background] Cross-origin images blocked: ${resolved.origin}`);
+    }
+    return resolved.toString();
+  }
+  async loadWorldsBackgroundImageFromResolvedUrl(resolvedUrl) {
+    const MAX_IMAGE_URL_BYTES = 128 * 1024 * 1024;
+    try {
+      const response = await fetch(resolvedUrl, {
+        mode: "same-origin",
+        credentials: "same-origin"
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+      const contentLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_URL_BYTES) {
+        throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (server reported ${contentLength})`);
+      }
+      const mime = String(response.headers.get("content-type") ?? "").toLowerCase();
+      if (!mime.startsWith("image/")) {
+        throw new Error(`Unsupported content type: ${mime || "unknown"}`);
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      if (arrayBuffer.byteLength > MAX_IMAGE_URL_BYTES) {
+        throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (downloaded ${arrayBuffer.byteLength})`);
+      }
+      return await this.decodeRenderableImageFromBytes(new Uint8Array(arrayBuffer), mime);
+    } catch (error) {
+      console.warn(`[worlds.background] Failed to load image from "${resolvedUrl}":`, error);
+      return null;
+    }
+  }
+  ensureWorldsBackgroundImageLoaded(rawUrl) {
+    const rawKey = String(rawUrl ?? "").trim();
+    if (!rawKey || this.backgroundImageUrlFailures.has(rawKey)) return null;
+    let resolvedUrl;
+    try {
+      resolvedUrl = this.resolveWorldsBackgroundImageUrl(rawUrl);
+    } catch (error) {
+      console.warn(error);
+      this.backgroundImageUrlFailures.add(rawKey);
+      return null;
+    }
+    if (this.backgroundImageUrlFailures.has(resolvedUrl)) return null;
+    const cached = this.backgroundImageUrlCache.get(resolvedUrl);
+    if (cached) return cached;
+    if (!this.backgroundImageUrlInFlightCache.has(resolvedUrl)) {
+      const promise = this.loadWorldsBackgroundImageFromResolvedUrl(resolvedUrl).then((image) => {
+        if (!image) {
+          this.backgroundImageUrlFailures.add(resolvedUrl);
+          return null;
+        }
+        this.backgroundImageUrlCache.set(resolvedUrl, image);
+        if (this.worldsEnabled && this.section3DLayouts.length > 0) {
+          this.clear3DSectionTextures();
+        }
+        return image;
+      }).finally(() => {
+        this.backgroundImageUrlInFlightCache.delete(resolvedUrl);
+      });
+      this.backgroundImageUrlInFlightCache.set(resolvedUrl, promise);
+    }
+    return null;
   }
   ensureMarkdownBlobImageLoaded(source, documentId) {
     const docId = documentId ?? this.activeDocumentId;
@@ -32507,7 +32781,7 @@ ${exportVars}
    * Shared by the live mainLoop and tickExportFrame.
    */
   runFrame() {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     try {
       this.update();
       this.render();
@@ -32557,6 +32831,8 @@ ${exportVars}
           const configuredPaperNoiseStrength = this.worldsConfig.sectionBackgroundPaperNoiseStrength;
           const paperNoiseStrength = Number.isFinite(configuredPaperNoiseStrength) ? Math.max(0, Math.min(1, configuredPaperNoiseStrength)) : defaultPaperNoiseStrength;
           const shaderInfo = this.parseWorldsSectionBackgroundShader();
+          const textureInfo = this.parseWorldsSectionBackgroundTexture();
+          const textureImage = textureInfo ? this.ensureWorldsBackgroundImageLoaded(textureInfo.url) : null;
           let mergedShaderUniforms = (shaderInfo == null ? void 0 : shaderInfo.uniforms) ? { ...shaderInfo.uniforms } : shaderInfo ? {} : void 0;
           if (shaderInfo && mergedShaderUniforms) {
             mergedShaderUniforms.worldsBackground = 1;
@@ -32595,11 +32871,12 @@ ${exportVars}
           }
           const paperPlaneZ = (() => {
             var _a2, _b2, _c2, _d2;
-            if (!shaderInfo) return void 0;
-            if (Number.isFinite(shaderInfo.paperPlaneZ)) {
-              return shaderInfo.paperPlaneZ;
+            const planeZValue = (shaderInfo == null ? void 0 : shaderInfo.paperPlaneZ) ?? (textureInfo == null ? void 0 : textureInfo.paperPlaneZ);
+            const planeZMode = (shaderInfo == null ? void 0 : shaderInfo.paperPlaneZMode) ?? (textureInfo == null ? void 0 : textureInfo.paperPlaneZMode);
+            if (Number.isFinite(planeZValue)) {
+              return planeZValue;
             }
-            if (shaderInfo.paperPlaneZMode === "focus") {
+            if (planeZMode === "focus") {
               const focusedIdx = ((_a2 = this.lastApplied3DCameraFocus) == null ? void 0 : _a2.kind) === "frame" ? null : (_b2 = this.lastApplied3DCameraFocus) == null ? void 0 : _b2.sectionIndex;
               if (!(typeof focusedIdx === "number" && Number.isFinite(focusedIdx))) return void 0;
               const focused = this.section3DLayouts.find((l) => l.sectionIndex === focusedIdx);
@@ -32608,31 +32885,37 @@ ${exportVars}
             }
             return void 0;
           })();
-          const backgroundConfig = proceduralBackground || shaderInfo ? {
+          const worldsPixelsPerWorldUnit = this.getWorldsPixelsPerWorldUnit();
+          const textureTilePx = Number.isFinite(textureInfo == null ? void 0 : textureInfo.tilePx) ? Math.max(1, textureInfo.tilePx) : 512;
+          const textureCoordScale = Number.isFinite(textureInfo == null ? void 0 : textureInfo.coordScale) ? textureInfo.coordScale : worldsPixelsPerWorldUnit / textureTilePx;
+          const backgroundConfig = proceduralBackground || shaderInfo || textureInfo ? {
             enabled: true,
             chain: backgroundChain,
             shaderName: shaderInfo == null ? void 0 : shaderInfo.name,
             shaderUniforms: mergedShaderUniforms,
+            image: textureImage,
+            screenLock: textureInfo == null ? void 0 : textureInfo.screenLock,
             paperPlaneZ,
             paperColor: this.resolveWorldsSectionBackground(),
             lineColor: this.withAlpha(this.getStyle("dim").fg, 64),
-            scale: shaderInfo ? shaderCoordScale : 1,
+            scale: shaderInfo ? shaderCoordScale : textureInfo ? textureCoordScale : 1,
             spacing: 1,
             thickness: 0.06,
-            noiseStrength: paperNoiseStrength
+            noiseStrength: paperNoiseStrength,
+            sectionBlendMode: (textureInfo == null ? void 0 : textureInfo.blendMode) ?? ((_b = this.worldsConfig) == null ? void 0 : _b.sectionBlendMode)
           } : void 0;
           const linkConnectors = this.getRendered3DLinkConnectors();
           this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig, linkConnectors);
         }
         if (this.webgpuUIRenderer) {
           this.syncWorldsInlineWidgets();
-          const inlineGui = this.worldsInlineWidgetInstances.length > 0 ? (_d = (_c = (_b = this.api) == null ? void 0 : _b.gui) == null ? void 0 : _c.getSystem) == null ? void 0 : _d.call(_c) : null;
+          const inlineGui = this.worldsInlineWidgetInstances.length > 0 ? (_e = (_d = (_c = this.api) == null ? void 0 : _c.gui) == null ? void 0 : _d.getSystem) == null ? void 0 : _e.call(_d) : null;
           if (inlineGui) {
             const { charWidth, charHeight } = this.getGUIPixelMetrics();
             inlineGui.update(this.input.getMouseX(), this.input.getMouseY(), this.input.isMouseDown(0), charWidth, charHeight);
             this.syncWorldsInlineWidgets();
           }
-          const guiAPI = (_e = this.api) == null ? void 0 : _e.gui;
+          const guiAPI = (_f = this.api) == null ? void 0 : _f.gui;
           if (guiAPI && guiAPI.getSystem && guiAPI.getSystem()) {
             guiAPI.render(this.createMarkdownAwareDraw2D(this.webgpuUIRenderer, this.activeDocumentId ?? void 0));
           }
@@ -32939,8 +33222,9 @@ ${exportVars}
         const proceduralRuledPaper2 = this.isWorldsSectionBackgroundProceduralChainEnabled();
         const bakedRuledPaper2 = this.isWorldsSectionBackgroundBakedRuledLines();
         const shaderBg2 = !!this.parseWorldsSectionBackgroundShader();
+        const textureBg2 = !!this.parseWorldsSectionBackgroundTexture();
         const surfaceBg2 = this.resolveWorldsSectionBackground();
-        const mdBg2 = proceduralRuledPaper2 || bakedRuledPaper2 || shaderBg2 ? this.withAlpha(surfaceBg2, 0) : surfaceBg2;
+        const mdBg2 = proceduralRuledPaper2 || bakedRuledPaper2 || shaderBg2 || textureBg2 ? this.withAlpha(surfaceBg2, 0) : surfaceBg2;
         const mdStyle2 = this.createWorldsMarkdownStyle({
           activeLinkIndex,
           background: mdBg2,
@@ -33016,9 +33300,10 @@ ${exportVars}
       const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
       const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
       const shaderBg = !!this.parseWorldsSectionBackgroundShader();
+      const textureBg = !!this.parseWorldsSectionBackgroundTexture();
       const surfaceBg = this.resolveWorldsSectionBackground();
       const borderStyle = this.getStyle("border");
-      const mdBg = proceduralRuledPaper || bakedRuledPaper || shaderBg ? this.withAlpha(surfaceBg, 0) : surfaceBg;
+      const mdBg = proceduralRuledPaper || bakedRuledPaper || shaderBg || textureBg ? this.withAlpha(surfaceBg, 0) : surfaceBg;
       const mdStyle = this.createWorldsMarkdownStyle({
         activeLinkIndex,
         background: mdBg,
@@ -33197,6 +33482,12 @@ ${exportVars}
       layout.worldHeight = h;
     }
   }
+  getWorldsPixelsPerWorldUnit() {
+    const logicalFontSizePx = Math.max(1, this.fontSize || 16);
+    const fontStack = this.worldsCardFontStack || this.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
+    const measured = this.measureFontMetrics(fontStack, logicalFontSizePx);
+    return Math.max(1, measured.baseLineHeight);
+  }
   reflowWorldsAutoLayout() {
     if (!this.section3DLayouts || this.section3DLayouts.length === 0) return;
     if (this.worldsOverviewEnabled) return;
@@ -33324,6 +33615,70 @@ ${exportVars}
       return { name: name.trim(), uniforms, paperPlaneZ, paperPlaneZMode };
     }
     return null;
+  }
+  parseWorldsSectionBackgroundTexture() {
+    const v2 = this.worldsConfig.sectionBackground;
+    if (typeof v2 !== "string" || !v2.startsWith("texture:")) return null;
+    const textureSpec = v2.substring(8).trim();
+    const [url, ...paramSpecs] = textureSpec.split(";");
+    const textureUrl = String(url ?? "").trim();
+    if (!textureUrl) return null;
+    let coordScale;
+    let tilePx;
+    let paperPlaneZ;
+    let paperPlaneZMode;
+    let screenLock;
+    let blendMode;
+    for (const spec of paramSpecs) {
+      const [key, value] = spec.split("=");
+      if (!key || value === void 0) continue;
+      const trimmedKey = key.trim();
+      const trimmedValue = value.trim();
+      if (!trimmedKey) continue;
+      if (trimmedKey === "paperPlaneZ") {
+        const lower = trimmedValue.toLowerCase();
+        if (lower === "focus" || lower === "focused") {
+          paperPlaneZMode = "focus";
+          continue;
+        }
+        const num = parseFloat(trimmedValue);
+        if (!isNaN(num) && Number.isFinite(num)) {
+          paperPlaneZ = num;
+        }
+        continue;
+      }
+      if (trimmedKey === "coordScale" || trimmedKey === "scale") {
+        const num = parseFloat(trimmedValue);
+        if (!isNaN(num) && Number.isFinite(num) && num > 0) {
+          coordScale = num;
+        }
+        continue;
+      }
+      if (trimmedKey === "tilePx" || trimmedKey === "tile") {
+        const num = parseFloat(trimmedValue);
+        if (!isNaN(num) && Number.isFinite(num) && num > 0) {
+          tilePx = num;
+        }
+        continue;
+      }
+      if (trimmedKey === "screenLock") {
+        const lower = trimmedValue.toLowerCase();
+        if (lower === "1" || lower === "true" || lower === "yes" || lower === "on") {
+          screenLock = true;
+        } else if (lower === "0" || lower === "false" || lower === "no" || lower === "off") {
+          screenLock = false;
+        }
+        continue;
+      }
+      if (trimmedKey === "blendMode" || trimmedKey === "blend") {
+        const lower = trimmedValue.toLowerCase();
+        if (lower === "multiply" || lower === "mul") {
+          blendMode = "multiply";
+        }
+        continue;
+      }
+    }
+    return { url: textureUrl, coordScale, tilePx, paperPlaneZ, paperPlaneZMode, screenLock, blendMode };
   }
   isWorldsSectionBackgroundProceduralChainEnabled() {
     const chain = this.parseWorldsSectionBackgroundChain();
@@ -33498,9 +33853,10 @@ ${exportVars}
     const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
     const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
     const shaderBg = !!this.parseWorldsSectionBackgroundShader();
+    const textureBg = !!this.parseWorldsSectionBackgroundTexture();
     const surfaceBg = this.resolveWorldsSectionBackground();
     const borderStyle = this.getStyle("border");
-    const mdBg = proceduralRuledPaper || bakedRuledPaper || shaderBg ? this.withAlpha(surfaceBg, 0) : surfaceBg;
+    const mdBg = proceduralRuledPaper || bakedRuledPaper || shaderBg || textureBg ? this.withAlpha(surfaceBg, 0) : surfaceBg;
     const borderEnabled = this.worldsConfig.sectionBorderEnabled !== false;
     const borderWidth = Math.max(0, Math.round(this.worldsConfig.sectionBorderWidth ?? 2));
     for (const layout of this.section3DLayouts) {
@@ -35281,8 +35637,9 @@ ${exportVars}
     const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
     const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
     const shaderBg = !!this.parseWorldsSectionBackgroundShader();
+    const textureBg = !!this.parseWorldsSectionBackgroundTexture();
     const surfaceBg = this.resolveWorldsSectionBackground();
-    const mdBg = proceduralRuledPaper || bakedRuledPaper || shaderBg ? this.withAlpha(surfaceBg, 0) : surfaceBg;
+    const mdBg = proceduralRuledPaper || bakedRuledPaper || shaderBg || textureBg ? this.withAlpha(surfaceBg, 0) : surfaceBg;
     const mdStyle = this.createWorldsMarkdownStyle({ background: mdBg });
     const fontSizePx = Math.max(1, this.fontSize || 16);
     const fontStack = this.worldsCardFontStack || this.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";

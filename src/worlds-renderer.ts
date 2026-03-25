@@ -15,6 +15,8 @@ import {
 import { ColorUtils, type Color } from './types.js';
 import { ShaderManager } from './shader-manager.js';
 
+type RenderableImageSource = ImageBitmap | HTMLImageElement;
+
 type WorldsBackgroundConfig = {
   enabled: boolean;
   /** Procedural layer chain, e.g. ['ruledlines','paper'] */
@@ -23,6 +25,10 @@ type WorldsBackgroundConfig = {
   shaderName?: string;
   /** Runtime uniforms for custom shader */
   shaderUniforms?: Record<string, number | number[]>;
+  /** Optional image-based background tile uploaded once and sampled per frame. */
+  image?: RenderableImageSource | null;
+  /** If true, sample in screen space instead of world space. */
+  screenLock?: boolean;
   /**
    * Optional Z plane (world units) used for world-locked background sampling.
    * When omitted, WorldsRenderer uses the median Z of visible cards.
@@ -41,6 +47,8 @@ type WorldsBackgroundConfig = {
   thickness: number;
   /** Noise strength for the 'paper' layer (0..1). */
   noiseStrength: number;
+  /** Blend mode for section card compositing over the background. */
+  sectionBlendMode?: 'normal' | 'multiply';
 };
 
 type Worlds3DConnector = {
@@ -54,6 +62,9 @@ type Worlds3DConnector = {
 export class WorldsRenderer {
   private device: GPUDevice;
   private renderPipeline: GPURenderPipeline | null = null;
+  private multiplyRenderPipeline: GPURenderPipeline | null = null;
+  private sharedPipelineLayout: GPUPipelineLayout | null = null;
+  private sharedBindGroupLayout: GPUBindGroupLayout | null = null;
   private linePipeline: GPURenderPipeline | null = null;
   private shaderManager: ShaderManager;
   
@@ -71,6 +82,8 @@ export class WorldsRenderer {
   private backgroundTexture: GPUTexture | null = null;
   private backgroundShaderTexture: GPUTexture | null = null;
   private backgroundShaderMipLevelCount: number = 1;
+  private backgroundImageTexture: GPUTexture | null = null;
+  private backgroundImageSource: RenderableImageSource | null = null;
 
   // Mipmap generation for backgroundShaderTexture (reduces shimmer under camera motion)
   private mipmapPipeline: GPURenderPipeline | null = null;
@@ -170,6 +183,45 @@ export class WorldsRenderer {
     });
   }
 
+  setBackgroundImage(image: RenderableImageSource | null): void {
+    if (this.backgroundImageSource === image) return;
+
+    this.backgroundImageSource = image;
+    if (this.backgroundImageTexture) {
+      this.backgroundImageTexture.destroy();
+      this.backgroundImageTexture = null;
+    }
+
+    if (!image) return;
+
+    const width = Math.max(1, image.width | 0);
+    const height = Math.max(1, image.height | 0);
+    const mipLevelCount = this.calcMipLevelCount(width, height, 12);
+    const texture = this.device.createTexture({
+      size: { width, height },
+      mipLevelCount,
+      format: this.format,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+
+    try {
+      this.device.queue.copyExternalImageToTexture(
+        { source: image },
+        { texture },
+        { width, height }
+      );
+
+      const encoder = this.device.createCommandEncoder({ label: 'WorldsRenderer Background Image Upload' });
+      this.generateMipmaps(encoder, texture, mipLevelCount, width, height);
+      this.device.queue.submit([encoder.finish()]);
+      this.backgroundImageTexture = texture;
+    } catch (error) {
+      console.warn('[WorldsRenderer] Failed to upload background image texture:', error);
+      texture.destroy();
+      this.backgroundImageSource = null;
+    }
+  }
+
   /**
    * Create offscreen render texture
    */
@@ -256,14 +308,14 @@ export class WorldsRenderer {
     });
   }
 
-  private generateMipmaps(encoder: GPUCommandEncoder, texture: GPUTexture, mipLevelCount: number): void {
+  private generateMipmaps(encoder: GPUCommandEncoder, texture: GPUTexture, mipLevelCount: number, textureWidth?: number, textureHeight?: number): void {
     if (!this.sampler) return;
     if (mipLevelCount <= 1) return;
     this.ensureMipmapPipeline();
     if (!this.mipmapPipeline) return;
 
-    let mipWidth = this.width;
-    let mipHeight = this.height;
+    let mipWidth = textureWidth ?? this.width;
+    let mipHeight = textureHeight ?? this.height;
 
     for (let level = 1; level < mipLevelCount; level++) {
       mipWidth = Math.max(1, mipWidth >> 1);
@@ -600,7 +652,7 @@ export class WorldsRenderer {
           // transparent background so paper shows through from behind.
           if (isBackground && uniforms.paperParams.w > 0.5) {
             if (uniforms.bgFlags.w > 0.5) {
-              // Use custom shader background texture.
+              // Use a sampled background texture (shader-rendered or uploaded image).
               // params0.y is a mode flag for the background pass:
               //   1 = screen-locked (static in screen space)
               //   0 = world-locked (mapped to a world XY plane)
@@ -609,10 +661,13 @@ export class WorldsRenderer {
               } else {
                 // World-locked mapping: map the ray/plane intersection coord into a repeatable UV domain.
                 let coord = paperCoordFromScreenUv(input.uv);
-                var uv2 = fract(coord * uniforms.paperParams.x);
+                let coordScaled = coord * uniforms.paperParams.x;
+                let gradX = dpdx(coordScaled);
+                let gradY = dpdy(coordScaled);
+                var uv2 = fract(coordScaled);
                 // Avoid sampling exactly at the clamp edge.
                 uv2 = uv2 * 0.999 + vec2<f32>(0.0005, 0.0005);
-                outColor = textureSample(backgroundShaderTexture, textureSampler, uv2);
+                outColor = textureSampleGrad(backgroundShaderTexture, textureSampler, uv2, gradX, gradY);
               }
             } else {
               // Use procedural background
@@ -622,6 +677,78 @@ export class WorldsRenderer {
           }
 
           if (!isBackground) {
+            // --- Texture blend effects (sectionBlendMode = 'multiply') ---
+            // Flags: bgFlags.x > 0.5 = effects active; params1.w carries screen width
+            // for reconstructing screen-space UV (needed for world-locked paper sampling).
+            //
+            // Effects:
+            //   1. Paper surface gradient displaces card UV — content appears to
+            //      follow the paper's topography (depth / bas-relief illusion).
+            //   2. Ink bleed: 4-tap soft dilation of dark opaque ink into adjacent
+            //      transparent areas, simulating capillary absorption in paper fibers.
+            //
+            // The actual multiply composite (card * paper) is handled by the
+            // fixed-function blend state (srcFactor='dst') — zero extra passes.
+            if (uniforms.bgFlags.x > 0.5 && uniforms.params1.w > 0.5) {
+              // Reconstruct screen UV from fragment pixel position
+              let screenW = uniforms.params1.w;
+              let screenH = screenW / max(uniforms.params1.x, 0.0001);
+              let screenUv = input.position.xy / vec2f(screenW, screenH);
+
+              // Sample paper texture at the world-locked position for this pixel
+              let wCoord = paperCoordFromScreenUv(screenUv);
+              let wUvRaw = wCoord * uniforms.paperParams.x;
+              let wGX = dpdx(wUvRaw);
+              let wGY = dpdy(wUvRaw);
+              var wUv = fract(wUvRaw) * 0.999 + vec2f(0.0005, 0.0005);
+              let paper = textureSampleGrad(backgroundShaderTexture, textureSampler, wUv, wGX, wGY);
+              let paperLuma = dot(paper.rgb, vec3f(0.299, 0.587, 0.114));
+
+              // Paper surface gradient: bright = raised, dark = depressed.
+              // Displace card UV toward depressed areas so ink appears to settle
+              // into the paper's texture valleys (depth / thickness illusion).
+              // DISABLED (0.0) for diagnostics — suspected source of pixel scatter.
+              let gradVec = vec2f(dpdx(paperLuma), dpdy(paperLuma));
+              let gradLen = length(gradVec);
+              let gradDir = select(vec2f(0.0), gradVec / gradLen, gradLen > 0.0001);
+              let uvPerPx = vec2f(abs(dpdx(input.uv.x)), abs(dpdy(input.uv.y)));
+              let distortedUv = clamp(
+                input.uv - gradDir * uvPerPx * 0.0,
+                vec2f(0.001), vec2f(0.999)
+              );
+
+              // Re-sample card at distorted UV
+              let card = textureSample(textureData, textureSampler, distortedUv);
+
+              // Ink bleed: 4-tap cross — dark opaque neighbors bleed into lighter areas.
+              // Uses screen-pixel-sized steps so bleed is resolution-independent.
+              let uStep = uvPerPx.x * 1.5;
+              let vStep = uvPerPx.y * 1.5;
+              let n0 = textureSample(textureData, textureSampler, distortedUv + vec2f(uStep, 0.0));
+              let n1 = textureSample(textureData, textureSampler, distortedUv - vec2f(uStep, 0.0));
+              let n2 = textureSample(textureData, textureSampler, distortedUv + vec2f(0.0, vStep));
+              let n3 = textureSample(textureData, textureSampler, distortedUv - vec2f(0.0, vStep));
+
+              // Darkness × opacity weight per neighbor (dark ink bleeds most)
+              let lumaW = vec3f(0.299, 0.587, 0.114);
+              let d0 = n0.a * (1.0 - dot(n0.rgb, lumaW));
+              let d1 = n1.a * (1.0 - dot(n1.rgb, lumaW));
+              let d2 = n2.a * (1.0 - dot(n2.rgb, lumaW));
+              let d3 = n3.a * (1.0 - dot(n3.rgb, lumaW));
+              let dSelf = card.a * (1.0 - dot(card.rgb, lumaW));
+
+              let neighborInk = max(d0, max(d1, max(d2, d3)));
+              let bleedIn = clamp((neighborInk - dSelf) * 0.45, 0.0, 0.18);
+
+              let dTotal = max(d0 + d1 + d2 + d3, 0.00001);
+              let bleedRgb = (n0.rgb * d0 + n1.rgb * d1 + n2.rgb * d2 + n3.rgb * d3) / dTotal;
+
+              outColor = vec4f(
+                mix(card.rgb, bleedRgb, bleedIn),
+                clamp(card.a + bleedIn * 0.6, 0.0, 1.0)
+              );
+            }
+
             outColor = vec4<f32>(outColor.rgb, outColor.a * clamp(uniforms.paperParams.w, 0.0, 1.0));
           }
 
@@ -652,9 +779,25 @@ export class WorldsRenderer {
       ]
     };
     
+    // Create explicit bind group layout once; reused by both the normal and
+    // multiply pipelines so that bind groups are fully interchangeable.
+    this.sharedBindGroupLayout = this.device.createBindGroupLayout({
+      label: '3D Canvas Bind Group Layout',
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform', hasDynamicOffset: false, minBindingSize: 224 } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d', multisampled: false } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d', multisampled: false } },
+      ]
+    });
+    this.sharedPipelineLayout = this.device.createPipelineLayout({
+      label: '3D Canvas Pipeline Layout',
+      bindGroupLayouts: [this.sharedBindGroupLayout]
+    });
+
     this.renderPipeline = this.device.createRenderPipeline({
       label: '3D Canvas Pipeline',
-      layout: 'auto',
+      layout: this.sharedPipelineLayout,
       vertex: {
         module: shaderModule,
         entryPoint: 'vertexMain',
@@ -689,6 +832,43 @@ export class WorldsRenderer {
       //   depthWriteEnabled: true,
       //   depthCompare: 'less'
       // }
+    });
+
+    // Multiply blend pipeline: dark content inks into the background texture.
+    // White/transparent areas let the texture show through; dark areas darken it.
+    // Color formula: result = src.rgb * dst.rgb * src.a + dst.rgb * (1 - src.a)
+    // Approximated with: srcFactor='dst', dstFactor='one-minus-src-alpha'
+    this.multiplyRenderPipeline = this.device.createRenderPipeline({
+      label: '3D Canvas Multiply Pipeline',
+      layout: this.sharedPipelineLayout,
+      vertex: {
+        module: shaderModule,
+        entryPoint: 'vertexMain',
+        buffers: [vertexBufferLayout]
+      },
+      fragment: {
+        module: shaderModule,
+        entryPoint: 'fragmentMain',
+        targets: [{
+          format: format,
+          blend: {
+            color: {
+              srcFactor: 'dst',
+              dstFactor: 'one-minus-src-alpha',
+              operation: 'add'
+            },
+            alpha: {
+              srcFactor: 'one',
+              dstFactor: 'one-minus-src-alpha',
+              operation: 'add'
+            }
+          }
+        }]
+      },
+      primitive: {
+        topology: 'triangle-list',
+        cullMode: 'none'
+      }
     });
   }
 
@@ -771,6 +951,8 @@ export class WorldsRenderer {
     background?: WorldsBackgroundConfig,
     connectors: Worlds3DConnector[] = []
   ): void {
+    this.setBackgroundImage(background?.image ?? null);
+
     if (!this.renderPipeline || !this.vertexBuffer || !this.indexBuffer || !this.renderTexture) {
       console.warn('WorldsRenderer not fully initialized');
       return;
@@ -845,7 +1027,12 @@ export class WorldsRenderer {
     }
 
     const useShaderBackground = paperEnabled && !!shaderName && this.shaderManager.hasShader(shaderName);
-    const bgFlags = paperEnabled ? [hasRuledLines ? 1 : 0, hasPaper ? 1 : 0, noiseStrength, useShaderBackground ? 1 : 0] : [0, 0, 0, 0];
+    const useImageBackground = paperEnabled && !useShaderBackground && !!background?.image && !!this.backgroundImageTexture;
+    const useSampledBackground = useShaderBackground || useImageBackground;
+    const bgFlags = paperEnabled ? [hasRuledLines ? 1 : 0, hasPaper ? 1 : 0, noiseStrength, useSampledBackground ? 1 : 0] : [0, 0, 0, 0];
+    const backgroundDetailTexture = useShaderBackground
+      ? this.backgroundShaderTexture
+      : (useImageBackground ? this.backgroundImageTexture : null);
 
     const camPos = camera.effectivePosition ?? camera.position;
     const cameraPos = new Float32Array([
@@ -870,7 +1057,7 @@ export class WorldsRenderer {
       } else {
         // Check if using custom shader for background
         const shaderName = background!.shaderName;
-        if (shaderName && this.shaderManager.hasShader(shaderName) && this.backgroundShaderTexture) {
+        if (useShaderBackground && shaderName && this.backgroundShaderTexture) {
           // Set shader uniforms if provided
           if (background!.shaderUniforms) {
             for (const [uniformName, value] of Object.entries(background!.shaderUniforms)) {
@@ -928,10 +1115,10 @@ export class WorldsRenderer {
 
         // Background mode is signaled via params0.x < 0.
         // params0.y is reserved as a background-only flag.
-        const screenLockRaw = (background!.shaderUniforms as any)?.screenLock;
-        const screenLock = Number.isFinite(screenLockRaw as any)
-          ? (screenLockRaw as number) > 0.5
-          : false;
+        const screenLockRaw = background?.screenLock ?? (background!.shaderUniforms as any)?.screenLock;
+        const screenLock = typeof screenLockRaw === 'boolean'
+          ? screenLockRaw
+          : (Number.isFinite(screenLockRaw as any) ? (screenLockRaw as number) > 0.5 : false);
         const params0 = new Float32Array([-1, screenLock ? 1 : 0, 0, 0]);
 
         // Paper plane selection:
@@ -967,12 +1154,22 @@ export class WorldsRenderer {
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, cameraForward);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 208, new Float32Array(bgFlags));
 
-        const bindGroup = this.createBindGroupForTexture(this.backgroundTexture, uniformOffset);
+        const bindGroup = this.createBindGroupForTexture(this.backgroundTexture, uniformOffset, backgroundDetailTexture);
         if (bindGroup) {
           pass.setBindGroup(0, bindGroup);
           pass.drawIndexed(6);
         }
       }
+    }
+
+    // Switch to multiply pipeline for section cards if configured.
+    // The background quad above always uses the normal pipeline so it composites
+    // cleanly over the transparent render target.
+    const useMultiply = background?.sectionBlendMode === 'multiply' && !!this.multiplyRenderPipeline;
+    if (useMultiply) {
+      pass.setPipeline(this.multiplyRenderPipeline!);
+      pass.setVertexBuffer(0, this.vertexBuffer);
+      pass.setIndexBuffer(this.indexBuffer, 'uint16');
     }
     
     // Render each visible section
@@ -1041,23 +1238,31 @@ export class WorldsRenderer {
       const params0 = new Float32Array([baseW, baseH, hover, highlightEnabled]);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
 
-      const params1 = rect
-        ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax])
-        : new Float32Array([0, 0, 0, 0]);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
-
       // Paper uniforms (used only for background pass; set disabled for cards)
+      // Exception: multiply blend mode writes paper scale in .x so the card
+      // fragment can compute world-locked paper UV for distortion/bleed effects.
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 96, new Float32Array(paperColor));
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 112, new Float32Array(lineColor));
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array([0, 0, 0, layout.opacity]));
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array([
+        useMultiply && paperEnabled ? (paperParams[0] ?? 0) : 0, 0, 0, layout.opacity
+      ]));
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, cameraForward);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 208, new Float32Array([0, 0, 0, 0]));
-      
-      // Create bind group for this section (texture + uniforms)
-      const bindGroup = this.createBindGroupForTexture(layout.texture, uniformOffset);
+      // bgFlags.x = 1 signals texture-blend effects active (distortion + ink bleed) for cards.
+      // params1 carries camera params needed for screen→world UV when in multiply mode;
+      // params1.w = screen width (used to reconstruct screen UV from @builtin(position)).
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 208, new Float32Array(
+        useMultiply ? [1, 0, 0, 0] : [0, 0, 0, 0]
+      ));
+      const params1 = useMultiply
+        ? new Float32Array([aspect, Math.tan(camera.fov * 0.5), layout.transform.position.z, this.width])
+        : (rect
+          ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax])
+          : new Float32Array([0, 0, 0, 0]));
+      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
+      const bindGroup = this.createBindGroupForTexture(layout.texture, uniformOffset, backgroundDetailTexture);
       if (!bindGroup) continue;
       
       pass.setBindGroup(0, bindGroup);
@@ -1119,14 +1324,18 @@ export class WorldsRenderer {
   /**
    * Create bind group for a section (texture sampling)
    */
-  private createBindGroupForTexture(texture: GPUTexture, uniformOffset: number): GPUBindGroup | null {
-    if (!this.renderPipeline || !this.uniformBuffer || !this.sampler) return null;
+  private createBindGroupForTexture(
+    texture: GPUTexture,
+    uniformOffset: number,
+    backgroundDetailTexture?: GPUTexture | null
+  ): GPUBindGroup | null {
+    if (!this.sharedBindGroupLayout || !this.uniformBuffer || !this.sampler) return null;
 
-    const shaderBgTexture = this.backgroundShaderTexture ?? this.backgroundTexture;
-    if (!shaderBgTexture) return null;
+    const sampledBackgroundTexture = backgroundDetailTexture ?? this.backgroundShaderTexture ?? this.backgroundImageTexture ?? this.backgroundTexture;
+    if (!sampledBackgroundTexture) return null;
     
     return this.device.createBindGroup({
-      layout: this.renderPipeline.getBindGroupLayout(0),
+      layout: this.sharedBindGroupLayout,
       entries: [
         {
           binding: 0,
@@ -1142,7 +1351,7 @@ export class WorldsRenderer {
         },
         {
           binding: 3,
-          resource: shaderBgTexture.createView()
+          resource: sampledBackgroundTexture.createView()
         }
       ]
     });
@@ -1192,5 +1401,7 @@ export class WorldsRenderer {
     this.renderTexture?.destroy();
     this.backgroundTexture?.destroy();
     this.backgroundShaderTexture?.destroy();
+    this.backgroundImageTexture?.destroy();
+    this.multiplyRenderPipeline = null;
   }
 }

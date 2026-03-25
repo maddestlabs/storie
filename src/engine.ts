@@ -363,6 +363,9 @@ export class StorieEngine {
   private audioContext: AudioContext;
   private readonly audioUrlBufferCache: Map<string, AudioBuffer> = new Map();
   private readonly audioUrlInFlightCache: Map<string, Promise<AudioBuffer | null>> = new Map();
+  private readonly backgroundImageUrlCache: Map<string, RenderableImageSource> = new Map();
+  private readonly backgroundImageUrlInFlightCache: Map<string, Promise<RenderableImageSource | null>> = new Map();
+  private readonly backgroundImageUrlFailures: Set<string> = new Set();
   private audioGestureUnlocked: boolean = false;
   private trustedAudioGestureDepth: number = 0;
   private pendingGestureAudioStarts: Array<() => void> = [];
@@ -1404,6 +1407,120 @@ export class StorieEngine {
 
     this.audioUrlInFlightCache.set(resolvedUrl, promise);
     return await promise;
+  }
+
+  private resolveWorldsBackgroundImageUrl(rawUrl: string): string {
+    const trimmed = String(rawUrl ?? '').trim();
+    if (!trimmed) {
+      throw new Error('[worlds.background] Missing texture URL');
+    }
+
+    if (this.untrustedContent) {
+      const allowedPrefix = /^(?:\.\/)?assets\/img\//;
+      if (!allowedPrefix.test(trimmed) || trimmed.includes('..') || trimmed.startsWith('/') || trimmed.startsWith('\\')) {
+        throw new Error('[worlds.background] Untrusted mode allows only relative URLs under "assets/img/"');
+      }
+      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
+        throw new Error('[worlds.background] Untrusted mode blocks URL schemes');
+      }
+    }
+
+    let resolved: URL;
+    try {
+      resolved = new URL(trimmed, globalThis.location?.href ?? 'http://localhost/');
+    } catch (error: any) {
+      throw new Error(`[worlds.background] Invalid URL: ${String(error?.message ?? error)}`);
+    }
+
+    const protocol = resolved.protocol.toLowerCase();
+    if (protocol === 'data:' || protocol === 'blob:' || protocol === 'javascript:' || protocol === 'file:') {
+      throw new Error(`[worlds.background] Unsupported URL scheme: ${protocol}`);
+    }
+    if (resolved.username || resolved.password) {
+      throw new Error('[worlds.background] Credentials in URLs are not supported');
+    }
+
+    const origin = globalThis.location?.origin;
+    if (origin && origin !== 'null' && resolved.origin !== origin) {
+      throw new Error(`[worlds.background] Cross-origin images blocked: ${resolved.origin}`);
+    }
+
+    return resolved.toString();
+  }
+
+  private async loadWorldsBackgroundImageFromResolvedUrl(resolvedUrl: string): Promise<RenderableImageSource | null> {
+    const MAX_IMAGE_URL_BYTES = 128 * 1024 * 1024;
+
+    try {
+      const response = await fetch(resolvedUrl, {
+        mode: 'same-origin',
+        credentials: 'same-origin',
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+      }
+
+      const contentLength = Number(response.headers.get('content-length'));
+      if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_URL_BYTES) {
+        throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (server reported ${contentLength})`);
+      }
+
+      const mime = String(response.headers.get('content-type') ?? '').toLowerCase();
+      if (!mime.startsWith('image/')) {
+        throw new Error(`Unsupported content type: ${mime || 'unknown'}`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      if (arrayBuffer.byteLength > MAX_IMAGE_URL_BYTES) {
+        throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (downloaded ${arrayBuffer.byteLength})`);
+      }
+
+      return await this.decodeRenderableImageFromBytes(new Uint8Array(arrayBuffer), mime);
+    } catch (error) {
+      console.warn(`[worlds.background] Failed to load image from "${resolvedUrl}":`, error);
+      return null;
+    }
+  }
+
+  private ensureWorldsBackgroundImageLoaded(rawUrl: string): RenderableImageSource | null {
+    const rawKey = String(rawUrl ?? '').trim();
+    if (!rawKey || this.backgroundImageUrlFailures.has(rawKey)) return null;
+
+    let resolvedUrl: string;
+    try {
+      resolvedUrl = this.resolveWorldsBackgroundImageUrl(rawUrl);
+    } catch (error) {
+      console.warn(error);
+      this.backgroundImageUrlFailures.add(rawKey);
+      return null;
+    }
+
+    if (this.backgroundImageUrlFailures.has(resolvedUrl)) return null;
+
+    const cached = this.backgroundImageUrlCache.get(resolvedUrl);
+    if (cached) return cached;
+
+    if (!this.backgroundImageUrlInFlightCache.has(resolvedUrl)) {
+      const promise = this.loadWorldsBackgroundImageFromResolvedUrl(resolvedUrl)
+        .then(image => {
+          if (!image) {
+            this.backgroundImageUrlFailures.add(resolvedUrl);
+            return null;
+          }
+          this.backgroundImageUrlCache.set(resolvedUrl, image);
+          if (this.worldsEnabled && this.section3DLayouts.length > 0) {
+            this.clear3DSectionTextures();
+          }
+          return image;
+        })
+        .finally(() => {
+          this.backgroundImageUrlInFlightCache.delete(resolvedUrl);
+        });
+      this.backgroundImageUrlInFlightCache.set(resolvedUrl, promise);
+    }
+
+    return null;
   }
 
   private ensureMarkdownBlobImageLoaded(source: string, documentId?: string): MarkdownImageCacheEntry | null {
@@ -8382,6 +8499,10 @@ ${exportVars}
 
           // Check for shader background
           const shaderInfo = this.parseWorldsSectionBackgroundShader();
+          const textureInfo = this.parseWorldsSectionBackgroundTexture();
+          const textureImage = textureInfo
+            ? this.ensureWorldsBackgroundImageLoaded(textureInfo.url)
+            : null;
 
           // If using a shader background, merge in a few engine-provided uniforms
           // (only applied if the shader declares these uniforms).
@@ -8453,13 +8574,14 @@ ${exportVars}
           }
           
           const paperPlaneZ = (() => {
-            if (!shaderInfo) return undefined;
+            const planeZValue = shaderInfo?.paperPlaneZ ?? textureInfo?.paperPlaneZ;
+            const planeZMode = shaderInfo?.paperPlaneZMode ?? textureInfo?.paperPlaneZMode;
 
-            if (Number.isFinite(shaderInfo.paperPlaneZ as any)) {
-              return shaderInfo.paperPlaneZ as number;
+            if (Number.isFinite(planeZValue as any)) {
+              return planeZValue as number;
             }
 
-            if (shaderInfo.paperPlaneZMode === 'focus') {
+            if (planeZMode === 'focus') {
               const focusedIdx = this.lastApplied3DCameraFocus?.kind === 'frame'
                 ? null
                 : this.lastApplied3DCameraFocus?.sectionIndex;
@@ -8472,19 +8594,30 @@ ${exportVars}
             return undefined;
           })();
 
-          const backgroundConfig = proceduralBackground || shaderInfo
+          const worldsPixelsPerWorldUnit = this.getWorldsPixelsPerWorldUnit();
+          const textureTilePx = Number.isFinite(textureInfo?.tilePx as any)
+            ? Math.max(1, textureInfo!.tilePx as number)
+            : 512;
+          const textureCoordScale = Number.isFinite(textureInfo?.coordScale as any)
+            ? (textureInfo!.coordScale as number)
+            : (worldsPixelsPerWorldUnit / textureTilePx);
+
+          const backgroundConfig = proceduralBackground || shaderInfo || textureInfo
             ? {
                 enabled: true,
                 chain: backgroundChain,
                 shaderName: shaderInfo?.name,
                 shaderUniforms: mergedShaderUniforms,
+                image: textureImage,
+                screenLock: textureInfo?.screenLock,
                 paperPlaneZ,
                 paperColor: this.resolveWorldsSectionBackground(),
                 lineColor: this.withAlpha(this.getStyle('dim').fg, 0x40),
-                scale: shaderInfo ? shaderCoordScale : 1,
+                scale: shaderInfo ? shaderCoordScale : (textureInfo ? textureCoordScale : 1),
                 spacing: 1,
                 thickness: 0.06,
                 noiseStrength: paperNoiseStrength,
+                sectionBlendMode: (textureInfo?.blendMode ?? (this.worldsConfig as any)?.sectionBlendMode) as ('multiply' | undefined),
               }
             : undefined;
 
@@ -8918,9 +9051,10 @@ ${exportVars}
         const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
         const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
         const shaderBg = !!this.parseWorldsSectionBackgroundShader();
+        const textureBg = !!this.parseWorldsSectionBackgroundTexture();
         const surfaceBg = this.resolveWorldsSectionBackground();
 
-        const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
+        const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg || textureBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
         const mdStyle = this.createWorldsMarkdownStyle({
           activeLinkIndex,
           background: mdBg,
@@ -9026,12 +9160,13 @@ ${exportVars}
       const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
       const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
       const shaderBg = !!this.parseWorldsSectionBackgroundShader();
+      const textureBg = !!this.parseWorldsSectionBackgroundTexture();
       const surfaceBg = this.resolveWorldsSectionBackground();
       const borderStyle = this.getStyle('border');
 
       // If the 3D shader (procedural) or this path (baked) will draw paper,
       // keep the section texture background transparent so paper shows through.
-      const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
+      const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg || textureBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
 
       const mdStyle = this.createWorldsMarkdownStyle({
         activeLinkIndex,
@@ -9241,6 +9376,16 @@ ${exportVars}
     }
   }
 
+  private getWorldsPixelsPerWorldUnit(): number {
+    const logicalFontSizePx = Math.max(1, this.fontSize || 16);
+    const fontStack =
+      this.worldsCardFontStack ||
+      this.fontFamily ||
+      "'3270-regular', 'Consolas', 'Monaco', monospace";
+    const measured = this.measureFontMetrics(fontStack, logicalFontSizePx);
+    return Math.max(1, measured.baseLineHeight);
+  }
+
   private reflowWorldsAutoLayout(): void {
     if (!this.section3DLayouts || this.section3DLayouts.length === 0) return;
     if (this.worldsOverviewEnabled) return;
@@ -9426,6 +9571,90 @@ ${exportVars}
     }
     
     return null;
+  }
+
+  private parseWorldsSectionBackgroundTexture(): {
+    url: string;
+    coordScale?: number;
+    tilePx?: number;
+    paperPlaneZ?: number;
+    paperPlaneZMode?: 'focus';
+    screenLock?: boolean;
+    blendMode?: 'multiply';
+  } | null {
+    const v: any = (this.worldsConfig as any).sectionBackground;
+    if (typeof v !== 'string' || !v.startsWith('texture:')) return null;
+
+    const textureSpec = v.substring(8).trim();
+    const [url, ...paramSpecs] = textureSpec.split(';');
+    const textureUrl = String(url ?? '').trim();
+    if (!textureUrl) return null;
+
+    let coordScale: number | undefined;
+    let tilePx: number | undefined;
+    let paperPlaneZ: number | undefined;
+    let paperPlaneZMode: 'focus' | undefined;
+    let screenLock: boolean | undefined;
+    let blendMode: 'multiply' | undefined;
+
+    for (const spec of paramSpecs) {
+      const [key, value] = spec.split('=');
+      if (!key || value === undefined) continue;
+
+      const trimmedKey = key.trim();
+      const trimmedValue = value.trim();
+      if (!trimmedKey) continue;
+
+      if (trimmedKey === 'paperPlaneZ') {
+        const lower = trimmedValue.toLowerCase();
+        if (lower === 'focus' || lower === 'focused') {
+          paperPlaneZMode = 'focus';
+          continue;
+        }
+
+        const num = parseFloat(trimmedValue);
+        if (!isNaN(num) && Number.isFinite(num)) {
+          paperPlaneZ = num;
+        }
+        continue;
+      }
+
+      if (trimmedKey === 'coordScale' || trimmedKey === 'scale') {
+        const num = parseFloat(trimmedValue);
+        if (!isNaN(num) && Number.isFinite(num) && num > 0) {
+          coordScale = num;
+        }
+        continue;
+      }
+
+      if (trimmedKey === 'tilePx' || trimmedKey === 'tile') {
+        const num = parseFloat(trimmedValue);
+        if (!isNaN(num) && Number.isFinite(num) && num > 0) {
+          tilePx = num;
+        }
+        continue;
+      }
+
+      if (trimmedKey === 'screenLock') {
+        const lower = trimmedValue.toLowerCase();
+        if (lower === '1' || lower === 'true' || lower === 'yes' || lower === 'on') {
+          screenLock = true;
+        } else if (lower === '0' || lower === 'false' || lower === 'no' || lower === 'off') {
+          screenLock = false;
+        }
+        continue;
+      }
+
+      if (trimmedKey === 'blendMode' || trimmedKey === 'blend') {
+        const lower = trimmedValue.toLowerCase();
+        if (lower === 'multiply' || lower === 'mul') {
+          blendMode = 'multiply';
+        }
+        continue;
+      }
+    }
+
+    return { url: textureUrl, coordScale, tilePx, paperPlaneZ, paperPlaneZMode, screenLock, blendMode };
   }
 
   private isWorldsSectionBackgroundProceduralChainEnabled(): boolean {
@@ -9652,10 +9881,11 @@ ${exportVars}
     const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
     const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
     const shaderBg = !!this.parseWorldsSectionBackgroundShader();
+    const textureBg = !!this.parseWorldsSectionBackgroundTexture();
     const surfaceBg = this.resolveWorldsSectionBackground();
     const borderStyle = this.getStyle('border');
 
-    const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
+    const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg || textureBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
 
     const borderEnabled = this.worldsConfig.sectionBorderEnabled !== false;
     const borderWidth = Math.max(0, Math.round(this.worldsConfig.sectionBorderWidth ?? 2));
@@ -11962,8 +12192,9 @@ ${exportVars}
     const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
     const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
     const shaderBg = !!this.parseWorldsSectionBackgroundShader();
+    const textureBg = !!this.parseWorldsSectionBackgroundTexture();
     const surfaceBg = this.resolveWorldsSectionBackground();
-    const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
+    const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg || textureBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
     const mdStyle = this.createWorldsMarkdownStyle({ background: mdBg });
 
     // Measure in logical CSS pixels; the runtime render path applies DPR only

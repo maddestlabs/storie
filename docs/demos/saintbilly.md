@@ -2,8 +2,8 @@
 title: "Depths Beckon"
 author: "Maddest Labs"
 theme: "saintbilly"
-shaders: "blurgradual+lightvignette"
 font: "Rye"
+shaders: "blurgradual+lightvignette"
 ---
 
 ```javascript on:init
@@ -25,7 +25,7 @@ worlds.config.setDefaults({
   defaultSectionHeight: 520,
   autoLayoutSpacing: 10,
   sectionBorderEnabled: false,
-  sectionBackground: 'shader:saintbilly',
+  sectionBackground: 'texture:assets/img/paper_seamless_texture_3197.jpg;tilePx=320;blendMode=multiply;paperPlaneZ=focus',
 });
 worlds.camera.setPosition(0, 55, 320);
 worlds.camera.setRotation(CAMERA_BASE_ROT.x, CAMERA_BASE_ROT.y, CAMERA_BASE_ROT.z);

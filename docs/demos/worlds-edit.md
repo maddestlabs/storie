@@ -322,9 +322,6 @@ function resetView() {
 
 function applyEditorPreset() {
   worlds.presets.apply('story-editor');
-  worlds.config.setDefaults({
-    sectionBackground: 'texture:assets/img/paper_seamless_texture_3197.jpg;tilePx=320;paperPlaneZ=focus',
-  });
   worlds.camera.setRotation(0, 0, 0);
 }
 

@@ -231,7 +231,7 @@ This demo showcases:
     // Cache-bust the module URL so WebView2 doesn't reuse an older bundle across runs.
     // Cache-buster is replaced during `npm run build` so WebViews don't keep
     // serving a stale storie.es.js across rebuilds.
-    import { StorieEngine } from './storie.es.js?v=2026-03-24T22:47:18.992Z';
+    import { StorieEngine } from './storie.es.js?v=2026-03-25T22:38:53.836Z';
 
     const audioGate = document.getElementById('audio-gate');
     const makeSilentWavUrl = (durationMs = 120, sampleRate = 8000) => {
@@ -419,7 +419,7 @@ This demo showcases:
         // Add .md extension if not present
         const demoFile = demoName.endsWith('.md') ? demoName : demoName + '.md';
         const demoFetchSuffix = (() => {
-          const seed = window.location.search ? window.location.search.slice(1) : '2026-03-24T22:47:18.992Z';
+          const seed = window.location.search ? window.location.search.slice(1) : '2026-03-25T22:38:53.836Z';
           if (!seed) return '';
           return (demoFile.includes('?') ? '&' : '?') + 'v=' + encodeURIComponent(seed);
         })();

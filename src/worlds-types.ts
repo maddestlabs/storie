@@ -208,6 +208,7 @@ export interface WorldsConfig {
     * - Special string: 'paper' (seamless procedural paper grain background, computed in the 3D shader)
    * - Special chain syntax (Worlds): 'ruledlines+paper' (apply multiple procedural background layers)
    * - Special string: 'ruledlines-baked' (draws ruled-paper into the per-section texture; non-seamless across cards)
+    * - Texture syntax: 'texture:assets/img/wood.jpg;tilePx=384;paperPlaneZ=focus'
    * - Hex strings: '#RRGGBB' or '#RRGGBBAA'
    * - Packed color: 0xRRGGBBAA
    * - Legacy object: { r, g, b, a? } where a is 0..1
@@ -235,6 +236,20 @@ export interface WorldsConfig {
    * without `ruledlines`).
    */
   sectionBackgroundPaperNoiseStrength?: number;
+
+  /**
+   * Blend mode used when compositing section card content over the background.
+   *
+   * - `'normal'` (default): standard alpha compositing — card content paints on top.
+   * - `'multiply'`: card color × background color. Dark text and graphics appear
+   *   inked onto the background texture; white/light areas become transparent,
+   *   letting the texture show through. Ideal for paper-texture backgrounds.
+   *
+   * Can also be embedded in a `texture:` sectionBackground string as
+   * `blendMode=multiply`, e.g.:
+   * `'texture:assets/img/paper.jpg;tilePx=160;blendMode=multiply;paperPlaneZ=focus'`
+   */
+  sectionBlendMode?: 'normal' | 'multiply';
 
   /**
    * Whether markdown links rendered into Worlds section cards should draw an
