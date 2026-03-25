@@ -31,7 +31,6 @@ var state = {
   currentSectionId: null,
   timedSections: [],
 
-  panel: null,
   widgets: null,
   mouseDownLeft: false,
   statusText: 'Loading local WAV asset...',
@@ -87,7 +86,7 @@ function resetDemo(autoplay) {
   if (state.widgets?.seek) state.widgets.seek.setValue(0);
   if (state.widgets?.time) {
     const total = state.audioBuffer ? fmtTime(state.audioBuffer.duration) : '--:--';
-    state.widgets.time.setText(`Time: 0:00 / ${total}`);
+    state.widgets.time.setText(`0:00 / ${total}`);
   }
   if (autoplay !== false && state.audioBuffer) playFrom(0);
 }
@@ -135,7 +134,6 @@ function playFrom(offsetSec) {
 
 function setStatus(text) {
   state.statusText = text;
-  if (state.widgets?.status) state.widgets.status.setText(text);
 }
 
 function loadLocalAudio() {
@@ -156,7 +154,7 @@ function loadLocalAudio() {
       state.widgets.seek.max = Math.max(0.01, buffer.duration);
       state.widgets.seek.step = 0.01;
       state.widgets.seek.setValue(0);
-      state.widgets.time.setText(`Time: 0:00 / ${fmtTime(buffer.duration)}`);
+      state.widgets.time.setText(`0:00 / ${fmtTime(buffer.duration)}`);
 
       const firstSection = sectionAtMs(0);
       if (firstSection) {
@@ -354,49 +352,29 @@ worlds.camera.shake.setEnabled(true);
 
 worlds.camera.focusOnSectionFit(0, WORLDS_SECTION_FILL, { keepRotation: true });
 
-gui.init();
+gui.init({ boundsSpace: 'device' });
 buildTimedSections();
 
-const tokens = gui.getTokens();
-const panel = gui.createResponsivePanel({
-  bounds: { x: 0, y: 0, width: 200, height: 180 },
-  padding: tokens.spacing.md,
-  gap: tokens.spacing.xs,
-  maxWidth: 200,
-  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content' }
+const btnPlayPause = gui.createButton({
+  bounds: { x: 0, y: 0, width: 180, height: 36 },
+  label: 'Play',
 });
 
 const time = gui.createLabel({
-  bounds: { x: 0, y: 0, width: 1, height: 20 },
+  bounds: { x: 0, y: 0, width: 180, height: 24 },
   text: '--:-- / --:--',
   align: 'left',
-  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
 });
 
 const seek = gui.createSlider({
-  bounds: { x: 0, y: 0, width: 1, height: 40 },
+  bounds: { x: 0, y: 0, width: 180, height: 28 },
   label: '',
   min: 0,
   max: 1,
   value: 0,
   step: 0.1,
-  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
 });
 
-const btnPlayPause = gui.createButton({
-  bounds: { x: 0, y: 0, width: 1, height: 40 },
-  label: 'Play/Pause',
-  layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-});
-
-panel
-  .add(time)
-  .add(seek)
-  .add(btnPlayPause);
-
-panel.layout();
-
-state.panel = panel;
 state.widgets = { time, seek, btnPlayPause };
 state.gain = audio.createGain();
 state.gain.gain.value = 1;
@@ -427,26 +405,17 @@ if (event.type === 'mouse_move') gui.handleMouse(event.x, event.y, state.mouseDo
 ```javascript on:update
 if (!state.widgets) return;
 
-if (state.panel) {
-  const viewport = gui.getViewportRect();
-  const info = gui.getResponsiveInfo({ width: viewport.width, height: viewport.height });
-  const tokens = gui.getTokens();
-  const compact = info.breakpoint === 'xs';
-  const inset = compact ? tokens.spacing.sm : tokens.spacing.lg;
-  const maxWidth = Math.min(200, Math.max(160, (info.usableWidth || viewport.width) - inset));
-
-  state.panel.container.padding = compact ? tokens.spacing.sm : tokens.spacing.md;
-  state.panel.container.gap = compact ? tokens.spacing.xs : tokens.spacing.sm;
-  state.panel.setMaxWidth(maxWidth, false);
-  state.panel.fitToViewport(viewport, {
-    inset,
-    safeArea: true,
-    maxWidth,
-    anchorX: 'end',
-    anchorY: 'start'
-  }, false);
-  state.panel.layout();
-}
+const W = ui.metrics.canvasWidth;
+const inset = 16;
+const ctrlW = 180;
+const btnH = 36, timeH = 24, seekH = 28, gap = 6;
+const x = W - inset - ctrlW;
+let y = inset;
+state.widgets.btnPlayPause.setBounds({ x, y, width: ctrlW, height: btnH });
+y += btnH + gap;
+state.widgets.time.setBounds({ x, y, width: ctrlW, height: timeH });
+y += timeH + gap;
+state.widgets.seek.setBounds({ x, y, width: ctrlW, height: seekH });
 
 gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);
 
