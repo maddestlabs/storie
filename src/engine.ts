@@ -48,6 +48,7 @@ import { parseMarkdownLite } from './ui/document/markdown-lite.js';
 import { layoutMarkdownDocument } from './ui/document/layout.js';
 import type { DrawOp, LinkRegion, MarkdownStyle, WidgetPlacement, LayoutOptions } from './ui/document/types.js';
 import type { Draw2D } from './ui/draw2d.js';
+import { createTransformedDraw2D, invertAffine, type Draw2DAffine } from './ui/draw2d-transform.js';
 import { getHiddenTextInputBridgeAttributes, normalizeSingleLineText } from './ui/core/text-input.js';
 import type { TextInputCapable } from './ui/core/types.js';
 import { ShaderManager } from './shader-manager.js';
@@ -1880,6 +1881,17 @@ export class StorieEngine {
         if (next === 'left' || next === 'center' || next === 'right') {
           const prev = (engine.worldsConfig as any).sectionTextAlign;
           (engine.worldsConfig as any).sectionTextAlign = next;
+          if (prev !== next) {
+            engine.clear3DSectionTextures();
+          }
+        }
+      }
+
+      if ((config as any).sectionGuiMode !== undefined) {
+        const next = (config as any).sectionGuiMode;
+        if (next === 'overlay' || next === 'baked') {
+          const prev = (engine.worldsConfig as any).sectionGuiMode;
+          (engine.worldsConfig as any).sectionGuiMode = next;
           if (prev !== next) {
             engine.clear3DSectionTextures();
           }
@@ -4584,6 +4596,29 @@ export class StorieEngine {
       
       // WGSL Shader API (high-level shader management)
       shader: {
+        // Dynamically register (or replace) a named WGSL shader from user code.
+        // Returns a Promise<boolean> so callers can await compilation.
+        define: async (shaderName: string, wgslCode: string, opts?: { kind?: 'fragment' | 'vertex' }): Promise<boolean> => {
+          if (!engine.shaderManager) {
+            console.warn('ShaderManager not available (WebGPU not initialized)');
+            return false;
+          }
+          try {
+            const shader = {
+              name: shaderName,
+              code: wgslCode,
+              kind: (opts?.kind ?? 'fragment') as import('./types.js').WGSLShaderKind,
+              uniforms: [] as string[],
+              bindings: [] as number[],
+              workgroupSize: [1, 1, 1] as [number, number, number],
+            };
+            return await engine.shaderManager.registerShader(shader);
+          } catch (error) {
+            console.error(`Failed to define shader ${shaderName}:`, error);
+            return false;
+          }
+        },
+
         setUniform: (shaderName: string, uniformName: string, value: number | number[]) => {
           if (!engine.shaderManager) {
             console.warn('ShaderManager not available (WebGPU not initialized)');
@@ -6024,6 +6059,137 @@ export class StorieEngine {
     };
   }
 
+  private createCanvas2DDraw2D(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D): import('./ui/draw2d.js').Draw2D {
+    const clipStack: Array<{ x: number; y: number; w: number; h: number } | null> = [];
+
+    const api: import('./ui/draw2d.js').Draw2D = {
+      rect: (x, y, w, h, color) => {
+        ctx.fillStyle = ColorUtils.toCss(color as any);
+        ctx.fillRect(x, y, w, h);
+      },
+      text: (text, x, y, color) => {
+        ctx.fillStyle = ColorUtils.toCss(color as any);
+        ctx.fillText(text, x, y);
+      },
+      measureTextWidth: (text) => ctx.measureText(text).width,
+      image: (imageId, x, y, w, h, options) => {
+        // The retained GUI passes image ids that map to sandbox-loaded images.
+        // In the section-texture path we also allow markdown image sources.
+        const img = this.getMarkdownImageSource(imageId, this.activeDocumentId ?? undefined);
+        if (!img) return;
+
+        if (options?.uv) {
+          const sx = options.uv.u;
+          const sy = options.uv.v;
+          const sw = options.uv.w;
+          const sh = options.uv.h;
+          try {
+            ctx.drawImage(img as any, sx, sy, sw, sh, x, y, w, h);
+          } catch {
+            // ignore
+          }
+        } else {
+          try {
+            ctx.drawImage(img as any, x, y, w, h);
+          } catch {
+            // ignore
+          }
+        }
+      },
+      pushClipRect: (x, y, w, h) => {
+        clipStack.push({ x, y, w, h });
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x, y, w, h);
+        ctx.clip();
+      },
+      popClipRect: () => {
+        if (clipStack.length === 0) return;
+        clipStack.pop();
+        ctx.restore();
+      },
+      // Stencil masking not supported on Canvas2D.
+      pushMaskRect: undefined,
+      pushMaskRoundedRect: undefined,
+      pushMaskPolygon: undefined,
+      popMask: undefined,
+      colors: ColorUtils as any,
+      metrics: undefined,
+    };
+
+    return api;
+  }
+
+  private getWorldsSectionTextureToScreenAffine(layout: Section3DLayout): { screenFromTexPx: Draw2DAffine; localFromScreenTexPx: Draw2DAffine; clipRectScreen: { x: number; y: number; w: number; h: number } } | null {
+    const dims = this.sectionTextureCache.get(layout.sectionId);
+    if (!dims || dims.width <= 0 || dims.height <= 0) return null;
+
+    // Sample three points in texture pixel space: origin, +x, +y.
+    const p00 = this.project3DTexturePointToScreen(layout, { x: 0, y: 0 });
+    const p10 = this.project3DTexturePointToScreen(layout, { x: dims.width, y: 0 });
+    const p01 = this.project3DTexturePointToScreen(layout, { x: 0, y: dims.height });
+    if (!p00 || !p10 || !p01) return null;
+
+    const a = (p10.x - p00.x) / dims.width;
+    const b = (p10.y - p00.y) / dims.width;
+    const c = (p01.x - p00.x) / dims.height;
+    const d = (p01.y - p00.y) / dims.height;
+    const e = p00.x;
+    const f = p00.y;
+    const screenFromTexPx: Draw2DAffine = { a, b, c, d, e, f };
+    const localFromScreenTexPx = invertAffine(screenFromTexPx);
+    if (!localFromScreenTexPx) return null;
+
+    // Clip to the section quad's AABB on screen.
+    const quad = this.getSectionScreenQuad(layout, { allowOffscreen: true });
+    if (!quad) return null;
+    const xs = quad.map((p) => p.x);
+    const ys = quad.map((p) => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    if (![minX, maxX, minY, maxY].every(Number.isFinite)) return null;
+    const clipRectScreen = { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+
+    return { screenFromTexPx, localFromScreenTexPx, clipRectScreen };
+  }
+
+  private renderWorldsSectionBoundGUI(renderer: WebGPUUIRenderer, documentId?: string): void {
+    const guiAPI: any = this.api?.gui;
+    const system = guiAPI?.getSystem?.();
+    if (!system) return;
+    if (!this.worldsEnabled || !this.camera3D) return;
+
+    const bindings: Array<{ group: string | number; sections: number[] }> = Array.isArray(guiAPI?._sectionBindings)
+      ? guiAPI._sectionBindings
+      : [];
+    if (bindings.length === 0) return;
+
+    const baseUI = this.createMarkdownAwareDraw2D(renderer, documentId);
+    const { charWidth, charHeight } = this.getGUIPixelMetrics();
+
+    for (const binding of bindings) {
+      for (const sectionIndex of binding.sections) {
+        const layout = this.getSectionLayoutByIndex(sectionIndex);
+        if (!layout || !layout.visible || layout.interactive === false || !layout.texture) continue;
+
+        const xform = this.getWorldsSectionTextureToScreenAffine(layout);
+        if (!xform) continue;
+
+        // Render only this group's widgets, mapped from texture pixel coords to screen.
+        const transformed = createTransformedDraw2D(baseUI, {
+          screenFromLocal: xform.screenFromTexPx,
+          localFromScreen: xform.localFromScreenTexPx,
+          clipRectScreen: xform.clipRectScreen,
+        });
+        (transformed as any).metrics = { charWidth, charHeight };
+
+        system.renderGroup(binding.group, transformed, charWidth, charHeight);
+      }
+    }
+  }
+
   private clearWorldsInlineWidgets(): void {
     const guiAPI = this.api?.gui as any;
     const system = guiAPI?.getSystem?.();
@@ -6702,6 +6868,77 @@ export class StorieEngine {
     this.syncWorldsInlineWidgets();
 
     return hitBefore || draggingBefore;
+  }
+
+  private handleWorldsSectionBoundGUIMouse(pixelX: number, pixelY: number, mouseDown: boolean): boolean {
+    const guiAPI: any = this.api?.gui;
+    const system = guiAPI?.getSystem?.();
+    if (!system) return false;
+    if (!this.worldsEnabled || !this.camera3D) return false;
+
+    const bindings: Array<{ group: string | number; sections: number[] }> = Array.isArray(guiAPI?._sectionBindings)
+      ? guiAPI._sectionBindings
+      : [];
+    if (bindings.length === 0) return false;
+
+    const { charWidth, charHeight } = this.getGUIPixelMetrics();
+
+    // Prefer current/selected section first for UX.
+    const preferred = this.getResolvedSelected3DSectionIndex();
+
+    const candidates: Array<{ group: string | number; sectionIndex: number }> = [];
+    for (const binding of bindings) {
+      for (const sectionIndex of binding.sections) {
+        candidates.push({ group: binding.group, sectionIndex });
+      }
+    }
+    candidates.sort((a, b) => {
+      const ap = a.sectionIndex === preferred ? -1 : 0;
+      const bp = b.sectionIndex === preferred ? -1 : 0;
+      return ap - bp;
+    });
+
+    let handled = false;
+    for (const candidate of candidates) {
+      const layout = this.getSectionLayoutByIndex(candidate.sectionIndex);
+      if (!layout || !layout.visible || layout.interactive === false || !layout.texture) continue;
+
+      const xform = this.getWorldsSectionTextureToScreenAffine(layout);
+      if (!xform) continue;
+
+      // Quick reject: outside the clipped AABB.
+      const clip = xform.clipRectScreen;
+      if (pixelX < clip.x || pixelY < clip.y || pixelX > clip.x + clip.w || pixelY > clip.y + clip.h) {
+        continue;
+      }
+
+      const local = {
+        x: xform.localFromScreenTexPx.a * pixelX + xform.localFromScreenTexPx.c * pixelY + xform.localFromScreenTexPx.e,
+        y: xform.localFromScreenTexPx.b * pixelX + xform.localFromScreenTexPx.d * pixelY + xform.localFromScreenTexPx.f,
+      };
+
+      // Only route if inside the section texture bounds.
+      const dims = this.sectionTextureCache.get(layout.sectionId);
+      if (!dims) continue;
+      if (local.x < 0 || local.y < 0 || local.x > dims.width || local.y > dims.height) continue;
+
+      const beforeFocus = system.getFocusedWidget?.();
+      system.handleMouse(local.x, local.y, mouseDown, charWidth, charHeight);
+      const afterFocus = system.getFocusedWidget?.();
+
+      if (afterFocus && afterFocus.group === candidate.group) {
+        handled = true;
+        break;
+      }
+
+      // If focus didn't change but something in the group is hovered/pressed, we still consider it handled.
+      if (beforeFocus && beforeFocus.group === candidate.group) {
+        handled = true;
+        break;
+      }
+    }
+
+    return handled;
   }
 
   private handleWorldsInlineWidgetKey(key: string, modifiers?: { shift?: boolean; ctrl?: boolean; alt?: boolean }): boolean {
@@ -8618,6 +8855,14 @@ ${exportVars}
                 thickness: 0.06,
                 noiseStrength: paperNoiseStrength,
                 sectionBlendMode: (textureInfo?.blendMode ?? (this.worldsConfig as any)?.sectionBlendMode) as ('multiply' | undefined),
+                contentDistortStrength: (Number.isFinite((textureInfo as any)?.contentDistort as any)
+                  ? ((textureInfo as any).contentDistort as number)
+                  : (Number.isFinite((this.worldsConfig as any)?.contentDistortStrength as any)
+                      ? (this.worldsConfig as any).contentDistortStrength
+                      : 0)),
+                contentBlendStrength: Number.isFinite((textureInfo as any)?.blendStrength as any)
+                  ? ((textureInfo as any).blendStrength as number)
+                  : undefined,
               }
             : undefined;
 
@@ -8636,10 +8881,75 @@ ${exportVars}
             this.syncWorldsInlineWidgets();
           }
 
+          // Section-bound retained GUI needs its hover/pressed state updated in section-local coordinates.
+          // The generic gui.update() runs in screen space, so we drive a per-frame update for the
+          // preferred active section when bindings exist.
+          const guiAPIAny: any = this.api?.gui;
+          const systemForSectionGUI = guiAPIAny?.getSystem?.();
+          const bindingsForSectionGUI: Array<{ group: string | number; sections: number[] }> = Array.isArray(guiAPIAny?._sectionBindings)
+            ? guiAPIAny._sectionBindings
+            : [];
+          if (systemForSectionGUI && this.worldsEnabled && this.camera3D && bindingsForSectionGUI.length > 0) {
+            const sectionGuiMode = ((this.worldsConfig as any).sectionGuiMode === 'baked') ? 'baked' : 'overlay';
+
+            // In baked mode, visuals live in the section texture. If the GUI system
+            // indicates a state change (hover/pressed/focus/caret/etc), re-bake all
+            // bound sections so they don't appear "stuck" until a section becomes
+            // selected again.
+            if (sectionGuiMode === 'baked') {
+              const anySystem = systemForSectionGUI as any;
+              const needsRebake =
+                (typeof anySystem.needsRedraw === 'function' && !!anySystem.needsRedraw()) ||
+                (typeof anySystem.getNeedsRedraw === 'function' && !!anySystem.getNeedsRedraw());
+              if (needsRebake) {
+                for (const binding of bindingsForSectionGUI) {
+                  for (const idx of binding.sections || []) {
+                    if (typeof idx === 'number' && Number.isFinite(idx)) {
+                      this.invalidate3DSectionTexture(idx);
+                    }
+                  }
+                }
+              }
+            }
+
+            const preferredIndex = this.getResolvedSelected3DSectionIndex() ?? this.current3DSectionIndex;
+            const preferredLayout = this.getSectionLayoutByIndex(preferredIndex);
+            if (preferredLayout && preferredLayout.visible && preferredLayout.interactive !== false && preferredLayout.texture) {
+              const xform = this.getWorldsSectionTextureToScreenAffine(preferredLayout);
+              if (xform) {
+                const mx = this.input.getMouseX();
+                const my = this.input.getMouseY();
+                const localX = xform.localFromScreenTexPx.a * mx + xform.localFromScreenTexPx.c * my + xform.localFromScreenTexPx.e;
+                const localY = xform.localFromScreenTexPx.b * mx + xform.localFromScreenTexPx.d * my + xform.localFromScreenTexPx.f;
+                const { charWidth, charHeight } = this.getGUIPixelMetrics();
+                systemForSectionGUI.update(localX, localY, this.input.isMouseDown(0), charWidth, charHeight);
+
+                // In baked mode, hover/pressed/focus visuals live in the section texture.
+                // Trigger a re-bake while the mouse is over the section to keep visuals responsive.
+                if (sectionGuiMode === 'baked' && typeof preferredIndex === 'number' && Number.isFinite(preferredIndex)) {
+                  const clip = xform.clipRectScreen;
+                  const over = mx >= clip.x && my >= clip.y && mx <= clip.x + clip.w && my <= clip.y + clip.h;
+                  if (over) {
+                    this.invalidate3DSectionTexture(preferredIndex);
+                  }
+                }
+              }
+            }
+          }
+
           // Render retained-mode GUI widgets
           const guiAPI = this.api?.gui;
           if (guiAPI && guiAPI.getSystem && guiAPI.getSystem()) {
-            guiAPI.render(this.createMarkdownAwareDraw2D(this.webgpuUIRenderer, this.activeDocumentId ?? undefined));
+            const hasSectionBindings = Array.isArray((guiAPI as any)?._sectionBindings) && (guiAPI as any)._sectionBindings.length > 0;
+            // When sections are bound, render those groups in section-space.
+            // Avoid double-rendering the same widgets in the global overlay pass.
+            const sectionGuiMode = ((this.worldsConfig as any).sectionGuiMode === 'baked') ? 'baked' : 'overlay';
+            if (sectionGuiMode !== 'baked') {
+              this.renderWorldsSectionBoundGUI(this.webgpuUIRenderer, this.activeDocumentId ?? undefined);
+            }
+            if (!this.worldsEnabled || !hasSectionBindings) {
+              guiAPI.render(this.createMarkdownAwareDraw2D(this.webgpuUIRenderer, this.activeDocumentId ?? undefined));
+            }
           }
           
           this.webgpuUIRenderer.flush();
@@ -8995,16 +9305,33 @@ ${exportVars}
       }
     })();
 
+    const sectionGuiMode = ((this.worldsConfig as any).sectionGuiMode === 'baked') ? 'baked' : 'overlay';
+    const guiAPIAny: any = this.api?.gui;
+    const guiBindings: Array<{ group: string | number; sections: number[] }> = Array.isArray(guiAPIAny?._sectionBindings)
+      ? guiAPIAny._sectionBindings
+      : [];
+    const bakedGuiSections = new Set<number>();
+    if (sectionGuiMode === 'baked' && guiBindings.length > 0) {
+      for (const binding of guiBindings) {
+        for (const idx of binding.sections || []) {
+          if (typeof idx === 'number' && Number.isFinite(idx)) bakedGuiSections.add(idx);
+        }
+      }
+    }
+
     for (const layout of this.section3DLayouts) {
-      if (!layout.visible) continue;
+      const needsBakedGui = bakedGuiSections.size > 0 && bakedGuiSections.has(layout.sectionIndex);
+      if (!layout.visible && !needsBakedGui) continue;
 
       const activeLink = this.getActive3DLink();
       const activeLinkIndex = activeLink && activeLink.sectionIndex === layout.sectionIndex
         ? activeLink.linkIndex
         : null;
 
-      if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
-        continue;
+      if (!needsBakedGui) {
+        if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
+          continue;
+        }
       }
 
       // Re-rasterize when the active hovered/focused link changes for this card.
@@ -9197,6 +9524,13 @@ ${exportVars}
       const scaledLinkRegions = this.scaleLinkRegions(result.linkRegions, textureScale);
       const scaledWidgetPlacements = this.scaleWidgetPlacements(result.widgetPlacements, textureScale);
 
+      // Keep texture dimensions for section-bound GUI mapping + picking.
+      this.sectionTextureCache.set(layout.sectionId, {
+        width: textureWidthPx,
+        height: textureHeightPx,
+        activeLinkIndex,
+      });
+
       // Draw ops into the Canvas2D surface
       ctx.clearRect(0, 0, widthPx, heightPx);
       if (bakedRuledPaper) {
@@ -9216,6 +9550,56 @@ ${exportVars}
         } else {
           ctx.fillStyle = ColorUtils.toCss(op.color as any);
           ctx.fillText(op.text, op.x, op.y);
+        }
+      }
+
+      // Render section-bound retained GUI into the section texture, so it transforms with the card.
+      // This path is only used when sectionGuiMode is 'baked' and GUI section bindings exist.
+      {
+        const sectionGuiMode = ((this.worldsConfig as any).sectionGuiMode === 'baked') ? 'baked' : 'overlay';
+        if (sectionGuiMode !== 'baked') {
+          // Skip: overlay mode renders section-bound GUI via the UI layer.
+        } else {
+        const guiAPI: any = this.api?.gui;
+        const system = guiAPI?.getSystem?.();
+        const bindings: Array<{ group: string | number; sections: number[] }> = Array.isArray(guiAPI?._sectionBindings)
+          ? guiAPI._sectionBindings
+          : [];
+        if (system && bindings.length > 0) {
+          // IMPORTANT: GUI section bindings default to showing groups only for the
+          // *currently active* section. When baking, we want the groups that are
+          // bound to this layout.sectionIndex to be visible even if the user has
+          // panned/zoomed away or another section is "current".
+          //
+          // Force bindings to treat this section as active while we render into
+          // its texture, then restore normal binding state.
+          let restoreBindings: (() => void) | null = null;
+          if (typeof guiAPI.syncSectionBindings === 'function') {
+            try {
+              guiAPI.syncSectionBindings(layout.sectionIndex);
+              restoreBindings = () => {
+                try { guiAPI.syncSectionBindings(); } catch { /* ignore */ }
+              };
+            } catch {
+              // ignore
+            }
+          }
+
+          const boundGroups = bindings
+            .filter((b) => Array.isArray(b.sections) && b.sections.includes(layout.sectionIndex))
+            .map((b) => b.group);
+
+          if (boundGroups.length > 0) {
+            const draw2d = this.createCanvas2DDraw2D(ctx as any);
+            const metrics = this.getGUIPixelMetrics();
+            (draw2d as any).metrics = { charWidth: metrics.charWidth, charHeight: metrics.charHeight };
+            for (const group of boundGroups) {
+              system.renderGroup(group, draw2d as any, metrics.charWidth, metrics.charHeight);
+            }
+          }
+
+          if (restoreBindings) restoreBindings();
+        }
         }
       }
 
@@ -9353,6 +9737,7 @@ ${exportVars}
     this.sectionWidgetPlacementsCache.delete(layout.sectionId);
     this.worldsAutoLayoutCache = null;
   }
+
 
   private getWorldsWidgetLayoutOptions(sectionIndex: number, overflow: 'clip' | 'expand'): LayoutOptions {
     return {
@@ -9577,10 +9962,12 @@ ${exportVars}
     url: string;
     coordScale?: number;
     tilePx?: number;
+    contentDistort?: number;
+    blendStrength?: number;
     paperPlaneZ?: number;
     paperPlaneZMode?: 'focus';
     screenLock?: boolean;
-    blendMode?: 'multiply';
+    blendMode?: 'multiply' | 'screen' | 'overlay' | 'softlight' | 'hardlight' | 'darken' | 'lighten' | 'difference' | 'exclusion' | 'colorburn' | 'colordodge';
   } | null {
     const v: any = (this.worldsConfig as any).sectionBackground;
     if (typeof v !== 'string' || !v.startsWith('texture:')) return null;
@@ -9592,10 +9979,12 @@ ${exportVars}
 
     let coordScale: number | undefined;
     let tilePx: number | undefined;
+    let contentDistort: number | undefined;
+    let blendStrength: number | undefined;
     let paperPlaneZ: number | undefined;
     let paperPlaneZMode: 'focus' | undefined;
     let screenLock: boolean | undefined;
-    let blendMode: 'multiply' | undefined;
+    let blendMode: 'multiply' | 'screen' | 'overlay' | 'softlight' | 'hardlight' | 'darken' | 'lighten' | 'difference' | 'exclusion' | 'colorburn' | 'colordodge' | undefined;
 
     for (const spec of paramSpecs) {
       const [key, value] = spec.split('=');
@@ -9635,6 +10024,16 @@ ${exportVars}
         continue;
       }
 
+      if (trimmedKey === 'contentDistort' || trimmedKey === 'distort' || trimmedKey === 'contentWarp') {
+        const num = parseFloat(trimmedValue);
+        if (!isNaN(num) && Number.isFinite(num)) {
+          // Treat as a subtle UV strength; clamp to sane range.
+          // (Note: the shader interprets this in pixel-relative UV units.)
+          contentDistort = Math.max(0, Math.min(0.05, num));
+        }
+        continue;
+      }
+
       if (trimmedKey === 'screenLock') {
         const lower = trimmedValue.toLowerCase();
         if (lower === '1' || lower === 'true' || lower === 'yes' || lower === 'on') {
@@ -9645,16 +10044,26 @@ ${exportVars}
         continue;
       }
 
-      if (trimmedKey === 'blendMode' || trimmedKey === 'blend') {
-        const lower = trimmedValue.toLowerCase();
-        if (lower === 'multiply' || lower === 'mul') {
-          blendMode = 'multiply';
+      if (trimmedKey === 'blendMode') {
+        const lower = trimmedValue.toLowerCase().replace(/[-_\s]/g, '');
+        const validModes = ['multiply','screen','overlay','softlight','hardlight',
+                            'darken','lighten','difference','exclusion','colorburn','colordodge'];
+        if (validModes.includes(lower)) {
+          blendMode = lower as typeof blendMode;
+        }
+        continue;
+      }
+
+      if (trimmedKey === 'blendStrength' || trimmedKey === 'blendAmount' || trimmedKey === 'paperBlend') {
+        const num = parseFloat(trimmedValue);
+        if (!isNaN(num) && Number.isFinite(num)) {
+          blendStrength = Math.max(0, Math.min(1, num));
         }
         continue;
       }
     }
 
-    return { url: textureUrl, coordScale, tilePx, paperPlaneZ, paperPlaneZMode, screenLock, blendMode };
+    return { url: textureUrl, coordScale, tilePx, contentDistort, blendStrength, paperPlaneZ, paperPlaneZMode, screenLock, blendMode };
   }
 
   private isWorldsSectionBackgroundProceduralChainEnabled(): boolean {
@@ -11033,6 +11442,9 @@ ${exportVars}
       this.handleWorldsInlineWidgetMouse(pixelX, pixelY, this.input.isMouseDown(0));
     }
 
+    // Section-bound retained GUI (worlds-aware hit testing).
+    this.handleWorldsSectionBoundGUIMouse(pixelX, pixelY, this.input.isMouseDown(0));
+
     let dispatchedToDoc = false;
     if (doc?.handlers?.input) {
       const charWidth = this.canvas.width / this.width;
@@ -11108,10 +11520,12 @@ ${exportVars}
 
       const inlineWidgetConsumed = this.handleWorldsInlineWidgetMouse(pixelX, pixelY, action === 'press');
 
+      const sectionGuiConsumed = this.handleWorldsSectionBoundGUIMouse(pixelX, pixelY, action === 'press');
+
       this.input.applySyntheticEvent({ type: 'mouse', action, button: 'left', x: pixelX, y: pixelY });
 
       let handledBy3D = false;
-      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && action === 'press') {
+      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && !sectionGuiConsumed && action === 'press') {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);

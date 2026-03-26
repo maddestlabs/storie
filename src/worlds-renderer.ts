@@ -48,7 +48,12 @@ type WorldsBackgroundConfig = {
   /** Noise strength for the 'paper' layer (0..1). */
   noiseStrength: number;
   /** Blend mode for section card compositing over the background. */
-  sectionBlendMode?: 'normal' | 'multiply';
+  sectionBlendMode?: 'normal' | 'multiply' | 'screen' | 'overlay' | 'softlight' | 'hardlight' | 'darken' | 'lighten' | 'difference' | 'exclusion' | 'colorburn' | 'colordodge';
+
+  /** Optional UV distortion strength applied to section *content* sampling (0..0.05 typical). */
+  contentDistortStrength?: number;
+  /** Blend strength for in-shader paper multiply (0=none, 1=full multiply). Default 1. */
+  contentBlendStrength?: number;
 };
 
 type Worlds3DConnector = {
@@ -62,7 +67,6 @@ type Worlds3DConnector = {
 export class WorldsRenderer {
   private device: GPUDevice;
   private renderPipeline: GPURenderPipeline | null = null;
-  private multiplyRenderPipeline: GPURenderPipeline | null = null;
   private sharedPipelineLayout: GPUPipelineLayout | null = null;
   private sharedBindGroupLayout: GPUBindGroupLayout | null = null;
   private linePipeline: GPURenderPipeline | null = null;
@@ -84,6 +88,9 @@ export class WorldsRenderer {
   private backgroundShaderMipLevelCount: number = 1;
   private backgroundImageTexture: GPUTexture | null = null;
   private backgroundImageSource: RenderableImageSource | null = null;
+
+  // Neutral 1x1 fallback used to ensure binding(3) is always valid.
+  private neutralBackgroundTexture: GPUTexture | null = null;
 
   // Mipmap generation for backgroundShaderTexture (reduces shimmer under camera motion)
   private mipmapPipeline: GPURenderPipeline | null = null;
@@ -110,6 +117,25 @@ export class WorldsRenderer {
     
     // Create render texture immediately so compositor can register it
     this.createRenderTexture();
+
+    this.ensureNeutralBackgroundTexture();
+  }
+
+  private ensureNeutralBackgroundTexture(): void {
+    if (this.neutralBackgroundTexture) return;
+    this.neutralBackgroundTexture = this.device.createTexture({
+      label: 'Worlds Neutral Background Texture',
+      size: { width: 1, height: 1 },
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    // Mid-gray RGBA so (luma - 0.5) is ~0 and RG-centered displacement is ~0.
+    this.device.queue.writeTexture(
+      { texture: this.neutralBackgroundTexture },
+      new Uint8Array([128, 128, 128, 255]),
+      { bytesPerRow: 4 },
+      { width: 1, height: 1 }
+    );
   }
 
   /**
@@ -644,9 +670,9 @@ export class WorldsRenderer {
         
         @fragment
         fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
-          let texColor = textureSample(textureData, textureSampler, input.uv);
+          var uv = input.uv;
           let isBackground = uniforms.params0.x < 0.0;
-          var outColor = texColor;
+          var outColor = vec4<f32>(0.0);
 
           // Full-screen paper pass only. Section textures are rendered with a
           // transparent background so paper shows through from behind.
@@ -677,79 +703,109 @@ export class WorldsRenderer {
           }
 
           if (!isBackground) {
-            // --- Texture blend effects (sectionBlendMode = 'multiply') ---
-            // Flags: bgFlags.x > 0.5 = effects active; params1.w carries screen width
-            // for reconstructing screen-space UV (needed for world-locked paper sampling).
-            //
-            // Effects:
-            //   1. Paper surface gradient displaces card UV — content appears to
-            //      follow the paper's topography (depth / bas-relief illusion).
-            //   2. Ink bleed: 4-tap soft dilation of dark opaque ink into adjacent
-            //      transparent areas, simulating capillary absorption in paper fibers.
-            //
-            // The actual multiply composite (card * paper) is handled by the
-            // fixed-function blend state (srcFactor='dst') — zero extra passes.
-            if (uniforms.bgFlags.x > 0.5 && uniforms.params1.w > 0.5) {
-              // Reconstruct screen UV from fragment pixel position
-              let screenW = uniforms.params1.w;
-              let screenH = screenW / max(uniforms.params1.x, 0.0001);
-              let screenUv = input.position.xy / vec2f(screenW, screenH);
+            // --- Content distortion (bgFlags.y = strength 0..0.05) ---
+            if (uniforms.bgFlags.y > 0.0) {
+              let strength = clamp(uniforms.bgFlags.y, 0.0, 0.05);
+              let tile = max(uniforms.paperParams.x, 1.0);
+              let tileUv = input.uv * tile;
+              let gX = dpdx(tileUv);
+              let gY = dpdy(tileUv);
+              var sUv = fract(tileUv) * 0.999 + vec2f(0.0005);
+              let paper0 = textureSampleGrad(backgroundShaderTexture, textureSampler, sUv, gX, gY);
+              let disp = (paper0.rg - vec2f(0.5)) * 2.0;
+              let uvPerPx0 = vec2f(abs(dpdx(uv.x)), abs(dpdy(uv.y)));
+              uv = clamp(uv + disp * (uvPerPx0 * (strength * 600.0)), vec2f(0.001), vec2f(0.999));
+            }
 
-              // Sample paper texture at the world-locked position for this pixel
-              let wCoord = paperCoordFromScreenUv(screenUv);
-              let wUvRaw = wCoord * uniforms.paperParams.x;
-              let wGX = dpdx(wUvRaw);
-              let wGY = dpdy(wUvRaw);
-              var wUv = fract(wUvRaw) * 0.999 + vec2f(0.0005, 0.0005);
-              let paper = textureSampleGrad(backgroundShaderTexture, textureSampler, wUv, wGX, wGY);
-              let paperLuma = dot(paper.rgb, vec3f(0.299, 0.587, 0.114));
+            let texColor = textureSample(textureData, textureSampler, uv);
+            outColor = texColor;
 
-              // Paper surface gradient: bright = raised, dark = depressed.
-              // Displace card UV toward depressed areas so ink appears to settle
-              // into the paper's texture valleys (depth / thickness illusion).
-              // DISABLED (0.0) for diagnostics — suspected source of pixel scatter.
-              let gradVec = vec2f(dpdx(paperLuma), dpdy(paperLuma));
-              let gradLen = length(gradVec);
-              let gradDir = select(vec2f(0.0), gradVec / gradLen, gradLen > 0.0001);
-              let uvPerPx = vec2f(abs(dpdx(input.uv.x)), abs(dpdy(input.uv.y)));
-              let distortedUv = clamp(
-                input.uv - gradDir * uvPerPx * 0.0,
-                vec2f(0.001), vec2f(0.999)
-              );
+            // --- Paper blend mode (bgFlags.x = mode index, bgFlags.z = blendStrength 0..1) ---
+            // bgFlags.x encodes blend mode:
+            //   0 = none   1 = multiply  2 = screen    3 = overlay
+            //   4 = softlight  5 = hardlight  6 = darken  7 = lighten
+            //   8 = difference  9 = exclusion  10 = colorburn  11 = colordodge
+            let blendMode = i32(round(uniforms.bgFlags.x));
+            if (blendMode > 0) {
+              let bs = clamp(uniforms.bgFlags.z, 0.0, 1.0);
+              let tile2 = max(uniforms.paperParams.x, 1.0);
+              let tileUv2 = input.uv * tile2;
+              let gX2 = dpdx(tileUv2);
+              let gY2 = dpdy(tileUv2);
+              var sUv2 = fract(tileUv2) * 0.999 + vec2f(0.0005);
+              let paper = textureSampleGrad(backgroundShaderTexture, textureSampler, sUv2, gX2, gY2);
+              let src = outColor.rgb;
+              let dst = paper.rgb;
 
-              // Re-sample card at distorted UV
-              let card = textureSample(textureData, textureSampler, distortedUv);
+              var blended = src;
+              if (blendMode == 1) {
+                // multiply: darkens where paper is dark
+                blended = src * dst;
+              } else if (blendMode == 2) {
+                // screen: lightens — good for dark cards on light paper
+                blended = 1.0 - (1.0 - src) * (1.0 - dst);
+              } else if (blendMode == 3) {
+                // overlay: multiply where src<0.5, screen where src>0.5
+                let m = step(vec3f(0.5), src);
+                blended = mix(2.0 * src * dst,
+                              1.0 - 2.0 * (1.0 - src) * (1.0 - dst), m);
+              } else if (blendMode == 4) {
+                // soft-light
+                let m2 = step(vec3f(0.5), dst);
+                blended = mix(src - (1.0 - 2.0*dst)*src*(1.0-src),
+                              src + (2.0*dst - 1.0) * (sqrt(src) - src), m2);
+              } else if (blendMode == 5) {
+                // hard-light: like overlay but src/dst swapped
+                let m3 = step(vec3f(0.5), dst);
+                blended = mix(2.0 * src * dst,
+                              1.0 - 2.0 * (1.0 - src) * (1.0 - dst), m3);
+              } else if (blendMode == 6) {
+                // darken
+                blended = min(src, dst);
+              } else if (blendMode == 7) {
+                // lighten
+                blended = max(src, dst);
+              } else if (blendMode == 8) {
+                // difference
+                blended = abs(src - dst);
+              } else if (blendMode == 9) {
+                // exclusion
+                blended = src + dst - 2.0 * src * dst;
+              } else if (blendMode == 10) {
+                // color-burn: deepens shadows
+                blended = clamp(1.0 - (1.0 - dst) / max(src, vec3f(0.0001)), vec3f(0.0), vec3f(1.0));
+              } else if (blendMode == 11) {
+                // color-dodge: brightens highlights
+                blended = clamp(dst / max(1.0 - src, vec3f(0.0001)), vec3f(0.0), vec3f(1.0));
+              }
 
-              // Ink bleed: 4-tap cross — dark opaque neighbors bleed into lighter areas.
-              // Uses screen-pixel-sized steps so bleed is resolution-independent.
+              outColor = vec4f(mix(src, blended, bs), outColor.a);
+
+              // Ink bleed (shared by all blend modes)
+              let uvPerPx = vec2f(abs(dpdx(uv.x)), abs(dpdy(uv.y)));
               let uStep = uvPerPx.x * 1.5;
               let vStep = uvPerPx.y * 1.5;
-              let n0 = textureSample(textureData, textureSampler, distortedUv + vec2f(uStep, 0.0));
-              let n1 = textureSample(textureData, textureSampler, distortedUv - vec2f(uStep, 0.0));
-              let n2 = textureSample(textureData, textureSampler, distortedUv + vec2f(0.0, vStep));
-              let n3 = textureSample(textureData, textureSampler, distortedUv - vec2f(0.0, vStep));
-
-              // Darkness × opacity weight per neighbor (dark ink bleeds most)
+              let n0 = textureSample(textureData, textureSampler, uv + vec2f( uStep, 0.0));
+              let n1 = textureSample(textureData, textureSampler, uv + vec2f(-uStep, 0.0));
+              let n2 = textureSample(textureData, textureSampler, uv + vec2f(0.0,  vStep));
+              let n3 = textureSample(textureData, textureSampler, uv + vec2f(0.0, -vStep));
               let lumaW = vec3f(0.299, 0.587, 0.114);
               let d0 = n0.a * (1.0 - dot(n0.rgb, lumaW));
               let d1 = n1.a * (1.0 - dot(n1.rgb, lumaW));
               let d2 = n2.a * (1.0 - dot(n2.rgb, lumaW));
               let d3 = n3.a * (1.0 - dot(n3.rgb, lumaW));
-              let dSelf = card.a * (1.0 - dot(card.rgb, lumaW));
-
+              let dSelf = outColor.a * (1.0 - dot(outColor.rgb, lumaW));
               let neighborInk = max(d0, max(d1, max(d2, d3)));
               let bleedIn = clamp((neighborInk - dSelf) * 0.45, 0.0, 0.18);
-
               let dTotal = max(d0 + d1 + d2 + d3, 0.00001);
               let bleedRgb = (n0.rgb * d0 + n1.rgb * d1 + n2.rgb * d2 + n3.rgb * d3) / dTotal;
-
               outColor = vec4f(
-                mix(card.rgb, bleedRgb, bleedIn),
-                clamp(card.a + bleedIn * 0.6, 0.0, 1.0)
+                mix(outColor.rgb, bleedRgb, bleedIn),
+                clamp(outColor.a + bleedIn * 0.6, 0.0, 1.0)
               );
             }
 
-            outColor = vec4<f32>(outColor.rgb, outColor.a * clamp(uniforms.paperParams.w, 0.0, 1.0));
+            outColor = vec4f(outColor.rgb, outColor.a * clamp(uniforms.paperParams.w, 0.0, 1.0));
           }
 
           // params0.z is full-card hover flag (1 = hovered)
@@ -834,42 +890,7 @@ export class WorldsRenderer {
       // }
     });
 
-    // Multiply blend pipeline: dark content inks into the background texture.
-    // White/transparent areas let the texture show through; dark areas darken it.
-    // Color formula: result = src.rgb * dst.rgb * src.a + dst.rgb * (1 - src.a)
-    // Approximated with: srcFactor='dst', dstFactor='one-minus-src-alpha'
-    this.multiplyRenderPipeline = this.device.createRenderPipeline({
-      label: '3D Canvas Multiply Pipeline',
-      layout: this.sharedPipelineLayout,
-      vertex: {
-        module: shaderModule,
-        entryPoint: 'vertexMain',
-        buffers: [vertexBufferLayout]
-      },
-      fragment: {
-        module: shaderModule,
-        entryPoint: 'fragmentMain',
-        targets: [{
-          format: format,
-          blend: {
-            color: {
-              srcFactor: 'dst',
-              dstFactor: 'one-minus-src-alpha',
-              operation: 'add'
-            },
-            alpha: {
-              srcFactor: 'one',
-              dstFactor: 'one-minus-src-alpha',
-              operation: 'add'
-            }
-          }
-        }]
-      },
-      primitive: {
-        topology: 'triangle-list',
-        cullMode: 'none'
-      }
-    });
+    // (The multiply blend is now done in-shader, so no separate multiply pipeline is needed.)
   }
 
   /**
@@ -1018,8 +1039,12 @@ export class WorldsRenderer {
 
     const chain = paperEnabled ? (background!.chain || []) : [];
     const hasRuledLines = chain.some(s => s === 'ruledlines' || s === 'ruled-lines' || s === 'ruled_lines');
-    const hasPaper = chain.some(s => s === 'paper');
     const noiseStrength = paperEnabled ? (Number.isFinite(background!.noiseStrength) ? background!.noiseStrength : 0.06) : 0;
+    const contentDistortStrength = paperEnabled
+      ? (Number.isFinite(background!.contentDistortStrength as any)
+          ? Math.max(0, Math.min(0.05, background!.contentDistortStrength as number))
+          : 0)
+      : 0;
     const shaderName = background?.shaderName;
     if (paperEnabled && shaderName && !this.shaderManager.hasShader(shaderName)) {
       // Kick off async load; we'll start using it on a later frame.
@@ -1029,10 +1054,23 @@ export class WorldsRenderer {
     const useShaderBackground = paperEnabled && !!shaderName && this.shaderManager.hasShader(shaderName);
     const useImageBackground = paperEnabled && !useShaderBackground && !!background?.image && !!this.backgroundImageTexture;
     const useSampledBackground = useShaderBackground || useImageBackground;
-    const bgFlags = paperEnabled ? [hasRuledLines ? 1 : 0, hasPaper ? 1 : 0, noiseStrength, useSampledBackground ? 1 : 0] : [0, 0, 0, 0];
+    // bgFlags layout:
+    // x=hasRuledLines (background-only; also used as 'effects active' flag for multiply cards),
+    // y=contentDistortStrength (cards),
+    // z=noiseStrength (background-only),
+    // w=useSampledBackground
     const backgroundDetailTexture = useShaderBackground
       ? this.backgroundShaderTexture
-      : (useImageBackground ? this.backgroundImageTexture : null);
+      : (useImageBackground ? this.backgroundImageTexture : this.neutralBackgroundTexture);
+
+    // Content distortion samples binding(3). We always bind a neutral fallback
+    // texture, so it's safe to keep distortion enabled even while the real
+    // sectionBackground image/shader is still loading.
+    const effectiveContentDistortStrength = contentDistortStrength;
+
+    const bgFlags = paperEnabled
+      ? [hasRuledLines ? 1 : 0, effectiveContentDistortStrength, noiseStrength, useSampledBackground ? 1 : 0]
+      : [0, 0, 0, 0];
 
     const camPos = camera.effectivePosition ?? camera.position;
     const cameraPos = new Float32Array([
@@ -1139,8 +1177,8 @@ export class WorldsRenderer {
               return zVals.length ? zVals[(zVals.length / 2) | 0]! : 0;
             })();
 
-        // params1: x=aspect, y=tanHalfFov, z=planeZ, w=reserved
-        const params1 = new Float32Array([aspect, Math.tan(camera.fov * 0.5), planeZ, 0]);
+        // params1: x=aspect, y=tanHalfFov, z=planeZ, w=screenWidth (used by card content distortion)
+        const params1 = new Float32Array([aspect, Math.tan(camera.fov * 0.5), planeZ, this.width]);
 
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 0, mvp);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
@@ -1162,15 +1200,18 @@ export class WorldsRenderer {
       }
     }
 
-    // Switch to multiply pipeline for section cards if configured.
-    // The background quad above always uses the normal pipeline so it composites
-    // cleanly over the transparent render target.
-    const useMultiply = background?.sectionBlendMode === 'multiply' && !!this.multiplyRenderPipeline;
-    if (useMultiply) {
-      pass.setPipeline(this.multiplyRenderPipeline!);
-      pass.setVertexBuffer(0, this.vertexBuffer);
-      pass.setIndexBuffer(this.indexBuffer, 'uint16');
-    }
+    // Blend mode index for in-shader paper toning (0=none, matches WGSL blendMode constants).
+    const BLEND_MODES: Record<string, number> = {
+      multiply: 1, screen: 2, overlay: 3, softlight: 4,
+      hardlight: 5, darken: 6, lighten: 7, difference: 8,
+      exclusion: 9, colorburn: 10, colordodge: 11,
+    };
+    const blendModeStr = background?.sectionBlendMode ?? 'normal';
+    const blendModeIndex = BLEND_MODES[blendModeStr] ?? 0;
+    const useBlend = blendModeIndex > 0;
+    const contentBlendStrength = useBlend
+      ? Math.max(0, Math.min(1, background?.contentBlendStrength ?? 1.0))
+      : 0;
     
     // Render each visible section
     let drawnCount = 0;
@@ -1239,28 +1280,32 @@ export class WorldsRenderer {
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
 
       // Paper uniforms (used only for background pass; set disabled for cards)
-      // Exception: multiply blend mode writes paper scale in .x so the card
-      // fragment can compute world-locked paper UV for distortion/bleed effects.
+      // Exception: write paper scale in .x whenever paperEnabled so the card
+      // fragment can compute tiled UV for content distortion (and bleed in multiply mode).
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 96, new Float32Array(paperColor));
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 112, new Float32Array(lineColor));
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array([
-        useMultiply && paperEnabled ? (paperParams[0] ?? 0) : 0, 0, 0, layout.opacity
+        paperEnabled ? (paperParams[0] ?? 0) : 0, 0, 0, layout.opacity
       ]));
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, cameraForward);
-      // bgFlags.x = 1 signals texture-blend effects active (distortion + ink bleed) for cards.
-      // params1 carries camera params needed for screen→world UV when in multiply mode;
-      // params1.w = screen width (used to reconstruct screen UV from @builtin(position)).
+      // bgFlags for cards:
+      //   x = blend mode index (0=none,1=multiply,2=screen,3=overlay,4=softlight,
+      //                         5=hardlight,6=darken,7=lighten,8=difference,
+      //                         9=exclusion,10=colorburn,11=colordodge)
+      //   y = contentDistortStrength
+      //   z = contentBlendStrength (0=none, 1=full), meaningful when x>0
+      //   w = useSampledBackground
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 208, new Float32Array(
-        useMultiply ? [1, 0, 0, 0] : [0, 0, 0, 0]
+        [blendModeIndex, contentDistortStrength, contentBlendStrength, useSampledBackground ? 1 : 0]
       ));
-      const params1 = useMultiply
-        ? new Float32Array([aspect, Math.tan(camera.fov * 0.5), layout.transform.position.z, this.width])
-        : (rect
-          ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax])
-          : new Float32Array([0, 0, 0, 0]));
+      // params1 = highlight UV rect (or zeros). No longer used for camera params
+      // since multiply blend is in-shader and doesn't need screen-space reconstruction.
+      const params1 = rect
+        ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax])
+        : new Float32Array([0, 0, 0, 0]);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
       const bindGroup = this.createBindGroupForTexture(layout.texture, uniformOffset, backgroundDetailTexture);
       if (!bindGroup) continue;
@@ -1402,6 +1447,6 @@ export class WorldsRenderer {
     this.backgroundTexture?.destroy();
     this.backgroundShaderTexture?.destroy();
     this.backgroundImageTexture?.destroy();
-    this.multiplyRenderPipeline = null;
+    this.neutralBackgroundTexture?.destroy();
   }
 }

@@ -147,6 +147,13 @@ export interface WorldsConfig {
    * Widgets and images keep their own alignment controls.
    */
   sectionTextAlign?: 'left' | 'center' | 'right';
+
+  /**
+   * How section-bound retained GUI should be rendered.
+   * - 'overlay' (default): render via the UI layer with section-space mapping (fast, but axis-aligned primitives)
+   * - 'baked': draw the GUI into the section's texture during card rasterization (rotates with the section)
+   */
+  sectionGuiMode?: 'overlay' | 'baked';
   cameraFov: number;
   cameraNear: number;
   cameraFar: number;

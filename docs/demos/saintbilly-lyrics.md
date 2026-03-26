@@ -334,7 +334,7 @@ worlds.config.setDefaults({
   defaultSectionHeight: 520,
   autoLayoutSpacing: 2,
   sectionBorderEnabled: false,
-  sectionBackground: 'texture:assets/img/paper_seamless_texture_3197.jpg;tilePx=320;blendMode=multiply;paperPlaneZ=focus',
+  sectionBackground: 'texture:assets/img/Paper006_1K-JPG_Color.jpg;tilePx=640;contentDistort=0.008;blendMode=overlay;blendStrength=0.8;paperPlaneZ=focus',
 });
 
 worlds.camera.setPosition(0, 55, 320);
@@ -386,6 +386,7 @@ void loadLocalAudio();
 
 ```javascript on:input
 if (!event) return;
+if (typeof state === 'undefined' || !state) return;
 if (event.type === 'keydown') {
   gui.handleKey(event.key, {
     shift: (event.mods || []).includes('shift'),
@@ -403,7 +404,7 @@ if (event.type === 'mouse_move') gui.handleMouse(event.x, event.y, state.mouseDo
 ```
 
 ```javascript on:update
-if (!state.widgets) return;
+if (typeof state === 'undefined' || !state || !state.widgets) return;
 
 const W = ui.metrics.canvasWidth;
 const inset = 16;

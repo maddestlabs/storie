@@ -527,6 +527,8 @@ export interface SandboxAPI {
   };
   
   shader: {
+    // Dynamically register (or replace) a named WGSL shader from JavaScript
+    define: (shaderName: string, wgslCode: string, opts?: { kind?: 'fragment' | 'vertex' }) => Promise<boolean>;
     // WGSL shader management (high-level API)
     // Set uniform values for a registered shader
     setUniform: (shaderName: string, uniformName: string, value: number | number[]) => void;

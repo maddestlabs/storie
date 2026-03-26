@@ -496,6 +496,54 @@ export class GUISystem {
     }
   }
 
+  /**
+   * Render only widgets belonging to a specific group.
+   * This is used by Worlds to attach GUI widgets to a section-space transform.
+   */
+  renderGroup(group: string | number, uiAPI: Draw2D, charWidth: number, charHeight: number): void {
+    if (!uiAPI) return;
+
+    const widgets = this.widgetManager.getVisible().filter((widget: any) => widget?.group === group);
+    for (const widget of widgets) {
+      const handled = this.withWidgetGroupContext(widget, (_group, opacity) => {
+        const widgetUI = this.createOpacityAdjustedUI(uiAPI, opacity);
+
+        if (this.widgetRenderer) {
+          try {
+            const info = this.buildWidgetInfo(widget, charWidth, charHeight);
+            if (this.widgetRenderer(info, widgetUI) === true) {
+              return true;
+            }
+          } catch (err) {
+            console.warn('gui.setWidgetRenderer callback threw; falling back to default widget rendering.', err);
+          }
+        }
+
+        if (widget instanceof GUIButton) {
+          this.renderButton(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUILabel) {
+          this.renderLabel(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUICheckbox) {
+          this.renderCheckbox(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUISlider) {
+          this.renderSlider(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUIPianoKeyboard) {
+          this.renderPianoKeyboard(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUITextField) {
+          this.renderTextField(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUITextEditor) {
+          this.renderTextEditor(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUIMarkdownView) {
+          this.renderMarkdownView(widget, widgetUI, charWidth, charHeight);
+        }
+
+        return false;
+      });
+
+      if (handled === true) continue;
+    }
+  }
+
   private renderTextField(tf: GUITextField, ui: Draw2D, charW: number, charH: number): void {
     const metrics = tf.resolveRenderContext(charW, charH);
     charW = metrics.charWidth;

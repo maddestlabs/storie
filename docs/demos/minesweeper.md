@@ -2,8 +2,6 @@
 title: "Mine|sweeper"
 theme: "saintbilly"
 fontsize: 20
-width: 1080
-height: 2400
 ---
 
 # Play {"x":"0","y":"0","z":"0","width":"40","height":"18","opacity":"0.92"}
@@ -1059,7 +1057,7 @@ worlds.config.setDefaults({
   sectionClickFocusEnabled: false,
   defaultSectionWidth: 42,
   defaultSectionHeight: 32,
-  autoLayoutSpacing: 150
+  autoLayoutSpacing: 150,
 });
 
 worlds.camera.setPosition(0, 0, 250);

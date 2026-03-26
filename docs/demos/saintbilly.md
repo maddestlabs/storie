@@ -9,7 +9,7 @@ shaders: "blurgradual+lightvignette"
 ```javascript on:init
 // Camera styling helpers
 const deg = d => d * Math.PI / 180;
-const CAMERA_BASE_ROT = { x: deg(-4), y: deg(4), z: 0 };
+const CAMERA_BASE_ROT = { x: deg(-11), y: deg(4), z: 0 };
 worlds.enable();
 worlds.config.setDefaults({
   keepRotation: true,
@@ -25,7 +25,7 @@ worlds.config.setDefaults({
   defaultSectionHeight: 520,
   autoLayoutSpacing: 10,
   sectionBorderEnabled: false,
-  sectionBackground: 'texture:assets/img/paper_seamless_texture_3197.jpg;tilePx=320;blendMode=multiply;paperPlaneZ=focus',
+  sectionBackground: 'texture:assets/img/Paper004_1K-JPG_Displacement.jpg;tilePx=640;contentDistort=0.008;blendMode=overlay;blendStrength=0.7;paperPlaneZ=focus',
 });
 worlds.camera.setPosition(0, 55, 320);
 worlds.camera.setRotation(CAMERA_BASE_ROT.x, CAMERA_BASE_ROT.y, CAMERA_BASE_ROT.z);

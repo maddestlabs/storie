@@ -17856,6 +17856,48 @@ class GUISystem {
       if (handled === true) continue;
     }
   }
+  /**
+   * Render only widgets belonging to a specific group.
+   * This is used by Worlds to attach GUI widgets to a section-space transform.
+   */
+  renderGroup(group, uiAPI, charWidth, charHeight) {
+    if (!uiAPI) return;
+    const widgets = this.widgetManager.getVisible().filter((widget) => (widget == null ? void 0 : widget.group) === group);
+    for (const widget of widgets) {
+      const handled = this.withWidgetGroupContext(widget, (_group, opacity) => {
+        const widgetUI = this.createOpacityAdjustedUI(uiAPI, opacity);
+        if (this.widgetRenderer) {
+          try {
+            const info = this.buildWidgetInfo(widget, charWidth, charHeight);
+            if (this.widgetRenderer(info, widgetUI) === true) {
+              return true;
+            }
+          } catch (err2) {
+            console.warn("gui.setWidgetRenderer callback threw; falling back to default widget rendering.", err2);
+          }
+        }
+        if (widget instanceof GUIButton) {
+          this.renderButton(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUILabel) {
+          this.renderLabel(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUICheckbox) {
+          this.renderCheckbox(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUISlider) {
+          this.renderSlider(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUIPianoKeyboard) {
+          this.renderPianoKeyboard(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUITextField) {
+          this.renderTextField(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUITextEditor) {
+          this.renderTextEditor(widget, widgetUI, charWidth, charHeight);
+        } else if (widget instanceof GUIMarkdownView) {
+          this.renderMarkdownView(widget, widgetUI, charWidth, charHeight);
+        }
+        return false;
+      });
+      if (handled === true) continue;
+    }
+  }
   renderTextField(tf, ui, charW, charH) {
     const metrics = tf.resolveRenderContext(charW, charH);
     charW = metrics.charWidth;
@@ -20382,6 +20424,86 @@ class WebGPUUIRenderer {
     });
   }
 }
+function applyAffine(m, x, y) {
+  return { x: m.a * x + m.c * y + m.e, y: m.b * x + m.d * y + m.f };
+}
+function invertAffine(m) {
+  const det = m.a * m.d - m.b * m.c;
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return null;
+  const invDet = 1 / det;
+  const a = m.d * invDet;
+  const b = -m.b * invDet;
+  const c2 = -m.c * invDet;
+  const d = m.a * invDet;
+  const e = -(a * m.e + c2 * m.f);
+  const f = -(b * m.e + d * m.f);
+  return { a, b, c: c2, d, e, f };
+}
+function transformRectAABB(m, x, y, w, h) {
+  const p0 = applyAffine(m, x, y);
+  const p1 = applyAffine(m, x + w, y);
+  const p2 = applyAffine(m, x + w, y + h);
+  const p3 = applyAffine(m, x, y + h);
+  const minX = Math.min(p0.x, p1.x, p2.x, p3.x);
+  const maxX = Math.max(p0.x, p1.x, p2.x, p3.x);
+  const minY = Math.min(p0.y, p1.y, p2.y, p3.y);
+  const maxY = Math.max(p0.y, p1.y, p2.y, p3.y);
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+function createTransformedDraw2D(base, space) {
+  const colors = base.colors;
+  const metrics = base.metrics;
+  const pushClip = (rect) => {
+    if (!rect) return;
+    if (!base.pushClipRect) return;
+    base.pushClipRect(rect.x, rect.y, rect.w, rect.h);
+  };
+  const popClip = () => {
+    if (!base.popClipRect) return;
+    base.popClipRect();
+  };
+  const clipStack = [];
+  const rootClip = space.clipRectScreen ?? null;
+  const api = {
+    rect(x, y, w, h, color) {
+      const aabb = transformRectAABB(space.screenFromLocal, x, y, w, h);
+      base.rect(aabb.x, aabb.y, aabb.w, aabb.h, color);
+    },
+    text(text, x, y, color) {
+      const p = applyAffine(space.screenFromLocal, x, y);
+      base.text(text, p.x, p.y, color);
+    },
+    measureTextWidth: base.measureTextWidth ? base.measureTextWidth.bind(base) : void 0,
+    image: base.image ? (imageId, x, y, w, h, options) => {
+      const aabb = transformRectAABB(space.screenFromLocal, x, y, w, h);
+      base.image(imageId, aabb.x, aabb.y, aabb.w, aabb.h, options);
+    } : void 0,
+    getImageSize: base.getImageSize ? base.getImageSize.bind(base) : void 0,
+    clear: base.clear ? base.clear.bind(base) : void 0,
+    pushClipRect: base.pushClipRect ? (x, y, w, h) => {
+      const aabb = transformRectAABB(space.screenFromLocal, x, y, w, h);
+      clipStack.push(aabb);
+      pushClip(aabb);
+    } : void 0,
+    popClipRect: base.popClipRect ? () => {
+      if (clipStack.length === 0) return;
+      clipStack.pop();
+      popClip();
+    } : void 0,
+    // Masking in transformed spaces is not supported yet.
+    pushMaskRect: void 0,
+    pushMaskRoundedRect: void 0,
+    pushMaskPolygon: void 0,
+    popMask: void 0,
+    colors,
+    metrics
+  };
+  if (rootClip && base.pushClipRect) {
+    base.pushClipRect(rootClip.x, rootClip.y, rootClip.w, rootClip.h);
+    clipStack.push(rootClip);
+  }
+  return api;
+}
 function resolveBuiltinShaderBaseUrl$1(baseUrl) {
   const raw = String(baseUrl ?? "").trim();
   const u = raw ? new URL(
@@ -22201,7 +22323,6 @@ class WorldsRenderer {
   constructor(device, width, height, shaderManager) {
     __publicField(this, "device");
     __publicField(this, "renderPipeline", null);
-    __publicField(this, "multiplyRenderPipeline", null);
     __publicField(this, "sharedPipelineLayout", null);
     __publicField(this, "sharedBindGroupLayout", null);
     __publicField(this, "linePipeline", null);
@@ -22221,6 +22342,8 @@ class WorldsRenderer {
     __publicField(this, "backgroundShaderMipLevelCount", 1);
     __publicField(this, "backgroundImageTexture", null);
     __publicField(this, "backgroundImageSource", null);
+    // Neutral 1x1 fallback used to ensure binding(3) is always valid.
+    __publicField(this, "neutralBackgroundTexture", null);
     // Mipmap generation for backgroundShaderTexture (reduces shimmer under camera motion)
     __publicField(this, "mipmapPipeline", null);
     // Avoid repeatedly fetching/evaluating the same built-in shader.
@@ -22237,6 +22360,22 @@ class WorldsRenderer {
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this.shaderManager = shaderManager || new ShaderManager(device, this.format);
     this.createRenderTexture();
+    this.ensureNeutralBackgroundTexture();
+  }
+  ensureNeutralBackgroundTexture() {
+    if (this.neutralBackgroundTexture) return;
+    this.neutralBackgroundTexture = this.device.createTexture({
+      label: "Worlds Neutral Background Texture",
+      size: { width: 1, height: 1 },
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+    });
+    this.device.queue.writeTexture(
+      { texture: this.neutralBackgroundTexture },
+      new Uint8Array([128, 128, 128, 255]),
+      { bytesPerRow: 4 },
+      { width: 1, height: 1 }
+    );
   }
   /**
    * Initialize the 3D renderer
@@ -22726,9 +22865,9 @@ class WorldsRenderer {
         
         @fragment
         fn fragmentMain(input: VertexOutput) -> @location(0) vec4<f32> {
-          let texColor = textureSample(textureData, textureSampler, input.uv);
+          var uv = input.uv;
           let isBackground = uniforms.params0.x < 0.0;
-          var outColor = texColor;
+          var outColor = vec4<f32>(0.0);
 
           // Full-screen paper pass only. Section textures are rendered with a
           // transparent background so paper shows through from behind.
@@ -22759,79 +22898,109 @@ class WorldsRenderer {
           }
 
           if (!isBackground) {
-            // --- Texture blend effects (sectionBlendMode = 'multiply') ---
-            // Flags: bgFlags.x > 0.5 = effects active; params1.w carries screen width
-            // for reconstructing screen-space UV (needed for world-locked paper sampling).
-            //
-            // Effects:
-            //   1. Paper surface gradient displaces card UV — content appears to
-            //      follow the paper's topography (depth / bas-relief illusion).
-            //   2. Ink bleed: 4-tap soft dilation of dark opaque ink into adjacent
-            //      transparent areas, simulating capillary absorption in paper fibers.
-            //
-            // The actual multiply composite (card * paper) is handled by the
-            // fixed-function blend state (srcFactor='dst') — zero extra passes.
-            if (uniforms.bgFlags.x > 0.5 && uniforms.params1.w > 0.5) {
-              // Reconstruct screen UV from fragment pixel position
-              let screenW = uniforms.params1.w;
-              let screenH = screenW / max(uniforms.params1.x, 0.0001);
-              let screenUv = input.position.xy / vec2f(screenW, screenH);
+            // --- Content distortion (bgFlags.y = strength 0..0.05) ---
+            if (uniforms.bgFlags.y > 0.0) {
+              let strength = clamp(uniforms.bgFlags.y, 0.0, 0.05);
+              let tile = max(uniforms.paperParams.x, 1.0);
+              let tileUv = input.uv * tile;
+              let gX = dpdx(tileUv);
+              let gY = dpdy(tileUv);
+              var sUv = fract(tileUv) * 0.999 + vec2f(0.0005);
+              let paper0 = textureSampleGrad(backgroundShaderTexture, textureSampler, sUv, gX, gY);
+              let disp = (paper0.rg - vec2f(0.5)) * 2.0;
+              let uvPerPx0 = vec2f(abs(dpdx(uv.x)), abs(dpdy(uv.y)));
+              uv = clamp(uv + disp * (uvPerPx0 * (strength * 600.0)), vec2f(0.001), vec2f(0.999));
+            }
 
-              // Sample paper texture at the world-locked position for this pixel
-              let wCoord = paperCoordFromScreenUv(screenUv);
-              let wUvRaw = wCoord * uniforms.paperParams.x;
-              let wGX = dpdx(wUvRaw);
-              let wGY = dpdy(wUvRaw);
-              var wUv = fract(wUvRaw) * 0.999 + vec2f(0.0005, 0.0005);
-              let paper = textureSampleGrad(backgroundShaderTexture, textureSampler, wUv, wGX, wGY);
-              let paperLuma = dot(paper.rgb, vec3f(0.299, 0.587, 0.114));
+            let texColor = textureSample(textureData, textureSampler, uv);
+            outColor = texColor;
 
-              // Paper surface gradient: bright = raised, dark = depressed.
-              // Displace card UV toward depressed areas so ink appears to settle
-              // into the paper's texture valleys (depth / thickness illusion).
-              // DISABLED (0.0) for diagnostics — suspected source of pixel scatter.
-              let gradVec = vec2f(dpdx(paperLuma), dpdy(paperLuma));
-              let gradLen = length(gradVec);
-              let gradDir = select(vec2f(0.0), gradVec / gradLen, gradLen > 0.0001);
-              let uvPerPx = vec2f(abs(dpdx(input.uv.x)), abs(dpdy(input.uv.y)));
-              let distortedUv = clamp(
-                input.uv - gradDir * uvPerPx * 0.0,
-                vec2f(0.001), vec2f(0.999)
-              );
+            // --- Paper blend mode (bgFlags.x = mode index, bgFlags.z = blendStrength 0..1) ---
+            // bgFlags.x encodes blend mode:
+            //   0 = none   1 = multiply  2 = screen    3 = overlay
+            //   4 = softlight  5 = hardlight  6 = darken  7 = lighten
+            //   8 = difference  9 = exclusion  10 = colorburn  11 = colordodge
+            let blendMode = i32(round(uniforms.bgFlags.x));
+            if (blendMode > 0) {
+              let bs = clamp(uniforms.bgFlags.z, 0.0, 1.0);
+              let tile2 = max(uniforms.paperParams.x, 1.0);
+              let tileUv2 = input.uv * tile2;
+              let gX2 = dpdx(tileUv2);
+              let gY2 = dpdy(tileUv2);
+              var sUv2 = fract(tileUv2) * 0.999 + vec2f(0.0005);
+              let paper = textureSampleGrad(backgroundShaderTexture, textureSampler, sUv2, gX2, gY2);
+              let src = outColor.rgb;
+              let dst = paper.rgb;
 
-              // Re-sample card at distorted UV
-              let card = textureSample(textureData, textureSampler, distortedUv);
+              var blended = src;
+              if (blendMode == 1) {
+                // multiply: darkens where paper is dark
+                blended = src * dst;
+              } else if (blendMode == 2) {
+                // screen: lightens — good for dark cards on light paper
+                blended = 1.0 - (1.0 - src) * (1.0 - dst);
+              } else if (blendMode == 3) {
+                // overlay: multiply where src<0.5, screen where src>0.5
+                let m = step(vec3f(0.5), src);
+                blended = mix(2.0 * src * dst,
+                              1.0 - 2.0 * (1.0 - src) * (1.0 - dst), m);
+              } else if (blendMode == 4) {
+                // soft-light
+                let m2 = step(vec3f(0.5), dst);
+                blended = mix(src - (1.0 - 2.0*dst)*src*(1.0-src),
+                              src + (2.0*dst - 1.0) * (sqrt(src) - src), m2);
+              } else if (blendMode == 5) {
+                // hard-light: like overlay but src/dst swapped
+                let m3 = step(vec3f(0.5), dst);
+                blended = mix(2.0 * src * dst,
+                              1.0 - 2.0 * (1.0 - src) * (1.0 - dst), m3);
+              } else if (blendMode == 6) {
+                // darken
+                blended = min(src, dst);
+              } else if (blendMode == 7) {
+                // lighten
+                blended = max(src, dst);
+              } else if (blendMode == 8) {
+                // difference
+                blended = abs(src - dst);
+              } else if (blendMode == 9) {
+                // exclusion
+                blended = src + dst - 2.0 * src * dst;
+              } else if (blendMode == 10) {
+                // color-burn: deepens shadows
+                blended = clamp(1.0 - (1.0 - dst) / max(src, vec3f(0.0001)), vec3f(0.0), vec3f(1.0));
+              } else if (blendMode == 11) {
+                // color-dodge: brightens highlights
+                blended = clamp(dst / max(1.0 - src, vec3f(0.0001)), vec3f(0.0), vec3f(1.0));
+              }
 
-              // Ink bleed: 4-tap cross — dark opaque neighbors bleed into lighter areas.
-              // Uses screen-pixel-sized steps so bleed is resolution-independent.
+              outColor = vec4f(mix(src, blended, bs), outColor.a);
+
+              // Ink bleed (shared by all blend modes)
+              let uvPerPx = vec2f(abs(dpdx(uv.x)), abs(dpdy(uv.y)));
               let uStep = uvPerPx.x * 1.5;
               let vStep = uvPerPx.y * 1.5;
-              let n0 = textureSample(textureData, textureSampler, distortedUv + vec2f(uStep, 0.0));
-              let n1 = textureSample(textureData, textureSampler, distortedUv - vec2f(uStep, 0.0));
-              let n2 = textureSample(textureData, textureSampler, distortedUv + vec2f(0.0, vStep));
-              let n3 = textureSample(textureData, textureSampler, distortedUv - vec2f(0.0, vStep));
-
-              // Darkness × opacity weight per neighbor (dark ink bleeds most)
+              let n0 = textureSample(textureData, textureSampler, uv + vec2f( uStep, 0.0));
+              let n1 = textureSample(textureData, textureSampler, uv + vec2f(-uStep, 0.0));
+              let n2 = textureSample(textureData, textureSampler, uv + vec2f(0.0,  vStep));
+              let n3 = textureSample(textureData, textureSampler, uv + vec2f(0.0, -vStep));
               let lumaW = vec3f(0.299, 0.587, 0.114);
               let d0 = n0.a * (1.0 - dot(n0.rgb, lumaW));
               let d1 = n1.a * (1.0 - dot(n1.rgb, lumaW));
               let d2 = n2.a * (1.0 - dot(n2.rgb, lumaW));
               let d3 = n3.a * (1.0 - dot(n3.rgb, lumaW));
-              let dSelf = card.a * (1.0 - dot(card.rgb, lumaW));
-
+              let dSelf = outColor.a * (1.0 - dot(outColor.rgb, lumaW));
               let neighborInk = max(d0, max(d1, max(d2, d3)));
               let bleedIn = clamp((neighborInk - dSelf) * 0.45, 0.0, 0.18);
-
               let dTotal = max(d0 + d1 + d2 + d3, 0.00001);
               let bleedRgb = (n0.rgb * d0 + n1.rgb * d1 + n2.rgb * d2 + n3.rgb * d3) / dTotal;
-
               outColor = vec4f(
-                mix(card.rgb, bleedRgb, bleedIn),
-                clamp(card.a + bleedIn * 0.6, 0.0, 1.0)
+                mix(outColor.rgb, bleedRgb, bleedIn),
+                clamp(outColor.a + bleedIn * 0.6, 0.0, 1.0)
               );
             }
 
-            outColor = vec4<f32>(outColor.rgb, outColor.a * clamp(uniforms.paperParams.w, 0.0, 1.0));
+            outColor = vec4f(outColor.rgb, outColor.a * clamp(uniforms.paperParams.w, 0.0, 1.0));
           }
 
           // params0.z is full-card hover flag (1 = hovered)
@@ -22911,38 +23080,6 @@ class WorldsRenderer {
       //   depthWriteEnabled: true,
       //   depthCompare: 'less'
       // }
-    });
-    this.multiplyRenderPipeline = this.device.createRenderPipeline({
-      label: "3D Canvas Multiply Pipeline",
-      layout: this.sharedPipelineLayout,
-      vertex: {
-        module: shaderModule,
-        entryPoint: "vertexMain",
-        buffers: [vertexBufferLayout]
-      },
-      fragment: {
-        module: shaderModule,
-        entryPoint: "fragmentMain",
-        targets: [{
-          format,
-          blend: {
-            color: {
-              srcFactor: "dst",
-              dstFactor: "one-minus-src-alpha",
-              operation: "add"
-            },
-            alpha: {
-              srcFactor: "one",
-              dstFactor: "one-minus-src-alpha",
-              operation: "add"
-            }
-          }
-        }]
-      },
-      primitive: {
-        topology: "triangle-list",
-        cullMode: "none"
-      }
     });
   }
   /**
@@ -23083,8 +23220,8 @@ class WorldsRenderer {
     ] : [0, 0, 0, 0];
     const chain = paperEnabled ? background.chain || [] : [];
     const hasRuledLines = chain.some((s) => s === "ruledlines" || s === "ruled-lines" || s === "ruled_lines");
-    const hasPaper = chain.some((s) => s === "paper");
     const noiseStrength = paperEnabled ? Number.isFinite(background.noiseStrength) ? background.noiseStrength : 0.06 : 0;
+    const contentDistortStrength = paperEnabled ? Number.isFinite(background.contentDistortStrength) ? Math.max(0, Math.min(0.05, background.contentDistortStrength)) : 0 : 0;
     const shaderName = background == null ? void 0 : background.shaderName;
     if (paperEnabled && shaderName && !this.shaderManager.hasShader(shaderName)) {
       this.requestBuiltinShaderLoad(shaderName);
@@ -23092,8 +23229,9 @@ class WorldsRenderer {
     const useShaderBackground = paperEnabled && !!shaderName && this.shaderManager.hasShader(shaderName);
     const useImageBackground = paperEnabled && !useShaderBackground && !!(background == null ? void 0 : background.image) && !!this.backgroundImageTexture;
     const useSampledBackground = useShaderBackground || useImageBackground;
-    const bgFlags = paperEnabled ? [hasRuledLines ? 1 : 0, hasPaper ? 1 : 0, noiseStrength, useSampledBackground ? 1 : 0] : [0, 0, 0, 0];
-    const backgroundDetailTexture = useShaderBackground ? this.backgroundShaderTexture : useImageBackground ? this.backgroundImageTexture : null;
+    const backgroundDetailTexture = useShaderBackground ? this.backgroundShaderTexture : useImageBackground ? this.backgroundImageTexture : this.neutralBackgroundTexture;
+    const effectiveContentDistortStrength = contentDistortStrength;
+    const bgFlags = paperEnabled ? [hasRuledLines ? 1 : 0, effectiveContentDistortStrength, noiseStrength, useSampledBackground ? 1 : 0] : [0, 0, 0, 0];
     const camPos = camera.effectivePosition ?? camera.position;
     const cameraPos = new Float32Array([
       camPos.x,
@@ -23167,7 +23305,7 @@ class WorldsRenderer {
           const zVals = layouts.filter((l) => l.visible).map((l) => l.transform.position.z).sort((a, b) => a - b);
           return zVals.length ? zVals[zVals.length / 2 | 0] : 0;
         })();
-        const params1 = new Float32Array([aspect, Math.tan(camera.fov * 0.5), planeZ, 0]);
+        const params1 = new Float32Array([aspect, Math.tan(camera.fov * 0.5), planeZ, this.width]);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 0, mvp);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
         this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
@@ -23186,12 +23324,23 @@ class WorldsRenderer {
         }
       }
     }
-    const useMultiply = (background == null ? void 0 : background.sectionBlendMode) === "multiply" && !!this.multiplyRenderPipeline;
-    if (useMultiply) {
-      pass.setPipeline(this.multiplyRenderPipeline);
-      pass.setVertexBuffer(0, this.vertexBuffer);
-      pass.setIndexBuffer(this.indexBuffer, "uint16");
-    }
+    const BLEND_MODES = {
+      multiply: 1,
+      screen: 2,
+      overlay: 3,
+      softlight: 4,
+      hardlight: 5,
+      darken: 6,
+      lighten: 7,
+      difference: 8,
+      exclusion: 9,
+      colorburn: 10,
+      colordodge: 11
+    };
+    const blendModeStr = (background == null ? void 0 : background.sectionBlendMode) ?? "normal";
+    const blendModeIndex = BLEND_MODES[blendModeStr] ?? 0;
+    const useBlend = blendModeIndex > 0;
+    const contentBlendStrength = useBlend ? Math.max(0, Math.min(1, (background == null ? void 0 : background.contentBlendStrength) ?? 1)) : 0;
     for (let i = 0; i < layouts.length; i++) {
       const layout = layouts[i];
       if (!layout.visible || !layout.texture) continue;
@@ -23244,7 +23393,7 @@ class WorldsRenderer {
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 96, new Float32Array(paperColor));
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 112, new Float32Array(lineColor));
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array([
-        useMultiply && paperEnabled ? paperParams[0] ?? 0 : 0,
+        paperEnabled ? paperParams[0] ?? 0 : 0,
         0,
         0,
         layout.opacity
@@ -23254,9 +23403,9 @@ class WorldsRenderer {
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, cameraForward);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 208, new Float32Array(
-        useMultiply ? [1, 0, 0, 0] : [0, 0, 0, 0]
+        [blendModeIndex, contentDistortStrength, contentBlendStrength, useSampledBackground ? 1 : 0]
       ));
-      const params1 = useMultiply ? new Float32Array([aspect, Math.tan(camera.fov * 0.5), layout.transform.position.z, this.width]) : rect ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax]) : new Float32Array([0, 0, 0, 0]);
+      const params1 = rect ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax]) : new Float32Array([0, 0, 0, 0]);
       this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
       const bindGroup = this.createBindGroupForTexture(layout.texture, uniformOffset, backgroundDetailTexture);
       if (!bindGroup) continue;
@@ -23365,7 +23514,7 @@ class WorldsRenderer {
    * Clean up resources
    */
   destroy() {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     (_a = this.vertexBuffer) == null ? void 0 : _a.destroy();
     (_b = this.indexBuffer) == null ? void 0 : _b.destroy();
     (_c = this.uniformBuffer) == null ? void 0 : _c.destroy();
@@ -23374,7 +23523,7 @@ class WorldsRenderer {
     (_f = this.backgroundTexture) == null ? void 0 : _f.destroy();
     (_g = this.backgroundShaderTexture) == null ? void 0 : _g.destroy();
     (_h = this.backgroundImageTexture) == null ? void 0 : _h.destroy();
-    this.multiplyRenderPipeline = null;
+    (_i = this.neutralBackgroundTexture) == null ? void 0 : _i.destroy();
   }
 }
 class LineStream {
@@ -27382,6 +27531,16 @@ class StorieEngine {
           }
         }
       }
+      if (config.sectionGuiMode !== void 0) {
+        const next = config.sectionGuiMode;
+        if (next === "overlay" || next === "baked") {
+          const prev = engine.worldsConfig.sectionGuiMode;
+          engine.worldsConfig.sectionGuiMode = next;
+          if (prev !== next) {
+            engine.clear3DSectionTextures();
+          }
+        }
+      }
       if (config.cameraFov !== void 0) {
         engine.worldsConfig.cameraFov = config.cameraFov;
       }
@@ -29808,6 +29967,28 @@ class StorieEngine {
       },
       // WGSL Shader API (high-level shader management)
       shader: {
+        // Dynamically register (or replace) a named WGSL shader from user code.
+        // Returns a Promise<boolean> so callers can await compilation.
+        define: async (shaderName, wgslCode, opts) => {
+          if (!engine.shaderManager) {
+            console.warn("ShaderManager not available (WebGPU not initialized)");
+            return false;
+          }
+          try {
+            const shader = {
+              name: shaderName,
+              code: wgslCode,
+              kind: (opts == null ? void 0 : opts.kind) ?? "fragment",
+              uniforms: [],
+              bindings: [],
+              workgroupSize: [1, 1, 1]
+            };
+            return await engine.shaderManager.registerShader(shader);
+          } catch (error) {
+            console.error(`Failed to define shader ${shaderName}:`, error);
+            return false;
+          }
+        },
         setUniform: (shaderName, uniformName, value) => {
           if (!engine.shaderManager) {
             console.warn("ShaderManager not available (WebGPU not initialized)");
@@ -30966,6 +31147,113 @@ class StorieEngine {
       charHeight: (atlas == null ? void 0 : atlas.getCharHeight()) ?? 16
     };
   }
+  createCanvas2DDraw2D(ctx) {
+    const clipStack = [];
+    const api = {
+      rect: (x, y, w, h, color) => {
+        ctx.fillStyle = ColorUtils.toCss(color);
+        ctx.fillRect(x, y, w, h);
+      },
+      text: (text, x, y, color) => {
+        ctx.fillStyle = ColorUtils.toCss(color);
+        ctx.fillText(text, x, y);
+      },
+      measureTextWidth: (text) => ctx.measureText(text).width,
+      image: (imageId, x, y, w, h, options) => {
+        const img = this.getMarkdownImageSource(imageId, this.activeDocumentId ?? void 0);
+        if (!img) return;
+        if (options == null ? void 0 : options.uv) {
+          const sx = options.uv.u;
+          const sy = options.uv.v;
+          const sw = options.uv.w;
+          const sh = options.uv.h;
+          try {
+            ctx.drawImage(img, sx, sy, sw, sh, x, y, w, h);
+          } catch {
+          }
+        } else {
+          try {
+            ctx.drawImage(img, x, y, w, h);
+          } catch {
+          }
+        }
+      },
+      pushClipRect: (x, y, w, h) => {
+        clipStack.push({ x, y, w, h });
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x, y, w, h);
+        ctx.clip();
+      },
+      popClipRect: () => {
+        if (clipStack.length === 0) return;
+        clipStack.pop();
+        ctx.restore();
+      },
+      // Stencil masking not supported on Canvas2D.
+      pushMaskRect: void 0,
+      pushMaskRoundedRect: void 0,
+      pushMaskPolygon: void 0,
+      popMask: void 0,
+      colors: ColorUtils,
+      metrics: void 0
+    };
+    return api;
+  }
+  getWorldsSectionTextureToScreenAffine(layout) {
+    const dims = this.sectionTextureCache.get(layout.sectionId);
+    if (!dims || dims.width <= 0 || dims.height <= 0) return null;
+    const p00 = this.project3DTexturePointToScreen(layout, { x: 0, y: 0 });
+    const p10 = this.project3DTexturePointToScreen(layout, { x: dims.width, y: 0 });
+    const p01 = this.project3DTexturePointToScreen(layout, { x: 0, y: dims.height });
+    if (!p00 || !p10 || !p01) return null;
+    const a = (p10.x - p00.x) / dims.width;
+    const b = (p10.y - p00.y) / dims.width;
+    const c2 = (p01.x - p00.x) / dims.height;
+    const d = (p01.y - p00.y) / dims.height;
+    const e = p00.x;
+    const f = p00.y;
+    const screenFromTexPx = { a, b, c: c2, d, e, f };
+    const localFromScreenTexPx = invertAffine(screenFromTexPx);
+    if (!localFromScreenTexPx) return null;
+    const quad = this.getSectionScreenQuad(layout, { allowOffscreen: true });
+    if (!quad) return null;
+    const xs = quad.map((p) => p.x);
+    const ys = quad.map((p) => p.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    if (![minX, maxX, minY, maxY].every(Number.isFinite)) return null;
+    const clipRectScreen = { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+    return { screenFromTexPx, localFromScreenTexPx, clipRectScreen };
+  }
+  renderWorldsSectionBoundGUI(renderer, documentId) {
+    var _a, _b;
+    const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
+    const system = (_b = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _b.call(guiAPI);
+    if (!system) return;
+    if (!this.worldsEnabled || !this.camera3D) return;
+    const bindings = Array.isArray(guiAPI == null ? void 0 : guiAPI._sectionBindings) ? guiAPI._sectionBindings : [];
+    if (bindings.length === 0) return;
+    const baseUI = this.createMarkdownAwareDraw2D(renderer, documentId);
+    const { charWidth, charHeight } = this.getGUIPixelMetrics();
+    for (const binding of bindings) {
+      for (const sectionIndex of binding.sections) {
+        const layout = this.getSectionLayoutByIndex(sectionIndex);
+        if (!layout || !layout.visible || layout.interactive === false || !layout.texture) continue;
+        const xform = this.getWorldsSectionTextureToScreenAffine(layout);
+        if (!xform) continue;
+        const transformed = createTransformedDraw2D(baseUI, {
+          screenFromLocal: xform.screenFromTexPx,
+          localFromScreen: xform.localFromScreenTexPx,
+          clipRectScreen: xform.clipRectScreen
+        });
+        transformed.metrics = { charWidth, charHeight };
+        system.renderGroup(binding.group, transformed, charWidth, charHeight);
+      }
+    }
+  }
   clearWorldsInlineWidgets() {
     var _a, _b;
     const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
@@ -31495,6 +31783,58 @@ class StorieEngine {
     system.handleMouse(pixelX, pixelY, mouseDown, charWidth, charHeight);
     this.syncWorldsInlineWidgets();
     return hitBefore || draggingBefore;
+  }
+  handleWorldsSectionBoundGUIMouse(pixelX, pixelY, mouseDown) {
+    var _a, _b, _c, _d;
+    const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
+    const system = (_b = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _b.call(guiAPI);
+    if (!system) return false;
+    if (!this.worldsEnabled || !this.camera3D) return false;
+    const bindings = Array.isArray(guiAPI == null ? void 0 : guiAPI._sectionBindings) ? guiAPI._sectionBindings : [];
+    if (bindings.length === 0) return false;
+    const { charWidth, charHeight } = this.getGUIPixelMetrics();
+    const preferred = this.getResolvedSelected3DSectionIndex();
+    const candidates = [];
+    for (const binding of bindings) {
+      for (const sectionIndex of binding.sections) {
+        candidates.push({ group: binding.group, sectionIndex });
+      }
+    }
+    candidates.sort((a, b) => {
+      const ap = a.sectionIndex === preferred ? -1 : 0;
+      const bp = b.sectionIndex === preferred ? -1 : 0;
+      return ap - bp;
+    });
+    let handled = false;
+    for (const candidate of candidates) {
+      const layout = this.getSectionLayoutByIndex(candidate.sectionIndex);
+      if (!layout || !layout.visible || layout.interactive === false || !layout.texture) continue;
+      const xform = this.getWorldsSectionTextureToScreenAffine(layout);
+      if (!xform) continue;
+      const clip = xform.clipRectScreen;
+      if (pixelX < clip.x || pixelY < clip.y || pixelX > clip.x + clip.w || pixelY > clip.y + clip.h) {
+        continue;
+      }
+      const local = {
+        x: xform.localFromScreenTexPx.a * pixelX + xform.localFromScreenTexPx.c * pixelY + xform.localFromScreenTexPx.e,
+        y: xform.localFromScreenTexPx.b * pixelX + xform.localFromScreenTexPx.d * pixelY + xform.localFromScreenTexPx.f
+      };
+      const dims = this.sectionTextureCache.get(layout.sectionId);
+      if (!dims) continue;
+      if (local.x < 0 || local.y < 0 || local.x > dims.width || local.y > dims.height) continue;
+      const beforeFocus = (_c = system.getFocusedWidget) == null ? void 0 : _c.call(system);
+      system.handleMouse(local.x, local.y, mouseDown, charWidth, charHeight);
+      const afterFocus = (_d = system.getFocusedWidget) == null ? void 0 : _d.call(system);
+      if (afterFocus && afterFocus.group === candidate.group) {
+        handled = true;
+        break;
+      }
+      if (beforeFocus && beforeFocus.group === candidate.group) {
+        handled = true;
+        break;
+      }
+    }
+    return handled;
   }
   handleWorldsInlineWidgetKey(key, modifiers) {
     var _a, _b, _c;
@@ -32781,7 +33121,7 @@ ${exportVars}
    * Shared by the live mainLoop and tickExportFrame.
    */
   runFrame() {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     try {
       this.update();
       this.render();
@@ -32902,22 +33242,70 @@ ${exportVars}
             spacing: 1,
             thickness: 0.06,
             noiseStrength: paperNoiseStrength,
-            sectionBlendMode: (textureInfo == null ? void 0 : textureInfo.blendMode) ?? ((_b = this.worldsConfig) == null ? void 0 : _b.sectionBlendMode)
+            sectionBlendMode: (textureInfo == null ? void 0 : textureInfo.blendMode) ?? ((_b = this.worldsConfig) == null ? void 0 : _b.sectionBlendMode),
+            contentDistortStrength: Number.isFinite(textureInfo == null ? void 0 : textureInfo.contentDistort) ? textureInfo.contentDistort : Number.isFinite((_c = this.worldsConfig) == null ? void 0 : _c.contentDistortStrength) ? this.worldsConfig.contentDistortStrength : 0,
+            contentBlendStrength: Number.isFinite(textureInfo == null ? void 0 : textureInfo.blendStrength) ? textureInfo.blendStrength : void 0
           } : void 0;
           const linkConnectors = this.getRendered3DLinkConnectors();
           this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig, linkConnectors);
         }
         if (this.webgpuUIRenderer) {
           this.syncWorldsInlineWidgets();
-          const inlineGui = this.worldsInlineWidgetInstances.length > 0 ? (_e = (_d = (_c = this.api) == null ? void 0 : _c.gui) == null ? void 0 : _d.getSystem) == null ? void 0 : _e.call(_d) : null;
+          const inlineGui = this.worldsInlineWidgetInstances.length > 0 ? (_f = (_e = (_d = this.api) == null ? void 0 : _d.gui) == null ? void 0 : _e.getSystem) == null ? void 0 : _f.call(_e) : null;
           if (inlineGui) {
             const { charWidth, charHeight } = this.getGUIPixelMetrics();
             inlineGui.update(this.input.getMouseX(), this.input.getMouseY(), this.input.isMouseDown(0), charWidth, charHeight);
             this.syncWorldsInlineWidgets();
           }
-          const guiAPI = (_f = this.api) == null ? void 0 : _f.gui;
+          const guiAPIAny = (_g = this.api) == null ? void 0 : _g.gui;
+          const systemForSectionGUI = (_h = guiAPIAny == null ? void 0 : guiAPIAny.getSystem) == null ? void 0 : _h.call(guiAPIAny);
+          const bindingsForSectionGUI = Array.isArray(guiAPIAny == null ? void 0 : guiAPIAny._sectionBindings) ? guiAPIAny._sectionBindings : [];
+          if (systemForSectionGUI && this.worldsEnabled && this.camera3D && bindingsForSectionGUI.length > 0) {
+            const sectionGuiMode = this.worldsConfig.sectionGuiMode === "baked" ? "baked" : "overlay";
+            if (sectionGuiMode === "baked") {
+              const anySystem = systemForSectionGUI;
+              const needsRebake = typeof anySystem.needsRedraw === "function" && !!anySystem.needsRedraw() || typeof anySystem.getNeedsRedraw === "function" && !!anySystem.getNeedsRedraw();
+              if (needsRebake) {
+                for (const binding of bindingsForSectionGUI) {
+                  for (const idx of binding.sections || []) {
+                    if (typeof idx === "number" && Number.isFinite(idx)) {
+                      this.invalidate3DSectionTexture(idx);
+                    }
+                  }
+                }
+              }
+            }
+            const preferredIndex = this.getResolvedSelected3DSectionIndex() ?? this.current3DSectionIndex;
+            const preferredLayout = this.getSectionLayoutByIndex(preferredIndex);
+            if (preferredLayout && preferredLayout.visible && preferredLayout.interactive !== false && preferredLayout.texture) {
+              const xform = this.getWorldsSectionTextureToScreenAffine(preferredLayout);
+              if (xform) {
+                const mx = this.input.getMouseX();
+                const my = this.input.getMouseY();
+                const localX = xform.localFromScreenTexPx.a * mx + xform.localFromScreenTexPx.c * my + xform.localFromScreenTexPx.e;
+                const localY = xform.localFromScreenTexPx.b * mx + xform.localFromScreenTexPx.d * my + xform.localFromScreenTexPx.f;
+                const { charWidth, charHeight } = this.getGUIPixelMetrics();
+                systemForSectionGUI.update(localX, localY, this.input.isMouseDown(0), charWidth, charHeight);
+                if (sectionGuiMode === "baked" && typeof preferredIndex === "number" && Number.isFinite(preferredIndex)) {
+                  const clip = xform.clipRectScreen;
+                  const over = mx >= clip.x && my >= clip.y && mx <= clip.x + clip.w && my <= clip.y + clip.h;
+                  if (over) {
+                    this.invalidate3DSectionTexture(preferredIndex);
+                  }
+                }
+              }
+            }
+          }
+          const guiAPI = (_i = this.api) == null ? void 0 : _i.gui;
           if (guiAPI && guiAPI.getSystem && guiAPI.getSystem()) {
-            guiAPI.render(this.createMarkdownAwareDraw2D(this.webgpuUIRenderer, this.activeDocumentId ?? void 0));
+            const hasSectionBindings = Array.isArray(guiAPI == null ? void 0 : guiAPI._sectionBindings) && guiAPI._sectionBindings.length > 0;
+            const sectionGuiMode = this.worldsConfig.sectionGuiMode === "baked" ? "baked" : "overlay";
+            if (sectionGuiMode !== "baked") {
+              this.renderWorldsSectionBoundGUI(this.webgpuUIRenderer, this.activeDocumentId ?? void 0);
+            }
+            if (!this.worldsEnabled || !hasSectionBindings) {
+              guiAPI.render(this.createMarkdownAwareDraw2D(this.webgpuUIRenderer, this.activeDocumentId ?? void 0));
+            }
           }
           this.webgpuUIRenderer.flush();
         }
@@ -33151,7 +33539,7 @@ ${exportVars}
     }
   }
   ensure3DSectionTextures(device) {
-    var _a;
+    var _a, _b, _c, _d;
     if (!this.worldsEnabled || !this.camera3D) return;
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
@@ -33187,12 +33575,26 @@ ${exportVars}
         return null;
       }
     })();
+    const sectionGuiMode = this.worldsConfig.sectionGuiMode === "baked" ? "baked" : "overlay";
+    const guiAPIAny = (_a = this.api) == null ? void 0 : _a.gui;
+    const guiBindings = Array.isArray(guiAPIAny == null ? void 0 : guiAPIAny._sectionBindings) ? guiAPIAny._sectionBindings : [];
+    const bakedGuiSections = /* @__PURE__ */ new Set();
+    if (sectionGuiMode === "baked" && guiBindings.length > 0) {
+      for (const binding of guiBindings) {
+        for (const idx of binding.sections || []) {
+          if (typeof idx === "number" && Number.isFinite(idx)) bakedGuiSections.add(idx);
+        }
+      }
+    }
     for (const layout of this.section3DLayouts) {
-      if (!layout.visible) continue;
+      const needsBakedGui = bakedGuiSections.size > 0 && bakedGuiSections.has(layout.sectionIndex);
+      if (!layout.visible && !needsBakedGui) continue;
       const activeLink = this.getActive3DLink();
       const activeLinkIndex = activeLink && activeLink.sectionIndex === layout.sectionIndex ? activeLink.linkIndex : null;
-      if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
-        continue;
+      if (!needsBakedGui) {
+        if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
+          continue;
+        }
       }
       if (layout.texture) {
         const existing = this.sectionTextureCache.get(layout.sectionId);
@@ -33328,6 +33730,11 @@ ${exportVars}
       this.applyWorldsContentAlignment(result, widthPx, heightPx, texturePadding, layout.contentAlign);
       const scaledLinkRegions = this.scaleLinkRegions(result.linkRegions, textureScale);
       const scaledWidgetPlacements = this.scaleWidgetPlacements(result.widgetPlacements, textureScale);
+      this.sectionTextureCache.set(layout.sectionId, {
+        width: textureWidthPx,
+        height: textureHeightPx,
+        activeLinkIndex
+      });
       ctx.clearRect(0, 0, widthPx, heightPx);
       if (bakedRuledPaper) {
         const ruledLine = this.withAlpha(mdStyle.mutedFg, 64);
@@ -33345,6 +33752,40 @@ ${exportVars}
         } else {
           ctx.fillStyle = ColorUtils.toCss(op.color);
           ctx.fillText(op.text, op.x, op.y);
+        }
+      }
+      {
+        const sectionGuiMode2 = this.worldsConfig.sectionGuiMode === "baked" ? "baked" : "overlay";
+        if (sectionGuiMode2 !== "baked") ;
+        else {
+          const guiAPI = (_b = this.api) == null ? void 0 : _b.gui;
+          const system = (_c = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _c.call(guiAPI);
+          const bindings = Array.isArray(guiAPI == null ? void 0 : guiAPI._sectionBindings) ? guiAPI._sectionBindings : [];
+          if (system && bindings.length > 0) {
+            let restoreBindings = null;
+            if (typeof guiAPI.syncSectionBindings === "function") {
+              try {
+                guiAPI.syncSectionBindings(layout.sectionIndex);
+                restoreBindings = () => {
+                  try {
+                    guiAPI.syncSectionBindings();
+                  } catch {
+                  }
+                };
+              } catch {
+              }
+            }
+            const boundGroups = bindings.filter((b) => Array.isArray(b.sections) && b.sections.includes(layout.sectionIndex)).map((b) => b.group);
+            if (boundGroups.length > 0) {
+              const draw2d = this.createCanvas2DDraw2D(ctx);
+              const metrics = this.getGUIPixelMetrics();
+              draw2d.metrics = { charWidth: metrics.charWidth, charHeight: metrics.charHeight };
+              for (const group of boundGroups) {
+                system.renderGroup(group, draw2d, metrics.charWidth, metrics.charHeight);
+              }
+            }
+            if (restoreBindings) restoreBindings();
+          }
         }
       }
       const borderEnabled = this.worldsConfig.sectionBorderEnabled !== false;
@@ -33391,7 +33832,7 @@ ${exportVars}
       }
       if (!uploaded) {
         try {
-          const imageData = (_a = ctx.getImageData) == null ? void 0 : _a.call(ctx, 0, 0, textureWidthPx, textureHeightPx);
+          const imageData = (_d = ctx.getImageData) == null ? void 0 : _d.call(ctx, 0, 0, textureWidthPx, textureHeightPx);
           if (imageData && imageData.data) {
             const unpaddedBytesPerRow = textureWidthPx * 4;
             const bytesPerRow = Math.ceil(unpaddedBytesPerRow / 256) * 256;
@@ -33625,6 +34066,8 @@ ${exportVars}
     if (!textureUrl) return null;
     let coordScale;
     let tilePx;
+    let contentDistort;
+    let blendStrength;
     let paperPlaneZ;
     let paperPlaneZMode;
     let screenLock;
@@ -33661,6 +34104,13 @@ ${exportVars}
         }
         continue;
       }
+      if (trimmedKey === "contentDistort" || trimmedKey === "distort" || trimmedKey === "contentWarp") {
+        const num = parseFloat(trimmedValue);
+        if (!isNaN(num) && Number.isFinite(num)) {
+          contentDistort = Math.max(0, Math.min(0.05, num));
+        }
+        continue;
+      }
       if (trimmedKey === "screenLock") {
         const lower = trimmedValue.toLowerCase();
         if (lower === "1" || lower === "true" || lower === "yes" || lower === "on") {
@@ -33670,15 +34120,35 @@ ${exportVars}
         }
         continue;
       }
-      if (trimmedKey === "blendMode" || trimmedKey === "blend") {
-        const lower = trimmedValue.toLowerCase();
-        if (lower === "multiply" || lower === "mul") {
-          blendMode = "multiply";
+      if (trimmedKey === "blendMode") {
+        const lower = trimmedValue.toLowerCase().replace(/[-_\s]/g, "");
+        const validModes = [
+          "multiply",
+          "screen",
+          "overlay",
+          "softlight",
+          "hardlight",
+          "darken",
+          "lighten",
+          "difference",
+          "exclusion",
+          "colorburn",
+          "colordodge"
+        ];
+        if (validModes.includes(lower)) {
+          blendMode = lower;
+        }
+        continue;
+      }
+      if (trimmedKey === "blendStrength" || trimmedKey === "blendAmount" || trimmedKey === "paperBlend") {
+        const num = parseFloat(trimmedValue);
+        if (!isNaN(num) && Number.isFinite(num)) {
+          blendStrength = Math.max(0, Math.min(1, num));
         }
         continue;
       }
     }
-    return { url: textureUrl, coordScale, tilePx, paperPlaneZ, paperPlaneZMode, screenLock, blendMode };
+    return { url: textureUrl, coordScale, tilePx, contentDistort, blendStrength, paperPlaneZ, paperPlaneZMode, screenLock, blendMode };
   }
   isWorldsSectionBackgroundProceduralChainEnabled() {
     const chain = this.parseWorldsSectionBackgroundChain();
@@ -34766,6 +35236,7 @@ ${exportVars}
     if (this.worldsInlineWidgetInstances.length > 0) {
       this.handleWorldsInlineWidgetMouse(pixelX, pixelY, this.input.isMouseDown(0));
     }
+    this.handleWorldsSectionBoundGUIMouse(pixelX, pixelY, this.input.isMouseDown(0));
     let dispatchedToDoc = false;
     if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input) {
       const charWidth = this.canvas.width / this.width;
@@ -34827,9 +35298,10 @@ ${exportVars}
         }
       }
       const inlineWidgetConsumed = this.handleWorldsInlineWidgetMouse(pixelX, pixelY, action === "press");
+      const sectionGuiConsumed = this.handleWorldsSectionBoundGUIMouse(pixelX, pixelY, action === "press");
       this.input.applySyntheticEvent({ type: "mouse", action, button: "left", x: pixelX, y: pixelY });
       let handledBy3D = false;
-      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && action === "press") {
+      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && !sectionGuiConsumed && action === "press") {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);

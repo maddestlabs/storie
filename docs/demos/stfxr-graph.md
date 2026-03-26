@@ -1,6 +1,6 @@
 ---
 name: "STFXR: Graph Viewer"
-theme: "neotopia"
+theme: "nord"
 requiresAudioGesture: true
 ---
 
@@ -17,6 +17,117 @@ A basic **graph viewer** for a single `stfxr` preset.
 ## Demo
 
 ```js
+// Inlined graph utilities (src/graph/core.ts + layout.ts)
+function _graphNodeById(graph) {
+  const map = new Map();
+  for (const n of graph.nodes ?? []) {
+    const id = String(n?.id ?? '');
+    if (!id) continue;
+    if (!map.has(id)) map.set(id, { ...n, id });
+  }
+  return map;
+}
+function topoSort(graph) {
+  const nodes = _graphNodeById(graph);
+  const ids = Array.from(nodes.keys());
+  const indeg = new Map();
+  const out = new Map();
+  for (const id of ids) { indeg.set(id, 0); out.set(id, []); }
+  for (const e of graph.edges ?? []) {
+    const a = String(e?.from?.node ?? '');
+    const b = String(e?.to?.node ?? '');
+    if (!a || !b || !nodes.has(a) || !nodes.has(b)) continue;
+    out.get(a).push(b);
+    indeg.set(b, (indeg.get(b) ?? 0) + 1);
+  }
+  const q = [];
+  for (const id of ids) if ((indeg.get(id) ?? 0) === 0) q.push(id);
+  const order = [];
+  const indeg2 = new Map(indeg);
+  while (q.length) {
+    const id = q.shift();
+    order.push(id);
+    for (const b of out.get(id) ?? []) {
+      indeg2.set(b, (indeg2.get(b) ?? 0) - 1);
+      if ((indeg2.get(b) ?? 0) === 0) q.push(b);
+    }
+  }
+  if (order.length === ids.length) return { order, hasCycle: false, cyclicNodes: [] };
+  const seen = new Set(order);
+  const cyclicNodes = ids.filter(id => !seen.has(id));
+  return { order: order.concat(cyclicNodes), hasCycle: true, cyclicNodes };
+}
+function computeLevels(graph, order) {
+  const nodes = _graphNodeById(graph);
+  const ids = Array.from(nodes.keys());
+  const out = new Map();
+  for (const id of ids) out.set(id, []);
+  for (const e of graph.edges ?? []) {
+    const a = String(e?.from?.node ?? '');
+    const b = String(e?.to?.node ?? '');
+    if (!a || !b || !nodes.has(a) || !nodes.has(b)) continue;
+    out.get(a).push(b);
+  }
+  const level = new Map();
+  for (const id of ids) level.set(id, 0);
+  const seq = Array.isArray(order) && order.length ? order : topoSort(graph).order;
+  for (const id of seq) {
+    const l = level.get(id) ?? 0;
+    for (const b of out.get(id) ?? []) level.set(b, Math.max(level.get(b) ?? 0, l + 1));
+  }
+  return level;
+}
+function autoLayoutLevels(graph, bounds, opts) {
+  opts = opts || {};
+  const pad = opts.pad ?? 24;
+  const colW = opts.colW ?? 260;
+  const rowH = opts.rowH ?? 88;
+  const nodeW = opts.nodeW ?? 180;
+  const nodeH = opts.nodeH ?? 60;
+  const nodes = _graphNodeById(graph);
+  const topo = topoSort(graph);
+  const level = computeLevels(graph, topo.order);
+  const groups = new Map();
+  for (const id of nodes.keys()) {
+    const l = level.get(id) ?? 0;
+    const arr = groups.get(l) ?? [];
+    arr.push(id);
+    groups.set(l, arr);
+  }
+  const levels = Array.from(groups.keys()).sort((a, b) => a - b);
+  const layout = new Map();
+  for (let li = 0; li < levels.length; li++) {
+    const l = levels[li];
+    const ids = groups.get(l) ?? [];
+    for (let ri = 0; ri < ids.length; ri++) {
+      const id = ids[ri];
+      layout.set(id, { x: bounds.x + pad + li * colW, y: bounds.y + pad + ri * rowH, w: nodeW, h: nodeH });
+    }
+  }
+  return layout;
+}
+function hitTestNode(layoutById, x, y) {
+  let hit = null;
+  for (const [id, r] of layoutById.entries()) {
+    if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) hit = id;
+  }
+  return hit;
+}
+function drawLine(ui, x0, y0, x1, y1, color, thickness) {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len < 1) return;
+  const steps = Math.ceil(len);
+  const t2 = Math.max(0, Math.floor((thickness || 1) / 2));
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const x = Math.round(x0 + dx * t);
+    const y = Math.round(y0 + dy * t);
+    ui.rect(x - t2, y - t2, (thickness || 1) + t2, (thickness || 1) + t2, color);
+  }
+}
+
 let state = {
   seed: 1337,
   volume: 0.7,
@@ -128,52 +239,30 @@ function computeGraph(preset) {
     audioEdges.push({ ...e, to: toRaw });
   }
 
-  // Build adjacency for topo-ish layout using only audio edges.
-  const ids = Array.from(nodeById.keys());
-  const indeg = new Map(ids.map(id => [id, 0]));
-  const out = new Map(ids.map(id => [id, []]));
+  // Reuse shared topo sort + level computation by adapting to the core graph shape.
+  const topoGraph = {
+    nodes: Array.from(nodeById.keys()).map((id) => ({ id, kind: String(nodeById.get(id)?.kind ?? 'node') })),
+    edges: audioEdges.map((e, idx) => ({
+      id: `e${idx}`,
+      from: { node: String(e.from), port: 'out' },
+      to: { node: String(e.to), port: 'in' }
+    }))
+  };
+  const topo = topoSort(topoGraph);
+  const level = computeLevels(topoGraph, topo.order);
+  const nodesOut = topo.order.map(id => nodeById.get(id));
 
-  for (const e of audioEdges) {
-    const a = String(e.from);
-    const b = String(e.to);
-    if (!nodeById.has(a) || !nodeById.has(b)) continue;
-    out.get(a).push(b);
-    indeg.set(b, (indeg.get(b) || 0) + 1);
-  }
-
-  // Kahn order
-  const q = [];
-  for (const id of ids) {
-    if ((indeg.get(id) || 0) === 0) q.push(id);
-  }
-
-  const order = [];
-  const indeg2 = new Map(indeg);
-  while (q.length) {
-    const id = q.shift();
-    order.push(id);
-    for (const b of out.get(id) || []) {
-      indeg2.set(b, (indeg2.get(b) || 0) - 1);
-      if ((indeg2.get(b) || 0) === 0) q.push(b);
-    }
-  }
-
-  // If cycle, append remaining in stable order.
-  if (order.length < ids.length) {
-    const seen = new Set(order);
-    for (const id of ids) if (!seen.has(id)) order.push(id);
-  }
-
-  // Compute levels from order.
-  const level = new Map(ids.map(id => [id, 0]));
-  for (const id of order) {
-    const l = level.get(id) || 0;
-    for (const b of out.get(id) || []) {
-      level.set(b, Math.max(level.get(b) || 0, l + 1));
-    }
-  }
-
-  const nodesOut = order.map(id => nodeById.get(id));
+  // Compatibility: provide a port-based graph for shared graph-core utilities.
+  // stfxr graph viewer treats all audio edges as node-level connections.
+  const coreGraph = {
+    version: 1,
+    nodes: nodesOut.map((n) => ({ id: String(n.id), kind: String(n.kind ?? 'unknown'), params: n })),
+    edges: audioEdges.map((e, idx) => ({
+      id: e.id ?? `e${idx}`,
+      from: { node: String(e.from), port: 'out' },
+      to: { node: String(e.to), port: 'in' }
+    }))
+  };
 
   return {
     nodeById,
@@ -181,90 +270,38 @@ function computeGraph(preset) {
     audioEdges,
     paramEdges,
     events,
-    level
+    level,
+    coreGraph
   };
 }
 
 function autoLayout(graph, bounds) {
-  const pad = 24;
-  const colW = 260;
-  const rowH = 88;
+  const coreGraph = {
+    nodes: graph.nodes.map((n) => ({ id: String(n.id), kind: String(n.kind ?? 'node') })),
+    edges: graph.audioEdges.map((e, idx) => ({
+      id: `e${idx}`,
+      from: { node: String(e.from), port: 'out' },
+      to: { node: String(e.to), port: 'in' }
+    }))
+  };
 
-  // Group by level.
-  const groups = new Map();
-  for (const n of graph.nodes) {
-    const id = String(n.id);
-    const l = graph.level.get(id) || 0;
-    const arr = groups.get(l) || [];
-    arr.push(id);
-    groups.set(l, arr);
-  }
+  const base = autoLayoutLevels(coreGraph, bounds, { nodeW: 180, nodeH: 60, colW: 260, rowH: 88, pad: 24 });
 
-  const levels = Array.from(groups.keys()).sort((a, b) => a - b);
+  // Preserve the original demo's dynamic node width behavior.
   const layout = new Map();
-
-  for (let li = 0; li < levels.length; li++) {
-    const l = levels[li];
-    const ids = groups.get(l) || [];
-
-    for (let ri = 0; ri < ids.length; ri++) {
-      const id = ids[ri];
-      const n = graph.nodeById.get(id);
-      const label = `${id}`;
-      const kind = String(n?.kind ?? '');
-
-      const w = Math.max(180, (label.length + Math.max(0, kind.length - 2)) * 9 + 44);
-      const h = 60;
-
-      const x = bounds.x + pad + li * colW;
-      const y = bounds.y + pad + ri * rowH;
-
-      layout.set(id, { x, y, w, h });
-    }
+  for (const [id, r] of base.entries()) {
+    const node = graph.nodeById.get(id);
+    const label = `${id}`;
+    const kind = String(node?.kind ?? '');
+    const w = Math.max(180, (label.length + Math.max(0, kind.length - 2)) * 9 + 44);
+    layout.set(id, { x: r.x, y: r.y, w, h: 60 });
   }
 
   return layout;
 }
 
 function hitTest(layoutById, x, y) {
-  // Iterate in insertion order so later nodes are "on top" if we reinsert.
-  let hit = null;
-  for (const [id, r] of layoutById.entries()) {
-    if (!r) continue;
-    if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) {
-      hit = id;
-    }
-  }
-  return hit;
-}
-
-function drawLine(ui, x0, y0, x1, y1, color, thickness = 1) {
-  x0 = Math.round(x0); y0 = Math.round(y0);
-  x1 = Math.round(x1); y1 = Math.round(y1);
-
-  const dx = Math.abs(x1 - x0);
-  const sx = x0 < x1 ? 1 : -1;
-  const dy = -Math.abs(y1 - y0);
-  const sy = y0 < y1 ? 1 : -1;
-  let err = dx + dy;
-
-  const stamp = (x, y) => {
-    if (thickness <= 1) {
-      ui.rect(x, y, 1, 1, color);
-      return;
-    }
-    const t = Math.max(1, Math.floor(thickness));
-    const o = Math.floor(t / 2);
-    ui.rect(x - o, y - o, t, t, color);
-  };
-
-  while (true) {
-    stamp(x0, y0);
-    if (x0 === x1 && y0 === y1) break;
-    const e2 = 2 * err;
-    if (e2 >= dy) { err += dy; x0 += sx; }
-    if (e2 <= dx) { err += dx; y0 += sy; }
-  }
+  return hitTestNode(layoutById, x, y);
 }
 
 function edgePoints(layout, fromId, toId) {
@@ -857,6 +894,8 @@ function viewToWorld(x, y) {
 function worldToView(x, y) {
   return { x: x + state.camX, y: y + state.camY };
 }
+
+
 ```
 
 ```js on:init
@@ -961,6 +1000,7 @@ if (state.graph && state.selectedId && state.widgets?.nodeJson) {
 
 ```js on:input
 if (!event) return;
+if (!state) return;
 
 if (event.type === 'keydown') {
   gui.handleKey(event.key, {
@@ -1077,7 +1117,7 @@ if (event.type === 'mouse_move') {
 ```
 
 ```js on:update
-if (!state.widgets) return;
+if (!state || !state.widgets) return;
 
 gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);
 
@@ -1227,6 +1267,8 @@ state.widgets.status.setText(state.statusText);
 ```
 
 ```js on:render
+if (!state) return; // main block hasn't run yet
+
 const base = getStyle('default');
 ui.clear(base.bg);
 term.layerID = 'default';

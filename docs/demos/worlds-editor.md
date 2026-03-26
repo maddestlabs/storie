@@ -1,6 +1,6 @@
 ---
 name: "Worlds Editor Lab"
-theme: "solarlight"
+theme: "saintbilly"
 fontsize: 22
 font: "Special+Elite"
 shaders: "blurgradual+lightvignette"
@@ -323,7 +323,7 @@ function resetView() {
 function applyEditorPreset() {
   worlds.presets.apply('story-editor');
   worlds.config.setDefaults({
-    sectionBackground: 'texture:assets/img/paper_seamless_texture_3197.jpg;tilePx=320;paperPlaneZ=focus',
+    sectionBackground: 'texture:assets/img/Paper004_1K-JPG_Displacement.jpg;tilePx=640;contentDistort=0.008;blendMode=overlay;blendStrength=0.8;paperPlaneZ=focus',
   });
   worlds.camera.setRotation(0, 0, 0);
 }
