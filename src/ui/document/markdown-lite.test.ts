@@ -93,6 +93,35 @@ describe('parseMarkdownLite', () => {
       ]
     });
   });
+
+  it('parses per-item list-icon directive objects on unordered lists', () => {
+    const nodes = parseMarkdownLite('- First {"list-icon":"➵"}\n- Second\n- Third {list-icon: "✦"}');
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]).toEqual({
+      kind: 'list',
+      ordered: false,
+      items: [
+        { inlines: [{ kind: 'text', text: 'First' }], markerText: '➵' },
+        { inlines: [{ kind: 'text', text: 'Second' }], markerText: undefined },
+        { inlines: [{ kind: 'text', text: 'Third' }], markerText: '✦' },
+      ]
+    });
+  });
+
+  it('parses emphasis and strong into inline nodes', () => {
+    const nodes = parseMarkdownLite('Go *north* then **run**.');
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]).toMatchObject({
+      kind: 'paragraph',
+      inlines: [
+        { kind: 'text', text: 'Go ' },
+        { kind: 'em' },
+        { kind: 'text', text: ' then ' },
+        { kind: 'strong' },
+        { kind: 'text', text: '.' },
+      ]
+    });
+  });
 });
 
 describe('layoutMarkdownDocument', () => {
@@ -204,6 +233,43 @@ describe('layoutMarkdownDocument', () => {
     const buttonText = result.ops.find((op) => op.kind === 'text' && op.text === 'Pulse');
     expect(buttonRect).toBeTruthy();
     expect(buttonText).toBeTruthy();
+  });
+
+  it('renders per-item list-icon markers when provided', () => {
+    const nodes = parseMarkdownLite('- A {"list-icon":"➵"}\n- B');
+    const result = layoutMarkdownDocument(
+      nodes,
+      { x: 0, y: 0, width: 240, height: 240 },
+      { charW: 8, charH: 16 },
+      { ...style, listMarker: '* ' },
+      0,
+      10
+    );
+
+    const markerOps = result.ops.filter((op) => op.kind === 'text' && (op.text === '➵' || op.text === '* '));
+    expect(markerOps.some((op) => op.kind === 'text' && op.text === '➵')).toBe(true);
+    expect(markerOps.some((op) => op.kind === 'text' && op.text === '* ')).toBe(true);
+  });
+
+  it('renders italics using italicFg and strong as a double-draw pass', () => {
+    const nodes = parseMarkdownLite('*north* and **bold**');
+    const italicFg = 0xabcdef01 as any;
+    const result = layoutMarkdownDocument(
+      nodes,
+      { x: 0, y: 0, width: 240, height: 120 },
+      { charW: 8, charH: 16 },
+      { ...style, italicFg },
+      0,
+      10
+    );
+
+    const northOps = result.ops.filter((op) => op.kind === 'text' && op.text === 'north') as any[];
+    expect(northOps.length).toBe(1);
+    expect(northOps[0].color).toBe(italicFg);
+
+    const boldOps = result.ops.filter((op) => op.kind === 'text' && op.text === 'bold') as any[];
+    expect(boldOps.length).toBe(2);
+    expect(boldOps[1].x).toBe(boldOps[0].x + 1);
   });
 
   it('can reserve widget space without drawing duplicate placeholder content', () => {

@@ -1,7 +1,7 @@
 import type { DocNode, Inline, LayoutBox, LayoutResult, LinkRegion, MarkdownStyle, TextMetrics, DrawOp, WidgetPlacement, WidgetSpec, LayoutOptions } from './types.js';
 
 type Run =
-  | { kind: 'text' | 'link' | 'code'; text: string; url?: string }
+  | { kind: 'text' | 'link' | 'code'; text: string; url?: string; em?: boolean; strong?: boolean }
   | { kind: 'widget'; widget: WidgetSpec }
   | { kind: 'newline' };
 
@@ -18,16 +18,27 @@ function getLineWidth(line: WrappedLine, maxWidthPx: number, measure: ((text: st
   return width;
 }
 
-function tokenizeInlines(inlines: Inline[]): Run[] {
+function tokenizeInlines(inlines: Inline[], ctx?: { em?: boolean; strong?: boolean }): Run[] {
   const runs: Run[] = [];
-  for (const inline of inlines) {
-    if (inline.kind === 'text') {
+  const em = ctx?.em === true;
+  const strong = ctx?.strong === true;
+
+  const pushText = (text: string, kind: 'text' | 'link' | 'code', url?: string) => {
+    if (kind === 'text') {
       // preserve spaces by splitting with capture
-      const parts = inline.text.split(/(\s+)/);
+      const parts = text.split(/(\s+)/);
       for (const p of parts) {
         if (!p) continue;
-        runs.push({ kind: 'text', text: p });
+        runs.push({ kind: 'text', text: p, em, strong });
       }
+      return;
+    }
+    runs.push({ kind, text, ...(url ? { url } : {}), em, strong } as any);
+  };
+
+  for (const inline of inlines) {
+    if (inline.kind === 'text') {
+      pushText(inline.text, 'text');
     } else if (inline.kind === 'newline') {
       runs.push({ kind: 'newline' });
     } else if (inline.kind === 'widget') {
@@ -36,10 +47,14 @@ function tokenizeInlines(inlines: Inline[]): Run[] {
       // Keep the link label as a single run so hit-testing + keyboard navigation
       // treat it as one link (not a separate link per word).
       // wrapRuns() will still hard-break extremely long labels if needed.
-      runs.push({ kind: 'link', text: inline.text, url: inline.url });
+      pushText(inline.text, 'link', inline.url);
+    } else if (inline.kind === 'code') {
+      pushText(inline.text, 'code');
+    } else if (inline.kind === 'em') {
+      runs.push(...tokenizeInlines(inline.inlines, { em: true, strong }));
     } else {
-      // code
-      runs.push({ kind: 'code', text: inline.text });
+      // strong
+      runs.push(...tokenizeInlines(inline.inlines, { em, strong: true }));
     }
   }
   return runs;
@@ -425,13 +440,15 @@ export function layoutMarkdownDocument(
       }
 
       const isActiveLink = run.kind === 'link' && style.activeLinkIndex === linkIndex;
-      const color =
+      const baseColor =
         fgOverride ??
         (run.kind === 'link'
           ? (isActiveLink ? (style.activeLinkFg ?? style.linkFg) : style.linkFg)
           : run.kind === 'code'
             ? style.codeFg
             : style.fg);
+
+      const color = run.em ? (style.italicFg ?? baseColor) : baseColor;
 
       // code: draw a small background behind the run
       if (run.kind === 'code' && run.text.trim().length > 0) {
@@ -441,6 +458,10 @@ export function layoutMarkdownDocument(
       }
 
       ops.push({ kind: 'text', text: run.text, x: cx, y: textY, color });
+      if (run.strong) {
+        // Fake bold: second draw pass, 1px right.
+        ops.push({ kind: 'text', text: run.text, x: cx + 1, y: textY, color });
+      }
       {
         const w = measure ? measure(run.text) : run.text.length * charW;
         bumpMax(cx, textY, w, charH);
@@ -536,7 +557,7 @@ export function layoutMarkdownDocument(
           const item = node.items[itemIndex];
           const markerText = node.ordered
             ? `${(node.start ?? 1) + itemIndex}.`
-            : customMarkerText;
+            : (item.markerText === undefined ? customMarkerText : String(item.markerText ?? ''));
           const markerWidth = markerText.length > 0
             ? (measure ? measure(markerText) : markerText.length * charW)
             : 0;
@@ -549,7 +570,7 @@ export function layoutMarkdownDocument(
           const wrapIndentPx = Math.max(markerAdvance, hangIndentPx);
           const listInnerWidth = Math.max(1, localInnerW - wrapIndentPx);
           const listMaxChars = Math.max(1, Math.floor(listInnerWidth / charW));
-          const itemRuns = tokenizeInlines(item);
+          const itemRuns = tokenizeInlines(item.inlines);
           const lines = measure
             ? wrapRunsByWidth(itemRuns, listInnerWidth, measure, charW, charH)
             : wrapRuns(itemRuns, listMaxChars, charW, charH);

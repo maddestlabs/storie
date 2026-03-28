@@ -36,10 +36,10 @@ export const THEMES: Record<string, ThemeColors> = {
     bg:      0xF4EEEAFF,   // Warm paper (slight red-brown)
     bgAlt:   0xE6DFDAFF,   // Raised paper
     fg:      0x2A2A2CFF,   // Near-black ink
-    fgAlt:   0x6C6C6EFF,   // Muted gray
+    fgAlt:   0xF00808FF,   // Red (tertiary)
     accent1: 0x7A1414FF,   // Dark red
     accent2: 0x3A3A3CFF,   // Charcoal (links/secondary)
-    accent3: 0x7D7D80FF,   // Mid gray (tertiary)
+    accent3: 0x6C6C6EFF,   // Muted gray
   },
 
   neotopia: {

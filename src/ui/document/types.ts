@@ -5,12 +5,14 @@ export type Inline =
   | { kind: 'link'; text: string; url: string }
   | { kind: 'code'; text: string }
   | { kind: 'widget'; widget: WidgetSpec }
+  | { kind: 'em'; inlines: Inline[] }
+  | { kind: 'strong'; inlines: Inline[] }
   | { kind: 'newline' };
 
 export type DocNode =
   | { kind: 'heading'; level: number; inlines: Inline[] }
   | { kind: 'paragraph'; inlines: Inline[] }
-  | { kind: 'list'; items: Inline[][]; ordered: boolean; start?: number }
+  | { kind: 'list'; items: { inlines: Inline[]; markerText?: string | null }[]; ordered: boolean; start?: number }
   | { kind: 'image'; alt: string; source: string; title?: string; align?: 'left' | 'center' | 'right'; width?: string }
   | { kind: 'widget'; widget: WidgetSpec }
   | { kind: 'callout'; tone: 'note' | 'info' | 'tip' | 'warning' | 'important' | 'caution'; title?: string; nodes: DocNode[] }
@@ -56,6 +58,8 @@ export interface MarkdownStyle {
   borderFg: Color;
   surfaceBg: Color;
   headingFg: Color;
+  /** Color used for emphasis (italics) when supported by the renderer. */
+  italicFg?: Color;
   textAlign?: 'left' | 'center' | 'right';
   listMarker?: string | null;
   listMarkerFg?: Color;

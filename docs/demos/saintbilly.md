@@ -1,5 +1,5 @@
 ---
-title: "Depths Beckon"
+title: "Saint Billy"
 author: "Maddest Labs"
 theme: "saintbilly"
 font: "Rye"
@@ -25,7 +25,7 @@ worlds.config.setDefaults({
   defaultSectionHeight: 520,
   autoLayoutSpacing: 10,
   sectionBorderEnabled: false,
-  sectionBackground: 'texture:assets/img/Paper004_1K-JPG_Displacement.jpg;tilePx=640;contentDistort=0.008;blendMode=overlay;blendStrength=0.7;paperPlaneZ=focus',
+  sectionBackground: 'texture:assets/img/Paper004_1K-JPG_Displacement.jpg;tilePx=640;contentDistort=0.003;blendMode=overlay;blendStrength=0.7;paperPlaneZ=focus',
 });
 worlds.camera.setPosition(0, 55, 320);
 worlds.camera.setRotation(CAMERA_BASE_ROT.x, CAMERA_BASE_ROT.y, CAMERA_BASE_ROT.z);
@@ -41,7 +41,7 @@ worlds.camera.shake.setParams({
   // translation is in camera-local world units
   translate: { x: 1.2, y: 0.9, z: 0.4 },
   // rotation is radians
-  rotate: { x: deg(0.55), y: deg(0.65), z: 0 },
+  rotate: { x: deg(3.0), y: deg(3.0), z: 0.02 },
 });
 worlds.camera.shake.setEnabled(true);
 
@@ -88,9 +88,9 @@ torchQuality = "bright"
 You step into a vast hall supported by crumbling pillars. **Three stone statues** stand guard, each depicting a different warrior from a forgotten age. Their hollow eyes seem to follow you as you move.
 ⠀
 Passages branch off in three directions:
-- To the **north**, you hear the sound of rushing water
-- To the **east**, a faint blue glow emanates from the darkness  
-- To the **west**, you smell something acrid and unpleasant
+- To the **north**, you hear the sound of rushing water {"list-icon":"🠹"}
+- To the **east**, a faint blue glow emanates from the darkness  {"list-icon":"🠸"}
+- To the **west**, you smell something acrid and unpleasant {"list-icon":"🠺"}
 ⠀
 The main entrance lies behind you.
 ⠀

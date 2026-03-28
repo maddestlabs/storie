@@ -334,7 +334,7 @@ worlds.config.setDefaults({
   defaultSectionHeight: 520,
   autoLayoutSpacing: 2,
   sectionBorderEnabled: false,
-  sectionBackground: 'texture:assets/img/Paper006_1K-JPG_Color.jpg;tilePx=640;contentDistort=0.008;blendMode=overlay;blendStrength=0.8;paperPlaneZ=focus',
+  sectionBackground: 'texture:assets/img/Paper004_1K-JPG_Displacement.jpg;tilePx=640;contentDistort=0.003;blendMode=overlay;blendStrength=0.7;paperPlaneZ=focus',
 });
 
 worlds.camera.setPosition(0, 55, 320);

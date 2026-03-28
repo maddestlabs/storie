@@ -10195,6 +10195,7 @@ ${exportVars}
       borderFg: border.fg,
       surfaceBg: surface.bg,
       headingFg: heading.fg,
+      italicFg: this.currentTheme.accent3,
       textAlign: options?.textAlign ?? 'left',
       listMarker: this.getWorldsListMarker(),
       listMarkerGapPx: this.getWorldsListMarkerGapPx(),

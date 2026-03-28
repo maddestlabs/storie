@@ -67,12 +67,35 @@ function hitTestNode(layoutById, x, y) {
   return hit;
 }
 function drawLine(ui, x0, y0, x1, y1, color, thickness) {
-  const dx = x1 - x0; const dy = y1 - y0; const len = Math.sqrt(dx * dx + dy * dy);
+  // IMPORTANT: WebGPU UI renderer has a per-frame rect limit (4096).
+  // Drawing wires one pixel at a time will blow that limit as edges get longer,
+  // causing later UI (sliders/preview) to silently stop rendering.
+  const t = Math.max(1, Math.round(thickness || 1));
+  const t2 = Math.floor(t / 2);
+
+  // Fast path: axis-aligned segments as a single rectangle.
+  if (Math.abs(y1 - y0) < 0.001) {
+    const xMin = Math.min(x0, x1);
+    const xMax = Math.max(x0, x1);
+    ui.rect(Math.round(xMin), Math.round(y0) - t2, Math.round(xMax - xMin), t, color);
+    return;
+  }
+  if (Math.abs(x1 - x0) < 0.001) {
+    const yMin = Math.min(y0, y1);
+    const yMax = Math.max(y0, y1);
+    ui.rect(Math.round(x0) - t2, Math.round(yMin), t, Math.round(yMax - yMin), color);
+    return;
+  }
+
+  // Fallback for non-axis-aligned segments: cap steps.
+  const dx = x1 - x0; const dy = y1 - y0;
+  const len = Math.sqrt(dx * dx + dy * dy);
   if (len < 1) return;
-  const steps = Math.ceil(len); const t2 = Math.floor((thickness || 1) / 2);
+  const stepPx = 4;
+  const steps = Math.max(1, Math.min(256, Math.ceil(len / stepPx)));
   for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    ui.rect(Math.round(x0 + dx * t) - t2, Math.round(y0 + dy * t) - t2, (thickness || 1), (thickness || 1), color);
+    const tt = i / steps;
+    ui.rect(Math.round(x0 + dx * tt) - t2, Math.round(y0 + dy * tt) - t2, t, t, color);
   }
 }
 
@@ -80,7 +103,24 @@ function drawLine(ui, x0, y0, x1, y1, color, thickness) {
 function rgba01(r, g, b, a01) {
   return ui.colors.rgba(r, g, b, Math.round(Math.max(0, Math.min(1, a01)) * 255));
 }
-function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+// NOTE: In Storie's SES sandbox, top-level `function` declarations are auto-bound
+// onto `scope` (they do not create a stable global binding). Use `scope.clamp(...)`
+// everywhere to avoid capturing a missing/non-function `clamp` identifier.
+// Also: `scope` persists across hot reloads, so always overwrite these helpers
+// to avoid keeping a truthy-but-non-function value from a previous run.
+scope.clamp = function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); };
+
+// ─── JS math helpers (mirror WGSL helpers for software preview) ───────────────
+scope._fract = function _fract(x) { return x - Math.floor(x); };
+scope._jMix = function _jMix(a, b, t) { return a + (b - a) * t; };
+scope._h21 = function _h21(px, py) { return scope._fract(Math.sin(px * 127.1 + py * 311.7) * 43758.5453); };
+scope._h22 = function _h22(px, py) { return [scope._fract(Math.sin(px * 127.1 + py * 311.7) * 43758.5453), scope._fract(Math.sin(px * 269.5 + py * 183.3) * 43758.5453)]; };
+
+// Make clamp resilient when bounds are accidentally reversed.
+scope.clamp = function clamp(v, a, b) {
+  if (a > b) { const t = a; a = b; b = t; }
+  return Math.max(a, Math.min(b, v));
+};
 
 // ─── Node library ─────────────────────────────────────────────────────────────
 // Each entry: { kind, label, category, inputs, outputs, params, wgsl }
@@ -96,7 +136,8 @@ scope.NODE_DEFS = scope.NODE_DEFS || (function() { return [
     inputs: [],
     outputs: [{ name: 'uv', type: 'vec2f' }],
     params: [],
-    wgsl: (p, ins, out) => `let ${out}_uv: vec2f = uv;`
+    wgsl: (p, ins, out) => `let ${out}_uv: vec2f = uv;`,
+    js:   (p, ins, u, v, t) => ({ uv: [u, v] })
   },
   {
     kind: 'time',
@@ -105,7 +146,8 @@ scope.NODE_DEFS = scope.NODE_DEFS || (function() { return [
     inputs: [],
     outputs: [{ name: 'time', type: 'f32' }],
     params: [],
-    wgsl: (p, ins, out) => `let ${out}_time: f32 = time;`
+    wgsl: (p, ins, out) => `let ${out}_time: f32 = time;`,
+    js:   (p, ins, u, v, t) => ({ time: t })
   },
   {
     kind: 'color_const',
@@ -119,7 +161,8 @@ scope.NODE_DEFS = scope.NODE_DEFS || (function() { return [
       { name: 'b', label: 'B', type: 'f32', default: 0.2, min: 0, max: 1, step: 0.01 },
       { name: 'a', label: 'A', type: 'f32', default: 1.0, min: 0, max: 1, step: 0.01 }
     ],
-    wgsl: (p, ins, out) => `let ${out}_color: vec4f = vec4f(${p.r ?? 1.0}f, ${p.g ?? 0.5}f, ${p.b ?? 0.2}f, ${p.a ?? 1.0}f);`
+    wgsl: (p, ins, out) => `let ${out}_color: vec4f = vec4f(${p.r ?? 1.0}f, ${p.g ?? 0.5}f, ${p.b ?? 0.2}f, ${p.a ?? 1.0}f);`,
+    js:   (p, ins, u, v, t) => ({ color: [p.r ?? 1.0, p.g ?? 0.5, p.b ?? 0.2, p.a ?? 1.0] })
   },
   {
     kind: 'checkerboard',
@@ -133,6 +176,12 @@ scope.NODE_DEFS = scope.NODE_DEFS || (function() { return [
     wgsl: (p, ins, out) => {
       const uvIn = ins.uv || 'uv';
       return `let ${out}_c = floor(${uvIn} * ${p.scale ?? 8.0}f);\nlet ${out}_value: f32 = fract((${out}_c.x + ${out}_c.y) * 0.5) * 2.0;`;
+    },
+    js: (p, ins, u, v, t) => {
+      const uv = ins.uv || [u, v];
+      const sc = p.scale ?? 8.0;
+      const cx = Math.floor(uv[0] * sc); const cy = Math.floor(uv[1] * sc);
+      return { value: scope._fract((cx + cy) * 0.5) * 2.0 };
     }
   },
   {
@@ -148,6 +197,10 @@ scope.NODE_DEFS = scope.NODE_DEFS || (function() { return [
     wgsl: (p, ins, out) => {
       const uvIn = ins.uv || 'uv'; const tIn = ins.time || 'time';
       return `let ${out}_value: f32 = sin(${uvIn}.x * ${p.freq ?? 4.0}f * 6.28318f + ${tIn} * ${p.speed ?? 1.0}f) * 0.5 + 0.5;`;
+    },
+    js: (p, ins, u, v, t) => {
+      const uv = ins.uv || [u, v]; const ti = ins.time !== undefined ? ins.time : t;
+      return { value: Math.sin(uv[0] * (p.freq ?? 4.0) * 6.28318 + ti * (p.speed ?? 1.0)) * 0.5 + 0.5 };
     }
   },
   {
@@ -171,6 +224,17 @@ for (var ${out}_i: i32 = 0; ${out}_i < ${oct}; ${out}_i++) {
   ${out}_f *= 2.0; ${out}_a *= 0.5; ${out}_p = ${out}_p * 2.01 + vec2f(0.13, 0.7);
 }
 let ${out}_value: f32 = ${out}_v * 0.5 + 0.5;`;
+    },
+    js: (p, ins, u, v, t) => {
+      const uv = ins.uv || [u, v]; const ti = ins.time !== undefined ? ins.time : t;
+      const sc = p.scale ?? 3.0; const oct = Math.round(p.octaves ?? 5); const spd = p.speed ?? 0.2;
+      let px = uv[0] * sc + ti * spd; let py = uv[1] * sc;
+      let val = 0; let amp = 0.5; let freq = 1.0;
+      for (let i = 0; i < oct; i++) {
+        val += amp * (scope._h21(px * freq, py * freq) * 2.0 - 1.0);
+        freq *= 2.0; amp *= 0.5; px = px * 2.01 + 0.13; py = py * 2.01 + 0.7;
+      }
+      return { value: scope.clamp(val * 0.5 + 0.5, 0, 1) };
     }
   },
   {
@@ -196,6 +260,24 @@ for (var ${out}_dy: i32 = -1; ${out}_dy <= 1; ${out}_dy++) {
   }
 }
 let ${out}_value: f32 = clamp(${out}_md, 0.0, 1.0);`;
+    },
+    js: (p, ins, u, v, t) => {
+      const uv = ins.uv || [u, v]; const ti = ins.time !== undefined ? ins.time : t;
+      const sc = p.scale ?? 5.0; const spd = p.speed ?? 0.3;
+      const sx = uv[0] * sc; const sy = uv[1] * sc;
+      const ix = Math.floor(sx); const iy = Math.floor(sy);
+      let md = 8.0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = ix + dx; const ny = iy + dy;
+          const h = scope._h22(nx, ny);
+          const hpx = h[0] * 0.5 + 0.5 + Math.sin(ti * spd + scope._h21(nx, ny) * 6.28) * 0.3;
+          const hpy = h[1] * 0.5 + 0.5 + Math.cos(ti * spd + scope._h21(nx + 1, ny) * 6.28) * 0.3;
+          const ddx = (sx - ix) - (nx - ix + hpx); const ddy = (sy - iy) - (ny - iy + hpy);
+          md = Math.min(md, Math.sqrt(ddx * ddx + ddy * ddy));
+        }
+      }
+      return { value: scope.clamp(md, 0, 1) };
     }
   },
   {
@@ -210,6 +292,12 @@ let ${out}_value: f32 = clamp(${out}_md, 0.0, 1.0);`;
     wgsl: (p, ins, out) => {
       const aIn = ins.a || '0.0'; const bIn = ins.b || '1.0'; const fIn = ins.factor || `${p.factor ?? 0.5}f`;
       return `let ${out}_result: f32 = mix(${aIn}, ${bIn}, ${fIn});`;
+    },
+    js: (p, ins, u, v, t) => {
+      const a = ins.a !== undefined ? ins.a : 0.0;
+      const b = ins.b !== undefined ? ins.b : 1.0;
+      const f = ins.factor !== undefined ? ins.factor : (p.factor ?? 0.5);
+      return { result: scope._jMix(a, b, f) };
     }
   },
   {
@@ -229,6 +317,10 @@ let ${out}_value: f32 = clamp(${out}_md, 0.0, 1.0);`;
     wgsl: (p, ins, out) => {
       const vIn = ins.value || '0.5';
       return `let ${out}_color: vec4f = vec4f(mix(${p.r0 ?? 0.05}f, ${p.r1 ?? 0.8}f, ${vIn}), mix(${p.g0 ?? 0.02}f, ${p.g1 ?? 0.5}f, ${vIn}), mix(${p.b0 ?? 0.15}f, ${p.b1 ?? 1.0}f, ${vIn}), 1.0);`;
+    },
+    js: (p, ins, u, v, t) => {
+      const val = ins.value !== undefined ? ins.value : 0.5;
+      return { color: [scope._jMix(p.r0 ?? 0.05, p.r1 ?? 0.8, val), scope._jMix(p.g0 ?? 0.02, p.g1 ?? 0.5, val), scope._jMix(p.b0 ?? 0.15, p.b1 ?? 1.0, val), 1.0] };
     }
   },
   {
@@ -241,6 +333,10 @@ let ${out}_value: f32 = clamp(${out}_md, 0.0, 1.0);`;
     wgsl: (p, ins, out) => {
       const aIn = ins.a || 'vec4f(1.0)'; const bIn = ins.b || 'vec4f(1.0)';
       return `let ${out}_color: vec4f = ${aIn} * ${bIn};`;
+    },
+    js: (p, ins, u, v, t) => {
+      const a = ins.a || [1,1,1,1]; const b = ins.b || [1,1,1,1];
+      return { color: [a[0]*b[0], a[1]*b[1], a[2]*b[2], (a[3]??1)*(b[3]??1)] };
     }
   },
   {
@@ -253,7 +349,8 @@ let ${out}_value: f32 = clamp(${out}_md, 0.0, 1.0);`;
     wgsl: (p, ins, out) => {
       const cIn = ins.color || 'vec4f(0.0, 0.0, 0.0, 1.0)';
       return `return ${cIn};`;
-    }
+    },
+    js: (p, ins, u, v, t) => ({ _result: ins.color || [0,0,0,1] })
   }
 ]; })();
 var NODE_DEFS = scope.NODE_DEFS;
@@ -266,7 +363,42 @@ scope.NODE_DEF_MAP = scope.NODE_DEF_MAP || (function() {
 })();
 var NODE_DEF_MAP = scope.NODE_DEF_MAP;
 
-// ─── Graph-to-WGSL Compiler ───────────────────────────────────────────────────
+// ─── Software graph evaluator (for preview panel) ─────────────────────────────
+// Evaluates the node graph at a single UV coordinate in JavaScript.
+// Returns [r, g, b, a] (each 0-1) for the output node colour, or null on error.
+function evalGraphAtUV(graph, u, v, t, _cachedOrder) {
+  if (!graph) return null;
+  const topo = _cachedOrder ? { order: _cachedOrder, hasCycle: false } : topoSort(graph);
+  if (topo.hasCycle) return null;
+  // port values keyed by "nodeId.portName"
+  const vals = {};
+  for (let ni = 0; ni < topo.order.length; ni++) {
+    const nodeId = topo.order[ni];
+    const node = graph.nodes.find(function(n) { return n.id === nodeId; });
+    if (!node) continue;
+    const def = NODE_DEF_MAP[node.kind];
+    if (!def || typeof def.js !== 'function') continue;
+    // Gather inputs from upstream edges
+    const ins = {};
+    for (let ei = 0; ei < (graph.edges || []).length; ei++) {
+      const e = graph.edges[ei];
+      if (String(e.to && e.to.node) === nodeId) {
+        ins[e.to.port] = vals[e.from.node + '.' + e.from.port];
+      }
+    }
+    const outs = def.js(node.params || {}, ins, u, v, t);
+    // Store outputs
+    for (let pi = 0; pi < (def.outputs || []).length; pi++) {
+      vals[nodeId + '.' + def.outputs[pi].name] = outs && outs[def.outputs[pi].name];
+    }
+    if (node.kind === 'output') {
+      const c = outs && outs._result;
+      if (Array.isArray(c)) return [c[0]||0, c[1]||0, c[2]||0, c[3]!==undefined?c[3]:1];
+      return [0.1, 0.05, 0.2, 1.0];
+    }
+  }
+  return [0.1, 0.05, 0.2, 1.0];
+}
 // Rewrite the final `return` from the output node to be the actual shader return.
 // The output node emits `return <expr>;` — we just keep it, but we need it to
 // appear BEFORE the fallback return, so actually compile it correctly:
@@ -375,7 +507,7 @@ var state = {
   camY: 0,
 
   // Panel split
-  previewH: 300,       // height of preview area at the bottom
+  previewH: 260,       // height of preview area at the bottom
 
   // Interaction
   mouseDownLeft: false,
@@ -392,6 +524,9 @@ var state = {
   // Add-node panel
   addPanelOpen: false,
   addPanelScroll: 0,
+  addPanelX: 12,
+  addPanelY: 8,
+  longPress: null,
 
   // Shader compilation
   shaderName: 'shader-graph-live',
@@ -399,22 +534,43 @@ var state = {
   compileError: null,
   shaderDirty: true,
   lastCompileTime: 0,
+
+  // Inspector
+  inspectedId: null,
+  inspectorScrollY: 0,
 };
 
 // ─── Layout helpers ───────────────────────────────────────────────────────────
 function graphBounds() {
   const W = ui.metrics.canvasWidth || 1280;
   const H = ui.metrics.canvasHeight || 720;
-  const toolbarH = 52;
-  const previewH = clamp(state.previewH || 300, 120, H - toolbarH - 120);
+  const toolbarH = 0;
+  const previewH = scope.clamp(state.previewH || 260, 140, H - toolbarH - 100);
   state.previewH = previewH;
-  const graphH = H - toolbarH - previewH - 6; // 6px splitter
+  const graphH = H - toolbarH - previewH - 8; // 8px splitter
   return {
     toolbar: { x: 0, y: 0, w: W, h: toolbarH },
     graph:   { x: 0, y: toolbarH, w: W, h: graphH },
-    split:   { x: 0, y: toolbarH + graphH, w: W, h: 6 },
-    preview: { x: 0, y: toolbarH + graphH + 6, w: W, h: previewH }
+    split:   { x: 0, y: toolbarH + graphH, w: W, h: 8 },
+    preview: { x: 0, y: toolbarH + graphH + 8, w: W, h: previewH }
   };
+}
+
+function openAddPanelAt(mx, my) {
+  const b = graphBounds();
+  const pw = 260;
+  const ph = Math.min(440, (ui.metrics.canvasHeight || 720) - 80);
+
+  // Prefer opening within the graph canvas.
+  const minX = b.graph.x + 8;
+  const maxX = b.graph.x + b.graph.w - pw - 8;
+  const minY = b.graph.y + 8;
+  const maxY = b.graph.y + b.graph.h - ph - 8;
+
+  state.addPanelX = scope.clamp(mx - pw / 2, minX, maxX);
+  state.addPanelY = scope.clamp(my - 20,    minY, maxY);
+  state.addPanelScroll = 0;
+  state.addPanelOpen = true;
 }
 
 function viewToWorld(x, y) { return { x: x - state.camX, y: y - state.camY }; }
@@ -461,11 +617,9 @@ function recompileIfDirty() {
 
   state.compiledWGSL = wgsl;
   state.compileError = null;
-
-  shader.define(state.shaderName, wgsl, { kind: 'fragment' }).then(function(ok) {
-    if (ok) { shader.setActive(state.shaderName); }
-    else { state.compileError = 'Shader compile failed (GPU rejected)'; }
-  }).catch(function(e) {
+  // Validate WGSL on GPU but never set as active — preview renders via JS software rasterizer.
+  // Only surface real thrown errors; a false return (e.g. WebGPU not yet ready) is not a WGSL error.
+  shader.define(state.shaderName, wgsl, { kind: 'fragment' }).catch(function(e) {
     state.compileError = String(e?.message ?? e);
   });
 }
@@ -554,36 +708,25 @@ function hitTestPort(x, y) {
 ```
 
 ```js on:init
+// Guard against hot-reload / persisted scope corruption.
+if (typeof scope.clamp !== 'function') scope.clamp = function clamp(v, a, b) { if (a > b) { const t = a; a = b; b = t; } return Math.max(a, Math.min(b, v)); };
+if (typeof scope._fract !== 'function') scope._fract = function _fract(x) { return x - Math.floor(x); };
+if (typeof scope._jMix !== 'function') scope._jMix = function _jMix(a, b, t) { return a + (b - a) * t; };
+if (typeof scope._h21 !== 'function') scope._h21 = function _h21(px, py) { return scope._fract(Math.sin(px * 127.1 + py * 311.7) * 43758.5453); };
+if (typeof scope._h22 !== 'function') scope._h22 = function _h22(px, py) { return [scope._fract(Math.sin(px * 127.1 + py * 311.7) * 43758.5453), scope._fract(Math.sin(px * 269.5 + py * 183.3) * 43758.5453)]; };
+
 term.layerID = 'default';
 term.clear();
 gui.init();
 
+// Fresh widget map every load (state persists across hot reloads).
+state.widgets = {};
+state.addPanelOpen = false;
+state.longPress = null;
+
 // Load default graph
 state.graph = JSON.parse(JSON.stringify(DEFAULT_GRAPH));
 rebuildLayout();
-
-const b = graphBounds();
-
-// Toolbar widgets
-const btnAddNode = gui.createButton({
-  bounds: { x: 12, y: 8, width: 110, height: 36 },
-  label: 'Add Node'
-});
-const btnDelete = gui.createButton({
-  bounds: { x: 130, y: 8, width: 90, height: 36 },
-  label: 'Delete'
-});
-const btnReLayout = gui.createButton({
-  bounds: { x: 228, y: 8, width: 100, height: 36 },
-  label: 'Re-Layout'
-});
-const lblStatus = gui.createLabel({
-  bounds: { x: 340, y: 14, width: 600, height: 24 },
-  text: 'Ready',
-  align: 'left'
-});
-
-state.widgets = { btnAddNode, btnDelete, btnReLayout, lblStatus };
 
 // Initial compile
 recompileIfDirty();
@@ -612,6 +755,17 @@ if (event.type === 'text') gui.handleText(event.text);
 
 if (event.type === 'mouse') {
   const mx = event.x; const my = event.y;
+
+  // Desktop: right-click opens the Add Node menu.
+  if (event.button === 'right' && event.action === 'press') {
+    const b = graphBounds();
+    const inGraph = mx >= b.graph.x && mx < b.graph.x + b.graph.w && my >= b.graph.y && my < b.graph.y + b.graph.h;
+    if (inGraph) {
+      openAddPanelAt(mx, my);
+      return;
+    }
+  }
+
   if (event.button === 'left') {
     state.mouseDownLeft = event.action === 'press' || event.action === 'repeat';
 
@@ -621,7 +775,8 @@ if (event.type === 'mouse') {
       // Add-node panel click handling (overlay, check first)
       if (state.addPanelOpen) {
         const pw = 260; const ph = Math.min(440, (ui.metrics.canvasHeight || 720) - 80);
-        const px2 = 12; const py2 = b.toolbar.h + 8;
+        const px2 = state.addPanelX != null ? state.addPanelX : 12;
+        const py2 = state.addPanelY != null ? state.addPanelY : (b.toolbar.h + 8);
         const inPanel = mx >= px2 && mx < px2 + pw && my >= py2 && my < py2 + ph;
         if (inPanel) {
           // Recalculate row layout to find which node was clicked
@@ -648,7 +803,7 @@ if (event.type === 'mouse') {
       }
 
       const inGraph = mx >= b.graph.x && mx < b.graph.x + b.graph.w && my >= b.graph.y && my < b.graph.y + b.graph.h;
-      const inSplit = my >= b.split.y && my < b.split.y + b.split.h;
+      const inSplit = my >= b.split.y && my < b.split.y + b.split.h + 2; // slight tolerance
 
       if (inSplit) {
         state.drag = { mode: 'split', ox: my, startPreviewH: state.previewH };
@@ -675,7 +830,10 @@ if (event.type === 'mouse') {
           state.drag = { mode: 'node', id: hitId, ox: mx, oy: my, startX: r.x, startY: r.y };
         } else {
           state.selectedId = null;
-          state.drag = { mode: 'pan', ox: mx, oy: my, startCamX: state.camX, startCamY: state.camY };
+          // Mobile-friendly: arm long-press to open Add Node. If the pointer
+          // moves, this becomes a pan drag.
+          state.longPress = { x: mx, y: my, t0: Date.now() };
+          state.drag = { mode: 'panPending', ox: mx, oy: my, startCamX: state.camX, startCamY: state.camY };
         }
       }
     }
@@ -689,18 +847,46 @@ if (event.type === 'mouse') {
         state.wireFrom = null;
       }
       state.drag = null;
+      state.longPress = null;
     }
+  }
+  // Immediate GUI mouse handling (slider drag requires same-frame input)
+  gui.handleMouse(event.x, event.y, state.mouseDownLeft);
+}
+
+// Inspector scroll: click on scroll arrows drawn in on:render
+if (event.type === 'mouse' && event.action === 'press') {
+  const emx = event.x; const emy = event.y;
+  const bb = graphBounds();
+  const INSP_W2 = 296;
+  const SAX = bb.preview.x + INSP_W2 - 22;
+  const inArrowX = emx >= SAX && emx < SAX + 18;
+  if (inArrowX) {
+    const upY = bb.preview.y + 4;
+    const dnY = bb.preview.y + bb.preview.h - 22;
+    if (emy >= upY && emy < upY + 18) { state.inspectorScrollY = Math.max(0, (state.inspectorScrollY || 0) - 40); }
+    if (emy >= dnY && emy < dnY + 18) { state.inspectorScrollY = (state.inspectorScrollY || 0) + 40; }
   }
 }
 
 if (event.type === 'mouse_move') {
   const mx = event.x; const my = event.y;
+  gui.handleMouse(mx, my, state.mouseDownLeft);
   if (!state.drag) {
     const w = viewToWorld(mx, my);
     state.hoveredId = hitTestNode(state.layoutById, w.x, w.y);
     return;
   }
   const d = state.drag;
+  if (d.mode === 'panPending') {
+    const dx = mx - d.ox;
+    const dy = my - d.oy;
+    if ((dx * dx + dy * dy) > (6 * 6)) {
+      state.longPress = null;
+      state.drag = { mode: 'pan', ox: d.ox, oy: d.oy, startCamX: d.startCamX, startCamY: d.startCamY };
+    }
+    return;
+  }
   if (d.mode === 'pan') {
     state.camX = d.startCamX + (mx - d.ox);
     state.camY = d.startCamY + (my - d.oy);
@@ -713,7 +899,7 @@ if (event.type === 'mouse_move') {
   } else if (d.mode === 'split') {
     const b = graphBounds();
     const H = ui.metrics.canvasHeight || 720;
-    state.previewH = clamp(d.startPreviewH - (my - d.ox), 80, H - b.toolbar.h - 80);
+    state.previewH = scope.clamp(d.startPreviewH - (my - d.ox), 80, H - b.toolbar.h - 80);
   }
 }
 ```
@@ -721,254 +907,479 @@ if (event.type === 'mouse_move') {
 ```js on:update
 if (!state || !state.widgets) return;
 
-gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);
+// Guard against hot-reload / persisted scope corruption.
+if (typeof scope.clamp !== 'function') scope.clamp = function clamp(v, a, b) { if (a > b) { const t = a; a = b; b = t; } return Math.max(a, Math.min(b, v)); };
+if (typeof scope._fract !== 'function') scope._fract = function _fract(x) { return x - Math.floor(x); };
+if (typeof scope._jMix !== 'function') scope._jMix = function _jMix(a, b, t) { return a + (b - a) * t; };
+if (typeof scope._h21 !== 'function') scope._h21 = function _h21(px, py) { return scope._fract(Math.sin(px * 127.1 + py * 311.7) * 43758.5453); };
+if (typeof scope._h22 !== 'function') scope._h22 = function _h22(px, py) { return [scope._fract(Math.sin(px * 127.1 + py * 311.7) * 43758.5453), scope._fract(Math.sin(px * 269.5 + py * 183.3) * 43758.5453)]; };
 
-// Toolbar button events
-if (state.widgets.btnAddNode.wasClicked()) {
-  state.addPanelOpen = !state.addPanelOpen;
-}
-if (state.widgets.btnDelete.wasClicked()) {
-  deleteSelectedNode();
-}
-if (state.widgets.btnReLayout.wasClicked()) {
-  state.layoutById = new Map(); // clear positions, force auto-layout
-  rebuildLayout();
-}
-
-// Inspector: param sliders for selected node
-const sel = state.selectedId;
-if (sel && state.graph) {
-  const node = state.graph.nodes.find(n => n.id === sel);
-  const def = node ? NODE_DEF_MAP[node.kind] : null;
-  if (def && def.params && def.params.length > 0) {
-    for (const p of def.params) {
-      const widgetId = `param_${sel}_${p.name}`;
-      const existing = state.widgets[widgetId];
-      if (!existing) {
-        // Create slider on-demand
-        const b = graphBounds();
-        const idx = def.params.indexOf(p);
-        state.widgets[widgetId] = gui.createSlider({
-          bounds: { x: 4, y: b.preview.y + 8 + idx * 44, width: 260, height: 36 },
-          label: p.label || p.name,
-          min: p.min ?? 0,
-          max: p.max ?? 1,
-          value: Number(node.params?.[p.name] ?? p.default),
-          step: p.step ?? 0.01
-        });
-      } else {
-        // Update param from slider changes
-        const newVal = existing.getValue();
-        const cur = Number(node?.params?.[p.name] ?? p.default);
-        if (Math.abs(newVal - cur) > 0.0001) {
-          setParam(sel, p.name, newVal);
-        }
-      }
-    }
+// Long-press on empty graph space opens Add Node.
+if (state.longPress && state.mouseDownLeft && !state.addPanelOpen) {
+  const lp = state.longPress;
+  const dt = Date.now() - (lp.t0 || 0);
+  const dx = (getMouseX() - lp.x);
+  const dy = (getMouseY() - lp.y);
+  if (dt > 520 && (dx * dx + dy * dy) <= (6 * 6) && (!state.drag || state.drag.mode === 'panPending')) {
+    openAddPanelAt(lp.x, lp.y);
+    state.longPress = null;
+    state.drag = null;
   }
 }
 
-// Update shader time uniform on every frame
-if (state.compiledWGSL && !state.compileError) {
-  shader.setUniform(state.shaderName, 'time', getTime());
-  shader.setUniform(state.shaderName, 'resolution',
-    [ui.metrics.canvasWidth || 1280, ui.metrics.canvasHeight || 720]);
+// Inspector: param sliders — use gui.setGroupVisible() for reliable show/hide
+// Group key: the node id string (e.g. 'noise0')
+const sel = state.selectedId;
+const bInsp = graphBounds();
+const INSP_PAD = 8;
+const ITEM_H = 36;
+const ITEM_GAP = 6;
+const HEADER_H = 44;  // space for title + id text above sliders
+
+// Slider colors (theme-derived). Default slider track uses the theme surface bg,
+// which can look too opaque against the inspector panel.
+const _baseStyle = getStyle('default');
+const _accent1 = getStyle('accent1');
+const _accent2 = getStyle('accent2');
+function _cr(c) { return (Number(c) >>> 24) & 255; }
+function _cg(c) { return (Number(c) >>> 16) & 255; }
+function _cb(c) { return (Number(c) >>>  8) & 255; }
+function _cl01(t) { return Math.max(0, Math.min(1, Number(t) || 0)); }
+function _withAlpha(c, a01) {
+  const a = Math.round(_cl01(a01) * 255);
+  return ui.colors.rgba(_cr(c), _cg(c), _cb(c), a);
+}
+function _mix(c0, c1, t) {
+  const tt = _cl01(t);
+  const inv = 1 - tt;
+  return ui.colors.rgba(
+    Math.round(_cr(c0) * inv + _cr(c1) * tt),
+    Math.round(_cg(c0) * inv + _cg(c1) * tt),
+    Math.round(_cb(c0) * inv + _cb(c1) * tt),
+    255
+  );
+}
+const SLIDER_TRACK_ALPHA = 0.16;
+const _sliderTrackColor = _withAlpha(_mix(_baseStyle.fg, _accent2.fg, 0.12), SLIDER_TRACK_ALPHA);
+const _sliderKnobColor = _withAlpha(_accent2.fg, 0.85);
+const _sliderKnobHoverColor = _withAlpha(_accent1.fg, 0.92);
+
+// Selection changed: switch visible group
+if (state.inspectedId !== sel) {
+  if (state.inspectedId != null) { gui.setGroupVisible(state.inspectedId, false); }
+  state.inspectorScrollY = 0;
+  state.inspectedId = sel;
+  if (sel != null) { gui.setGroupVisible(sel, true); }
 }
 
-// Status
+// Keep the selected group's widgets visible even during drags.
+if (sel != null) gui.setGroupVisible(sel, true);
+
+if (sel && state.graph) {
+  const node = state.graph.nodes.find(function(n) { return n.id === sel; });
+  const def = node ? NODE_DEF_MAP[node.kind] : null;
+  const params = (def && def.params) ? def.params : [];
+  const totalH = HEADER_H + params.length * (ITEM_H + ITEM_GAP) + (ITEM_H + ITEM_GAP);
+  const availH = bInsp.preview.h - INSP_PAD * 2;
+  const maxScroll = Math.max(0, totalH - availH);
+  if ((state.inspectorScrollY || 0) > maxScroll) state.inspectorScrollY = maxScroll;
+  if ((state.inspectorScrollY || 0) < 0) state.inspectorScrollY = 0;
+
+  for (let pi2 = 0; pi2 < params.length; pi2++) {
+    const p = params[pi2];
+    const widgetId = 'param_' + sel + '_' + p.name;
+    const sliderY = bInsp.preview.y + HEADER_H + INSP_PAD + pi2 * (ITEM_H + ITEM_GAP) - (state.inspectorScrollY || 0);
+
+    if (!state.widgets[widgetId]) {
+      // Create slider, assign to node's group for clean show/hide
+      state.widgets[widgetId] = gui.createSlider({
+        group: sel,
+        bounds: { x: bInsp.preview.x + INSP_PAD, y: sliderY, width: 278 - INSP_PAD * 2, height: ITEM_H },
+        label: p.label || p.name,
+        min: p.min != null ? p.min : 0,
+        max: p.max != null ? p.max : 1,
+        value: Number(node.params ? (node.params[p.name] != null ? node.params[p.name] : p.default) : p.default),
+        step: p.step != null ? p.step : 0.01,
+        sliderStyle: {
+          fg: _baseStyle.fg,
+          trackColor: _sliderTrackColor,
+          knobColor: _sliderKnobColor,
+          knobHoverColor: _sliderKnobHoverColor
+        }
+      });
+    } else {
+      const w = state.widgets[widgetId];
+      // Update position for scroll (use setBounds to stay in the API)
+      w.setBounds({ x: bInsp.preview.x + INSP_PAD, y: sliderY, width: 278 - INSP_PAD * 2, height: ITEM_H });
+      // Keep theme-derived, lower-opacity slider styling in sync.
+      if (w.sliderStyle) {
+        w.sliderStyle.fg = _baseStyle.fg;
+        w.sliderStyle.trackColor = _sliderTrackColor;
+        w.sliderStyle.knobColor = _sliderKnobColor;
+        w.sliderStyle.knobHoverColor = _sliderKnobHoverColor;
+      }
+      // Sync param from slider value
+      const newVal = w.getValue();
+      const cur = Number(node.params ? (node.params[p.name] != null ? node.params[p.name] : p.default) : p.default);
+      if (Math.abs(newVal - cur) > 0.0001) { setParam(sel, p.name, newVal); }
+    }
+  }
+
+  // Delete button inline after the sliders (scrolls with inspector content).
+  const delId = 'btnDeleteNode_' + sel;
+  const delY = bInsp.preview.y + HEADER_H + INSP_PAD + params.length * (ITEM_H + ITEM_GAP) - (state.inspectorScrollY || 0);
+  const delBounds = { x: bInsp.preview.x + INSP_PAD, y: delY, width: 278 - INSP_PAD * 2, height: ITEM_H };
+  if (!state.widgets[delId]) {
+    state.widgets[delId] = gui.createButton({ group: sel, bounds: delBounds, label: 'Delete Node' });
+  } else {
+    state.widgets[delId].setBounds(delBounds);
+  }
+  if (state.widgets[delId].wasClicked()) deleteSelectedNode();
+}
+
+// Compile
 recompileIfDirty();
-const statusMsg = state.compileError
-  ? 'Error: ' + state.compileError.slice(0, 80)
-  : state.compiledWGSL ? 'Compiled OK' : 'No graph';
-if (state.widgets.lblStatus) state.widgets.lblStatus.setText(statusMsg);
 ```
 
 ```js on:render
 if (!state) return;
 
-const base = getStyle('default');
-const W = ui.metrics.canvasWidth || 1280;
-const H = ui.metrics.canvasHeight || 720;
-const mx = getMouseX();
-const my = getMouseY();
+// Guard against hot-reload / persisted scope corruption.
+if (typeof scope.clamp !== 'function') scope.clamp = function clamp(v, a, b) { if (a > b) { const t = a; a = b; b = t; } return Math.max(a, Math.min(b, v)); };
+if (typeof scope._fract !== 'function') scope._fract = function _fract(x) { return x - Math.floor(x); };
+if (typeof scope._jMix !== 'function') scope._jMix = function _jMix(a, b, t) { return a + (b - a) * t; };
+if (typeof scope._h21 !== 'function') scope._h21 = function _h21(px, py) { return scope._fract(Math.sin(px * 127.1 + py * 311.7) * 43758.5453); };
+if (typeof scope._h22 !== 'function') scope._h22 = function _h22(px, py) { return [scope._fract(Math.sin(px * 127.1 + py * 311.7) * 43758.5453), scope._fract(Math.sin(px * 269.5 + py * 183.3) * 43758.5453)]; };
 
-// Colour palette
-const BG        = rgba01(12, 10, 20, 1.0);
-const GRAPH_BG  = rgba01(14, 12, 24, 1.0);
-const PREVIEW_BG= rgba01(8, 6, 16, 1.0);
-const NODE_BG   = rgba01(28, 24, 48, 0.92);
-const NODE_SEL  = rgba01(80, 60, 180, 0.5);
-const NODE_HOV  = rgba01(50, 40, 100, 0.4);
-const BORDER    = rgba01(80, 70, 140, 0.5);
-const PORT_OUT  = rgba01(120, 220, 140, 1.0);
-const PORT_IN   = rgba01(100, 160, 255, 1.0);
-const WIRE      = rgba01(160, 100, 255, 0.7);
-const WIRE_PEND = rgba01(255, 200, 80, 0.8);
-const TEXT_PRI  = rgba01(230, 220, 255, 1.0);
-const TEXT_DIM  = rgba01(150, 140, 200, 0.8);
-const TEXT_KIND = rgba01(120, 200, 160, 0.9);
+// Keep GUI alive even if some graph draw path throws.
+state._lastRenderErrAt = state._lastRenderErrAt || 0;
+try {
+  const base = getStyle('default');
+  const bgAlt = getStyle('bgAlt');
+  const dim = getStyle('dim');
+  const hover = getStyle('hover');
+  const focus = getStyle('focus');
+  const active = getStyle('active');
+  const accent1 = getStyle('accent1');
+  const accent2 = getStyle('accent2');
+  const accent3 = getStyle('accent3');
+  const success = getStyle('success');
+  const error = getStyle('error');
 
-ui.clear(BG);
-term.clear();
-
-const b = graphBounds();
-
-// ── Toolbar background ──────────────────────────────────────────────────────
-ui.rect(0, 0, W, b.toolbar.h, rgba01(20, 16, 36, 1.0));
-ui.rect(0, b.toolbar.h - 1, W, 1, rgba01(80, 70, 140, 0.4));
-
-// ── Graph canvas ────────────────────────────────────────────────────────────
-ui.rect(b.graph.x, b.graph.y, b.graph.w, b.graph.h, GRAPH_BG);
-ui.pushClipRect(b.graph.x, b.graph.y, b.graph.w, b.graph.h);
-
-// Grid
-{
-  const step = 40;
-  const grid = rgba01(255, 255, 255, 0.025);
-  for (let x = ((state.camX % step) + b.graph.x - step); x < b.graph.x + b.graph.w; x += step) {
-    ui.rect(Math.round(x), b.graph.y, 1, b.graph.h, grid);
+  // Theme color helpers (packed 0xRRGGBBAA).
+  function _cr(c) { return (Number(c) >>> 24) & 255; }
+  function _cg(c) { return (Number(c) >>> 16) & 255; }
+  function _cb(c) { return (Number(c) >>>  8) & 255; }
+  function _ca(c) { return (Number(c) >>>  0) & 255; }
+  function _cl01(t) { return Math.max(0, Math.min(1, Number(t) || 0)); }
+  function withAlpha(c, a01) {
+    return ui.colors.rgba(_cr(c), _cg(c), _cb(c), Math.round(_cl01(a01) * 255));
   }
-  for (let y = ((state.camY % step) + b.graph.y - step); y < b.graph.y + b.graph.h; y += step) {
-    ui.rect(b.graph.x, Math.round(y), b.graph.w, 1, grid);
+  function mix(c0, c1, t) {
+    const tt = _cl01(t);
+    const inv = 1 - tt;
+    return ui.colors.rgba(
+      Math.round(_cr(c0) * inv + _cr(c1) * tt),
+      Math.round(_cg(c0) * inv + _cg(c1) * tt),
+      Math.round(_cb(c0) * inv + _cb(c1) * tt),
+      Math.round(_ca(c0) * inv + _ca(c1) * tt)
+    );
   }
-}
+  const W = ui.metrics.canvasWidth || 1280;
+  const H = ui.metrics.canvasHeight || 720;
+  const mx = getMouseX();
+  const my = getMouseY();
 
-// Edges
-if (state.graph) {
-  for (const e of state.graph.edges ?? []) {
-    const fromId = String(e.from?.node ?? '');
-    const toId   = String(e.to?.node ?? '');
-    const fromPort = String(e.from?.port ?? '');
-    const toPort   = String(e.to?.port ?? '');
-    const fr = state.layoutById.get(fromId);
-    const tr = state.layoutById.get(toId);
-    if (!fr || !tr) continue;
+  // Theme-derived palette
+  const BG         = base.bg;
+  const GRAPH_BG   = bgAlt.bg;
+  const PREVIEW_BG = mix(base.bg, bgAlt.bg, 0.55);
 
-    const fromDef = NODE_DEF_MAP[state.graph.nodes.find(n => n.id === fromId)?.kind ?? ''];
-    const toDef   = NODE_DEF_MAP[state.graph.nodes.find(n => n.id === toId)?.kind ?? ''];
-    const fromOutIdx = (fromDef?.outputs ?? []).findIndex(p => p.name === fromPort);
-    const toInIdx    = (toDef?.inputs    ?? []).findIndex(p => p.name === toPort);
+  const NODE_BG    = mix(bgAlt.bg, base.fg, 0.06);
+  const NODE_SEL   = withAlpha(active.bg, 0.80);
+  const NODE_HOV   = withAlpha(hover.bg, 0.75);
 
-    const fv = worldToView(fr.x + fr.w, fr.y + 20 + fromOutIdx * 18);
-    const tv = worldToView(tr.x,        tr.y + 20 + toInIdx * 18);
+  const BORDER     = withAlpha(mix(base.fg, accent2.fg, 0.15), 0.55);
+  const BORDER_SEL = withAlpha(accent1.fg, 0.95);
 
-    // Bezier-like: just draw 3 segments via midpoint
-    const mx2 = (fv.x + tv.x) / 2;
-    drawLine(ui, fv.x, fv.y, mx2, fv.y, WIRE, 2);
-    drawLine(ui, mx2, fv.y, mx2, tv.y, WIRE, 2);
-    drawLine(ui, mx2, tv.y, tv.x, tv.y, WIRE, 2);
+  const PORT_OUT   = withAlpha(accent3.fg, 0.95);
+  const PORT_IN    = withAlpha(accent2.fg, 0.95);
+  const WIRE       = withAlpha(accent2.fg, 0.60);
+  const WIRE_PEND  = withAlpha(accent1.fg, 0.85);
+
+  const TEXT_PRI   = base.fg;
+  const TEXT_DIM   = dim.fg;
+  const TEXT_KIND  = withAlpha(accent3.fg, 0.90);
+
+  const GRID_LINE  = withAlpha(base.fg, 0.05);
+  const PANEL_BG   = withAlpha(bgAlt.bg, 0.92);
+  const PANEL_DIV  = withAlpha(mix(base.fg, accent2.fg, 0.10), 0.25);
+  const SPLIT_BG   = mix(bgAlt.bg, accent2.fg, 0.10);
+  const SPLIT_HOV  = mix(bgAlt.bg, accent2.fg, 0.18);
+  const SPLIT_BAR  = withAlpha(accent2.fg, 0.40);
+  const GRIP_DOT   = withAlpha(accent2.fg, 0.45);
+  const GRIP_DOT_H = withAlpha(accent1.fg, 0.65);
+
+  function catColorFor(category, a01) {
+    const a = a01 != null ? a01 : 1;
+    if (category === 'input')  return withAlpha(accent3.fg, a);
+    if (category === 'pattern')return withAlpha(accent2.fg, a);
+    if (category === 'math')   return withAlpha(accent1.fg, a);
+    if (category === 'color')  return withAlpha(mix(accent1.fg, accent3.fg, 0.5), a);
+    if (category === 'output') return withAlpha(mix(accent1.fg, base.fg, 0.35), a);
+    return withAlpha(base.fg, a * 0.25);
   }
-}
 
-// In-progress wire
-if (state.wireFrom) {
-  const ox = state.wireFrom.px;
-  const oy = state.wireFrom.py;
-  const mx2 = (ox + mx) / 2;
-  drawLine(ui, ox, oy, mx2, oy, WIRE_PEND, 2);
-  drawLine(ui, mx2, oy, mx2, my, WIRE_PEND, 2);
-  drawLine(ui, mx2, my, mx, my, WIRE_PEND, 2);
-}
+  ui.clear(BG);
+  term.clear();
 
-// Nodes
-if (state.graph) {
-  for (const [nodeId, r] of state.layoutById.entries()) {
-    const node = state.graph.nodes.find(n => n.id === nodeId);
-    if (!node || !r) continue;
-    const def = NODE_DEF_MAP[node.kind];
-    const vr = worldToView(r.x, r.y);
+  const b = graphBounds();
 
-    const isSel = state.selectedId === nodeId;
-    const isHov = state.hoveredId === nodeId;
-
-    const bg = isSel ? NODE_SEL : isHov ? NODE_HOV : NODE_BG;
-    ui.rect(vr.x, vr.y, r.w, r.h, bg);
-    // Border
-    const bCol = isSel ? rgba01(140, 100, 255, 0.9) : BORDER;
-    ui.rect(vr.x, vr.y, r.w, 1, bCol);
-    ui.rect(vr.x, vr.y + r.h - 1, r.w, 1, bCol);
-    ui.rect(vr.x, vr.y, 1, r.h, bCol);
-    ui.rect(vr.x + r.w - 1, vr.y, 1, r.h, bCol);
-    // Category colour bar on left
-    const catColor = def?.category === 'input'  ? rgba01(80, 200, 120, 0.7)
-                   : def?.category === 'pattern' ? rgba01(80, 140, 220, 0.7)
-                   : def?.category === 'color'   ? rgba01(220, 100, 200, 0.7)
-                   : def?.category === 'math'    ? rgba01(220, 180, 60, 0.7)
-                   : def?.category === 'output'  ? rgba01(220, 80, 80, 0.7)
-                   : BORDER;
-    ui.rect(vr.x, vr.y, 3, r.h, catColor);
-
-    // Labels
-    ui.text(String(def?.label ?? node.kind), vr.x + 10, vr.y + 6, TEXT_PRI);
-    ui.text(nodeId, vr.x + 10, vr.y + 22, TEXT_DIM);
-
-    // Output ports (right side)
-    for (let i = 0; i < (def?.outputs ?? []).length; i++) {
-      const py = vr.y + 20 + i * 18;
-      ui.rect(vr.x + r.w - 6, py - 4, 7, 8, PORT_OUT);
-      ui.text(def.outputs[i].name, vr.x + r.w - 60, py - 6, TEXT_KIND);
+  // ── Graph canvas ────────────────────────────────────────────────────────────
+  ui.rect(b.graph.x, b.graph.y, b.graph.w, b.graph.h, GRAPH_BG);
+  ui.pushClipRect(b.graph.x, b.graph.y, b.graph.w, b.graph.h);
+try {
+  // Grid
+  {
+    const step = 40;
+    const grid = GRID_LINE;
+    for (let x = ((state.camX % step) + b.graph.x - step); x < b.graph.x + b.graph.w; x += step) {
+      ui.rect(Math.round(x), b.graph.y, 1, b.graph.h, grid);
     }
-    // Input ports (left side)
-    for (let i = 0; i < (def?.inputs ?? []).length; i++) {
-      const py = vr.y + 20 + i * 18;
-      ui.rect(vr.x - 1, py - 4, 7, 8, PORT_IN);
-      ui.text(def.inputs[i].name, vr.x + 8, py - 6, TEXT_KIND);
+    for (let y = ((state.camY % step) + b.graph.y - step); y < b.graph.y + b.graph.h; y += step) {
+      ui.rect(b.graph.x, Math.round(y), b.graph.w, 1, grid);
     }
   }
+
+  // Edges
+  if (state.graph) {
+    for (const e of state.graph.edges ?? []) {
+      const fromId = String(e.from?.node ?? '');
+      const toId   = String(e.to?.node ?? '');
+      const fromPort = String(e.from?.port ?? '');
+      const toPort   = String(e.to?.port ?? '');
+      const fr = state.layoutById.get(fromId);
+      const tr = state.layoutById.get(toId);
+      if (!fr || !tr) continue;
+
+      const fromDef = NODE_DEF_MAP[state.graph.nodes.find(n => n.id === fromId)?.kind ?? ''];
+      const toDef   = NODE_DEF_MAP[state.graph.nodes.find(n => n.id === toId)?.kind ?? ''];
+      const fromOutIdx = (fromDef?.outputs ?? []).findIndex(p => p.name === fromPort);
+      const toInIdx    = (toDef?.inputs    ?? []).findIndex(p => p.name === toPort);
+
+      const fv = worldToView(fr.x + fr.w, fr.y + 20 + fromOutIdx * 18);
+      const tv = worldToView(tr.x,        tr.y + 20 + toInIdx * 18);
+
+      // Bezier-like: just draw 3 segments via midpoint
+      const mx2 = (fv.x + tv.x) / 2;
+      drawLine(ui, fv.x, fv.y, mx2, fv.y, WIRE, 2);
+      drawLine(ui, mx2, fv.y, mx2, tv.y, WIRE, 2);
+      drawLine(ui, mx2, tv.y, tv.x, tv.y, WIRE, 2);
+    }
+  }
+
+  // In-progress wire
+  if (state.wireFrom) {
+    const ox = state.wireFrom.px;
+    const oy = state.wireFrom.py;
+    const mx2 = (ox + mx) / 2;
+    drawLine(ui, ox, oy, mx2, oy, WIRE_PEND, 2);
+    drawLine(ui, mx2, oy, mx2, my, WIRE_PEND, 2);
+    drawLine(ui, mx2, my, mx, my, WIRE_PEND, 2);
+  }
+
+  // Nodes
+  if (state.graph) {
+    for (const [nodeId, r] of state.layoutById.entries()) {
+      const node = state.graph.nodes.find(n => n.id === nodeId);
+      if (!node || !r) continue;
+      const def = NODE_DEF_MAP[node.kind];
+      const vr = worldToView(r.x, r.y);
+
+      const isSel = state.selectedId === nodeId;
+      const isHov = state.hoveredId === nodeId;
+
+      const bg = isSel ? NODE_SEL : isHov ? NODE_HOV : NODE_BG;
+      ui.rect(vr.x, vr.y, r.w, r.h, bg);
+      // Border
+      const bCol = isSel ? BORDER_SEL : BORDER;
+      ui.rect(vr.x, vr.y, r.w, 1, bCol);
+      ui.rect(vr.x, vr.y + r.h - 1, r.w, 1, bCol);
+      ui.rect(vr.x, vr.y, 1, r.h, bCol);
+      ui.rect(vr.x + r.w - 1, vr.y, 1, r.h, bCol);
+      // Category colour bar on left
+      const catColor = catColorFor(def?.category, 0.70);
+      ui.rect(vr.x, vr.y, 3, r.h, catColor);
+
+      // Labels
+      ui.text(String(def?.label ?? node.kind), vr.x + 10, vr.y + 6, TEXT_PRI);
+      ui.text(nodeId, vr.x + 10, vr.y + 22, TEXT_DIM);
+
+      // Output ports (right side)
+      for (let i = 0; i < (def?.outputs ?? []).length; i++) {
+        const py = vr.y + 20 + i * 18;
+        ui.rect(vr.x + r.w - 6, py - 4, 7, 8, PORT_OUT);
+        ui.text(def.outputs[i].name, vr.x + r.w - 60, py - 6, TEXT_KIND);
+      }
+      // Input ports (left side)
+      for (let i = 0; i < (def?.inputs ?? []).length; i++) {
+        const py = vr.y + 20 + i * 18;
+        ui.rect(vr.x - 1, py - 4, 7, 8, PORT_IN);
+        ui.text(def.inputs[i].name, vr.x + 8, py - 6, TEXT_KIND);
+      }
+    }
+  }
+  } finally {
+    ui.popClipRect();
+  }
+
+// ── Splitter (draggable — drag up to expand bottom panel) ──────────────────
+const splitHover = mx >= b.split.x && mx < b.split.x + b.split.w && my >= b.split.y && my < b.split.y + b.split.h;
+ui.rect(b.split.x, b.split.y, b.split.w, b.split.h, splitHover ? SPLIT_HOV : SPLIT_BG);
+ui.rect(b.split.x, b.split.y + 2, b.split.w, 2, SPLIT_BAR);
+// Grip dots in the center
+{
+  const gx = Math.floor(W / 2) - 20;
+  const gy = b.split.y + 1;
+  for (let gi = 0; gi < 5; gi++) {
+    ui.rect(gx + gi * 10, gy, 4, 4, splitHover ? GRIP_DOT_H : GRIP_DOT);
+  }
 }
 
-ui.popClipRect();
+  // ── Preview area: inspector strip (left) + shader square (right) ─────────────
+  const INSP_W  = 296;
+  const INSP_PAD = 8;
+  const PREV_SZ = Math.min(b.preview.h - 16, 240);  // square size
+  const prevSqX = b.preview.x + b.preview.w - PREV_SZ - INSP_PAD;
+  const prevSqY = b.preview.y + Math.max(0, Math.floor((b.preview.h - PREV_SZ) / 2));
 
-// ── Splitter ────────────────────────────────────────────────────────────────
-ui.rect(b.split.x, b.split.y, b.split.w, b.split.h, rgba01(40, 35, 70, 1.0));
-ui.rect(b.split.x, b.split.y + 2, b.split.w, 2, rgba01(100, 80, 180, 0.5));
+  // Background
+  ui.rect(b.preview.x, b.preview.y, b.preview.w, b.preview.h, PREVIEW_BG);
+  // Inspector strip background
+  ui.rect(b.preview.x, b.preview.y, INSP_W, b.preview.h, PANEL_BG);
+  // Divider line
+  ui.rect(b.preview.x + INSP_W, b.preview.y, 1, b.preview.h, PANEL_DIV);
 
-// ── Preview area ────────────────────────────────────────────────────────────
-ui.rect(b.preview.x, b.preview.y, b.preview.w, b.preview.h, PREVIEW_BG);
+  // Inspector content (clipped to strip)
+  ui.pushClipRect(b.preview.x, b.preview.y, INSP_W, b.preview.h);
+  try {
+    if (!state.selectedId) {
+      ui.text('No node selected', b.preview.x + INSP_PAD, b.preview.y + INSP_PAD, TEXT_DIM);
+      ui.text('Click a node to inspect it', b.preview.x + INSP_PAD, b.preview.y + INSP_PAD + 16, withAlpha(TEXT_DIM, 0.75));
+    } else {
+      const selNode = state.graph ? state.graph.nodes.find(function(n) { return n.id === state.selectedId; }) : null;
+      const selDef = selNode ? NODE_DEF_MAP[selNode.kind] : null;
+      if (selDef) {
+        const hx = b.preview.x + INSP_PAD;
+        const hy = b.preview.y + INSP_PAD;
+        // Category colour dot
+        const dotCol = catColorFor(selDef.category, 1.0);
+        ui.rect(hx, hy + 3, 6, 10, dotCol);
+        ui.text(selDef.label != null ? selDef.label : selNode.kind, hx + 10, hy, TEXT_PRI);
+        ui.text('id: ' + state.selectedId, hx + 10, hy + 14, TEXT_DIM);
+        if (!selDef.params || selDef.params.length === 0) {
+          ui.text('(no parameters)', hx + 10, hy + 34, TEXT_DIM);
+        }
+      }
+    }
+  } finally {
+    ui.popClipRect();
+  }
 
-// The active shader (if compiled) renders via the `shader` system to the
-// screen background, so we just overlay a label + WGSL source peek here.
+// Scroll arrows for inspector (if needed)
 {
-  const px = b.preview.x + 4;
-  const py = b.preview.y + 4;
+  const selNode2 = state.selectedId && state.graph ? state.graph.nodes.find(function(n) { return n.id === state.selectedId; }) : null;
+  const selDef2 = selNode2 ? NODE_DEF_MAP[selNode2.kind] : null;
+  const paramCount = selDef2 && selDef2.params ? selDef2.params.length : 0;
+  const totalContentH = 34 + paramCount * 40;
+  const availH = b.preview.h - INSP_PAD * 2;
+  const maxScroll = Math.max(0, totalContentH - availH);
+  const sax = b.preview.x + INSP_W - 22;
+  if (maxScroll > 0 && (state.inspectorScrollY || 0) > 0) {
+    ui.rect(sax, b.preview.y + 4, 18, 18, withAlpha(focus.bg, 0.75));
+    ui.text('\u25b2', sax + 5, b.preview.y + 5, withAlpha(accent2.fg, 0.90));
+  }
+  if (maxScroll > 0 && (state.inspectorScrollY || 0) < maxScroll) {
+    ui.rect(sax, b.preview.y + b.preview.h - 22, 18, 18, withAlpha(focus.bg, 0.75));
+    ui.text('\u25bc', sax + 5, b.preview.y + b.preview.h - 21, withAlpha(accent2.fg, 0.90));
+  }
+}
+
+// Shader preview square (bottom-right)
+ui.rect(prevSqX - 2, prevSqY - 2, PREV_SZ + 4, PREV_SZ + 4, withAlpha(accent2.fg, 0.25));
+ui.rect(prevSqX, prevSqY, PREV_SZ, PREV_SZ, withAlpha(base.bg, 1.0));
+ui.pushClipRect(prevSqX, prevSqY, PREV_SZ, PREV_SZ);
+try {
+  if (state.graph && state.compiledWGSL) {
+    const topoCache = topoSort(state.graph);
+    if (!topoCache.hasCycle) {
+      const PREV_PX = 6;
+      const pcols = Math.max(1, Math.floor(PREV_SZ / PREV_PX));
+      const prows = Math.max(1, Math.floor(PREV_SZ / PREV_PX));
+      const pt = getTime();
+
+      // Sanitize channel values to avoid NaNs breaking color creation.
+      function _ch(x) {
+        const n = Number(x);
+        return Number.isFinite(n) ? n : 0;
+      }
+
+      for (let prow = 0; prow < prows; prow++) {
+        for (let pcol = 0; pcol < pcols; pcol++) {
+          const pu = (pcol + 0.5) / pcols;
+          const pv = (prow + 0.5) / prows;
+          const rgba = evalGraphAtUV(state.graph, pu, pv, pt, topoCache.order);
+          if (rgba && rgba.length >= 3) {
+            const r = scope.clamp(_ch(rgba[0]), 0, 1);
+            const g = scope.clamp(_ch(rgba[1]), 0, 1);
+            const b2 = scope.clamp(_ch(rgba[2]), 0, 1);
+            const pc = ui.colors.rgba(
+              Math.round(r * 255),
+              Math.round(g * 255),
+              Math.round(b2 * 255),
+              255
+            );
+            ui.rect(prevSqX + pcol * PREV_PX, prevSqY + prow * PREV_PX, PREV_PX, PREV_PX, pc);
+          }
+        }
+      }
+    }
+  }
+} catch(_e) {
+  // If preview rendering fails, keep the rest of the UI alive.
+  // Throttle logs to avoid spamming on every frame.
+  state._lastPreviewErrAt = state._lastPreviewErrAt || 0;
+  const now = Date.now();
+  if (now - state._lastPreviewErrAt > 1000) {
+    state._lastPreviewErrAt = now;
+    try { console.warn('[shader-graph] preview render failed:', _e); } catch { /* ignore */ }
+  }
+} finally {
+  ui.popClipRect();
+}
+// Status below preview square
+{
+  const slx = prevSqX;
+  const sly = prevSqY + PREV_SZ + 5;
   if (state.compileError) {
-    ui.text('Compile Error:', px, py, rgba01(255, 80, 80, 1.0));
-    ui.text(state.compileError.slice(0, 120), px, py + 18, rgba01(255, 160, 100, 0.9));
-  } else if (!state.compiledWGSL) {
-    ui.text('No compiled shader', px, py, TEXT_DIM);
+    ui.text('WGSL Error', slx, sly, error.fg);
+  } else if (state.compiledWGSL) {
+    ui.text('Live Preview', slx, sly, withAlpha(success.fg, 0.95));
   } else {
-    ui.text('Live Preview  (shader running)', px, py, rgba01(120, 220, 140, 1.0));
-    // Show first few lines of WGSL
-    const lines = state.compiledWGSL.split('\n').slice(0, 6);
-    for (let i = 0; i < lines.length; i++) {
-      ui.text(lines[i].slice(0, 90), px, py + 20 + i * 16, rgba01(160, 150, 200, 0.6));
-    }
-  }
-}
-
-// Inspector panel (right side of preview, param sliders)
-if (state.selectedId && state.graph) {
-  const node = state.graph.nodes.find(n => n.id === state.selectedId);
-  const def = node ? NODE_DEF_MAP[node.kind] : null;
-  if (def) {
-    const ix = b.preview.x + 270;
-    const iy = b.preview.y + 4;
-    ui.text(`[${def.label ?? node.kind}]  id: ${state.selectedId}`, ix, iy, TEXT_PRI);
-    if (def.params && def.params.length === 0) {
-      ui.text('(no parameters)', ix, iy + 18, TEXT_DIM);
-    }
+    ui.text('No shader', slx, sly, TEXT_DIM);
   }
 }
 
 // ── Add-node panel (overlay) ───────────────────────────────────────────────
 if (state.addPanelOpen) {
   const pw = 260; const ph = Math.min(440, H - 80);
-  const px2 = 12; const py2 = b.toolbar.h + 8;
-  ui.rect(px2, py2, pw, ph, rgba01(20, 16, 40, 0.97));
-  ui.rect(px2, py2, pw, 1, rgba01(120, 100, 220, 0.7));
-  ui.rect(px2, py2 + ph - 1, pw, 1, rgba01(120, 100, 220, 0.7));
-  ui.rect(px2, py2, 1, ph, rgba01(120, 100, 220, 0.7));
-  ui.rect(px2 + pw - 1, py2, 1, ph, rgba01(120, 100, 220, 0.7));
+  const px2 = state.addPanelX != null ? state.addPanelX : 12;
+  const py2 = state.addPanelY != null ? state.addPanelY : (b.toolbar.h + 8);
+  ui.rect(px2, py2, pw, ph, withAlpha(bgAlt.bg, 0.97));
+  ui.rect(px2, py2, pw, 1, withAlpha(accent2.fg, 0.60));
+  ui.rect(px2, py2 + ph - 1, pw, 1, withAlpha(accent2.fg, 0.60));
+  ui.rect(px2, py2, 1, ph, withAlpha(accent2.fg, 0.60));
+  ui.rect(px2 + pw - 1, py2, 1, ph, withAlpha(accent2.fg, 0.60));
   ui.text('Add Node', px2 + 10, py2 + 8, TEXT_PRI);
 
   const categories = ['input', 'pattern', 'math', 'color', 'output'];
@@ -980,8 +1391,8 @@ if (state.addPanelOpen) {
     rowY += 16;
     for (const d of catDefs) {
       const hovered = mx >= px2 + 4 && mx < px2 + pw - 4 && my >= rowY - 2 && my < rowY + 18;
-      if (hovered) ui.rect(px2 + 4, rowY - 2, pw - 8, 20, rgba01(80, 60, 160, 0.5));
-      ui.text(d.label, px2 + 14, rowY, hovered ? rgba01(240, 220, 255, 1.0) : TEXT_PRI);
+      if (hovered) ui.rect(px2 + 4, rowY - 2, pw - 8, 20, withAlpha(focus.bg, 0.85));
+      ui.text(d.label, px2 + 14, rowY, hovered ? accent1.fg : TEXT_PRI);
       // Click detection in render is not ideal but works for overlay panels
       rowY += 22;
       if (rowY > py2 + ph - 16) break;
@@ -991,6 +1402,14 @@ if (state.addPanelOpen) {
   }
 }
 
-// GUI overlay
-gui.render(ui);
+} catch(_e) {
+  const now = Date.now();
+  if (now - state._lastRenderErrAt > 1000) {
+    state._lastRenderErrAt = now;
+    try { console.warn('[shader-graph] render failed:', _e); } catch { /* ignore */ }
+  }
+} finally {
+  // GUI overlay should always render (sliders, buttons, etc.)
+  try { gui.render(ui); } catch { /* ignore */ }
+}
 ```

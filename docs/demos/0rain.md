@@ -84,7 +84,7 @@ Its crew knew every rattle in the frame. Kess trusted it because it was ugly, ov
 
 Now the ship is a carcass cooling in the rain, but to the survivors it still means one thing: there is no route home except the one they make themselves.
 
-- [Back](action:history-back)
+- [Back](action:history-back){"list-icon":"⇐"}
 
 # Plan with Kess
 
@@ -1095,7 +1095,7 @@ function initOverlayGui() {
     { label: '1', action: 'digit', value: '1' },
     { label: '2', action: 'digit', value: '2' },
     { label: '3', action: 'digit', value: '3' },
-    { label: '<', action: 'backspace' },
+    { label: '⌫', action: 'backspace' },
     { label: '4', action: 'digit', value: '4' },
     { label: '5', action: 'digit', value: '5' },
     { label: '6', action: 'digit', value: '6' },
@@ -1911,7 +1911,7 @@ if (event.type === 'keydown') {
 if (event.type === 'mouse' && event.action === 'press') {
   if (_gm === 'play') {
      handleDigit(event.cellX < getTermWidth() / 2 ? '1' : '0');
-  } else {
+  } else if (_gm === 'start') {
     startGame();
   }
 }

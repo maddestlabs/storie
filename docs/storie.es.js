@@ -11815,14 +11815,14 @@ const THEMES = {
     // Raised paper
     fg: 707407103,
     // Near-black ink
-    fgAlt: 1819045631,
-    // Muted gray
+    fgAlt: 4027058431,
+    // Red (tertiary)
     accent1: 2048136447,
     // Dark red
     accent2: 976895231,
     // Charcoal (links/secondary)
-    accent3: 2105377023
-    // Mid gray (tertiary)
+    accent3: 1819045631
+    // Muted gray
   },
   neotopia: {
     bg: 151587327,
@@ -15908,6 +15908,78 @@ function parseImageMetadata(title) {
     ...width ? { width } : {}
   };
 }
+function tryParseJsonObject(raw) {
+  try {
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === "object" && !Array.isArray(obj)) return obj;
+  } catch {
+  }
+  return null;
+}
+function parseLooseDirectiveValue(raw) {
+  const s = raw.trim();
+  if (s === "true") return true;
+  if (s === "false") return false;
+  if (s === "null") return null;
+  if (/^[+-]?(?:\d+\.?\d*|\d*\.\d+)$/.test(s)) return Number(s);
+  const quoted = s.match(/^"([\s\S]*)"$/) ?? s.match(/^'([\s\S]*)'$/);
+  if (quoted) return quoted[1];
+  return s;
+}
+function parseLooseDirectiveObject(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  const inner = trimmed.slice(1, -1).trim();
+  if (!inner) return {};
+  const parts = [];
+  let buf = "";
+  let quote2 = null;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (quote2) {
+      buf += ch;
+      if (ch === quote2 && inner[i - 1] !== "\\") quote2 = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote2 = ch;
+      buf += ch;
+      continue;
+    }
+    if (ch === ",") {
+      parts.push(buf.trim());
+      buf = "";
+      continue;
+    }
+    buf += ch;
+  }
+  if (buf.trim()) parts.push(buf.trim());
+  const out = {};
+  for (const part of parts) {
+    if (!part) continue;
+    const colon = part.indexOf(":");
+    if (colon <= 0) continue;
+    const key = part.slice(0, colon).trim().replace(/^"|"$/g, "").replace(/^'|'$/g, "");
+    out[key] = parseLooseDirectiveValue(part.slice(colon + 1));
+  }
+  return out;
+}
+function parseDirectiveObject(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  return tryParseJsonObject(trimmed) ?? parseLooseDirectiveObject(trimmed);
+}
+function parseTrailingDirectiveObject(text) {
+  const lastBrace = text.lastIndexOf("{");
+  if (lastBrace >= 0) {
+    const directivePart = text.slice(lastBrace);
+    const obj = parseDirectiveObject(directivePart);
+    if (obj) {
+      return { displayText: text.slice(0, lastBrace).trimEnd(), directive: obj };
+    }
+  }
+  return { displayText: text, directive: null };
+}
 function parseCalloutBlock(lines, options) {
   let firstContentIndex = -1;
   for (let i = 0; i < lines.length; i++) {
@@ -16062,6 +16134,26 @@ function parseInlines(text, options) {
   };
   while (i < text.length) {
     const ch = text[i] || "";
+    if (text.startsWith("**", i)) {
+      const end = text.indexOf("**", i + 2);
+      if (end !== -1) {
+        const inner = text.slice(i + 2, end);
+        flushText();
+        inlines.push({ kind: "strong", inlines: parseInlines(inner, options) });
+        i = end + 2;
+        continue;
+      }
+    }
+    if (ch === "*" && text[i + 1] !== "*") {
+      const end = text.indexOf("*", i + 1);
+      if (end !== -1) {
+        const inner = text.slice(i + 1, end);
+        flushText();
+        inlines.push({ kind: "em", inlines: parseInlines(inner, options) });
+        i = end + 1;
+        continue;
+      }
+    }
     if (text.startsWith(":gui{", i)) {
       const end = findInlineDirectiveEnd(text, i + 5);
       if (end !== -1) {
@@ -16240,8 +16332,10 @@ function parseMarkdownLite(source, options) {
     if (/^\s*[-*]\s+/.test(line)) {
       const items = [];
       while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-        const itemText = lines[i].replace(/^\s*[-*]\s+/, "").trimEnd();
-        items.push(parseInlines(itemText, options));
+        const rawItemText = lines[i].replace(/^\s*[-*]\s+/, "").trimEnd();
+        const { displayText, directive } = parseTrailingDirectiveObject(rawItemText);
+        const markerText = directive && Object.prototype.hasOwnProperty.call(directive, "list-icon") ? directive["list-icon"] === null ? null : String(directive["list-icon"]) : void 0;
+        items.push({ inlines: parseInlines(displayText, options), markerText });
         i++;
       }
       nodes.push({ kind: "list", items, ordered: false });
@@ -16258,7 +16352,7 @@ function parseMarkdownLite(source, options) {
           start = Number.isFinite(parsed) ? parsed : 1;
         }
         const itemText = match[2].trimEnd();
-        items.push(parseInlines(itemText, options));
+        items.push({ inlines: parseInlines(itemText, options) });
         i++;
       }
       nodes.push({ kind: "list", items, ordered: true, start: start ?? 1 });
@@ -16301,23 +16395,36 @@ function getLineWidth(line, maxWidthPx, measure, charW, charH) {
   }
   return width;
 }
-function tokenizeInlines(inlines) {
+function tokenizeInlines(inlines, ctx) {
   const runs = [];
-  for (const inline of inlines) {
-    if (inline.kind === "text") {
-      const parts = inline.text.split(/(\s+)/);
+  const em = (ctx == null ? void 0 : ctx.em) === true;
+  const strong = (ctx == null ? void 0 : ctx.strong) === true;
+  const pushText = (text, kind, url) => {
+    if (kind === "text") {
+      const parts = text.split(/(\s+)/);
       for (const p of parts) {
         if (!p) continue;
-        runs.push({ kind: "text", text: p });
+        runs.push({ kind: "text", text: p, em, strong });
       }
+      return;
+    }
+    runs.push({ kind, text, ...url ? { url } : {}, em, strong });
+  };
+  for (const inline of inlines) {
+    if (inline.kind === "text") {
+      pushText(inline.text, "text");
     } else if (inline.kind === "newline") {
       runs.push({ kind: "newline" });
     } else if (inline.kind === "widget") {
       runs.push({ kind: "widget", widget: inline.widget });
     } else if (inline.kind === "link") {
-      runs.push({ kind: "link", text: inline.text, url: inline.url });
+      pushText(inline.text, "link", inline.url);
+    } else if (inline.kind === "code") {
+      pushText(inline.text, "code");
+    } else if (inline.kind === "em") {
+      runs.push(...tokenizeInlines(inline.inlines, { em: true, strong }));
     } else {
-      runs.push({ kind: "code", text: inline.text });
+      runs.push(...tokenizeInlines(inline.inlines, { em, strong: true }));
     }
   }
   return runs;
@@ -16621,13 +16728,17 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
         continue;
       }
       const isActiveLink = run.kind === "link" && style.activeLinkIndex === linkIndex;
-      const color = fgOverride ?? (run.kind === "link" ? isActiveLink ? style.activeLinkFg ?? style.linkFg : style.linkFg : run.kind === "code" ? style.codeFg : style.fg);
+      const baseColor = fgOverride ?? (run.kind === "link" ? isActiveLink ? style.activeLinkFg ?? style.linkFg : style.linkFg : run.kind === "code" ? style.codeFg : style.fg);
+      const color = run.em ? style.italicFg ?? baseColor : baseColor;
       if (run.kind === "code" && run.text.trim().length > 0) {
         const w = measure ? measure(run.text) : run.text.length * charW;
         ops.push({ kind: "rect", x: cx, y: textY - Math.round(charH * 0.15), w, h: Math.round(charH * 1.15), color: style.codeBg });
         bumpMax(cx, textY - Math.round(charH * 0.15), w, Math.round(charH * 1.15));
       }
       ops.push({ kind: "text", text: run.text, x: cx, y: textY, color });
+      if (run.strong) {
+        ops.push({ kind: "text", text: run.text, x: cx + 1, y: textY, color });
+      }
       {
         const w = measure ? measure(run.text) : run.text.length * charW;
         bumpMax(cx, textY, w, charH);
@@ -16705,7 +16816,7 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
         const markerColor = style.listMarkerFg ?? style.fg;
         for (let itemIndex = 0; itemIndex < node.items.length; itemIndex++) {
           const item = node.items[itemIndex];
-          const markerText = node.ordered ? `${(node.start ?? 1) + itemIndex}.` : customMarkerText;
+          const markerText = node.ordered ? `${(node.start ?? 1) + itemIndex}.` : item.markerText === void 0 ? customMarkerText : String(item.markerText ?? "");
           const markerWidth = markerText.length > 0 ? measure ? measure(markerText) : markerText.length * charW : 0;
           const defaultGapPx = markerText.length > 0 && !/\s$/.test(markerText) ? charW : 0;
           const resolvedGapPx = gapPx ?? defaultGapPx;
@@ -16714,7 +16825,7 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
           const wrapIndentPx = Math.max(markerAdvance, hangIndentPx);
           const listInnerWidth = Math.max(1, localInnerW - wrapIndentPx);
           const listMaxChars = Math.max(1, Math.floor(listInnerWidth / charW));
-          const itemRuns = tokenizeInlines(item);
+          const itemRuns = tokenizeInlines(item.inlines);
           const lines = measure ? wrapRunsByWidth(itemRuns, listInnerWidth, measure, charW, charH) : wrapRuns(itemRuns, listMaxChars, charW, charH);
           let first = true;
           for (const ln of lines) {
@@ -34250,6 +34361,7 @@ ${exportVars}
       borderFg: border.fg,
       surfaceBg: surface.bg,
       headingFg: heading.fg,
+      italicFg: this.currentTheme.accent3,
       textAlign: (options == null ? void 0 : options.textAlign) ?? "left",
       listMarker: this.getWorldsListMarker(),
       listMarkerGapPx: this.getWorldsListMarkerGapPx(),

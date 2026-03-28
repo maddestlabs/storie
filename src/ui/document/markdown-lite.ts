@@ -32,6 +32,86 @@ function parseImageMetadata(title?: string): { title?: string; align?: 'left' | 
   };
 }
 
+function tryParseJsonObject(raw: string): Record<string, any> | null {
+  try {
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj as Record<string, any>;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function parseLooseDirectiveValue(raw: string): any {
+  const s = raw.trim();
+  if (s === 'true') return true;
+  if (s === 'false') return false;
+  if (s === 'null') return null;
+  if (/^[+-]?(?:\d+\.?\d*|\d*\.\d+)$/.test(s)) return Number(s);
+  const quoted = s.match(/^"([\s\S]*)"$/) ?? s.match(/^'([\s\S]*)'$/);
+  if (quoted) return quoted[1];
+  return s;
+}
+
+function parseLooseDirectiveObject(raw: string): Record<string, any> | null {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+  const inner = trimmed.slice(1, -1).trim();
+  if (!inner) return {};
+
+  const parts: string[] = [];
+  let buf = '';
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i]!;
+    if (quote) {
+      buf += ch;
+      if (ch === quote && inner[i - 1] !== '\\') quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch as any;
+      buf += ch;
+      continue;
+    }
+    if (ch === ',') {
+      parts.push(buf.trim());
+      buf = '';
+      continue;
+    }
+    buf += ch;
+  }
+  if (buf.trim()) parts.push(buf.trim());
+
+  const out: Record<string, any> = {};
+  for (const part of parts) {
+    if (!part) continue;
+    const colon = part.indexOf(':');
+    if (colon <= 0) continue;
+    const key = part.slice(0, colon).trim().replace(/^"|"$/g, '').replace(/^'|'$/g, '');
+    out[key] = parseLooseDirectiveValue(part.slice(colon + 1));
+  }
+  return out;
+}
+
+function parseDirectiveObject(raw: string): Record<string, any> | null {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+  return tryParseJsonObject(trimmed) ?? parseLooseDirectiveObject(trimmed);
+}
+
+function parseTrailingDirectiveObject(text: string): { displayText: string; directive: Record<string, any> | null } {
+  const lastBrace = text.lastIndexOf('{');
+  if (lastBrace >= 0) {
+    const directivePart = text.slice(lastBrace);
+    const obj = parseDirectiveObject(directivePart);
+    if (obj) {
+      return { displayText: text.slice(0, lastBrace).trimEnd(), directive: obj };
+    }
+  }
+  return { displayText: text, directive: null };
+}
+
 function parseCalloutBlock(lines: string[], options?: ParseMarkdownLiteOptions): DocNode | null {
   let firstContentIndex = -1;
   for (let i = 0; i < lines.length; i++) {
@@ -210,6 +290,30 @@ function parseInlines(text: string, options?: ParseMarkdownLiteOptions): Inline[
 
   while (i < text.length) {
     const ch = text[i] || '';
+
+    // Strong emphasis: **text**
+    if (text.startsWith('**', i)) {
+      const end = text.indexOf('**', i + 2);
+      if (end !== -1) {
+        const inner = text.slice(i + 2, end);
+        flushText();
+        inlines.push({ kind: 'strong', inlines: parseInlines(inner, options) });
+        i = end + 2;
+        continue;
+      }
+    }
+
+    // Emphasis: *text*
+    if (ch === '*' && text[i + 1] !== '*') {
+      const end = text.indexOf('*', i + 1);
+      if (end !== -1) {
+        const inner = text.slice(i + 1, end);
+        flushText();
+        inlines.push({ kind: 'em', inlines: parseInlines(inner, options) });
+        i = end + 1;
+        continue;
+      }
+    }
 
     if (text.startsWith(':gui{', i)) {
       const end = findInlineDirectiveEnd(text, i + 5);
@@ -420,10 +524,14 @@ export function parseMarkdownLite(source: string, options?: ParseMarkdownLiteOpt
 
     // Unordered list
     if (/^\s*[-*]\s+/.test(line)) {
-      const items: Inline[][] = [];
+      const items: { inlines: Inline[]; markerText?: string | null }[] = [];
       while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-        const itemText = lines[i].replace(/^\s*[-*]\s+/, '').trimEnd();
-        items.push(parseInlines(itemText, options));
+        const rawItemText = lines[i].replace(/^\s*[-*]\s+/, '').trimEnd();
+        const { displayText, directive } = parseTrailingDirectiveObject(rawItemText);
+        const markerText = directive && Object.prototype.hasOwnProperty.call(directive, 'list-icon')
+          ? (directive['list-icon'] === null ? null : String(directive['list-icon']))
+          : undefined;
+        items.push({ inlines: parseInlines(displayText, options), markerText });
         i++;
       }
       nodes.push({ kind: 'list', items, ordered: false });
@@ -432,7 +540,7 @@ export function parseMarkdownLite(source: string, options?: ParseMarkdownLiteOpt
 
     // Ordered list
     if (/^\s*\d+\.\s+/.test(line)) {
-      const items: Inline[][] = [];
+      const items: { inlines: Inline[]; markerText?: string | null }[] = [];
       let start: number | undefined;
       while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
         const match = lines[i].match(/^\s*(\d+)\.\s+(.*)$/);
@@ -442,7 +550,7 @@ export function parseMarkdownLite(source: string, options?: ParseMarkdownLiteOpt
           start = Number.isFinite(parsed) ? parsed : 1;
         }
         const itemText = match[2].trimEnd();
-        items.push(parseInlines(itemText, options));
+        items.push({ inlines: parseInlines(itemText, options) });
         i++;
       }
       nodes.push({ kind: 'list', items, ordered: true, start: start ?? 1 });
