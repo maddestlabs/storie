@@ -694,6 +694,20 @@ export interface SandboxAPI {
       get: (name: string) => any | null;
       play: (name: string, seed?: number | string, options?: { volume?: number; when?: number }) => { stop: (when?: number) => void };
       playPreset: (preset: any, seed?: number | string, options?: { volume?: number; when?: number }) => { stop: (when?: number) => void };
+      voice: (name: string, seed?: number | string, options?: any) => {
+        params: Record<string, any>;
+        setHz: (hz: number, when?: number) => void;
+        noteOn: (hz?: number, velocity?: number, when?: number) => void;
+        noteOff: (when?: number) => void;
+        stop: (when?: number) => void;
+      };
+      voicePreset: (preset: any, seed?: number | string, options?: any) => {
+        params: Record<string, any>;
+        setHz: (hz: number, when?: number) => void;
+        noteOn: (hz?: number, velocity?: number, when?: number) => void;
+        noteOff: (when?: number) => void;
+        stop: (when?: number) => void;
+      };
       bake: (
         name: string,
         seed?: number | string,
@@ -711,6 +725,20 @@ export interface SandboxAPI {
     get: (name: string) => any | null;
     play: (name: string, seed?: number | string, options?: { volume?: number; when?: number }) => { stop: (when?: number) => void };
     playPreset: (preset: any, seed?: number | string, options?: { volume?: number; when?: number }) => { stop: (when?: number) => void };
+    voice: (name: string, seed?: number | string, options?: any) => {
+      params: Record<string, any>;
+      setHz: (hz: number, when?: number) => void;
+      noteOn: (hz?: number, velocity?: number, when?: number) => void;
+      noteOff: (when?: number) => void;
+      stop: (when?: number) => void;
+    };
+    voicePreset: (preset: any, seed?: number | string, options?: any) => {
+      params: Record<string, any>;
+      setHz: (hz: number, when?: number) => void;
+      noteOn: (hz?: number, velocity?: number, when?: number) => void;
+      noteOff: (when?: number) => void;
+      stop: (when?: number) => void;
+    };
     bake: (
       name: string,
       seed?: number | string,
@@ -746,6 +774,7 @@ export interface SandboxAPI {
         section?: number | string | null;
         internalOnly?: boolean;
         thickness?: number;
+        allVisible?: boolean;
       }) => void;
       getVisualConnections: (options?: {
         section?: number | string | null;

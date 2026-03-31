@@ -882,6 +882,18 @@ export function parseTransform3D(
     return s === 'true' || s === '1' || s === 'yes' || s === 'on';
   };
 
+  const metaBoolean = (key: string): boolean | undefined => {
+    if (!metaHas(key)) return undefined;
+    const v = (rawMetadata as any)[key];
+    if (v === true) return true;
+    if (v === false) return false;
+    if (v === null || v === undefined) return undefined;
+    const s = String(v).trim().toLowerCase();
+    if (s === 'true' || s === '1' || s === 'yes' || s === 'on') return true;
+    if (s === 'false' || s === '0' || s === 'no' || s === 'off') return false;
+    return undefined;
+  };
+
   const hasExplicitPosition = metaHas('x') || metaHas('y') || metaHas('z') || metaHas('depth');
 
   // Position
@@ -919,7 +931,17 @@ export function parseTransform3D(
   const height = parseFloat(metaStr('height', String(config.defaultSectionHeight)));
 
   // Visibility
-  const visible = !metaTruthy('hidden');
+  const hiddenUntilVisited = (() => {
+    const explicit = metaBoolean('hiddenUntilVisited');
+    if (explicit !== undefined) return explicit;
+    const cfgDefault = (config as any).autoHideSectionsUntilVisited;
+    return cfgDefault === true;
+  })();
+  const removeAfterVisit = metaTruthy('removeAfterVisit');
+
+  // `hiddenUntilVisited` starts hidden (but becomes visible on visit).
+  // `hidden` remains a hard hide.
+  const visible = hiddenUntilVisited ? false : !metaTruthy('hidden');
   const navigable = metaStr('navigable', 'true').trim().toLowerCase() !== 'false';
   const interactive = metaStr('interactive', 'true').trim().toLowerCase() !== 'false';
   const contentAlign = metaHas('contentAlign')
@@ -979,6 +1001,8 @@ export function parseTransform3D(
     texture: null,
     opacity,
     visible,
+    hiddenUntilVisited,
+    removeAfterVisit,
     navigable,
     interactive
   };
@@ -1055,6 +1079,7 @@ export function getDefaultWorldsConfig(): WorldsConfig {
     autoLayoutEnabled: true,
     autoLayoutColumns: 3,
     autoLayoutSpacing: 200,
+    autoHideSectionsUntilVisited: false,
     sectionTextureMode: 'canvas2d',
     sectionContentAlign: 'start',
     sectionTextAlign: 'left',

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <link rel="icon" type="image/png" sizes="16x16" href="./assets/favicons/favicon-16x16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="./assets/favicons/favicon-32x32.png">
+  <link rel="icon" type="image/x-icon" href="./assets/favicons/favicon.ico">
+  <link rel="apple-touch-icon" sizes="180x180" href="./assets/favicons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="./assets/favicons/android-chrome-192x192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="./assets/favicons/android-chrome-512x512.png">
+  <link rel="manifest" href="./manifest.webmanifest">
+
+  <title>0RAIN</title>
+  <link rel="stylesheet" href="./style.css">
+
+  <style>
+    #audio-gate {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.06);
+      backdrop-filter: blur(1px);
+      -webkit-backdrop-filter: blur(1px);
+      touch-action: manipulation;
+    }
+
+    #audio-gate.visible {
+      display: flex;
+    }
+
+    #audio-gate-card {
+      border: 1px solid rgba(255, 255, 255, 0.32);
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      font: 12px/1.35 monospace;
+      padding: 10px 12px;
+      border-radius: 6px;
+      text-align: center;
+      max-width: 220px;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="audio-gate" aria-hidden="true">
+    <div id="audio-gate-card">Tap once to enable audio</div>
+  </div>
+
+  <div id="container">
+    <div id="loading">
+      <div>Loading <span id="t">0</span><span id="cursor">|</span>rain...</div>
+    </div>
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <script type="module">
+    import { startStorieApp } from './bootstrap.js?v=2026-03-30T21:55:15.082Z';
+
+    startStorieApp({
+      engineModuleUrl: './storie.es.js?v=2026-03-30T21:55:15.082Z',
+      buildId: '2026-03-30T21:55:15.082Z',
+      serviceWorker: { url: './sw.js', scope: './' },
+      demoBaseUrl: './demos/',
+      indexMdUrl: './demos/0rain.md',
+      defaultContent: 'demo:0rain',
+      assetsBaseUrl: './assets/',
+      hostAssetsBaseUrl: '.',
+    });
+  </script>
+</body>
+</html>

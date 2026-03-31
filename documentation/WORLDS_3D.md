@@ -82,6 +82,8 @@ Card content uses the shared lightweight markdown renderer. In addition to headi
 | `height` | number | `defaultSectionHeight` (20) | Section height in lines |
 | `render` | enum | `all` | Card composition: `all`, `heading`, `content`, or `none` |
 | `hidden` | boolean | false | Hide the whole card and exclude it from normal navigation |
+| `hiddenUntilVisited` | boolean | false | Start hidden; reveal the first time the section is navigated to |
+| `removeAfterVisit` | boolean | false | After leaving the section once, hide it permanently |
 | `navigable` | boolean | true | Allow navigation to section |
 | `interactive` | boolean | true | Include card in picking/link interaction |
 
@@ -90,6 +92,8 @@ Card content uses the shared lightweight markdown renderer. In addition to headi
 ### `worlds` Object
 
 `worlds.config.setDefaults({ sectionRender })` sets the default card composition for the whole document. A section heading with explicit `render: ...` metadata still wins.
+
+`worlds.config.setDefaults({ autoHideSectionsUntilVisited: true })` makes all sections start hidden until first navigation, unless overridden by a section's `hiddenUntilVisited` heading directive.
 
 Main 3D canvas API exposed to user scripts.
 

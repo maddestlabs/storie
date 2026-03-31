@@ -71,9 +71,9 @@ export function createTransformedDraw2D(base: Draw2D, space: Draw2DTransformSpac
       const aabb = transformRectAABB(space.screenFromLocal, x, y, w, h);
       base.rect(aabb.x, aabb.y, aabb.w, aabb.h, color);
     },
-    text(text: string, x: number, y: number, color: Color): void {
+    text(text: string, x: number, y: number, color: Color, scale?: number): void {
       const p = applyAffine(space.screenFromLocal, x, y);
-      base.text(text, p.x, p.y, color);
+      base.text(text, p.x, p.y, color, scale);
     },
     measureTextWidth: base.measureTextWidth ? base.measureTextWidth.bind(base) : undefined,
     image: base.image

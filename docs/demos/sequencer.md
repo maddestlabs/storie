@@ -77,6 +77,9 @@ let state = {
   mixerReady: false,
   masterBus: null,
   trackBuses: {},
+  trackVoices: {},
+  pianoVoices: {},
+  pianoGate: { trackId: null, midi: null },
   widgets: null,
   tracks: [],
   patterns: {},
@@ -617,6 +620,90 @@ function toggleTrackSolo(index) {
   setStatus((track.solo ? 'Solo enabled for ' : 'Solo disabled for ') + track.name + '.');
 }
 
+function stopVoice(voice) {
+  if (!voice) return;
+  try {
+    if (typeof voice.stop === 'function') voice.stop(0);
+  } catch {}
+}
+
+function releaseVoice(voice) {
+  if (!voice) return;
+  try {
+    if (typeof voice.noteOff === 'function') voice.noteOff(0);
+  } catch {}
+}
+
+function stopAllTrackVoices() {
+  const voices = state.trackVoices || {};
+  for (const id in voices) stopVoice(voices[id]);
+  state.trackVoices = {};
+}
+
+function stopAllPianoVoices() {
+  const voices = state.pianoVoices || {};
+  for (const id in voices) stopVoice(voices[id]);
+  state.pianoVoices = {};
+  state.pianoGate = { trackId: null, midi: null };
+}
+
+function disposeVoicesForTrack(trackId) {
+  const id = String(trackId || '');
+  if (!id) return;
+  stopVoice(state.trackVoices && state.trackVoices[id]);
+  stopVoice(state.pianoVoices && state.pianoVoices[id]);
+  if (state.trackVoices) delete state.trackVoices[id];
+  if (state.pianoVoices) delete state.pianoVoices[id];
+  if (state.pianoGate && state.pianoGate.trackId === id) state.pianoGate = { trackId: null, midi: null };
+}
+
+function ensureTrackVoice(track) {
+  if (!track || !track.id) return null;
+  ensureMixerRouting();
+  if (!state.trackVoices) state.trackVoices = {};
+  const existing = state.trackVoices[track.id];
+  if (existing) return existing;
+
+  const bus = trackBusFor(track);
+  if (!bus) return null;
+
+  resumeAudioIfNeeded();
+  // Voice output is routed through track/master busses; use envelope velocity for per-note gain.
+  const voice = stfxr.voicePreset(graphPresetForTrack(track), nextSeed(), {
+    output: bus,
+    volume: 1,
+    attack: 0.003,
+    decay: 0.035,
+    sustain: 0.18,
+    release: 0.06
+  });
+  state.trackVoices[track.id] = voice;
+  return voice;
+}
+
+function ensurePianoVoice(track) {
+  if (!track || !track.id) return null;
+  ensureMixerRouting();
+  if (!state.pianoVoices) state.pianoVoices = {};
+  const existing = state.pianoVoices[track.id];
+  if (existing) return existing;
+
+  const bus = trackBusFor(track);
+  if (!bus) return null;
+
+  resumeAudioIfNeeded();
+  const voice = stfxr.voicePreset(graphPresetForTrack(track), nextSeed(), {
+    output: bus,
+    volume: 1,
+    attack: 0.003,
+    decay: 0.04,
+    sustain: 0.22,
+    release: 0.08
+  });
+  state.pianoVoices[track.id] = voice;
+  return voice;
+}
+
 function auditionMidiWithTrack(track, midi, velocity, sourceLabel, stepLength) {
   resumeAudioIfNeeded();
   ensureMixerRouting();
@@ -624,13 +711,13 @@ function auditionMidiWithTrack(track, midi, velocity, sourceLabel, stepLength) {
     setNowPlaying(noteNameForMidi(midi) + ' muted on ' + sourceLabel);
     return;
   }
+  const voice = ensureTrackVoice(track);
+  if (!voice) return;
   const hz = midiToHz(midi);
   const durationSec = stepDurationSeconds() * Math.max(1, Number(stepLength) || 1);
-  const preset = applyDurationToPreset(buildTunedPreset(graphPresetForTrack(track), hz), durationSec);
-  stfxr.playPreset(preset, nextSeed(), {
-    volume: voiceGainForTrack(track, velocity),
-    output: trackBusFor(track)
-  });
+  const v = voiceGainForTrack(track, velocity);
+  voice.noteOn(hz, v, 0);
+  voice.noteOff(durationSec);
   setNowPlaying(noteNameForMidi(midi) + ' from ' + sourceLabel);
 }
 
@@ -685,6 +772,7 @@ function parseGraphEditor() {
     track.graphPreset = JSON.parse(raw);
     track.graphText = raw;
     state.graphError = '';
+    disposeVoicesForTrack(track.id);
     setGraphStatus('Applied graph for ' + track.name + '.');
     setStatus('Applied graph for ' + track.name + '.');
     return true;
@@ -702,6 +790,7 @@ function resetGraphEditor() {
   track.graphPreset = deepClone(DEFAULT_MONO_PRESET);
   track.graphText = JSON.stringify(DEFAULT_MONO_PRESET, null, 2);
   state.widgets.graphEditor.setValue(track.graphText);
+  disposeVoicesForTrack(track.id);
   setGraphStatus('Reset graph for ' + track.name + '.');
   setStatus('Reset graph for ' + track.name + '.');
 }
@@ -732,6 +821,9 @@ function pauseTransport() {
   if (!state.isPlaying) return;
   state.pauseBeats = getTransportBeats();
   state.isPlaying = false;
+  // Release all voices immediately on pause.
+  const voices = state.trackVoices || {};
+  for (const id in voices) releaseVoice(voices[id]);
   syncWidgets();
   setStatus('Transport paused.');
 }
@@ -742,6 +834,7 @@ function stopTransport() {
   state.isPlaying = false;
   state.lastProcessedStep = -1;
   state.currentStep = 0;
+  stopAllTrackVoices();
   syncWidgets();
   setStatus('Transport stopped and rewound.');
 }
@@ -1316,7 +1409,33 @@ function createWidgets() {
   piano.on('noteon', function (event) {
     const track = focusedTrack();
     if (!track || !event || !event.data) return;
-    auditionMidiWithTrack(track, Number(event.data.midi) + track.transpose, Number(event.data.velocity || 0.7), 'piano', 1);
+    // Gate-mode auditioning uses a dedicated voice so it doesn't fight the transport voice.
+    if (!isTrackAudible(track)) {
+      setNowPlaying(noteNameForMidi(Number(event.data.midi) + track.transpose) + ' muted on piano');
+      return;
+    }
+    const voice = ensurePianoVoice(track);
+    if (!voice) return;
+
+    // If the piano re-triggers while held, release the previous gate first.
+    if (state.pianoGate && state.pianoGate.trackId) {
+      const prev = state.pianoVoices && state.pianoVoices[state.pianoGate.trackId];
+      releaseVoice(prev);
+    }
+
+    const midi = Number(event.data.midi) + track.transpose;
+    const hz = Number(event.data.hz);
+    const v = voiceGainForTrack(track, Number(event.data.velocity || 0.7));
+    voice.noteOn(hz, v, 0);
+    state.pianoGate = { trackId: track.id, midi: midi };
+    setNowPlaying(noteNameForMidi(midi) + ' from piano');
+  });
+
+  piano.on('noteoff', function () {
+    if (!state.pianoGate || !state.pianoGate.trackId) return;
+    const voice = state.pianoVoices && state.pianoVoices[state.pianoGate.trackId];
+    releaseVoice(voice);
+    state.pianoGate = { trackId: null, midi: null };
   });
   piano.on('railgesture', function (event) {
     if (!event || !event.data || !event.data.suggestedBounds) return;

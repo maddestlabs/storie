@@ -86,6 +86,35 @@ describe('heading directives', () => {
     expect(layout.renderMode).toBe('all');
   });
 
+  it('parses hiddenUntilVisited and removeAfterVisit for Worlds layouts', async () => {
+    const doc = await parseMarkdown([
+      '# Card One {hiddenUntilVisited: true, removeAfterVisit: true}',
+      '',
+      'Body'
+    ].join('\n'));
+
+    const layout = parseTransform3D(doc.sections[0], 0, getDefaultWorldsConfig());
+    expect(layout.hiddenUntilVisited).toBe(true);
+    expect(layout.removeAfterVisit).toBe(true);
+    // Starts hidden until visited.
+    expect(layout.visible).toBe(false);
+  });
+
+  it('uses config autoHideSectionsUntilVisited as the default when not overridden', async () => {
+    const doc = await parseMarkdown([
+      '# Card One',
+      '',
+      'Body'
+    ].join('\n'));
+
+    const layout = parseTransform3D(doc.sections[0], 0, {
+      ...getDefaultWorldsConfig(),
+      autoHideSectionsUntilVisited: true,
+    });
+    expect(layout.hiddenUntilVisited).toBe(true);
+    expect(layout.visible).toBe(false);
+  });
+
   it('parses per-section content and text alignment metadata', async () => {
     const doc = await parseMarkdown([
       '# Card One {render: content, contentAlign: center, textAlign: right}',

@@ -92,7 +92,15 @@ import { KEY } from './types.js';
 import { ColorUtils } from './types.js';
 import type { SandboxAPI } from './sandbox.js';
 import { getSfxPresetNames, playSfx, sfxSnippet, toSfxSeed } from './audio/sfx.js';
-import { bakeSfxGraphBuffer, mulberry32, parseSfxGraphPreset, parseStfxrDefinitionJson, playSfxGraph, type SfxGraphPreset } from './audio/sfx-graph.js';
+import {
+  bakeSfxGraphBuffer,
+  createSfxGraphVoice,
+  mulberry32,
+  parseSfxGraphPreset,
+  parseStfxrDefinitionJson,
+  playSfxGraph,
+  type SfxGraphPreset
+} from './audio/sfx-graph.js';
 import { SFX_PRESETS, type SfxPresetName } from './audio/sfx-presets.js';
 import {
   HostSync,
@@ -149,6 +157,7 @@ type Worlds3DRenderedLinkOverlay = {
   section: number | string | null;
   internalOnly: boolean;
   thickness: number;
+  allVisible: boolean;
 };
 
 function parseThemeOverride(raw: string): ThemeOverride | null {
@@ -519,11 +528,16 @@ export class StorieEngine {
   private current3DSectionIndex: number | null = null;
   private selected3DSectionId: string | null = null;
   private selected3DSectionIndex: number | null = null;
+
+  // Worlds section visit state (per-document)
+  private worldsVisitedSectionIds: Set<string> = new Set();
+  private worldsRemovedSectionIds: Set<string> = new Set();
   private worlds3DRenderedLinkOverlay: Worlds3DRenderedLinkOverlay = {
     enabled: false,
     section: null,
     internalOnly: true,
     thickness: 0.22,
+    allVisible: false,
   };
   private activated3DLinksQueue: Array<{ url: string; sectionId: string | null; sectionIndex: number | null; linkIndex: number | null }> = [];
 
@@ -636,6 +650,26 @@ export class StorieEngine {
   private canvas: HTMLCanvasElement;
   private hiddenTextInput: HTMLTextAreaElement | null = null;
   private hiddenTextInputSyncing: boolean = false;
+
+  private resetWorldsVisitState(): void {
+    this.worldsVisitedSectionIds.clear();
+    this.worldsRemovedSectionIds.clear();
+  }
+
+  private applyWorldsHiddenUntilVisitedVisibility(): void {
+    if (!this.section3DLayouts || this.section3DLayouts.length === 0) return;
+
+    for (const layout of this.section3DLayouts) {
+      if (!layout) continue;
+      if (this.worldsRemovedSectionIds.has(layout.sectionId)) {
+        layout.visible = false;
+        continue;
+      }
+      if (layout.hiddenUntilVisited) {
+        layout.visible = this.worldsVisitedSectionIds.has(layout.sectionId);
+      }
+    }
+  }
 
   private applyThemeColors(theme: ThemeColors, label: string, source: 'url' | 'frontmatter' | 'default' | 'runtime'): void {
     const nextTheme = { ...theme } as ThemeColors;
@@ -1040,17 +1074,44 @@ export class StorieEngine {
   }
 
   private getCanvasViewportRectCss(): { x: number; y: number; width: number; height: number } {
+    // Prefer the host-controlled CSS pixel size if explicitly set.
+    // In some hosted preview environments, `getBoundingClientRect()` can lag
+    // behind style updates even though the engine is being resized.
+    try {
+      const w = this.canvas?.style?.width;
+      const h = this.canvas?.style?.height;
+      if (typeof w === 'string' && typeof h === 'string' && w.endsWith('px') && h.endsWith('px')) {
+        const width = Number.parseFloat(w);
+        const height = Number.parseFloat(h);
+        if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+          return { x: 0, y: 0, width, height };
+        }
+      }
+    } catch {
+      // ignore
+    }
+
     try {
       const rect = this.canvas.getBoundingClientRect();
-      return { x: 0, y: 0, width: rect.width, height: rect.height };
+      if (Number.isFinite(rect.width) && rect.width > 0 && Number.isFinite(rect.height) && rect.height > 0) {
+        return { x: 0, y: 0, width: rect.width, height: rect.height };
+      }
     } catch {
+      // ignore
+    }
+
+    try {
+      // Fallback: infer CSS size from the backing store size and DPR.
       const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+      const v = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
       return {
         x: 0,
         y: 0,
-        width: this.canvas.width / dpr,
-        height: this.canvas.height / dpr
+        width: this.canvas.width / v,
+        height: this.canvas.height / v
       };
+    } catch {
+      return { x: 0, y: 0, width: 0, height: 0 };
     }
   }
 
@@ -2014,6 +2075,24 @@ export class StorieEngine {
         }
       }
 
+      if ((config as any).autoHideSectionsUntilVisited !== undefined) {
+        const prev = (engine.worldsConfig as any).autoHideSectionsUntilVisited;
+        const next = !!(config as any).autoHideSectionsUntilVisited;
+        (engine.worldsConfig as any).autoHideSectionsUntilVisited = next;
+        if (prev !== next) {
+          requiresSectionLayoutRecompile = true;
+        }
+      }
+
+      if ((config as any).sectionArrowNavigation !== undefined) {
+        (engine.worldsConfig as any).sectionArrowNavigation = !!(config as any).sectionArrowNavigation;
+      }
+
+      if ((config as any).sectionTextureCacheRadius !== undefined) {
+        const v = Number((config as any).sectionTextureCacheRadius);
+        (engine.worldsConfig as any).sectionTextureCacheRadius = Number.isFinite(v) ? Math.max(0, Math.floor(v)) : undefined;
+      }
+
       if (requiresSectionLayoutRecompile && engine.runtimeSectionStore.sections.length > 0) {
         engine.compileWorldsLayoutsFromRuntimeSectionStore('config defaults changed');
       } else {
@@ -2100,6 +2179,37 @@ export class StorieEngine {
       return out;
     };
 
+    const sanitizeVoiceOptions = (options?: any): any => {
+      const out: any = sanitizePlayOptions(options);
+
+      const a = Number(options?.attack);
+      if (Number.isFinite(a) && a >= 0) out.attack = Math.min(10, a);
+
+      const d = Number(options?.decay);
+      if (Number.isFinite(d) && d >= 0) out.decay = Math.min(10, d);
+
+      const s = Number(options?.sustain);
+      if (Number.isFinite(s)) out.sustain = Math.max(0, Math.min(1, s));
+
+      const r = Number(options?.release);
+      if (Number.isFinite(r) && r >= 0) out.release = Math.min(10, r);
+
+      const pk = Number(options?.peak);
+      if (Number.isFinite(pk) && pk >= 0) out.peak = Math.min(10, pk);
+
+      const pitchParams = options?.pitchParams;
+      if (typeof pitchParams === 'string') out.pitchParams = pitchParams;
+      else if (Array.isArray(pitchParams)) out.pitchParams = pitchParams.map((p: any) => String(p));
+
+      const gateParam = options?.gateParam;
+      if (typeof gateParam === 'string' && gateParam) out.gateParam = gateParam;
+
+      if (options?.scheduleEvents !== undefined) out.scheduleEvents = !!options.scheduleEvents;
+      if (options?.obeyStopAfter !== undefined) out.obeyStopAfter = !!options.obeyStopAfter;
+
+      return out;
+    };
+
     const playPresetInternal = (presetIn: unknown, seed?: number | string, options?: { volume?: number; when?: number; output?: AudioNode }) => {
       let preset: SfxGraphPreset;
       try {
@@ -2125,6 +2235,45 @@ export class StorieEngine {
       engine.audioContext.resume().catch(() => {});
       const resolvedSeed = toSfxSeed(seed);
       return playSfxGraph(engine.audioContext, preset, resolvedSeed, sanitizePlayOptions(options));
+    };
+
+    const voicePresetInternal = (presetIn: unknown, seed?: number | string, options?: any) => {
+      let preset: SfxGraphPreset;
+      try {
+        preset = parseSfxGraphPreset(presetIn);
+      } catch (e) {
+        console.warn('[stfxr.voicePreset] Invalid preset:', e);
+        return {
+          params: {},
+          setHz: () => {},
+          noteOn: () => {},
+          noteOff: () => {},
+          stop: () => {}
+        };
+      }
+
+      const MAX_NODES = 256;
+      const MAX_EDGES = 1024;
+      const MAX_EVENTS = 1024;
+      const nodeCount = Array.isArray(preset.nodes) ? preset.nodes.length : 0;
+      const edgeCount = Array.isArray(preset.edges) ? preset.edges.length : 0;
+      const eventCount = Array.isArray(preset.events) ? preset.events.length : 0;
+      if (nodeCount > MAX_NODES || edgeCount > MAX_EDGES || eventCount > MAX_EVENTS) {
+        console.warn(
+          `[stfxr.voicePreset] Refusing to create voice from overly large preset (nodes=${nodeCount}, edges=${edgeCount}, events=${eventCount}).`
+        );
+        return {
+          params: {},
+          setHz: () => {},
+          noteOn: () => {},
+          noteOff: () => {},
+          stop: () => {}
+        };
+      }
+
+      engine.audioContext.resume().catch(() => {});
+      const resolvedSeed = toSfxSeed(seed);
+      return createSfxGraphVoice(engine.audioContext, preset, resolvedSeed, sanitizeVoiceOptions(options));
     };
 
     const evictStfxrBakedIfNeeded = (store: Map<string, StfxrBakedEntry>) => {
@@ -2650,6 +2799,23 @@ export class StorieEngine {
         () => this.inputDispatchDepth > 0,
         () => {
           try {
+            // Prefer the host-controlled CSS px size if explicitly set.
+            // This avoids stale `getBoundingClientRect()` values in some
+            // hosted preview environments.
+            const sw = this.canvas?.style?.width;
+            const sh = this.canvas?.style?.height;
+            if (typeof sw === 'string' && typeof sh === 'string' && sw.endsWith('px') && sh.endsWith('px')) {
+              const cssW = Number.parseFloat(sw);
+              const cssH = Number.parseFloat(sh);
+              if (Number.isFinite(cssW) && cssW > 0 && Number.isFinite(cssH) && cssH > 0) {
+                const scaleX = this.canvas.width / cssW;
+                const scaleY = this.canvas.height / cssH;
+                if (Number.isFinite(scaleX) && scaleX > 0 && Number.isFinite(scaleY) && scaleY > 0) {
+                  return { scaleX, scaleY };
+                }
+              }
+            }
+
             const rect = this.canvas.getBoundingClientRect();
             const scaleX = rect.width > 0 ? (this.canvas.width / rect.width) : 0;
             const scaleY = rect.height > 0 ? (this.canvas.height / rect.height) : 0;
@@ -2999,6 +3165,25 @@ export class StorieEngine {
             playPreset: (preset: any, seed?: number | string, options?: { volume?: number; when?: number; output?: AudioNode }) => {
               return playPresetInternal(preset, seed, options);
             },
+            voice: (name: string, seed?: number | string, options?: any) => {
+              const store = getStfxrStore(docId);
+              const entry = store?.get(String(name));
+              if (!entry) {
+                return {
+                  params: {},
+                  setHz: () => {},
+                  noteOn: () => {},
+                  noteOff: () => {},
+                  stop: () => {}
+                };
+              }
+              engine.audioContext.resume().catch(() => {});
+              const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
+              return createSfxGraphVoice(engine.audioContext, entry.preset, resolvedSeed, sanitizeVoiceOptions(options));
+            },
+            voicePreset: (preset: any, seed?: number | string, options?: any) => {
+              return voicePresetInternal(preset, seed, options);
+            },
             bake: async (
               name: string,
               seed?: number | string,
@@ -3108,6 +3293,25 @@ export class StorieEngine {
         },
         playPreset: (preset: any, seed?: number | string, options?: { volume?: number; when?: number; output?: AudioNode }) => {
           return playPresetInternal(preset, seed, options);
+        },
+        voice: (name: string, seed?: number | string, options?: any) => {
+          const store = getStfxrStore();
+          const entry = store?.get(String(name));
+          if (!entry) {
+            return {
+              params: {},
+              setHz: () => {},
+              noteOn: () => {},
+              noteOff: () => {},
+              stop: () => {}
+            };
+          }
+          engine.audioContext.resume().catch(() => {});
+          const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
+          return createSfxGraphVoice(engine.audioContext, entry.preset, resolvedSeed, sanitizeVoiceOptions(options));
+        },
+        voicePreset: (preset: any, seed?: number | string, options?: any) => {
+          return voicePresetInternal(preset, seed, options);
         },
         bake: async (name: string, seed?: number | string, options?: { id?: string; seconds?: number; maxSeconds?: number }) => {
           const store = getStfxrStore();
@@ -4955,12 +5159,14 @@ export class StorieEngine {
             section?: number | string | null;
             internalOnly?: boolean;
             thickness?: number;
+            allVisible?: boolean;
           }) => {
             if (!options) {
               engine.worlds3DRenderedLinkOverlay.enabled = false;
               engine.worlds3DRenderedLinkOverlay.section = null;
               engine.worlds3DRenderedLinkOverlay.internalOnly = true;
               engine.worlds3DRenderedLinkOverlay.thickness = 0.22;
+              engine.worlds3DRenderedLinkOverlay.allVisible = false;
               return;
             }
             if (typeof options.enabled === 'boolean') {
@@ -4976,6 +5182,9 @@ export class StorieEngine {
             }
             if (typeof options.thickness === 'number' && Number.isFinite(options.thickness)) {
               engine.worlds3DRenderedLinkOverlay.thickness = Math.max(0.01, options.thickness);
+            }
+            if (typeof options.allVisible === 'boolean') {
+              engine.worlds3DRenderedLinkOverlay.allVisible = options.allVisible;
             }
           },
           getVisualConnections: (options?: {
@@ -6617,8 +6826,136 @@ export class StorieEngine {
     );
   }
 
-  private getRendered3DLinkConnectors(): Array<{ start: { x: number; y: number; z: number }; end: { x: number; y: number; z: number }; color: Color; thickness: number; opacity: number }> {
+  private getRendered3DLinkConnectors(): Array<{ start: { x: number; y: number; z: number }; end: { x: number; y: number; z: number }; control: { x: number; y: number; z: number }; color: Color; thickness: number; opacity: number }> {
     if (!this.worlds3DRenderedLinkOverlay.enabled) return [];
+
+    // Match the theme colors used by markdown anchor links on Worlds cards.
+    // Normal: theme `link` foreground. Active (hover/focus): theme `active` foreground.
+    const themeLinkColor = this.getStyle('link').fg;
+    const themeActiveLinkColor = this.getStyle('active').fg;
+    const activeLink = this.getActive3DLink();
+
+    // In allVisible mode, frustum-cull connectors so we don't spend time
+    // generating lines for offscreen cards.
+    let viewProj: any = null;
+    if (this.worlds3DRenderedLinkOverlay.allVisible && this.camera3D) {
+      const canvasW = this.canvas.width;
+      const canvasH = this.canvas.height;
+      if (canvasW > 0 && canvasH > 0) {
+        const aspect = canvasW / canvasH;
+        const view = getCameraViewMatrix(this.camera3D);
+        const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+        viewProj = mat4Multiply(proj, view);
+      }
+    }
+
+    const isCardPossiblyVisible = (layout: Section3DLayout): boolean => {
+      if (!this.worlds3DRenderedLinkOverlay.allVisible) return true;
+      if (!viewProj) return true;
+      return this.is3DCardPossiblyVisible(viewProj, layout);
+    };
+
+    const connectors: Array<{ start: { x: number; y: number; z: number }; end: { x: number; y: number; z: number }; control: { x: number; y: number; z: number }; color: Color; thickness: number; opacity: number }> = [];
+
+    const getBezierControlPoint = (start: { x: number; y: number; z: number }, end: { x: number; y: number; z: number }): { x: number; y: number; z: number } => {
+      // Stable, camera-independent curve: bend “up” in world space.
+      // Compute a bend direction that is perpendicular to the line segment and
+      // as aligned with worldUp as possible.
+      const worldUp = { x: 0, y: 1, z: 0 };
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const dz = end.z - start.z;
+      const dist = Math.hypot(dx, dy, dz);
+      if (!(dist > 1e-6)) {
+        return { x: (start.x + end.x) * 0.5, y: (start.y + end.y) * 0.5, z: (start.z + end.z) * 0.5 };
+      }
+      const dir = { x: dx / dist, y: dy / dist, z: dz / dist };
+
+      // Project worldUp into the plane perpendicular to dir.
+      // bend = normalize(worldUp - dir * dot(worldUp, dir))
+      const dot = worldUp.x * dir.x + worldUp.y * dir.y + worldUp.z * dir.z;
+      let bx = worldUp.x - dir.x * dot;
+      let by = worldUp.y - dir.y * dot;
+      let bz = worldUp.z - dir.z * dot;
+      let blen = Math.hypot(bx, by, bz);
+      if (!(blen > 1e-6)) {
+        // If dir ~ worldUp, fall back to a fixed axis.
+        bx = 1;
+        by = 0;
+        bz = 0;
+        blen = 1;
+      }
+      bx /= blen;
+      by /= blen;
+      bz /= blen;
+
+      // Bend magnitude: 20% of segment length for consistent visible curvature at any scale.
+      const bend = dist * 0.2;
+      const mx = (start.x + end.x) * 0.5;
+      const my = (start.y + end.y) * 0.5;
+      const mz = (start.z + end.z) * 0.5;
+      return { x: mx + bx * bend, y: my + by * bend, z: mz + bz * bend };
+    };
+
+    const addConnectorsForSource = (sourceLayout: Section3DLayout): void => {
+      if (!sourceLayout || !sourceLayout.visible || !sourceLayout.texture) return;
+      if (!isCardPossiblyVisible(sourceLayout)) return;
+
+      const regions = this.sectionLinkRegionsCache.get(sourceLayout.sectionId);
+      if (!regions || regions.length === 0) return;
+
+      const sourceModel = this.get3DCardModelMatrix(sourceLayout);
+      const sourceInv = mat4Invert(sourceModel);
+      if (!sourceInv) return;
+
+      for (let linkIndex = 0; linkIndex < regions.length; linkIndex++) {
+        const region = regions[linkIndex];
+        const internal = typeof region.url === 'string' && region.url.startsWith('#');
+        if (this.worlds3DRenderedLinkOverlay.internalOnly && !internal) continue;
+
+        const targetLayout = internal ? this.resolveWorldsInternalLinkTarget(region.url) : null;
+        if (!targetLayout || !targetLayout.visible || !targetLayout.texture) continue;
+        if (!isCardPossiblyVisible(targetLayout)) continue;
+
+        const sourceBounds = this.getTextureRectLocalBounds(sourceLayout, region);
+        if (!sourceBounds) continue;
+
+        const targetModel = this.get3DCardModelMatrix(targetLayout);
+        const targetInv = mat4Invert(targetModel);
+        if (!targetInv) continue;
+
+        const targetCenterWorld = mat4TransformPoint(targetModel, { x: 0, y: 0, z: 0 });
+        const targetCenterInSource = mat4TransformPoint(sourceInv, targetCenterWorld);
+        const sourceAnchorLocal = this.getRectAttachmentPointLocal(sourceBounds, targetCenterInSource);
+        const sourceAnchorWorld = mat4TransformPoint(sourceModel, { x: sourceAnchorLocal.x, y: sourceAnchorLocal.y, z: 0 });
+
+        const sourceAnchorInTarget = mat4TransformPoint(targetInv, sourceAnchorWorld);
+        const targetAnchorLocal = this.getCardAttachmentPointLocal(sourceAnchorInTarget);
+        const targetAnchorWorld = mat4TransformPoint(targetModel, { x: targetAnchorLocal.x, y: targetAnchorLocal.y, z: 0 });
+
+        connectors.push({
+          start: sourceAnchorWorld,
+          end: targetAnchorWorld,
+          control: getBezierControlPoint(sourceAnchorWorld, targetAnchorWorld),
+          color: (activeLink
+            && activeLink.sectionIndex === sourceLayout.sectionIndex
+            && activeLink.linkIndex === linkIndex)
+            ? themeActiveLinkColor
+            : themeLinkColor,
+          thickness: this.worlds3DRenderedLinkOverlay.thickness,
+          opacity: 0.92,
+        });
+      }
+    };
+
+    if (this.worlds3DRenderedLinkOverlay.allVisible) {
+      if (!this.section3DLayouts || this.section3DLayouts.length === 0) return [];
+      for (const layout of this.section3DLayouts) {
+        if (!layout) continue;
+        addConnectorsForSource(layout);
+      }
+      return connectors;
+    }
 
     const requested = this.worlds3DRenderedLinkOverlay.section !== undefined && this.worlds3DRenderedLinkOverlay.section !== null
       ? this.resolveRuntimeSectionRef(this.worlds3DRenderedLinkOverlay.section)
@@ -6628,48 +6965,8 @@ export class StorieEngine {
     if (!(typeof sectionIndex === 'number' && Number.isFinite(sectionIndex))) return [];
 
     const sourceLayout = this.getSectionLayoutByIndex(sectionIndex);
-    if (!sourceLayout || !sourceLayout.visible || !sourceLayout.texture) return [];
-
-    const regions = this.sectionLinkRegionsCache.get(sourceLayout.sectionId);
-    if (!regions || regions.length === 0) return [];
-
-    const sourceModel = this.get3DCardModelMatrix(sourceLayout);
-    const sourceInv = mat4Invert(sourceModel);
-    if (!sourceInv) return [];
-
-    const connectors: Array<{ start: { x: number; y: number; z: number }; end: { x: number; y: number; z: number }; color: Color; thickness: number; opacity: number }> = [];
-    for (const region of regions) {
-      const internal = typeof region.url === 'string' && region.url.startsWith('#');
-      if (this.worlds3DRenderedLinkOverlay.internalOnly && !internal) continue;
-
-      const targetLayout = internal ? this.resolveWorldsInternalLinkTarget(region.url) : null;
-      if (!targetLayout || !targetLayout.visible || !targetLayout.texture) continue;
-
-      const sourceBounds = this.getTextureRectLocalBounds(sourceLayout, region);
-      if (!sourceBounds) continue;
-
-      const targetModel = this.get3DCardModelMatrix(targetLayout);
-      const targetInv = mat4Invert(targetModel);
-      if (!targetInv) continue;
-
-      const targetCenterWorld = mat4TransformPoint(targetModel, { x: 0, y: 0, z: 0 });
-      const targetCenterInSource = mat4TransformPoint(sourceInv, targetCenterWorld);
-      const sourceAnchorLocal = this.getRectAttachmentPointLocal(sourceBounds, targetCenterInSource);
-      const sourceAnchorWorld = mat4TransformPoint(sourceModel, { x: sourceAnchorLocal.x, y: sourceAnchorLocal.y, z: 0 });
-
-      const sourceAnchorInTarget = mat4TransformPoint(targetInv, sourceAnchorWorld);
-      const targetAnchorLocal = this.getCardAttachmentPointLocal(sourceAnchorInTarget);
-      const targetAnchorWorld = mat4TransformPoint(targetModel, { x: targetAnchorLocal.x, y: targetAnchorLocal.y, z: 0 });
-
-      connectors.push({
-        start: sourceAnchorWorld,
-        end: targetAnchorWorld,
-        color: 0xD0A74BFF,
-        thickness: this.worlds3DRenderedLinkOverlay.thickness,
-        opacity: 0.92,
-      });
-    }
-
+    if (!sourceLayout) return [];
+    addConnectorsForSource(sourceLayout);
     return connectors;
   }
 
@@ -7009,6 +7306,7 @@ export class StorieEngine {
       } catch {
         // ignore
       }
+      this.resetWorldsVisitState();
       this.resetRuntimeSectionStore();
       this.section3DLayouts = [];
       this.worldsEnabled = false;
@@ -8064,6 +8362,7 @@ ${exportVars}
     this.applyWorldsLayoutCallback();
     this.applyActiveWorldsSectionOverrides();
     this.pruneActiveWorldsSectionOverrides();
+    this.applyWorldsHiddenUntilVisitedVisibility();
 
     if (this.worldsRenderer) {
       console.log(`  Created ${this.section3DLayouts.length} 3D layouts from runtime store (${reason})`);
@@ -9319,6 +9618,8 @@ ${exportVars}
       }
     }
 
+    this.evictDistantSectionTextures();
+
     for (const layout of this.section3DLayouts) {
       const needsBakedGui = bakedGuiSections.size > 0 && bakedGuiSections.has(layout.sectionIndex);
       if (!layout.visible && !needsBakedGui) continue;
@@ -9736,6 +10037,46 @@ ${exportVars}
     this.sectionLinkRegionsCache.delete(layout.sectionId);
     this.sectionWidgetPlacementsCache.delete(layout.sectionId);
     this.worldsAutoLayoutCache = null;
+  }
+
+  /**
+   * Evict GPU textures for sections that are too far from the current section
+   * in navigation order, when `sectionTextureCacheRadius` is configured.
+   *
+   * Uses the same navigable-candidate list as `navigateWorldsSection` so the
+   * radius counts logical slides, not raw section indices.  Evicted sections
+   * are re-rasterized lazily on the next frame they become visible.
+   */
+  private evictDistantSectionTextures(): void {
+    const radius = (this.worldsConfig as any).sectionTextureCacheRadius;
+    if (!(typeof radius === 'number' && Number.isFinite(radius) && radius >= 0)) return;
+    if (!this.section3DLayouts || this.section3DLayouts.length === 0) return;
+
+    const currentIdx = this.getResolvedCurrent3DSectionIndex();
+    if (currentIdx === null || !Number.isFinite(currentIdx)) return;
+
+    // Same candidate list as navigateWorldsSection: navigable, not removed,
+    // visible or hiddenUntilVisited (they may become visible soon).
+    const candidates = this.section3DLayouts.filter(
+      (l) => l && l.navigable
+        && !this.worldsRemovedSectionIds.has(l.sectionId)
+        && (l.visible !== false || l.hiddenUntilVisited === true)
+    );
+    if (candidates.length === 0) return;
+
+    const currentPos = candidates.findIndex((l) => l.sectionIndex === currentIdx);
+    if (currentPos < 0) return;
+
+    for (let i = 0; i < candidates.length; i++) {
+      if (Math.abs(i - currentPos) <= radius) continue;
+      const layout = candidates[i]!;
+      if (!layout.texture) continue;
+      try { layout.texture.destroy(); } catch { /* ignore */ }
+      layout.texture = null;
+      this.sectionTextureCache.delete(layout.sectionId);
+      this.sectionLinkRegionsCache.delete(layout.sectionId);
+      this.sectionWidgetPlacementsCache.delete(layout.sectionId);
+    }
   }
 
 
@@ -10299,6 +10640,8 @@ ${exportVars}
 
     const borderEnabled = this.worldsConfig.sectionBorderEnabled !== false;
     const borderWidth = Math.max(0, Math.round(this.worldsConfig.sectionBorderWidth ?? 2));
+
+    this.evictDistantSectionTextures();
 
     for (const layout of this.section3DLayouts) {
       if (!layout.visible) continue;
@@ -11796,12 +12139,23 @@ ${exportVars}
         } else if (e.key === 'Enter') {
           this.activateFocused3DLink();
           handledBy3D = true;
-        } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
-          this.move3DLinkFocus(1);
-          handledBy3D = true;
-        } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
-          this.move3DLinkFocus(-1);
-          handledBy3D = true;
+        } else if ((this.worldsConfig as any).sectionArrowNavigation) {
+          // Slide / presentation mode: arrows navigate between sections.
+          if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+            this.navigateWorldsSection(1);
+            handledBy3D = true;
+          } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+            this.navigateWorldsSection(-1);
+            handledBy3D = true;
+          }
+        } else {
+          if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+            this.move3DLinkFocus(1);
+            handledBy3D = true;
+          } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+            this.move3DLinkFocus(-1);
+            handledBy3D = true;
+          }
         }
       }
 
@@ -12172,6 +12526,55 @@ ${exportVars}
       sectionIndex: sel.sectionIndex,
       linkIndex: sel.linkIndex,
     };
+  }
+
+  private navigateWorldsSection(delta: 1 | -1): void {
+    if (!this.section3DLayouts || this.section3DLayouts.length === 0) return;
+
+    // Build an ordered list of navigable sections.
+    // Include sections that are currently visible OR that are hidden-until-visited
+    // (navigating to them is what reveals them). Exclude hard-hidden sections and
+    // permanently removed ones.
+    const candidates = this.section3DLayouts.filter(
+      (l) => l && l.navigable
+        && !this.worldsRemovedSectionIds.has(l.sectionId)
+        && (l.visible !== false || l.hiddenUntilVisited === true)
+    );
+    if (candidates.length === 0) return;
+
+    const currentIdx = this.getResolvedCurrent3DSectionIndex();
+    const pos = currentIdx !== null && Number.isFinite(currentIdx)
+      ? candidates.findIndex((l) => l.sectionIndex === currentIdx)
+      : -1;
+
+    const nextPos = pos < 0
+      ? (delta > 0 ? 0 : candidates.length - 1)
+      : Math.max(0, Math.min(candidates.length - 1, pos + delta));
+
+    const target = candidates[nextPos];
+    if (!target) return;
+
+    // Reuse the same focus mode (fit vs distance) as the last applied focus,
+    // forwarding only the section-independent options (keepRotation, straighten).
+    const last = this.lastApplied3DCameraFocus;
+    if (last && last.kind === 'focus') {
+      this.request3DCameraFocus({
+        kind: 'focus',
+        sectionIndex: target.sectionIndex,
+        distance: last.distance,
+        ...(last.keepRotation ? { keepRotation: true } : {}),
+        ...(last.straighten ? { straighten: true } : {}),
+      });
+    } else {
+      const fill = (last && last.kind === 'fit') ? last.fill : 0.9;
+      this.request3DCameraFocus({
+        kind: 'fit',
+        sectionIndex: target.sectionIndex,
+        fill,
+        ...((last && last.kind === 'fit' && last.keepRotation) ? { keepRotation: true } : {}),
+        ...((last && last.kind === 'fit' && last.straighten) ? { straighten: true } : {}),
+      });
+    }
   }
 
   private activate3DLink(
@@ -12792,7 +13195,25 @@ ${exportVars}
     }
     const navigationSideEffects = options?.navigationSideEffects !== false;
     const previousSectionIndex = this.getResolvedCurrent3DSectionIndex();
+    const previousLayout = (typeof previousSectionIndex === 'number' && Number.isFinite(previousSectionIndex))
+      ? this.getSectionLayoutByIndex(previousSectionIndex)
+      : null;
     this.clearWorldsInlineWidgets();
+
+    // Leaving a section: optionally remove it after the first visit.
+    if (previousLayout && previousLayout.removeAfterVisit) {
+      this.worldsRemovedSectionIds.add(previousLayout.sectionId);
+      previousLayout.visible = false;
+    }
+
+    // Entering a section: reveal hidden-until-visited sections.
+    if (nextLayout.hiddenUntilVisited) {
+      this.worldsVisitedSectionIds.add(nextLayout.sectionId);
+      if (!this.worldsRemovedSectionIds.has(nextLayout.sectionId)) {
+        nextLayout.visible = true;
+      }
+    }
+
     this.current3DSectionId = nextLayout.sectionId;
     this.current3DSectionIndex = nextLayout.sectionIndex;
 

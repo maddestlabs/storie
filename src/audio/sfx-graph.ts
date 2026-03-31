@@ -683,6 +683,46 @@ export interface PlaySfxGraphOptions {
   output?: AudioNode;
 }
 
+export interface CreateSfxGraphVoiceOptions extends PlaySfxGraphOptions {
+  /** Gate attack time (seconds) used by noteOn(). Default: 0.005 */
+  attack?: number;
+  /** Gate decay time (seconds) used by noteOn(). Default: 0 */
+  decay?: number;
+  /** Gate sustain level (0..1) used by noteOn(). Default: 1 */
+  sustain?: number;
+  /** Gate release time (seconds) used by noteOff(). Default: 0.08 */
+  release?: number;
+  /** Peak level multiplier (scaled by velocity) used by noteOn(). Default: 1 */
+  peak?: number;
+  /**
+   * Optional param path(s) to treat as pitch (e.g. "osc1.freqHz").
+   * If omitted, all oscVoice frequency params are targeted.
+   */
+  pitchParams?: string | string[];
+  /**
+   * Optional param path to use as the gate/envelope target (e.g. "amp.gain" or "out.gain").
+   * If omitted, an internal gate gain node is used.
+   */
+  gateParam?: string;
+  /** If true, schedules preset.events at voice creation time. Default: false */
+  scheduleEvents?: boolean;
+  /** If true, honors node stopAfter fields. Default: false */
+  obeyStopAfter?: boolean;
+}
+
+export interface SfxGraphVoiceHandle {
+  /** Map of "nodeId.param" -> AudioParam for live control. */
+  params: Record<string, AudioParam>;
+  /** Set pitch/frequency in Hz for the configured pitch params. */
+  setHz: (hz: number, when?: number) => void;
+  /** Starts (or retriggers) the gate envelope and optionally sets pitch. */
+  noteOn: (hz?: number, velocity?: number, when?: number) => void;
+  /** Releases the gate envelope (does not stop oscillators). */
+  noteOff: (when?: number) => void;
+  /** Stops and disposes the voice (stops oscillators and fades out). */
+  stop: (when?: number) => void;
+}
+
 export interface BakeSfxGraphOptions {
   // If omitted, duration is estimated from nodes/events.
   seconds?: number;
@@ -1141,12 +1181,80 @@ function safeConnectParam(node: AudioNode, param: AudioParam) {
   }
 }
 
-export function playSfxGraph(
+function buildParamsByPath(nodes: Map<string, RuntimeNode>): Record<string, AudioParam> {
+  const out: Record<string, AudioParam> = {};
+  for (const [id, n] of nodes.entries()) {
+    const params = n.params;
+    if (!params) continue;
+    for (const [k, p] of Object.entries(params)) {
+      if (!p) continue;
+      out[`${id}.${k}`] = p;
+    }
+  }
+  return out;
+}
+
+function gateOn(param: AudioParam, t0: number, attack: number, peak: number) {
+  const a = Math.max(0.0005, Number.isFinite(attack) ? attack : 0);
+  const pk = Math.max(0.00001, Number.isFinite(peak) ? peak : 0.00001);
+  try {
+    param.cancelScheduledValues(t0);
+    param.setValueAtTime(Math.max(0.00001, param.value || 0.00001), t0);
+    param.exponentialRampToValueAtTime(pk, t0 + a);
+  } catch {
+    // ignore
+  }
+}
+
+function gateOnADSR(param: AudioParam, t0: number, attack: number, decay: number, sustain: number, peak: number) {
+  const a = Math.max(0.0005, Number.isFinite(attack) ? attack : 0);
+  const d = Math.max(0, Number.isFinite(decay) ? decay : 0);
+  const s = clamp(Number.isFinite(sustain) ? sustain : 1, 0, 1);
+  const pk = Math.max(0.00001, Number.isFinite(peak) ? peak : 0.00001);
+  const sus = Math.max(0.00001, pk * s);
+  try {
+    param.cancelScheduledValues(t0);
+    param.setValueAtTime(Math.max(0.00001, param.value || 0.00001), t0);
+    param.exponentialRampToValueAtTime(pk, t0 + a);
+    if (d > 0.000001) {
+      param.exponentialRampToValueAtTime(sus, t0 + a + d);
+    } else {
+      param.setValueAtTime(sus, t0 + a);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function gateOff(param: AudioParam, t0: number, release: number) {
+  const r = Math.max(0.002, Number.isFinite(release) ? release : 0);
+  try {
+    param.cancelScheduledValues(t0);
+    param.setValueAtTime(Math.max(0.00001, param.value || 0.00001), t0);
+    param.exponentialRampToValueAtTime(0.00001, t0 + r);
+  } catch {
+    // ignore
+  }
+}
+
+type BuildRuntimeOptions = {
+  scheduleEvents: boolean;
+  obeyStopAfter: boolean;
+  connectOutput: (outGain: GainNode, outputNode: AudioNode) => void;
+};
+
+function buildSfxGraphRuntime(
   ctx: BaseAudioContext,
   preset: SfxGraphPreset,
   seed: number,
-  options: PlaySfxGraphOptions = {}
-): SfxGraphHandle {
+  options: PlaySfxGraphOptions,
+  rtOpts: BuildRuntimeOptions
+): {
+  t0: number;
+  stopAll: (when?: number) => void;
+  nodes: Map<string, RuntimeNode>;
+  oscFreqParams: AudioParam[];
+} {
   const rng = mulberry32(seed);
   const evalr = new ExprEvaluator(rng, preset.vars);
 
@@ -1156,12 +1264,13 @@ export function playSfxGraph(
 
   const outGain = ctx.createGain();
   outGain.gain.value = vol;
-  safeConnect(outGain, outputNode);
+  rtOpts.connectOutput(outGain, outputNode);
 
   const nodes: Map<string, RuntimeNode> = new Map();
   nodes.set('out', { id: 'out', kind: 'out', input: outGain, output: outGain, params: { gain: outGain.gain } });
 
   const stoppables: Array<{ stop: (t: number) => void }> = [];
+  const oscFreqParams: AudioParam[] = [];
 
   const stopAll = (when: number = 0) => {
     const t = ctx.currentTime + when;
@@ -1196,7 +1305,7 @@ export function playSfxGraph(
       osc.start(t0);
 
       const stopAfter = node.stopAfter !== undefined ? Number(evalr.eval(node.stopAfter)) : undefined;
-      if (stopAfter !== undefined && Number.isFinite(stopAfter) && stopAfter > 0) {
+      if (rtOpts.obeyStopAfter && stopAfter !== undefined && Number.isFinite(stopAfter) && stopAfter > 0) {
         osc.stop(t0 + stopAfter);
       }
 
@@ -1221,6 +1330,7 @@ export function playSfxGraph(
       };
       nodes.set(node.id, rt);
       stoppables.push({ stop: rt.stop! });
+      oscFreqParams.push(osc.frequency);
       continue;
     }
 
@@ -1236,7 +1346,7 @@ export function playSfxGraph(
       osc.start(t0);
 
       const stopAfter = node.stopAfter !== undefined ? Number(evalr.eval(node.stopAfter)) : undefined;
-      if (stopAfter !== undefined && Number.isFinite(stopAfter) && stopAfter > 0) {
+      if (rtOpts.obeyStopAfter && stopAfter !== undefined && Number.isFinite(stopAfter) && stopAfter > 0) {
         osc.stop(t0 + stopAfter);
       }
 
@@ -1281,7 +1391,7 @@ export function playSfxGraph(
       src.start(t0);
 
       const stopAfter = node.stopAfter !== undefined ? Number(evalr.eval(node.stopAfter)) : duration;
-      if (Number.isFinite(stopAfter) && stopAfter > 0) {
+      if (rtOpts.obeyStopAfter && Number.isFinite(stopAfter) && stopAfter > 0) {
         try {
           src.stop(t0 + stopAfter);
         } catch {
@@ -1430,13 +1540,12 @@ export function playSfxGraph(
         if (Number.isFinite(n)) param.value = n;
       };
 
-      // Modern positional params (AudioParams)
-      setParam((p as any).positionX, node.positionX);
-      setParam((p as any).positionY, node.positionY);
-      setParam((p as any).positionZ, node.positionZ);
-      setParam((p as any).orientationX, node.orientationX);
-      setParam((p as any).orientationY, node.orientationY);
-      setParam((p as any).orientationZ, node.orientationZ);
+      setParam((p as any).positionX, (node as any).positionX);
+      setParam((p as any).positionY, (node as any).positionY);
+      setParam((p as any).positionZ, (node as any).positionZ);
+      setParam((p as any).orientationX, (node as any).orientationX);
+      setParam((p as any).orientationY, (node as any).orientationY);
+      setParam((p as any).orientationZ, (node as any).orientationZ);
 
       const setNumProp = (key: keyof PannerNode, expr: any, clampFn?: (x: number) => number) => {
         if (expr === undefined) return;
@@ -1445,12 +1554,12 @@ export function playSfxGraph(
         (p as any)[key] = clampFn ? clampFn(n) : n;
       };
 
-      setNumProp('refDistance', node.refDistance, (x) => Math.max(0, x));
-      setNumProp('maxDistance', node.maxDistance, (x) => Math.max(0, x));
-      setNumProp('rolloffFactor', node.rolloffFactor, (x) => Math.max(0, x));
-      setNumProp('coneInnerAngle', node.coneInnerAngle, (x) => clamp(x, 0, 360));
-      setNumProp('coneOuterAngle', node.coneOuterAngle, (x) => clamp(x, 0, 360));
-      setNumProp('coneOuterGain', node.coneOuterGain, (x) => clamp(x, 0, 1));
+      setNumProp('refDistance', (node as any).refDistance, (x) => Math.max(0, x));
+      setNumProp('maxDistance', (node as any).maxDistance, (x) => Math.max(0, x));
+      setNumProp('rolloffFactor', (node as any).rolloffFactor, (x) => Math.max(0, x));
+      setNumProp('coneInnerAngle', (node as any).coneInnerAngle, (x) => clamp(x, 0, 360));
+      setNumProp('coneOuterAngle', (node as any).coneOuterAngle, (x) => clamp(x, 0, 360));
+      setNumProp('coneOuterGain', (node as any).coneOuterGain, (x) => clamp(x, 0, 1));
 
       nodes.set(node.id, {
         id: node.id,
@@ -1486,8 +1595,8 @@ export function playSfxGraph(
     }
 
     if (node.kind === 'iirFilter') {
-      const ff = node.feedforward;
-      const fb = node.feedback;
+      const ff = (node as any).feedforward;
+      const fb = (node as any).feedback;
       const f = ctx.createIIRFilter(ff, fb);
       nodes.set(node.id, { id: node.id, kind: node.kind, input: f, output: f });
       continue;
@@ -1495,12 +1604,12 @@ export function playSfxGraph(
 
     if (node.kind === 'constantSource') {
       const cs = ctx.createConstantSource();
-      const off = Number(evalr.eval(node.offset));
+      const off = Number(evalr.eval((node as any).offset));
       cs.offset.value = Number.isFinite(off) ? off : 0;
       cs.start(t0);
 
-      const stopAfter = node.stopAfter !== undefined ? Number(evalr.eval(node.stopAfter)) : undefined;
-      if (stopAfter !== undefined && Number.isFinite(stopAfter) && stopAfter > 0) {
+      const stopAfter = (node as any).stopAfter !== undefined ? Number(evalr.eval((node as any).stopAfter)) : undefined;
+      if (rtOpts.obeyStopAfter && stopAfter !== undefined && Number.isFinite(stopAfter) && stopAfter > 0) {
         try {
           cs.stop(t0 + stopAfter);
         } catch {
@@ -1532,12 +1641,12 @@ export function playSfxGraph(
 
     if (node.kind === 'filter') {
       const f = ctx.createBiquadFilter();
-      f.type = String(evalr.eval(node.filterType)) as BiquadFilterType;
-      f.frequency.value = Math.max(10, Number(evalr.eval(node.freqHz)));
-      f.Q.value = Math.max(0.0001, Number(evalr.eval(node.q)));
+      f.type = String(evalr.eval((node as any).filterType)) as BiquadFilterType;
+      f.frequency.value = Math.max(10, Number(evalr.eval((node as any).freqHz)));
+      f.Q.value = Math.max(0.0001, Number(evalr.eval((node as any).q)));
 
-      if (node.gain !== undefined) {
-        const g = Number(evalr.eval(node.gain));
+      if ((node as any).gain !== undefined) {
+        const g = Number(evalr.eval((node as any).gain));
         if (Number.isFinite(g)) f.gain.value = g;
       }
 
@@ -1558,14 +1667,12 @@ export function playSfxGraph(
 
     if (node.kind === 'waveshaper') {
       const ws = ctx.createWaveShaper();
-      const curveName = String(evalr.eval(node.curve));
-      const amount = node.amount !== undefined ? Number(evalr.eval(node.amount)) : 1;
-      // TS lib.dom has started typing WaveShaperNode.curve with a narrower typed-array backing.
-      // Our generated curve is compatible at runtime.
+      const curveName = String(evalr.eval((node as any).curve));
+      const amount = (node as any).amount !== undefined ? Number(evalr.eval((node as any).amount)) : 1;
       ws.curve = makeWaveshaperCurve(curveName, amount) as any;
 
-      const os = node.oversample !== undefined ? String(evalr.eval(node.oversample)) : 'none';
-      ws.oversample = (os === '2x' || os === '4x') ? (os as OverSampleType) : 'none';
+      const os = (node as any).oversample !== undefined ? String(evalr.eval((node as any).oversample)) : 'none';
+      ws.oversample = os === '2x' || os === '4x' ? (os as OverSampleType) : 'none';
 
       nodes.set(node.id, { id: node.id, kind: node.kind, input: ws, output: ws });
       continue;
@@ -1573,7 +1680,7 @@ export function playSfxGraph(
 
     if (node.kind === 'gain') {
       const g = ctx.createGain();
-      g.gain.value = Number(evalr.eval(node.gain));
+      g.gain.value = Number(evalr.eval((node as any).gain));
       nodes.set(node.id, { id: node.id, kind: node.kind, input: g, output: g, params: { gain: g.gain } });
       continue;
     }
@@ -1583,7 +1690,6 @@ export function playSfxGraph(
     const from = nodes.get(e.from);
     if (!from) continue;
 
-    // Param edges: to can be "nodeId.paramName" (e.g. "v.freqHz", "f.frequency", "out.gain")
     const toStr = String(e.to);
     const dot = toStr.lastIndexOf('.');
     if (dot > 0 && dot < toStr.length - 1) {
@@ -1603,58 +1709,196 @@ export function playSfxGraph(
     safeConnectIndexed(from.output, dest, e.fromChannel, e.toChannel);
   }
 
-  for (const ev of preset.events ?? []) {
-    const at = ev.at !== undefined ? Number(evalr.eval(ev.at)) : 0;
-    const t = t0 + Math.max(0, at);
+  if (rtOpts.scheduleEvents) {
+    for (const ev of preset.events ?? []) {
+      const at = ev.at !== undefined ? Number(evalr.eval(ev.at)) : 0;
+      const t = t0 + Math.max(0, at);
 
-    if (ev.kind === 'envAR') {
-      const node = nodes.get(ev.node);
-      const p = node?.params?.gain;
-      if (!p) continue;
-      envAR(p, t, Number(evalr.eval(ev.attack)), Number(evalr.eval(ev.release)), Number(evalr.eval(ev.peak)));
-      continue;
-    }
-
-    if (ev.kind === 'envADSR') {
-      const node = nodes.get(ev.node);
-      const p = node?.params?.gain;
-      if (!p) continue;
-      envADSR(
-        p,
-        t,
-        Number(evalr.eval(ev.attack)),
-        Number(evalr.eval(ev.decay)),
-        Number(evalr.eval(ev.sustain)),
-        Number(evalr.eval(ev.release)),
-        Number(evalr.eval(ev.peak)),
-        Number(evalr.eval(ev.hold))
-      );
-      continue;
-    }
-
-    if (ev.kind === 'freqDrop') {
-      const node = nodes.get(ev.node);
-      const p = node?.params?.freqHz ?? node?.params?.frequency;
-      if (!p) continue;
-      scheduleFreqDrop(p, t, Number(evalr.eval(ev.startHz)), Number(evalr.eval(ev.endHz)), Number(evalr.eval(ev.duration)));
-      continue;
-    }
-
-    if (ev.kind === 'freqSequence') {
-      const node = nodes.get(ev.node);
-      const p = node?.params?.freqHz ?? node?.params?.frequency;
-      if (!p) continue;
-      const base = Math.max(1, Number(evalr.eval(ev.baseHz)));
-      const step = Math.max(0.001, Number(evalr.eval(ev.stepDur)));
-      for (let i = 0; i < ev.multipliers.length; i++) {
-        const hz = Math.max(1, base * ev.multipliers[i]!);
-        p.setValueAtTime(hz, t + i * step);
+      if (ev.kind === 'envAR') {
+        const node = nodes.get(ev.node);
+        const p = node?.params?.gain;
+        if (!p) continue;
+        envAR(p, t, Number(evalr.eval(ev.attack)), Number(evalr.eval(ev.release)), Number(evalr.eval(ev.peak)));
+        continue;
       }
-      continue;
+
+      if (ev.kind === 'envADSR') {
+        const node = nodes.get(ev.node);
+        const p = node?.params?.gain;
+        if (!p) continue;
+        envADSR(
+          p,
+          t,
+          Number(evalr.eval(ev.attack)),
+          Number(evalr.eval(ev.decay)),
+          Number(evalr.eval(ev.sustain)),
+          Number(evalr.eval(ev.release)),
+          Number(evalr.eval(ev.peak)),
+          Number(evalr.eval(ev.hold))
+        );
+        continue;
+      }
+
+      if (ev.kind === 'freqDrop') {
+        const node = nodes.get(ev.node);
+        const p = node?.params?.freqHz ?? node?.params?.frequency;
+        if (!p) continue;
+        scheduleFreqDrop(p, t, Number(evalr.eval(ev.startHz)), Number(evalr.eval(ev.endHz)), Number(evalr.eval(ev.duration)));
+        continue;
+      }
+
+      if (ev.kind === 'freqSequence') {
+        const node = nodes.get(ev.node);
+        const p = node?.params?.freqHz ?? node?.params?.frequency;
+        if (!p) continue;
+        const base = Math.max(1, Number(evalr.eval(ev.baseHz)));
+        const step = Math.max(0.001, Number(evalr.eval(ev.stepDur)));
+        for (let i = 0; i < ev.multipliers.length; i++) {
+          const hz = Math.max(1, base * ev.multipliers[i]!);
+          p.setValueAtTime(hz, t + i * step);
+        }
+        continue;
+      }
     }
   }
 
-  return { stop: stopAll };
+  return { t0, stopAll, nodes, oscFreqParams };
+}
+
+export function playSfxGraph(
+  ctx: BaseAudioContext,
+  preset: SfxGraphPreset,
+  seed: number,
+  options: PlaySfxGraphOptions = {}
+): SfxGraphHandle {
+  const rt = buildSfxGraphRuntime(ctx, preset, seed, options, {
+    scheduleEvents: true,
+    obeyStopAfter: true,
+    connectOutput: (outGain, outputNode) => safeConnect(outGain, outputNode)
+  });
+  return { stop: rt.stopAll };
+}
+
+export function createSfxGraphVoice(
+  ctx: BaseAudioContext,
+  preset: SfxGraphPreset,
+  seed: number,
+  options: CreateSfxGraphVoiceOptions = {}
+): SfxGraphVoiceHandle {
+  const attack = Number.isFinite(Number(options.attack)) ? Math.max(0.0005, Number(options.attack)) : 0.005;
+  const decay = Number.isFinite(Number(options.decay)) ? Math.max(0, Number(options.decay)) : 0;
+  const sustain = Number.isFinite(Number(options.sustain)) ? clamp(Number(options.sustain), 0, 1) : 1;
+  const release = Number.isFinite(Number(options.release)) ? Math.max(0.002, Number(options.release)) : 0.08;
+  const peak = Number.isFinite(Number(options.peak)) ? Math.max(0, Number(options.peak)) : 1;
+  const obeyStopAfter = !!options.obeyStopAfter;
+  const scheduleEvents = !!options.scheduleEvents;
+
+  // Insert a gate gain after the graph output so the voice can sustain
+  // (noteOn/noteOff) without relying on one-shot events.
+  const gateGain = ctx.createGain();
+  gateGain.gain.value = 1;
+
+  const rt = buildSfxGraphRuntime(ctx, preset, seed, options, {
+    scheduleEvents,
+    obeyStopAfter,
+    connectOutput: (outGain, outputNode) => {
+      safeConnect(outGain, gateGain);
+      safeConnect(gateGain, outputNode);
+    }
+  });
+
+  const paramsByPath = buildParamsByPath(rt.nodes);
+
+  const pitchParamPaths: string[] = [];
+  if (typeof options.pitchParams === 'string') {
+    pitchParamPaths.push(options.pitchParams);
+  } else if (Array.isArray(options.pitchParams)) {
+    for (const p of options.pitchParams) pitchParamPaths.push(String(p));
+  }
+
+  const pitchTargets: AudioParam[] = [];
+  if (pitchParamPaths.length > 0) {
+    for (const p of pitchParamPaths) {
+      const param = paramsByPath[String(p)];
+      if (param) pitchTargets.push(param);
+    }
+  } else {
+    pitchTargets.push(...rt.oscFreqParams);
+  }
+
+  // Preserve the relative pitch relationships baked into the preset (e.g. detune/multipliers)
+  // by scaling each target by its initial ratio to the first target.
+  const pitchMultipliers: number[] = (() => {
+    if (pitchTargets.length === 0) return [];
+    const root = Math.max(0.00001, Number(pitchTargets[0]!.value) || 0.00001);
+    return pitchTargets.map((p, i) => {
+      if (i === 0) return 1;
+      const v = Number(p.value);
+      if (!Number.isFinite(v) || v <= 0) return 1;
+      const m = v / root;
+      return Number.isFinite(m) && m > 0 ? m : 1;
+    });
+  })();
+
+  let envParam: AudioParam = gateGain.gain;
+  if (options.gateParam) {
+    const p = paramsByPath[String(options.gateParam)];
+    if (p) envParam = p;
+  }
+
+  // If we are using the internal gate, start silent at the voice start time.
+  if (envParam === gateGain.gain) {
+    try {
+      gateGain.gain.setValueAtTime(0.00001, rt.t0);
+    } catch {
+      gateGain.gain.value = 0.00001;
+    }
+  }
+
+  const setHz = (hz: number, when: number = 0) => {
+    const t = ctx.currentTime + Math.max(0, Number(when) || 0);
+    const h = Math.max(1, Number(hz) || 0);
+    for (let i = 0; i < pitchTargets.length; i++) {
+      const p = pitchTargets[i]!;
+      const mul = pitchMultipliers[i] ?? 1;
+      try {
+        p.setValueAtTime(h * mul, t);
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const noteOn = (hz?: number, velocity: number = 1, when: number = 0) => {
+    const t = ctx.currentTime + Math.max(0, Number(when) || 0);
+    if (hz !== undefined) setHz(Number(hz), when);
+    const v = clamp(Number(velocity), 0, 2);
+    const pk = Math.max(0.00001, peak * Math.max(0.00001, v));
+    if (decay > 0 || sustain < 1) {
+      gateOnADSR(envParam, t, attack, decay, sustain, pk);
+    } else {
+      gateOn(envParam, t, attack, pk);
+    }
+  };
+
+  const noteOff = (when: number = 0) => {
+    const t = ctx.currentTime + Math.max(0, Number(when) || 0);
+    gateOff(envParam, t, release);
+  };
+
+  const stop = (when: number = 0) => {
+    const w = Math.max(0, Number(when) || 0);
+    noteOff(w);
+    rt.stopAll(w + release + 0.05);
+  };
+
+  return {
+    params: paramsByPath,
+    setHz,
+    noteOn,
+    noteOff,
+    stop
+  };
 }
 
 export function estimateSfxGraphDurationSeconds(preset: SfxGraphPreset, seed: number, tailSeconds: number = 0.06): number {

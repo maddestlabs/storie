@@ -82,14 +82,14 @@ export class WebGPUUIRenderer {
   // Per-instance stencil reference (mask depth)
   private textStencilRef: Int32Array;
 
-  measureTextWidth(text: string): number {
+  measureTextWidth(text: string, scale?: number): number {
     if (!text) return 0;
-
+    const s = (Number.isFinite(scale) && (scale as number) > 0) ? (scale as number) : 1;
     const charW = this.atlas.getCharWidth();
     let total = 0;
     for (const ch of text) {
       const glyph = this.atlas.getGlyph(ch);
-      total += Math.max(charW, glyph.pixelWidth || 0);
+      total += Math.max(charW, glyph.pixelWidth || 0) * s;
     }
     return total;
   }
@@ -639,12 +639,14 @@ export class WebGPUUIRenderer {
     this.rectCount++;
   }
 
-  text(text: string, x: number, y: number, color: Color): void {
+  text(text: string, x: number, y: number, color: Color, scale?: number): void {
     if (!text) return;
+    const s = (Number.isFinite(scale) && (scale as number) > 0) ? (scale as number) : 1;
 
     const [r, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color as any));
-    const charW = this.atlas.getCharWidth();
-    const charH = this.atlas.getCharHeight();
+    const baseCharW = this.atlas.getCharWidth();
+    const charW = baseCharW * s;
+    const charH = this.atlas.getCharHeight() * s;
 
     const start = this.textCount;
 
@@ -653,7 +655,7 @@ export class WebGPUUIRenderer {
       if (this.textCount >= 4096) break;
 
       const glyph = this.atlas.getGlyph(ch);
-      const glyphWidth = Math.max(charW, glyph.pixelWidth || 0);
+      const glyphWidth = Math.max(baseCharW, glyph.pixelWidth || 0) * s;
       const o = this.textCount * 12;
       this.textData[o + 0] = cursorX;
       this.textData[o + 1] = y;

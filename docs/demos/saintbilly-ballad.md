@@ -1,6 +1,6 @@
 ---
-name: "Saint Billy"
-title: "Saint Billy"
+name: "Ballad of Saint Billy"
+title: "Ballad of Saint Billy"
 author: "Maddest Labs"
 theme: "saintbilly"
 shaders: "blurgradual+lightvignette"
@@ -334,7 +334,7 @@ worlds.config.setDefaults({
   defaultSectionHeight: 520,
   autoLayoutSpacing: 2,
   sectionBorderEnabled: false,
-  sectionBackground: 'texture:assets/img/Paper004_1K-JPG_Displacement.jpg;tilePx=640;contentDistort=0.003;blendMode=overlay;blendStrength=0.7;paperPlaneZ=focus',
+  sectionBackground: 'texture:assets/img/Paper006_1K-JPG_Color.jpg;tilePx=640;contentDistort=0.01;blendMode=overlay;blendStrength=0.7;paperPlaneZ=focus',
 });
 
 worlds.camera.setPosition(0, 55, 320);

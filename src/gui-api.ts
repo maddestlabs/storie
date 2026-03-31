@@ -573,6 +573,10 @@ export function createGUIAPI(
       return this._boundsSpace === 'device' ? tokens : unscaleTokens(tokens);
     },
 
+    getScale() {
+      return safeGetScale();
+    },
+
     setTokens(tokens?: GUITokenPatch) {
       if (!this._system) {
         throw new Error('GUI system not initialized. Call gui.init() first.');
@@ -806,6 +810,37 @@ export function createGUIAPI(
           // GUI viewports already come from the canvas' safe-area-correct bounds.
           // Reapplying safe area here double-insets derived sub-rects.
           delete o.safeArea;
+
+          // In CSS boundsSpace, user code (and gui.getViewportRect) operate in
+          // CSS pixels, but containers/widgets are normalized into backing-store
+          // pixels for crisp rendering. Scale viewport + viewport options here
+          // so responsive relayout stays consistent during host resizes.
+          if (api._boundsSpace !== 'device') {
+            const vv = scaleBounds(v);
+            const oo: any = { ...o };
+
+            const scaleOpt = (key: string) => {
+              if (!Object.prototype.hasOwnProperty.call(oo, key)) return;
+              const n = Number(oo[key]);
+              if (!Number.isFinite(n)) return;
+              oo[key] = scaleLength(n);
+            };
+
+            scaleOpt('inset');
+            scaleOpt('insetX');
+            scaleOpt('insetY');
+            scaleOpt('insetTop');
+            scaleOpt('insetRight');
+            scaleOpt('insetBottom');
+            scaleOpt('insetLeft');
+            scaleOpt('width');
+            scaleOpt('height');
+            scaleOpt('maxWidth');
+            scaleOpt('maxHeight');
+
+            return container.fitToViewport(vv, oo, relayout);
+          }
+
           return container.fitToViewport(v, o, relayout);
         },
         getBounds: () => ({ ...container.bounds }),

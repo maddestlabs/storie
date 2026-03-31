@@ -67,6 +67,25 @@ https://maddestlabs.github.io/storie?content=browser:my-draft
 
 Video export uses browser tech to render at any resolution and frame rate but it requires file system access for feasible storage so it only works when hosted locally or via GitHub Codespaces. Just clone the repo and serve /docs/index.html with any basic web server. Then access Export panel with `CTRL-SHIFT-E`.
 
+## SVG → Worlds (Inkscape)
+
+If you prototype card/slide layouts in Inkscape, you can convert SVG text objects into a Worlds-ready Markdown document:
+
+```sh
+node scripts/svg-to-worlds-md.js docs/demos/demo.svg
+```
+
+This writes `docs/demos/import-demo.md` by default, using `docs/demos/worlds-import.md` as the template.
+
+Options:
+- `--flip-y 1` (default): flips SVG’s Y-down coordinates into Worlds’ Y-up coordinates and keeps rotations consistent.
+- `--anchor baseline-left` (default): treats SVG `<text x y>` as a baseline-left anchor and shifts it to an estimated text center (helps with rotated text).
+- `--anchor point`: uses the raw transformed SVG `x/y` point with no anchor correction.
+- `--scale <n>`: multiplies all imported coordinates.
+- `--center 1`: centers imported sections around the origin.
+- `--template <path>`: use a different template file (insert marker: `<!-- SVG_TO_WORLDS_SECTIONS -->`).
+- `--stdout`: write the output to stdout.
+
 ## History
 
 - Successor to [Storiel](https://github.com/maddestlabs/storiel), the Lua-based proof-of-concept.

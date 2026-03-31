@@ -171,7 +171,7 @@ export class GUISystem {
 
     return {
       rect: (x, y, w, h, color) => ui.rect(x, y, w, h, this.applyOpacityToColor(color, opacity)),
-      text: (text, x, y, color) => ui.text(text, x, y, this.applyOpacityToColor(color, opacity)),
+      text: (text, x, y, color, scale) => ui.text(text, x, y, this.applyOpacityToColor(color, opacity), scale),
       measureTextWidth: ui.measureTextWidth ? (text) => ui.measureTextWidth!(text) : undefined,
       image: ui.image
         ? (imageId, x, y, w, h, options) => ui.image!(imageId, x, y, w, h, options && options.tint
@@ -728,6 +728,7 @@ export class GUISystem {
   
   private renderButton(button: GUIButton, ui: Draw2D, charW: number, charH: number): void {
     const metrics = button.resolveRenderContext(charW, charH);
+    const renderScale = metrics.scale;
     charW = metrics.charWidth;
     charH = metrics.charHeight;
     const { x, y, width, height } = button.bounds;
@@ -746,15 +747,16 @@ export class GUISystem {
     ui.rect(x, y, border, height, borderColor);
     ui.rect(x + width - border, y, border, height, borderColor);
     
-    const labelWidth = typeof ui.measureTextWidth === 'function' ? ui.measureTextWidth(label) : label.length * charW;
+    const labelWidth = typeof ui.measureTextWidth === 'function' ? ui.measureTextWidth(label, renderScale) : label.length * charW;
     const labelX = x + (width - labelWidth) / 2;
     const labelY = y + Math.max(0, Math.floor((height - charH) / 2));
     
-    ui.text(label, labelX, labelY, fg);
+    ui.text(label, labelX, labelY, fg, renderScale);
   }
   
   private renderLabel(label: GUILabel, ui: Draw2D, charW: number, charH: number): void {
     const metrics = label.resolveRenderContext(charW, charH);
+    const renderScale = metrics.scale;
     charW = metrics.charWidth;
     charH = metrics.charHeight;
     const { x, y, width, height } = label.bounds;
@@ -769,14 +771,14 @@ export class GUISystem {
     // Text alignment
     let textX = x;
     if (label.align === 'center') {
-      const textWidth = typeof ui.measureTextWidth === 'function' ? ui.measureTextWidth(text) : text.length * charW;
+      const textWidth = typeof ui.measureTextWidth === 'function' ? ui.measureTextWidth(text, renderScale) : text.length * charW;
       textX = x + (width - textWidth) / 2;
     } else if (label.align === 'right') {
-      const textWidth = typeof ui.measureTextWidth === 'function' ? ui.measureTextWidth(text) : text.length * charW;
+      const textWidth = typeof ui.measureTextWidth === 'function' ? ui.measureTextWidth(text, renderScale) : text.length * charW;
       textX = x + width - textWidth;
     }
     
-    ui.text(text, textX, y + Math.max(0, Math.floor((height - charH) / 2)), fg);
+    ui.text(text, textX, y + Math.max(0, Math.floor((height - charH) / 2)), fg, renderScale);
   }
   
   private renderCheckbox(checkbox: GUICheckbox, ui: Draw2D, charW: number, _charH: number): void {

@@ -1,6 +1,6 @@
 ---
 title: "impress.js Recreation"
-theme: "solarlight"
+theme: "saintbilly"
 ---
 
 ```javascript
@@ -12,6 +12,7 @@ function applySlideStyle() {
     sectionBorderEnabled: false,
     sectionBackground: 0x00000000,
     sectionRender: 'content',
+    sectionBackground: 'texture:assets/img/Paper004_1K-JPG_Displacement.jpg;tilePx=640;contentDistort=0.003;blendMode=overlay;blendStrength=0.7;paperPlaneZ=focus',
   });
 }
 
@@ -129,16 +130,6 @@ The point here is not to clone the original HTML and CSS line for line. The poin
 - per-step scale
 - camera travel between authored positions
 
-Controls:
-
-- Next: `Space`, `PageDown`, `ArrowRight`, `n`
-- Previous: `Shift+Space`, `PageUp`, `ArrowLeft`, `p`
-- Overview: `O` or `End`
-- Zoom: `+` and `-`
-
-- [Jump to Title](#title)
-- [Jump to Overview](#overview)
-
 # Title {"x":"0","y":"0","scale":"4"}
 
 then you should try
@@ -149,9 +140,6 @@ This step mirrors the big center-title moment from the original demo.
 
 The section itself is just markdown. The authored metadata carries the spatial weight.
 
-- [Next: Its](#its)
-- [Back: Bored](#bored)
-
 # Its {"x":"20","y":"69","rotate-z":"90","scale":"5"}
 
 It is a presentation tool inspired by the same idea as impress.js, but authored through **sections** instead of freeform HTML steps.
@@ -160,17 +148,11 @@ In Storie, the transform lives beside the heading:
 
 `{"x":850,"y":3000,"rotate-z":90,"scale":5}`
 
-- [Next: Big](#big)
-- [Back: Title](#title)
-
 # Big {"x":"81","y":"48","rotate-z":"180","scale":"6"}
 
 visualize your **big** thoughts
 
 This is the same move as the original: bigger scale, farther away on the canvas, and rotated so the camera has to swing around to meet it.
-
-- [Next: Tiny](#tiny)
-- [Back: Its](#its)
 
 # Tiny {"x":"66","y":"54","z":"-69","rotate-z":"300"}
 
@@ -178,17 +160,11 @@ and **tiny** ideas
 
 This step is where the original demo pushes into depth. Worlds handles the same authored `z` offset directly in section metadata.
 
-- [Next: Ing](#ing)
-- [Back: Big](#big)
-
 # Ing {"x":"81","y":"-20","rotate-z":"270","scale":"6"}
 
 presentations are no longer trapped in a flat stack.
 
 Rotate the section, move it across the canvas, and let the engine do the camera work.
-
-- [Next: Imagination](#imagination)
-- [Back: Tiny](#tiny)
 
 # Imagination {"x":"154","y":"-7","scale":"6"}
 
@@ -196,26 +172,17 @@ the only limit is your **imagination**
 
 This step exists mostly to prove scale and long-distance navigation still read cleanly in the Worlds model.
 
-- [Next: Source](#source)
-- [Back: Ing](#ing)
-
 # Source {"x":"145","y":"46","rotate-z":"20","scale":"4"}
 
 want to know more?
 
 The original impress.js demo points people back to the source. This recreation points back to the Storie demo model instead: sections, metadata, and Worlds navigation.
 
-- [Next: One More Thing](#one-more-thing)
-- [Back: Imagination](#imagination)
-
 # One More Thing {"x":"138","y":"92","scale":"2"}
 
 one more thing...
 
 The final stretch in the original demo uses the same layout grammar and then escalates into 3D rotation.
-
-- [Next: Its In 3D](#its-in-3d)
-- [Back: Source](#source)
 
 # Its In 3D {"x":"143","y":"99","z":"-2","rotate-x":"-40","rotate-y":"10","scale":"2"}
 
@@ -231,9 +198,6 @@ This is the key validation point for Worlds. The step uses:
 - `scale`
 
 and Storie still computes a usable camera framing automatically.
-
-- [Next: Overview](#overview)
-- [Back: One More Thing](#one-more-thing)
 
 # Overview {"x":"69","y":"35","z":"0","scale":"4","width":"180","height":"120","render":"none","opacity":"0","interactive":"false"}
 

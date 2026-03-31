@@ -16,8 +16,8 @@ export interface Draw2DColorUtils {
  */
 export interface Draw2D {
   rect(x: number, y: number, w: number, h: number, color: Color): void;
-  text(text: string, x: number, y: number, color: Color): void;
-  measureTextWidth?(text: string): number;
+  text(text: string, x: number, y: number, color: Color, scale?: number): void;
+  measureTextWidth?(text: string, scale?: number): number;
 
   /**
    * Draw a previously loaded image by id.

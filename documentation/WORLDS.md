@@ -99,13 +99,14 @@ Supported keys:
 - Card composition: `render: "all" | "heading" | "content" | "none"`
 - Content block alignment: `contentAlign: "start" | "center"`
 - Wrapped text alignment: `textAlign: "left" | "center" | "right"`
-- Flags: `hidden: "true"` (visibility), `navigable: "false"`, `interactive: "false"`
+- Flags: `hidden: "true"` (hard-hide), `hiddenUntilVisited: "true"` (reveal on first navigation), `removeAfterVisit: "true"` (hide permanently after leaving once), `navigable: "false"`, `interactive: "false"`
 
 Notes:
 - Rotations are specified in degrees in metadata but are stored internally as radians.
 - `displayTitle` is the heading text with the JSON suffix stripped.
 - The relaxed form is intended for flat key/value metadata. If you need nested data, strict JSON is the safer choice.
 - `worlds.config.setDefaults({ sectionRender })` sets the document-wide default render mode, and per-section `render` metadata still overrides it.
+- `worlds.config.setDefaults({ autoHideSectionsUntilVisited: true })` makes all sections start hidden until first navigation, unless overridden per-section with `hiddenUntilVisited`.
 - `contentAlign` centers the rendered markdown block inside the card. `textAlign` aligns wrapped text lines inside headings, paragraphs, and lists.
 
 ## Card Content

@@ -1,6 +1,6 @@
 ---
 name: "Worlds Editor Lab"
-theme: "solarlight"
+theme: "saintbilly"
 fontsize: 22
 font: "Special+Elite"
 shaders: "blurgradual+lightvignette"
@@ -19,12 +19,11 @@ let state = {
   selectedSectionId: null,
   selectedSectionIndex: null,
   loadedSectionId: null,
-  dirty: false,
+  showAllConnectors: false,
   mouseDownLeft: false,
   pointerX: 0,
   pointerY: 0,
   lastWorldSection: null,
-  statusText: 'Ready',
   panel: {
     x: 24,
     y: 24,
@@ -47,37 +46,11 @@ let state = {
   widgets: null,
   layouts: null,
   logicalBounds: null,
-  draft: {
-    title: '',
-    directiveText: '{}',
-    content: ''
-  }
 };
 
 function safeText(value, fallback = '') {
   const text = String(value ?? '').trim();
   return text || fallback;
-}
-
-function directiveToText(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return '{}';
-  const keys = Object.keys(value);
-  if (keys.length === 0) return '{}';
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return '{}';
-  }
-}
-
-function parseDirectiveText(text) {
-  const raw = String(text ?? '').trim();
-  if (!raw || raw === '{}') return {};
-  const parsed = JSON.parse(raw);
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Directive must be a JSON object.');
-  }
-  return parsed;
 }
 
 function pointInBounds(x, y, bounds) {
@@ -130,34 +103,26 @@ function getScalablePanelWidgets() {
   if (!state.widgets) return [];
   return [
     state.widgets.hintLabel,
-    state.widgets.titleField,
-    state.widgets.directiveField,
-    state.widgets.contentEditor,
     state.widgets.btnPrev,
     state.widgets.btnNext,
     state.widgets.btnFocus,
     state.widgets.btnBirdsEye,
     state.widgets.btnResetView,
     state.widgets.btnToggleControls,
-    state.widgets.btnApply,
-    state.widgets.btnRevert,
+    state.widgets.btnToggleConnectors,
   ];
 }
 
 function captureLogicalBounds() {
   state.logicalBounds = {
     hintLabel: { ...state.widgets.hintLabel.bounds },
-    titleField: { ...state.widgets.titleField.bounds },
-    directiveField: { ...state.widgets.directiveField.bounds },
-    contentEditor: { ...state.widgets.contentEditor.bounds },
     btnPrev: { ...state.widgets.btnPrev.bounds },
     btnNext: { ...state.widgets.btnNext.bounds },
     btnFocus: { ...state.widgets.btnFocus.bounds },
     btnBirdsEye: { ...state.widgets.btnBirdsEye.bounds },
     btnResetView: { ...state.widgets.btnResetView.bounds },
     btnToggleControls: { ...state.widgets.btnToggleControls.bounds },
-    btnApply: { ...state.widgets.btnApply.bounds },
-    btnRevert: { ...state.widgets.btnRevert.bounds },
+    btnToggleConnectors: { ...state.widgets.btnToggleConnectors.bounds },
   };
 }
 
@@ -169,17 +134,13 @@ function restoreLogicalBounds() {
     }
   }
   state.widgets.hintLabel.bounds = { ...state.logicalBounds.hintLabel };
-  state.widgets.titleField.bounds = { ...state.logicalBounds.titleField };
-  state.widgets.directiveField.bounds = { ...state.logicalBounds.directiveField };
-  state.widgets.contentEditor.bounds = { ...state.logicalBounds.contentEditor };
   state.widgets.btnPrev.bounds = { ...state.logicalBounds.btnPrev };
   state.widgets.btnNext.bounds = { ...state.logicalBounds.btnNext };
   state.widgets.btnFocus.bounds = { ...state.logicalBounds.btnFocus };
   state.widgets.btnBirdsEye.bounds = { ...state.logicalBounds.btnBirdsEye };
   state.widgets.btnResetView.bounds = { ...state.logicalBounds.btnResetView };
   state.widgets.btnToggleControls.bounds = { ...state.logicalBounds.btnToggleControls };
-  state.widgets.btnApply.bounds = { ...state.logicalBounds.btnApply };
-  state.widgets.btnRevert.bounds = { ...state.logicalBounds.btnRevert };
+  state.widgets.btnToggleConnectors.bounds = { ...state.logicalBounds.btnToggleConnectors };
 }
 
 function getResizeHandleBounds() {
@@ -205,12 +166,7 @@ function clampPanelToViewport() {
 
 function updateHintLabel() {
   if (!state.widgets?.hintLabel) return;
-  const selectedTitle = safeText(state.draft.title, '(untitled)');
-  const mode = worlds.controls.enabled ? 'free-fly on' : 'free-fly off';
-  const dirty = state.dirty ? 'draft' : 'live';
-  const status = safeText(state.statusText, 'Ready');
-  const scaleText = `${state.panel.scale.toFixed(2)}x`;
-  state.widgets.hintLabel.setText(`${selectedTitle} | ${dirty} | ${mode} | ${scaleText} | ${status}`);
+  state.widgets.hintLabel.setText('Controls');
 }
 
 function updateModeButtonStyles() {
@@ -223,27 +179,29 @@ function updateModeButtonStyles() {
   state.widgets.btnToggleControls.buttonStyle.borderColor = enabled ? ui.colors.rgba(255, 246, 232, 255) : undefined;
 }
 
+function updateConnectorButtonStyles() {
+  if (!state.widgets?.btnToggleConnectors) return;
+  const enabled = !!state.showAllConnectors;
+  state.widgets.btnToggleConnectors.buttonStyle.fg = enabled ? ui.colors.rgba(18, 18, 18, 255) : undefined;
+  state.widgets.btnToggleConnectors.buttonStyle.bg = enabled ? ui.colors.rgba(244, 238, 224, 255) : undefined;
+  state.widgets.btnToggleConnectors.buttonStyle.hoverBg = enabled ? ui.colors.rgba(255, 246, 232, 255) : undefined;
+  state.widgets.btnToggleConnectors.buttonStyle.activeBg = enabled ? ui.colors.rgba(226, 214, 192, 255) : undefined;
+  state.widgets.btnToggleConnectors.buttonStyle.borderColor = enabled ? ui.colors.rgba(255, 246, 232, 255) : undefined;
+}
+
 function refreshSections() {
   state.sections = worlds.sections.list();
 }
 
-function syncDraftFromWidgets() {
-  if (!state.widgets) return;
-  state.draft.title = String(state.widgets.titleField.getValue() ?? '');
-  state.draft.directiveText = String(state.widgets.directiveField.getValue() ?? '{}');
-  state.draft.content = String(state.widgets.contentEditor.getValue() ?? '');
-}
-
-function syncWidgetsFromDraft() {
-  if (!state.widgets) return;
-  state.widgets.titleField.setValue(state.draft.title);
-  state.widgets.directiveField.setValue(state.draft.directiveText);
-  state.widgets.contentEditor.setValue(state.draft.content);
-}
-
-function setStatus(text) {
-  state.statusText = String(text ?? '');
-  updateHintLabel();
+function applyLinkOverlay() {
+  if (!state.selectedSectionId) return;
+  worlds.links.setRenderOverlay({
+    enabled: true,
+    section: state.selectedSectionId,
+    internalOnly: true,
+    thickness: 0.12,
+    allVisible: !!state.showAllConnectors,
+  });
 }
 
 function loadSection(selector, focusCamera) {
@@ -254,62 +212,17 @@ function loadSection(selector, focusCamera) {
   state.selectedSectionIndex = section.sectionIndex;
   state.loadedSectionId = section.sectionId;
   state.lastWorldSection = section.sectionIndex;
-  state.draft.title = String(section.title ?? '');
-  state.draft.directiveText = directiveToText(section.directive);
-  state.draft.content = String(section.content ?? '');
-  state.dirty = false;
-  worlds.links.setRenderOverlay({ enabled: true, section: section.sectionId, internalOnly: true, thickness: 0.12 });
-
-  syncWidgetsFromDraft();
+  applyLinkOverlay();
   updateHintLabel();
 
   if (focusCamera) {
     worlds.camera.focusOnSectionFit(section.sectionIndex, 0.9, { keepRotation: true });
   }
 
-  setStatus(`Selected ${safeText(section.title, '(untitled)')}`);
   return true;
-}
-
-function applyDraft() {
-  if (!state.selectedSectionId) return false;
-
-  syncDraftFromWidgets();
-
-  let directive = {};
-  try {
-    directive = parseDirectiveText(state.draft.directiveText);
-  } catch (error) {
-    setStatus(`Directive error: ${String(error?.message ?? error)}`);
-    return false;
-  }
-
-  const title = safeText(state.draft.title, 'Untitled Section');
-  const ok = worlds.sections.update(state.selectedSectionId, {
-    title,
-    content: state.draft.content,
-    directive
-  });
-
-  if (!ok) {
-    setStatus('Failed to update the selected section.');
-    return false;
-  }
-
-  refreshSections();
-  loadSection(state.selectedSectionId, false);
-  setStatus(`Applied changes to ${title}`);
-  return true;
-}
-
-function revertDraft() {
-  if (!state.selectedSectionId) return;
-  loadSection(state.selectedSectionId, false);
-  setStatus('Reverted draft to the runtime section state.');
 }
 
 function selectSection(selector, focusCamera = true) {
-  if (state.dirty) applyDraft();
   loadSection(selector, focusCamera);
 }
 
@@ -317,11 +230,18 @@ function resetView() {
   const current = state.selectedSectionIndex ?? 0;
   applyEditorPreset();
   worlds.camera.focusOnSectionFit(current, 0.9, { keepRotation: true });
-  setStatus('Reset the editor camera to the story-editor preset.');
 }
 
 function applyEditorPreset() {
   worlds.presets.apply('story-editor');
+  worlds.config.setDefaults({
+    sectionLinkUnderline: true,
+    sectionListMarker: '>',
+    sectionListMarkerGapPx: 12,
+    sectionListHangIndentPx: 24,
+    sectionBorderEnabled: true,
+    sectionBackground: 'texture:assets/img/Paper004_1K-JPG_Displacement.jpg;tilePx=640;contentDistort=0.008;blendMode=overlay;blendStrength=0.8;paperPlaneZ=focus',
+  });
   worlds.camera.setRotation(0, 0, 0);
 }
 
@@ -332,9 +252,12 @@ function drawSelectedSectionLinkGuides() {
 function toggleBuiltInControls() {
   worlds.controls.setEnabled(!worlds.controls.enabled);
   updateModeButtonStyles();
-  setStatus(worlds.controls.enabled
-    ? 'Free-fly edit mode enabled. Click sections to select, or left-drag to pan and reposition them.'
-    : 'Free-fly edit mode disabled. Section clicks focus/navigate again.');
+}
+
+function toggleConnectorOverlayMode() {
+  state.showAllConnectors = !state.showAllConnectors;
+  updateConnectorButtonStyles();
+  applyLinkOverlay();
 }
 
 function layoutPanels() {
@@ -355,20 +278,15 @@ function layoutPanels() {
   state.layouts.panel.layout();
   state.layouts.navRow.layout();
   state.layouts.modeRow.layout();
-  state.layouts.actionRow.layout();
   captureLogicalBounds();
   applyScaledBounds(state.widgets.hintLabel, state.logicalBounds.hintLabel);
-  applyScaledBounds(state.widgets.titleField, state.logicalBounds.titleField);
-  applyScaledBounds(state.widgets.directiveField, state.logicalBounds.directiveField);
-  applyScaledBounds(state.widgets.contentEditor, state.logicalBounds.contentEditor);
   applyScaledBounds(state.widgets.btnPrev, state.logicalBounds.btnPrev);
   applyScaledBounds(state.widgets.btnNext, state.logicalBounds.btnNext);
   applyScaledBounds(state.widgets.btnFocus, state.logicalBounds.btnFocus);
   applyScaledBounds(state.widgets.btnBirdsEye, state.logicalBounds.btnBirdsEye);
   applyScaledBounds(state.widgets.btnResetView, state.logicalBounds.btnResetView);
   applyScaledBounds(state.widgets.btnToggleControls, state.logicalBounds.btnToggleControls);
-  applyScaledBounds(state.widgets.btnApply, state.logicalBounds.btnApply);
-  applyScaledBounds(state.widgets.btnRevert, state.logicalBounds.btnRevert);
+  applyScaledBounds(state.widgets.btnToggleConnectors, state.logicalBounds.btnToggleConnectors);
   const resizeBounds = getResizeHandleBounds();
   state.widgets.resizeHandle.bounds.x = resizeBounds.x;
   state.widgets.resizeHandle.bounds.y = resizeBounds.y;
@@ -390,26 +308,19 @@ const btnFocus = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 42 }
 const btnBirdsEye = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 42 }, label: '⌕', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 80 } });
 const btnResetView = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 42 }, label: '↺', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 80 } });
 const btnToggleControls = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 42 }, label: '✥', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 92 } });
+const btnToggleConnectors = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 42 }, label: '⛓', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 92 } });
 const panelBackdrop = gui.createLabel({ bounds: { x: state.panel.x, y: state.panel.y, width: state.panel.width, height: state.panel.height }, text: '', align: 'left', enabled: false, focusable: false, labelStyle: { bg: ui.colors.rgba(12, 12, 12, 0.3) } });
-const hintLabel = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 44 }, text: 'Ready', align: 'left', enabled: false, focusable: false, labelStyle: { bg: ui.colors.rgba(0, 0, 0, 0.22) }, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
-const titleField = gui.createTextField({ bounds: { x: 0, y: 0, width: 1, height: 42 }, value: '', placeholder: 'Section title', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
-const directiveField = gui.createTextField({ bounds: { x: 0, y: 0, width: 1, height: 42 }, value: '{}', placeholder: '{"rotate-x":17}', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
-const contentEditor = gui.createTextEditor({ bounds: { x: 0, y: 0, width: 1, height: 320 }, value: '', placeholder: 'Section markdown content', layout: { widthPolicy: 'fill', heightPolicy: 'fill', minWidth: 0, minHeight: 260 } });
-const btnApply = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 42 }, label: 'Apply', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 120 } });
-const btnRevert = gui.createButton({ bounds: { x: 0, y: 0, width: 1, height: 42 }, label: 'Revert', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 120 } });
+const hintLabel = gui.createLabel({ bounds: { x: 0, y: 0, width: 1, height: 44 }, text: 'Controls', align: 'left', enabled: false, focusable: false, labelStyle: { bg: ui.colors.rgba(0, 0, 0, 0.22) }, layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 const resizeHandle = gui.createLabel({ bounds: { x: 0, y: 0, width: state.panel.resizeHandleSize, height: state.panel.resizeHandleSize }, text: '///', align: 'center', enabled: false, focusable: false, labelStyle: { bg: ui.colors.rgba(255, 255, 255, 0.12) } });
 
 const navRow = gui.createContainer({ bounds: { x: 0, y: 0, width: 1, height: 1 }, mode: 'row', gap: 8, alignX: 'stretch', alignY: 'center', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
 navRow.addMany([btnPrev, btnNext]);
 
 const modeRow = gui.createContainer({ bounds: { x: 0, y: 0, width: 1, height: 1 }, mode: 'row', gap: 8, alignX: 'stretch', alignY: 'center', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
-modeRow.addMany([btnFocus, btnBirdsEye, btnResetView, btnToggleControls]);
-
-const actionRow = gui.createContainer({ bounds: { x: 0, y: 0, width: 1, height: 1 }, mode: 'row', gap: 8, alignX: 'stretch', alignY: 'center', layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 } });
-actionRow.addMany([btnApply, btnRevert]);
+modeRow.addMany([btnFocus, btnBirdsEye, btnResetView, btnToggleControls, btnToggleConnectors]);
 
 const panel = gui.createContainer({ bounds: { x: state.panel.x, y: state.panel.y, width: state.panel.width, height: state.panel.height }, padding: 12, gap: 10, alignX: 'stretch', layout: { widthPolicy: 'fixed', heightPolicy: 'fill', minWidth: 320, minHeight: 360 } });
-panel.addMany([hintLabel, navRow, modeRow, titleField, directiveField, contentEditor, actionRow]);
+panel.addMany([hintLabel, navRow, modeRow]);
 
 state.widgets = {
   btnPrev,
@@ -418,24 +329,21 @@ state.widgets = {
   btnBirdsEye,
   btnResetView,
   btnToggleControls,
+  btnToggleConnectors,
   panelBackdrop,
   hintLabel,
-  titleField,
-  directiveField,
-  contentEditor,
   resizeHandle,
-  btnApply,
-  btnRevert
 };
 
-state.layouts = { panel, navRow, modeRow, actionRow };
+state.layouts = { panel, navRow, modeRow };
 
 refreshSections();
 layoutPanels();
 loadSection(0, false);
 worlds.camera.focusOnSectionFit(0, 0.9, { keepRotation: true });
 updateModeButtonStyles();
-setStatus('Drag the top bar to move. Drag the lower-right corner to scale. Wheel zooms. Two-finger pinch zooms and pans.');
+updateConnectorButtonStyles();
+updateHintLabel();
 ```
 
 ```js on:input
@@ -505,13 +413,6 @@ if (state.panel.scaling && state.mouseDownLeft) {
 layoutPanels();
 gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);
 
-if (state.widgets.titleField.wasChanged() || state.widgets.directiveField.wasChanged() || state.widgets.contentEditor.wasChanged()) {
-  syncDraftFromWidgets();
-  state.dirty = true;
-  updateHintLabel();
-  setStatus('Draft changed. Apply to update the Worlds runtime section.');
-}
-
 if (state.widgets.btnPrev.wasClicked() && state.sections.length > 0) {
   const idx = Math.max(0, (state.selectedSectionIndex ?? 0) - 1);
   selectSection(idx, true);
@@ -524,17 +425,13 @@ if (state.widgets.btnNext.wasClicked() && state.sections.length > 0) {
 
 if (state.widgets.btnFocus.wasClicked() && state.selectedSectionIndex !== null) {
   worlds.camera.focusOnSectionFit(state.selectedSectionIndex, 0.9, { keepRotation: true });
-  setStatus('Focused the selected section.');
 }
 
 if (state.widgets.btnBirdsEye.wasClicked()) {
-  if (state.dirty) applyDraft();
   worlds.camera.birdsEye({ view: 'oblique', fill: 0.88, padding: 40 });
-  setStatus('Framed the full story layout.');
 }
 
 if (state.widgets.btnResetView.wasClicked()) {
-  if (state.dirty) applyDraft();
   resetView();
 }
 
@@ -542,12 +439,8 @@ if (state.widgets.btnToggleControls.wasClicked()) {
   toggleBuiltInControls();
 }
 
-if (state.widgets.btnApply.wasClicked()) {
-  applyDraft();
-}
-
-if (state.widgets.btnRevert.wasClicked()) {
-  revertDraft();
+if (state.widgets.btnToggleConnectors.wasClicked()) {
+  toggleConnectorOverlayMode();
 }
 
 const current = typeof worlds.selectedSection === 'number' ? worlds.selectedSection : worlds.currentSection;

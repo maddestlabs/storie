@@ -95,6 +95,10 @@ export interface Section3DLayout {
   /** Final alpha multiplier applied when rendering this card. */
   opacity: number;
   visible: boolean;
+  /** If true, this section starts hidden and becomes visible when first navigated to. */
+  hiddenUntilVisited?: boolean;
+  /** If true, hide this section permanently after it has been visited once. */
+  removeAfterVisit?: boolean;
   navigable: boolean;
   /** Whether the section participates in picking and link interaction. */
   interactive: boolean;
@@ -190,6 +194,42 @@ export interface WorldsConfig {
   autoLayoutEnabled?: boolean;
   autoLayoutColumns?: number;
   autoLayoutSpacing?: number;
+
+  /**
+   * If true, sections default to starting hidden and are revealed the first time
+   * they are navigated to.
+   *
+   * Can be overridden per-section via heading directive `hiddenUntilVisited`.
+   */
+  autoHideSectionsUntilVisited?: boolean;
+
+  /**
+   * If true, the left/right arrow keys navigate to the previous/next
+   * visible+navigable section in index order, turning Worlds into a slide
+   * presentation. ArrowRight/ArrowDown → next, ArrowLeft/ArrowUp → prev.
+   *
+   * When enabled these keys no longer cycle through in-card links; Tab/Enter
+   * still handle link navigation as usual.
+   *
+   * The camera movement reuses whatever focus mode was last applied
+   * (fit or focus-at-distance). Falls back to `focusOnSectionFit` at 90% fill.
+   */
+  sectionArrowNavigation?: boolean;
+
+  /**
+   * When set, section GPU textures are evicted (freed from VRAM) for any
+   * navigable section whose navigation-order distance from the current section
+   * exceeds this radius.  Evicted textures are re-rasterized lazily the next
+   * time that section becomes visible — typically < 0.5 ms, invisible to the
+   * user.
+   *
+   * Recommended for large decks (100+ sections) on devices with limited VRAM
+   * (mobile, integrated GPU).  A radius of 10–20 keeps ±10–20 sections
+   * textured around the current position while bounding peak VRAM usage.
+   *
+   * Not set by default (no eviction).
+   */
+  sectionTextureCacheRadius?: number;
 
   /**
    * How section textures are generated for 3D cards.
