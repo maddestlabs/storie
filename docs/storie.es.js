@@ -31351,6 +31351,30 @@ class StorieEngine {
         getSectionCount: () => {
           return engine.section3DLayouts.length;
         },
+        setSectionSize: (sectionIndex, width, height) => {
+          const layout = engine.section3DLayouts[sectionIndex];
+          if (!layout) {
+            console.warn(`Section ${sectionIndex} not found`);
+            return;
+          }
+          const safeW = Math.max(1, Number.isFinite(width) ? width : layout.width);
+          const safeH = Math.max(1, Number.isFinite(height) ? height : layout.height);
+          layout.width = safeW;
+          layout.height = safeH;
+          layout.autoPositioned = false;
+          const override = engine.getOrCreateSectionRuntimeOverride(layout.sectionId);
+          override.width = safeW;
+          override.height = safeH;
+          if (!override.position) {
+            override.position = { ...layout.transform.position };
+          }
+          engine.invalidate3DSectionTexture(sectionIndex);
+        },
+        getScreenQuad: (sectionIndex) => {
+          const layout = engine.section3DLayouts[sectionIndex];
+          if (!layout) return null;
+          return engine.getSectionScreenQuad(layout, { allowOffscreen: true });
+        },
         content: {
           get: (selector) => {
             const ref = engine.resolveWorldsContentSectionRef(selector);
@@ -33274,6 +33298,12 @@ ${exportVars}
       if (typeof override.visible === "boolean") {
         layout.visible = override.visible;
       }
+      if (typeof override.width === "number" && override.width > 0) {
+        layout.width = override.width;
+      }
+      if (typeof override.height === "number" && override.height > 0) {
+        layout.height = override.height;
+      }
     }
   }
   cloneRuntimeSectionTree(sections) {
@@ -34560,7 +34590,6 @@ ${exportVars}
     this.sectionTextureCache.delete(layout.sectionId);
     this.sectionLinkRegionsCache.delete(layout.sectionId);
     this.sectionWidgetPlacementsCache.delete(layout.sectionId);
-    this.worldsAutoLayoutCache = null;
   }
   /**
    * Evict GPU textures for sections that are too far from the current section
@@ -34641,15 +34670,21 @@ ${exportVars}
     }
     this.worldsAutoLayoutCache = { cols, stepX, stepY };
     const xCenter = (cols - 1) / 2;
+    let anyMoved = false;
     for (const l of this.section3DLayouts) {
       if (!l || !l.autoPositioned) continue;
       const col = l.sectionIndex % cols;
       const row = Math.floor(l.sectionIndex / cols);
       const x = (col - xCenter) * stepX;
       const y = -row * stepY;
+      const prevX = l.transform.position.x;
+      const prevY = l.transform.position.y;
       l.transform.position = { x, y, z: l.transform.position.z };
+      if (Math.abs(x - prevX) > 1e-4 || Math.abs(y - prevY) > 1e-4) anyMoved = true;
     }
-    this.refocus3DForCurrentViewport();
+    if (anyMoved) {
+      this.refocus3DForCurrentViewport();
+    }
   }
   get3DCardWorldSize(layout) {
     var _a, _b;

@@ -134,6 +134,8 @@ type WorldsSectionRuntimeOverride = {
   rotationDegrees?: { x: number; y: number; z: number };
   scale?: { x: number; y: number; z: number };
   visible?: boolean;
+  width?: number;
+  height?: number;
 };
 type WorldsVisualLinkConnection = {
   sourceSectionId: string;
@@ -5793,6 +5795,34 @@ export class StorieEngine {
           return engine.section3DLayouts.length;
         },
 
+        setSectionSize: (sectionIndex: number, width: number, height: number) => {
+          const layout = engine.section3DLayouts[sectionIndex];
+          if (!layout) {
+            console.warn(`Section ${sectionIndex} not found`);
+            return;
+          }
+          const safeW = Math.max(1, Number.isFinite(width) ? width : layout.width);
+          const safeH = Math.max(1, Number.isFinite(height) ? height : layout.height);
+          layout.width = safeW;
+          layout.height = safeH;
+          // Pin position so reflowWorldsAutoLayout cannot move the section after
+          // the texture re-rasterizes with new dimensions.
+          layout.autoPositioned = false;
+          const override = engine.getOrCreateSectionRuntimeOverride(layout.sectionId);
+          override.width = safeW;
+          override.height = safeH;
+          if (!override.position) {
+            override.position = { ...layout.transform.position };
+          }
+          engine.invalidate3DSectionTexture(sectionIndex);
+        },
+
+        getScreenQuad: (sectionIndex: number): Array<{ x: number; y: number }> | null => {
+          const layout = engine.section3DLayouts[sectionIndex];
+          if (!layout) return null;
+          return engine.getSectionScreenQuad(layout, { allowOffscreen: true });
+        },
+
         content: {
           get: (selector?: number | string) => {
             const ref = engine.resolveWorldsContentSectionRef(selector);
@@ -6590,7 +6620,7 @@ export class StorieEngine {
     return points.every((point) => !!point) ? (points as Array<{ x: number; y: number }>) : null;
   }
 
-  private getSectionScreenQuad(
+  getSectionScreenQuad(
     layout: Section3DLayout,
     options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
   ): Array<{ x: number; y: number }> | null {
@@ -8287,6 +8317,12 @@ ${exportVars}
       }
       if (typeof override.visible === 'boolean') {
         layout.visible = override.visible;
+      }
+      if (typeof override.width === 'number' && override.width > 0) {
+        layout.width = override.width;
+      }
+      if (typeof override.height === 'number' && override.height > 0) {
+        layout.height = override.height;
       }
     }
   }
@@ -10019,7 +10055,7 @@ ${exportVars}
     this.worldsAutoLayoutCache = null;
   }
 
-  private invalidate3DSectionTexture(sectionIndex: number): void {
+  invalidate3DSectionTexture(sectionIndex: number): void {
     const layout = this.getSectionLayoutByIndex(sectionIndex);
     if (!layout) return;
 
@@ -10036,7 +10072,10 @@ ${exportVars}
     this.sectionTextureCache.delete(layout.sectionId);
     this.sectionLinkRegionsCache.delete(layout.sectionId);
     this.sectionWidgetPlacementsCache.delete(layout.sectionId);
-    this.worldsAutoLayoutCache = null;
+    // Note: worldsAutoLayoutCache is intentionally NOT cleared here. The cache
+    // is only invalid when card world sizes change, which is determined when the
+    // new texture is rasterized. Clearing eagerly causes spurious reflows and
+    // camera re-centers on texture invalidations like setSectionSize.
   }
 
   /**
@@ -10154,19 +10193,25 @@ ${exportVars}
 
     const xCenter = (cols - 1) / 2;
 
+    let anyMoved = false;
     for (const l of this.section3DLayouts) {
       if (!l || !l.autoPositioned) continue;
       const col = l.sectionIndex % cols;
       const row = Math.floor(l.sectionIndex / cols);
       const x = (col - xCenter) * stepX;
       const y = -row * stepY;
+      const prevX = l.transform.position.x;
+      const prevY = l.transform.position.y;
       l.transform.position = { x, y, z: l.transform.position.z };
+      if (Math.abs(x - prevX) > 1e-4 || Math.abs(y - prevY) > 1e-4) anyMoved = true;
     }
 
-    // If auto-layout moved sections after a camera focus was applied (common
-    // when card world sizes become known after init), re-apply the current
-    // focus so the active section stays centered.
-    this.refocus3DForCurrentViewport();
+    // Only re-apply the camera focus if positions actually changed (i.e. at
+    // least one auto-positioned section was moved). Skipping when nothing moved
+    // prevents spurious re-centers after texture invalidations like setSectionSize.
+    if (anyMoved) {
+      this.refocus3DForCurrentViewport();
+    }
   }
 
   private get3DCardWorldSize(layout: Section3DLayout): { width: number; height: number } {

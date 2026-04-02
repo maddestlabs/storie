@@ -929,6 +929,8 @@ export interface SandboxAPI {
     setSectionTransform: (sectionIndex: number, transform: any) => void;
     setSectionVisible: (sectionIndex: number, visible: boolean) => void;
     getSectionCount: () => number;
+    setSectionSize: (sectionIndex: number, width: number, height: number) => void;
+    getScreenQuad: (sectionIndex: number) => Array<{ x: number; y: number }> | null;
     timeline: {
       compile: (entries: Array<{ ms: number; text: string }>) => CompiledWorldsTimeline;
       stateAt: (compiled: CompiledWorldsTimeline, timeSec: number) => WorldsTimelineStateEntry[];

@@ -1,8 +1,6 @@
 ---
 name: "Worlds Editor Lab"
-theme: "saintbilly"
-fontsize: 22
-font: "Special+Elite"
+theme: "nord"
 shaders: "blurgradual+lightvignette"
 ---
 
@@ -43,9 +41,37 @@ let state = {
     maxScale: 1.8,
     resizeHandleSize: 26,
   },
+  sectionHandles: {
+    handleSize: 28,
+    resizing: false,
+    rotating: false,
+    resizeStartX: 0,
+    resizeStartY: 0,
+    resizeStartWidth: 1,
+    resizeStartHeight: 1,
+    resizeStartScreenW: 1,
+    resizeStartScreenH: 1,
+    rotateStartX: 0,
+    rotateStartY: 0,
+    rotateStartAngle: 0,
+    rotateCenterX: 0,
+    rotateCenterY: 0,
+    rotateStartRotX: 0,
+    rotateStartRotY: 0,
+    rotateStartRotZ: 0,
+  },
   widgets: null,
   layouts: null,
   logicalBounds: null,
+  minimap: {
+    width: 200,
+    height: 150,
+    margin: 14,
+    padding: 8,
+    visible: true,
+    bounds: null,
+    mapTransform: null,
+  },
 };
 
 function safeText(value, fallback = '') {
@@ -152,6 +178,40 @@ function getResizeHandleBounds() {
   };
 }
 
+function updateSectionHandles() {
+  if (!state.widgets?.sectionResizeHandle || !state.widgets?.sectionRotateHandle) return;
+  const idx = state.selectedSectionIndex;
+  if (idx === null || idx === undefined) {
+    state.widgets.sectionResizeHandle.enabled = false;
+    state.widgets.sectionRotateHandle.enabled = false;
+    state.widgets.sectionResizeHandle.bounds.width = 0;
+    state.widgets.sectionRotateHandle.bounds.width = 0;
+    return;
+  }
+  const quad = worlds.getScreenQuad(idx);
+  if (!quad || quad.length < 4) {
+    state.widgets.sectionResizeHandle.enabled = false;
+    state.widgets.sectionRotateHandle.enabled = false;
+    state.widgets.sectionResizeHandle.bounds.width = 0;
+    state.widgets.sectionRotateHandle.bounds.width = 0;
+    return;
+  }
+  // quad order: [bottom-left, bottom-right, top-right, top-left] in screen space
+  const hs = state.sectionHandles.handleSize;
+  const bottomRight = quad[1];
+  const topRight = quad[2];
+  state.widgets.sectionResizeHandle.enabled = true;
+  state.widgets.sectionResizeHandle.bounds.x = bottomRight.x - hs / 2;
+  state.widgets.sectionResizeHandle.bounds.y = bottomRight.y - hs / 2;
+  state.widgets.sectionResizeHandle.bounds.width = hs;
+  state.widgets.sectionResizeHandle.bounds.height = hs;
+  state.widgets.sectionRotateHandle.enabled = true;
+  state.widgets.sectionRotateHandle.bounds.x = topRight.x - hs / 2;
+  state.widgets.sectionRotateHandle.bounds.y = topRight.y - hs / 2;
+  state.widgets.sectionRotateHandle.bounds.width = hs;
+  state.widgets.sectionRotateHandle.bounds.height = hs;
+}
+
 function clampPanelToViewport() {
   const viewport = getDeviceViewportRect();
   const margin = 12;
@@ -240,9 +300,128 @@ function applyEditorPreset() {
     sectionListMarkerGapPx: 12,
     sectionListHangIndentPx: 24,
     sectionBorderEnabled: true,
-    sectionBackground: 'texture:assets/img/Paper004_1K-JPG_Displacement.jpg;tilePx=640;contentDistort=0.008;blendMode=overlay;blendStrength=0.8;paperPlaneZ=focus',
+    sectionClickFocusEnabled: false,
   });
   worlds.camera.setRotation(0, 0, 0);
+}
+
+function drawMinimap() {
+  if (!state.minimap.visible) return;
+  const mm = state.minimap;
+  const count = worlds.getSectionCount();
+  if (!count) return;
+
+  const cw = canvas2d.width || 800;
+  const ch = canvas2d.height || 600;
+  const deviceRect = getDeviceViewportRect();
+  const dw = Math.max(1, deviceRect.width);
+  const dh = Math.max(1, deviceRect.height);
+  // device pixel → canvas2d pixel scale
+  const dx = cw / dw, dy = ch / dh;
+
+  // Collect all screen quads (already 3D-projected) converted to canvas2d space
+  const allQuads = [];
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < count; i++) {
+    const quad = worlds.getScreenQuad(i);
+    if (!quad || quad.length < 4) { allQuads.push(null); continue; }
+    const pts = quad.map(p => ({ x: p.x * dx, y: p.y * dy }));
+    for (const p of pts) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+    allQuads.push(pts);
+  }
+  if (!isFinite(minX)) return;
+
+  const mmW = mm.width, mmH = mm.height;
+  const mmX = cw - mmW - mm.margin;
+  const mmY = ch - mmH - mm.margin;
+  mm.bounds = { x: mmX, y: mmY, width: mmW, height: mmH };
+
+  const innerX = mmX + mm.padding;
+  const innerY = mmY + mm.padding;
+  const innerW = mmW - mm.padding * 2;
+  const innerH = mmH - mm.padding * 2;
+
+  const contentW = Math.max(1, maxX - minX);
+  const contentH = Math.max(1, maxY - minY);
+  const fitScale = Math.min(innerW / contentW, innerH / contentH);
+  const fitOffX = innerX + (innerW - contentW * fitScale) / 2 - minX * fitScale;
+  const fitOffY = innerY + (innerH - contentH * fitScale) / 2 - minY * fitScale;
+
+  // Transform quads into minimap-canvas2d space and store for hit testing
+  const mmQuads = allQuads.map(pts => pts ? pts.map(p => ({
+    x: fitOffX + p.x * fitScale,
+    y: fitOffY + p.y * fitScale,
+  })) : null);
+  mm.mapTransform = { mmQuads, cw, ch };
+
+  const ctx = canvas2d.context;
+  ctx.save();
+
+  // Background
+  ctx.fillStyle = 'rgba(8, 10, 16, 0.80)';
+  ctx.fillRect(mmX, mmY, mmW, mmH);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(mmX + 0.5, mmY + 0.5, mmW - 1, mmH - 1);
+
+  // Clip to inner area
+  ctx.beginPath();
+  ctx.rect(innerX, innerY, innerW, innerH);
+  ctx.clip();
+
+  // Draw each projected quad as a polygon
+  for (let i = 0; i < count; i++) {
+    const pts = mmQuads[i];
+    if (!pts) continue;
+    const isSelected = i === state.selectedSectionIndex;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j].x, pts[j].y);
+    ctx.closePath();
+    ctx.fillStyle = isSelected ? 'rgba(255, 220, 70, 0.92)' : 'rgba(150, 165, 200, 0.45)';
+    ctx.fill();
+    if (isSelected) {
+      ctx.strokeStyle = 'rgba(255, 240, 100, 0.95)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+}
+
+function minimapPointInQuad(px, py, pts) {
+  // Sign-consistent cross product test: works for both CW and CCW wound convex polys
+  const n = pts.length;
+  let sign = 0;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % n];
+    const cross = (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x);
+    if (cross === 0) continue;
+    const s = cross > 0 ? 1 : -1;
+    if (sign === 0) { sign = s; } else if (s !== sign) return false;
+  }
+  return true;
+}
+
+function minimapHitSection(mx, my) {
+  const mm = state.minimap;
+  if (!mm.bounds || !mm.mapTransform) return -1;
+  const { mmQuads, cw, ch } = mm.mapTransform;
+  const deviceRect = getDeviceViewportRect();
+  const cx = mx * cw / Math.max(1, deviceRect.width);
+  const cy = my * ch / Math.max(1, deviceRect.height);
+  if (!pointInBounds(cx, cy, mm.bounds)) return -1;
+  const count = worlds.getSectionCount();
+  for (let i = count - 1; i >= 0; i--) {
+    const pts = mmQuads[i];
+    if (!pts) continue;
+    if (minimapPointInQuad(cx, cy, pts)) return i;
+  }
+  return -1;
 }
 
 function drawSelectedSectionLinkGuides() {
@@ -293,6 +472,7 @@ function layoutPanels() {
   state.widgets.resizeHandle.bounds.width = resizeBounds.width;
   state.widgets.resizeHandle.bounds.height = resizeBounds.height;
   state.widgets.resizeHandle.setRenderScale(state.panel.scale);
+  updateSectionHandles();
 }
 ```
 
@@ -322,6 +502,10 @@ modeRow.addMany([btnFocus, btnBirdsEye, btnResetView, btnToggleControls, btnTogg
 const panel = gui.createContainer({ bounds: { x: state.panel.x, y: state.panel.y, width: state.panel.width, height: state.panel.height }, padding: 12, gap: 10, alignX: 'stretch', layout: { widthPolicy: 'fixed', heightPolicy: 'fill', minWidth: 320, minHeight: 360 } });
 panel.addMany([hintLabel, navRow, modeRow]);
 
+const hs = state.sectionHandles.handleSize;
+const sectionResizeHandle = gui.createLabel({ bounds: { x: 0, y: 0, width: hs, height: hs }, text: '⤡', align: 'center', enabled: false, focusable: false, labelStyle: { bg: ui.colors.rgba(255, 200, 100, 0.85), fg: ui.colors.rgba(20, 20, 20, 255) } });
+const sectionRotateHandle = gui.createLabel({ bounds: { x: 0, y: 0, width: hs, height: hs }, text: '↻', align: 'center', enabled: false, focusable: false, labelStyle: { bg: ui.colors.rgba(100, 200, 255, 0.85), fg: ui.colors.rgba(20, 20, 20, 255) } });
+
 state.widgets = {
   btnPrev,
   btnNext,
@@ -333,6 +517,8 @@ state.widgets = {
   panelBackdrop,
   hintLabel,
   resizeHandle,
+  sectionResizeHandle,
+  sectionRotateHandle,
 };
 
 state.layouts = { panel, navRow, modeRow };
@@ -368,7 +554,59 @@ if (event.type === 'mouse') {
   if (event.button === 'left') {
     state.mouseDownLeft = event.action === 'press' || event.action === 'repeat';
     if (event.action === 'press') {
-      if (pointInBounds(event.x, event.y, state.widgets.resizeHandle.bounds)) {
+      if (state.minimap.visible) {
+        const mmHit = minimapHitSection(event.x, event.y);
+        if (mmHit >= 0) { selectSection(mmHit, true); }
+      }
+      const sh = state.sectionHandles;
+      const resizeW = state.widgets.sectionResizeHandle;
+      const rotateW = state.widgets.sectionRotateHandle;
+      const idx = state.selectedSectionIndex;
+      if (resizeW && resizeW.enabled && resizeW.bounds.width > 0 && pointInBounds(event.x, event.y, resizeW.bounds)) {
+        // Grab section resize handle — make this section current without moving camera
+        if (idx !== null) selectSection(idx, false);
+        sh.resizing = true;
+        sh.rotating = false;
+        state.panel.scaling = false;
+        state.panel.dragging = false;
+        sh.resizeStartX = event.x;
+        sh.resizeStartY = event.y;
+        const layout = idx !== null ? worlds.getSectionLayout(idx) : null;
+        sh.resizeStartWidth = layout ? layout.width : 1;
+        sh.resizeStartHeight = layout ? layout.height : 1;
+        // Record screen dimensions of the section quad to convert pixel delta to dimension delta
+        const quad = idx !== null ? worlds.getScreenQuad(idx) : null;
+        if (quad && quad.length >= 4) {
+          sh.resizeStartScreenW = Math.max(1, Math.hypot(quad[1].x - quad[0].x, quad[1].y - quad[0].y));
+          sh.resizeStartScreenH = Math.max(1, Math.hypot(quad[2].x - quad[1].x, quad[2].y - quad[1].y));
+        } else {
+          sh.resizeStartScreenW = 1;
+          sh.resizeStartScreenH = 1;
+        }
+      } else if (rotateW && rotateW.enabled && rotateW.bounds.width > 0 && pointInBounds(event.x, event.y, rotateW.bounds)) {
+        // Grab section rotate handle — make this section current without moving camera
+        if (idx !== null) selectSection(idx, false);
+        sh.rotating = true;
+        sh.resizing = false;
+        state.panel.scaling = false;
+        state.panel.dragging = false;
+        sh.rotateStartX = event.x;
+        sh.rotateStartY = event.y;
+        const quad = idx !== null ? worlds.getScreenQuad(idx) : null;
+        if (quad && quad.length >= 4) {
+          sh.rotateCenterX = (quad[0].x + quad[1].x + quad[2].x + quad[3].x) / 4;
+          sh.rotateCenterY = (quad[0].y + quad[1].y + quad[2].y + quad[3].y) / 4;
+        } else {
+          sh.rotateCenterX = event.x;
+          sh.rotateCenterY = event.y;
+        }
+        sh.rotateStartAngle = Math.atan2(event.y - sh.rotateCenterY, event.x - sh.rotateCenterX);
+        const layout = idx !== null ? worlds.getSectionLayout(idx) : null;
+        // rotation is in radians in getSectionLayout; convert to degrees for setSectionTransform
+        sh.rotateStartRotX = layout ? (layout.rotation.x * 180 / Math.PI) : 0;
+        sh.rotateStartRotY = layout ? (layout.rotation.y * 180 / Math.PI) : 0;
+        sh.rotateStartRotZ = layout ? (layout.rotation.z * 180 / Math.PI) : 0;
+      } else if (pointInBounds(event.x, event.y, state.widgets.resizeHandle.bounds)) {
         state.panel.scaling = true;
         state.panel.dragging = false;
         state.panel.scaleStartX = event.x;
@@ -384,6 +622,8 @@ if (event.type === 'mouse') {
     if (event.action === 'release') {
       state.panel.dragging = false;
       state.panel.scaling = false;
+      state.sectionHandles.resizing = false;
+      state.sectionHandles.rotating = false;
     }
   }
   gui.handleMouse(event.x, event.y, state.mouseDownLeft);
@@ -408,6 +648,25 @@ if (state.panel.scaling && state.mouseDownLeft) {
 } else if (!state.mouseDownLeft) {
   state.panel.dragging = false;
   state.panel.scaling = false;
+}
+
+const sh = state.sectionHandles;
+const idx = state.selectedSectionIndex;
+if (sh.resizing && state.mouseDownLeft && idx !== null) {
+  const deltaX = state.pointerX - sh.resizeStartX;
+  const deltaY = state.pointerY - sh.resizeStartY;
+  const newW = Math.max(10, sh.resizeStartWidth  * (1 + deltaX / sh.resizeStartScreenW));
+  const newH = Math.max(4,  sh.resizeStartHeight * (1 + deltaY / sh.resizeStartScreenH));
+  worlds.setSectionSize(idx, newW, newH);
+} else if (sh.rotating && state.mouseDownLeft && idx !== null) {
+  const curAngle = Math.atan2(state.pointerY - sh.rotateCenterY, state.pointerX - sh.rotateCenterX);
+  const deltaAngleDeg = (sh.rotateStartAngle - curAngle) * (180 / Math.PI);
+  worlds.setSectionTransform(idx, {
+    rotation: { x: sh.rotateStartRotX, y: sh.rotateStartRotY, z: sh.rotateStartRotZ + deltaAngleDeg }
+  });
+} else if (!state.mouseDownLeft) {
+  sh.resizing = false;
+  sh.rotating = false;
 }
 
 layoutPanels();
@@ -453,6 +712,7 @@ if (typeof current === 'number' && current !== state.lastWorldSection) {
 term.layerID = 'default';
 term.clear();
 canvas2d.clear('rgba(0, 0, 0, 0)');
+drawMinimap();
 ```
 
 # Entrance
