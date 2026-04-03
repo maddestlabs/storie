@@ -1,0 +1,728 @@
+---
+name: "Klondike Solitaire"
+theme: "nord"
+font: "Rye"
+---
+
+Classic Klondike solitaire. Drag cards between tableau columns, move runs to foundations, deal from the stock.
+
+- **Drag** a card (or run) to move it
+- **Double-click** a card to auto-move it to a foundation
+- **Click stock** (top-left) to deal; click through empty stock to reset
+- Cards render via `ui` immediate-mode + `pushMaskRoundedRect` for proper card shapes
+- Card ranks and suit glyphs are drawn with `ui.text`; no textures required
+- A WGSL post-process shader adds felt fiber microstructure to the table background
+
+```wgsl fragment:klondike-felt
+struct Uniforms {
+  time: f32,
+  resolution: vec2f,
+  grainAmt: f32,
+};
+@group(0) @binding(2) var<uniform> uniforms: Uniforms;
+@group(0) @binding(0) var inputTexture: texture_2d<f32>;
+@group(0) @binding(1) var inputSampler: sampler;
+
+struct VertexOutput {
+  @builtin(position) position: vec4f,
+  @location(0) uv: vec2f,
+};
+
+@vertex
+fn vertexMain(@location(0) pos: vec2f) -> VertexOutput {
+  var out: VertexOutput;
+  out.position = vec4f(pos, 0.0, 1.0);
+  out.uv = vec2f(pos.x * 0.5 + 0.5, 1.0 - (pos.y * 0.5 + 0.5));
+  return out;
+}
+
+fn _felt_h21(p: vec2f) -> f32 {
+  var q = fract(p * vec2f(127.1, 311.7));
+  q += dot(q, q + 19.19);
+  return fract(q.x * q.y);
+}
+
+@fragment
+fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
+  let uv = input.uv;
+  var col = textureSample(inputTexture, inputSampler, uv).rgb;
+
+  // Two orthogonal felt-fiber directions: horizontal threads + vertical threads.
+  // Each direction quantises one UV axis so nearby pixels share the same fiber.
+  let sc = uniforms.resolution.y * 0.20;
+  let f1 = _felt_h21(vec2f(floor(uv.x * sc), uv.y * sc * 2.5));
+  let f2 = _felt_h21(vec2f(uv.x * sc * 2.5, floor(uv.y * sc)));
+  let grain = ((f1 + f2) * 0.5 - 0.5) * uniforms.grainAmt;
+
+  return vec4f(clamp(col + vec3f(grain), vec3f(0.0), vec3f(1.0)), 1.0);
+}
+```
+
+## Demo
+
+```js
+// ─── Constants ────────────────────────────────────────────────────────────────
+var SUITS       = ['♠','♥','♦','♣'];   // spade, heart, diamond, club
+var RANKS       = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+var SUIT_RED    = [false, true, true, false]; // index matches SUITS
+var NUM_TABLEAU = 7;
+var STOCK_DEAL  = 1;   // cards dealt per click (set to 3 for draw-3 variant)
+
+// ─── Card helpers ─────────────────────────────────────────────────────────────
+function cardId(suit, rank) { return suit * 13 + rank; }         // 0-51
+function cardSuit(id)       { return Math.floor(id / 13); }      // 0-3
+function cardRank(id)       { return id % 13; }                  // 0-12
+function isRed(id)          { return SUIT_RED[cardSuit(id)]; }
+function rankLabel(r)       { return RANKS[r]; }
+function suitLabel(s)       { return SUITS[s]; }
+function cardLabel(id)      { return rankLabel(cardRank(id)) + suitLabel(cardSuit(id)); }
+
+function shuffledDeck() {
+  var deck = [];
+  for (var i = 0; i < 52; i++) deck.push(i);
+  // Fisher-Yates
+  for (var i2 = deck.length - 1; i2 > 0; i2--) {
+    var j = Math.floor(Math.random() * (i2 + 1));
+    var tmp = deck[i2]; deck[i2] = deck[j]; deck[j] = tmp;
+  }
+  return deck;
+}
+
+// ─── Game state ───────────────────────────────────────────────────────────────
+// Each "slot" is an array of { id, faceUp } objects.
+// Foundations: 4 piles (one per suit), ace-to-king.
+// Tableau: 7 columns. Stock: face-down draw pile. Waste: face-up discard.
+scope.gs = scope.gs || null;
+
+function newGame() {
+  var deck = shuffledDeck();
+  var di = 0;
+
+  var tableau = [];
+  for (var col = 0; col < NUM_TABLEAU; col++) {
+    var pile = [];
+    for (var row = 0; row <= col; row++) {
+      pile.push({ id: deck[di++], faceUp: row === col });
+    }
+    tableau.push(pile);
+  }
+
+  var stock = [];
+  while (di < 52) stock.push({ id: deck[di++], faceUp: false });
+
+  scope.gs = {
+    tableau:     tableau,
+    foundations: [[], [], [], []],
+    stock:       stock,
+    waste:       [],
+    drag:        null,   // { cards, fromPile, fromIndex, ox, oy, x, y }
+    dblTap:      null,   // { id, at } — for double-click detection
+    won:         false,
+    moveCount:   0,
+  };
+}
+
+// ─── Move validation ──────────────────────────────────────────────────────────
+function canPlaceOnFoundation(card, foundation) {
+  var suit = cardSuit(card.id);
+  if (foundation.length === 0) return cardRank(card.id) === 0;  // must be Ace
+  var top = foundation[foundation.length - 1];
+  return cardSuit(top.id) === suit && cardRank(top.id) === cardRank(card.id) - 1;
+}
+
+function canPlaceOnTableau(card, column) {
+  if (column.length === 0) return cardRank(card.id) === 12;  // only King on empty
+  var top = column[column.length - 1];
+  if (!top.faceUp) return false;
+  return isRed(card.id) !== isRed(top.id) && cardRank(top.id) === cardRank(card.id) + 1;
+}
+
+// Try to auto-move a card to the best foundation. Returns true if moved.
+function autoToFoundation(card, fromPile, fromIndex) {
+  var suit = cardSuit(card.id);
+  var found = scope.gs.foundations[suit];
+  if (!canPlaceOnFoundation(card, found)) return false;
+  fromPile.splice(fromIndex, 1);
+  found.push({ id: card.id, faceUp: true });
+  // Flip new top of source column
+  if (fromPile.length > 0 && !fromPile[fromPile.length - 1].faceUp) {
+    fromPile[fromPile.length - 1].faceUp = true;
+  }
+  scope.gs.moveCount++;
+  checkWin();
+  return true;
+}
+
+function checkWin() {
+  var g = scope.gs;
+  for (var s = 0; s < 4; s++) {
+    if (g.foundations[s].length < 13) return;
+  }
+  g.won = true;
+}
+
+// ─── Layout ────────────────────────────────────────────────────────────────────
+// Returns a layout descriptor based on current canvas size.
+// All coordinates in physical pixels (what ui.rect uses).
+function computeLayout() {
+  var W  = ui.metrics.canvasWidth  || 1280;
+  var H  = ui.metrics.canvasHeight || 720;
+  var portrait = H > W;
+
+  // Card dimensions: standard 2.5:3.5 ratio, scaled to fit.
+  var cols   = NUM_TABLEAU;                                     // 7 tableau columns
+  var hPad   = portrait ? Math.floor(W * 0.025) : Math.floor(W * 0.022);
+  var vPad   = portrait ? Math.floor(H * 0.025) : Math.floor(H * 0.028);
+  var colGap = Math.floor(hPad * 0.6);
+  var cw     = Math.floor((W - hPad * 2 - colGap * (cols - 1)) / cols);
+  var ch     = Math.round(cw * (3.5 / 2.5));
+  // Clamp card size for very large or very small screens
+  var maxCH  = portrait ? Math.floor(H * 0.22) : Math.floor(H * 0.28);
+  if (ch > maxCH) { ch = maxCH; cw = Math.round(ch * (2.5 / 3.5)); }
+
+  // Vertical card offset within a tableau column (how much of card is exposed)
+  var stackOffset = Math.max(Math.round(ch * 0.28), 18);
+  var faceUpOffset = Math.max(Math.round(ch * 0.38), 24);
+
+  // Top row: stock (col 0), waste (col 1), gap, foundations (cols 3-6)
+  var topRowY = vPad;
+  var topRowXs = [];
+  for (var ci = 0; ci < cols; ci++) {
+    topRowXs.push(hPad + ci * (cw + colGap));
+  }
+
+  // Tableau starts below top row
+  var tableauY = topRowY + ch + vPad;
+
+  return {
+    W: W, H: H,
+    cw: cw, ch: ch,
+    hPad: hPad, vPad: vPad, colGap: colGap,
+    topRowY: topRowY,
+    topRowXs: topRowXs,
+    tableauY: tableauY,
+    stackOffset: stackOffset,
+    faceUpOffset: faceUpOffset,
+    radius: Math.max(3, Math.round(cw * 0.07)),
+  };
+}
+scope._layout = null;
+
+// ─── Hit testing ──────────────────────────────────────────────────────────────
+// Returns { zone, pileKey, index } or null.
+//   zone: 'stock' | 'waste' | 'foundation' | 'tableau'
+//   pileKey: foundation index or tableau col index
+//   index: card index within pile (-1 = empty slot)
+function hitTest(px, py, layout) {
+  var L = layout;
+  var cw = L.cw; var ch = L.ch;
+
+  // Stock
+  if (px >= L.topRowXs[0] && px < L.topRowXs[0] + cw &&
+      py >= L.topRowY    && py < L.topRowY + ch) {
+    return { zone: 'stock', pileKey: 0, index: -1 };
+  }
+  // Waste
+  if (px >= L.topRowXs[1] && px < L.topRowXs[1] + cw &&
+      py >= L.topRowY    && py < L.topRowY + ch) {
+    return { zone: 'waste', pileKey: 0, index: scope.gs.waste.length - 1 };
+  }
+  // Foundations (slots 3-6)
+  for (var f = 0; f < 4; f++) {
+    var fx = L.topRowXs[3 + f];
+    if (px >= fx && px < fx + cw && py >= L.topRowY && py < L.topRowY + ch) {
+      return { zone: 'foundation', pileKey: f, index: scope.gs.foundations[f].length - 1 };
+    }
+  }
+  // Tableau columns
+  for (var col = 0; col < NUM_TABLEAU; col++) {
+    var cx2 = L.topRowXs[col];
+    var pile = scope.gs.tableau[col];
+    // Compute each card's rect (same as draw logic)
+    var cardRects = tableauCardRects(pile, cx2, L);
+    // Hit test from top (visually last) down
+    for (var ci2 = cardRects.length - 1; ci2 >= 0; ci2--) {
+      var r = cardRects[ci2];
+      // Exposed height: to next card or full card if last
+      var expH = (ci2 === cardRects.length - 1) ? ch : cardRects[ci2 + 1].y - r.y;
+      expH = Math.max(expH, 14);
+      if (px >= r.x && px < r.x + cw && py >= r.y && py < r.y + expH) {
+        return { zone: 'tableau', pileKey: col, index: ci2 };
+      }
+    }
+    // Empty column slot
+    if (pile.length === 0 &&
+        px >= cx2 && px < cx2 + cw &&
+        py >= L.tableauY && py < L.tableauY + ch) {
+      return { zone: 'tableau', pileKey: col, index: -1 };
+    }
+  }
+  return null;
+}
+
+// Compute y positions for each card in a tableau column
+function tableauCardRects(pile, colX, L) {
+  var rects = [];
+  var y = L.tableauY;
+  for (var i = 0; i < pile.length; i++) {
+    rects.push({ x: colX, y: y });
+    if (i < pile.length - 1) {
+      y += pile[i].faceUp ? L.faceUpOffset : L.stackOffset;
+    }
+  }
+  return rects;
+}
+
+// ─── Input handling ────────────────────────────────────────────────────────────
+function handleInput(L) {
+  var g = scope.gs;
+  var mx = ui.pointer.x();
+  var my = ui.pointer.y();
+  var clicked = ui.pointer.clicked(0);
+  var down = ui.pointer.down(0);
+  var now = Date.now();
+
+  // ── Drag update ────────────────────────────────────────────────
+  if (g.drag) {
+    g.drag.x = mx - g.drag.ox;
+    g.drag.y = my - g.drag.oy;
+  }
+
+  // ── Release: try to drop dragged cards ─────────────────────────
+  // Use !down while drag is active — matches the minesweeper pointer pattern.
+  if (!down && g.drag) {
+    var dropped = false;
+    var dragCards = g.drag.cards;
+    var topDragCard = dragCards[0];
+
+    // Check foundations (single-card drops only)
+    if (dragCards.length === 1) {
+      for (var f = 0; f < 4; f++) {
+        var fx = L.topRowXs[3 + f];
+        var fy = L.topRowY;
+        if (mx >= fx && mx < fx + L.cw && my >= fy && my < fy + L.ch) {
+          if (canPlaceOnFoundation(topDragCard, g.foundations[f])) {
+            // Remove from source
+            g.drag.fromPile.splice(g.drag.fromIndex, dragCards.length);
+            flipTopIfNeeded(g.drag.fromPile);
+            g.foundations[f].push({ id: topDragCard.id, faceUp: true });
+            g.moveCount++;
+            checkWin();
+            dropped = true;
+          }
+          break;
+        }
+      }
+    }
+
+    // Check tableau columns
+    if (!dropped) {
+      for (var col = 0; col < NUM_TABLEAU; col++) {
+        var cx2 = L.topRowXs[col];
+        var colPile = g.tableau[col];
+        // Generous drop zone: anywhere over the column strip
+        var colTop = L.tableauY;
+        var colBot = colTop + L.ch + colPile.length * L.faceUpOffset + 40;
+        if (mx >= cx2 && mx < cx2 + L.cw && my >= colTop - 20 && my < colBot) {
+          if (canPlaceOnTableau(topDragCard, colPile)) {
+            g.drag.fromPile.splice(g.drag.fromIndex, dragCards.length);
+            flipTopIfNeeded(g.drag.fromPile);
+            for (var dc = 0; dc < dragCards.length; dc++) {
+              colPile.push({ id: dragCards[dc].id, faceUp: true });
+            }
+            g.moveCount++;
+            dropped = true;
+          }
+          break;
+        }
+      }
+    }
+
+    // Return cards to source if drop failed
+    if (!dropped) {
+      for (var dc2 = 0; dc2 < dragCards.length; dc2++) {
+        g.drag.fromPile.splice(g.drag.fromIndex + dc2, 0, dragCards[dc2]);
+      }
+    }
+
+    g.drag = null;
+    return;
+  }
+
+  // ── Click / press ───────────────────────────────────────────────
+  if (!clicked) return;
+
+  var hit = hitTest(mx, my, L);
+  if (!hit) return;
+
+  // Double-click detection
+  var isDblClick = false;
+  if (g.dblTap && g.dblTap.x === hit.pileKey && g.dblTap.z === hit.zone &&
+      now - g.dblTap.at < 420) {
+    isDblClick = true;
+    g.dblTap = null;
+  } else {
+    g.dblTap = { x: hit.pileKey, z: hit.zone, at: now };
+  }
+
+  // Stock click
+  if (hit.zone === 'stock') {
+    if (g.stock.length > 0) {
+      for (var s2 = 0; s2 < STOCK_DEAL && g.stock.length > 0; s2++) {
+        var card = g.stock.pop();
+        card.faceUp = true;
+        g.waste.push(card);
+      }
+    } else {
+      // Reset: flip waste back to stock
+      while (g.waste.length > 0) {
+        var wc = g.waste.pop();
+        wc.faceUp = false;
+        g.stock.push(wc);
+      }
+    }
+    return;
+  }
+
+  // Waste top card — start drag or double-click auto-move
+  if (hit.zone === 'waste' && g.waste.length > 0) {
+    var wTop = g.waste[g.waste.length - 1];
+    if (isDblClick) {
+      autoToFoundation(wTop, g.waste, g.waste.length - 1);
+      return;
+    }
+    // Start drag
+    var wx = L.topRowXs[1]; var wy = L.topRowY;
+    g.drag = { cards: [wTop], fromPile: g.waste, fromIndex: g.waste.length - 1,
+               ox: mx - wx, oy: my - wy, x: wx, y: wy };
+    g.waste.splice(g.waste.length - 1, 1);
+    return;
+  }
+
+  // Foundation — start drag (move back to tableau)
+  if (hit.zone === 'foundation' && hit.pileKey >= 0) {
+    var fnd = g.foundations[hit.pileKey];
+    if (fnd.length === 0) return;
+    var fCard = fnd[fnd.length - 1];
+    var fCardX = L.topRowXs[3 + hit.pileKey]; var fCardY = L.topRowY;
+    g.drag = { cards: [fCard], fromPile: fnd, fromIndex: fnd.length - 1,
+               ox: mx - fCardX, oy: my - fCardY, x: fCardX, y: fCardY };
+    fnd.splice(fnd.length - 1, 1);
+    return;
+  }
+
+  // Tableau card
+  if (hit.zone === 'tableau') {
+    var tCol  = hit.pileKey;
+    var tPile = g.tableau[tCol];
+    var tIdx  = hit.index;
+    if (tIdx < 0 || tIdx >= tPile.length) return;
+    var tCard = tPile[tIdx];
+    if (!tCard.faceUp) {
+      // Flip face-down top card
+      if (tIdx === tPile.length - 1) tCard.faceUp = true;
+      return;
+    }
+    // Double-click: auto-move single top card to foundation
+    if (isDblClick && tIdx === tPile.length - 1) {
+      autoToFoundation(tCard, tPile, tIdx);
+      return;
+    }
+    // Drag the card and any cards below it (a run)
+    var runCards = tPile.slice(tIdx);
+    var rects2 = tableauCardRects(tPile, L.topRowXs[tCol], L);
+    var startX = rects2[tIdx].x; var startY = rects2[tIdx].y;
+    tPile.splice(tIdx, runCards.length);
+    g.drag = { cards: runCards, fromPile: tPile, fromIndex: tIdx,
+               ox: mx - startX, oy: my - startY, x: startX, y: startY };
+    return;
+  }
+}
+
+function flipTopIfNeeded(pile) {
+  if (pile.length > 0 && !pile[pile.length - 1].faceUp) {
+    pile[pile.length - 1].faceUp = true;
+  }
+}
+
+// ─── Palette ──────────────────────────────────────────────────────────────────
+// Card face/ink/back colors are fixed (theme-independent) so cards always look
+// like real playing cards. Only table felt, status text, and UI chrome use theme.
+function getPalette() {
+  var base    = getStyle('default');
+  var bgAlt   = getStyle('bgAlt');
+  var accent1 = getStyle('accent1');
+  var dim     = getStyle('dim');
+  var success = getStyle('success');
+  function a(c, alpha) {
+    var r = (c >>> 24) & 255; var g2 = (c >>> 16) & 255;
+    var b2 = (c >>> 8) & 255;
+    return ui.colors.rgba(r, g2, b2, Math.max(0, Math.min(255, Math.round(alpha * 255))));
+  }
+  return {
+    // Table
+    bg:           base.bg,
+    felt:         a(bgAlt.bg, 1.0),
+    // Card face — fixed warm off-white, fully opaque
+    cardFace:     ui.colors.rgba(250, 248, 242, 255),
+    // Card back — classic deep blue, fully opaque
+    cardBack:     ui.colors.rgba(28,  54, 115, 255),
+    cardBackMid:  ui.colors.rgba(42,  72, 148, 255),
+    cardBackPat:  ui.colors.rgba(58,  94, 172, 255),
+    // Borders — fixed grays
+    cardBorder:   ui.colors.rgba(160, 154, 142, 255),
+    cardBorderSel:a(accent1.fg, 1.0),
+    // Shadow — fixed dark, fully opaque
+    cardShadow:   ui.colors.rgba(0,   0,   0,  80),
+    // Suit ink — fixed classic red and near-black
+    red:          ui.colors.rgba(196,  28,  28, 255),
+    black:        ui.colors.rgba(18,   18,  22, 255),
+    // Slots
+    slotBorder:   a(base.fg, 0.20),
+    slotFill:     a(base.fg, 0.06),
+    // UI chrome
+    wonBanner:    a(success.fg, 0.95),
+    dimText:      a(dim.fg, 0.85),
+  };
+}
+
+// ─── Card drawing ─────────────────────────────────────────────────────────────
+// drawCard renders a single playing card at (x, y) using ui primitives only.
+// faceUp=true draws front; false draws back (simple crosshatch via rects).
+function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging) {
+  var id = cardObj ? cardObj.id : -1;
+  var faceUp = cardObj ? cardObj.faceUp : false;
+
+  // Shadow (offset rect, no mask needed)
+  if (!isDragging) {
+    ui.rect(x + 3, y + 3, cw, ch, pal.cardShadow);
+  }
+
+  // Card body with rounded-rect stencil mask
+  ui.pushMaskRoundedRect(x, y, cw, ch, radius);
+
+  if (faceUp && id >= 0) {
+    // ── Face ──────────────────────────────────────────────────────
+    ui.rect(x, y, cw, ch, pal.cardFace);
+
+    var suit = cardSuit(id);
+    var rank = cardRank(id);
+    var ink = SUIT_RED[suit] ? pal.red : pal.black;
+    var rankStr = rankLabel(rank);
+    var suitStr = suitLabel(suit);
+
+    // Corner rank label (top-left)
+    ui.text(rankStr, x + 4, y + 3, ink);
+    ui.text(suitStr, x + 4, y + 3 + (ui.metrics.charHeight || 14), ink);
+
+    // Center suit symbol — scaled up
+    var cx3 = x + Math.floor((cw - (ui.metrics.charWidth || 10)) * 0.5);
+    var cy3 = y + Math.floor((ch - (ui.metrics.charHeight || 14)) * 0.5) - 2;
+    ui.text(suitStr, cx3, cy3, ink, 1.6);
+
+    // Bottom-right corner (rotated, approximated by drawing near bottom-right)
+    var brx = x + cw - 4 - (ui.metrics.charWidth || 10);
+    var bry = y + ch - 4 - (ui.metrics.charHeight || 14) * 2;
+    ui.text(rankStr, brx, bry, ink);
+    ui.text(suitStr, brx, bry + (ui.metrics.charHeight || 14), ink);
+
+  } else {
+    // ── Back: classic double-border frame + crosshatch center ─────
+    // Base fill
+    ui.rect(x, y, cw, ch, pal.cardBack);
+    // Outer border band (lighter strip)
+    var bOuter = Math.max(2, Math.round(cw * 0.07));
+    ui.rect(x + bOuter, y + bOuter, cw - bOuter * 2, ch - bOuter * 2, pal.cardBackMid);
+    // Inner field (back to dark)
+    var bInner = Math.max(4, Math.round(cw * 0.14));
+    ui.rect(x + bInner, y + bInner, cw - bInner * 2, ch - bInner * 2, pal.cardBack);
+    // Fine crosshatch inside the inner field
+    var step = Math.max(4, Math.round(cw * 0.13));
+    var fm = bInner + 2;
+    for (var bx = x + fm; bx < x + cw - fm; bx += step) {
+      ui.rect(bx, y + fm, 1, ch - fm * 2, pal.cardBackPat);
+    }
+    for (var bby = y + fm; bby < y + ch - fm; bby += step) {
+      ui.rect(x + fm, bby, cw - fm * 2, 1, pal.cardBackPat);
+    }
+  }
+
+  // Border drawn inside the mask so it clips to rounded corners
+  var bc = isDragging ? pal.cardBorderSel : pal.cardBorder;
+  ui.rect(x,          y,          cw, 1,  bc);
+  ui.rect(x,          y + ch - 1, cw, 1,  bc);
+  ui.rect(x,          y,          1,  ch, bc);
+  ui.rect(x + cw - 1, y,          1,  ch, bc);
+
+  ui.popMask();
+}
+
+// Empty slot placeholder (for foundations and tableau empty columns)
+function drawEmptySlot(pal, x, y, cw, ch, radius, label) {
+  ui.pushMaskRoundedRect(x, y, cw, ch, radius);
+  ui.rect(x, y, cw, ch, pal.slotFill);
+  // Border inside mask so it clips to rounded corners
+  ui.rect(x,          y,          cw, 1,  pal.slotBorder);
+  ui.rect(x,          y + ch - 1, cw, 1,  pal.slotBorder);
+  ui.rect(x,          y,          1,  ch, pal.slotBorder);
+  ui.rect(x + cw - 1, y,          1,  ch, pal.slotBorder);
+  ui.popMask();
+  if (label) {
+    var lx = x + Math.floor((cw - (ui.metrics.charWidth || 10) * label.length) * 0.5);
+    var ly = y + Math.floor((ch - (ui.metrics.charHeight || 14)) * 0.5);
+    ui.text(label, lx, ly, pal.slotBorder);
+  }
+}
+
+// ─── Render ───────────────────────────────────────────────────────────────────
+function drawGame(L, pal) {
+  var g = scope.gs;
+  var cw = L.cw; var ch = L.ch; var r = L.radius;
+
+  // Felt background
+  ui.rect(0, 0, L.W, L.H, pal.felt);
+
+  // ── Top row ──────────────────────────────────────────────────────────────────
+
+  // Stock pile
+  var stockX = L.topRowXs[0]; var topY = L.topRowY;
+  if (g.stock.length > 0) {
+    drawCard(pal, stockX, topY, cw, ch, r, { id: 0, faceUp: false }, false);
+    // Small count badge
+    var countStr = String(g.stock.length);
+    ui.text(countStr, stockX + cw - (ui.metrics.charWidth || 10) * countStr.length - 4,
+            topY + 4, pal.dimText);
+  } else {
+    drawEmptySlot(pal, stockX, topY, cw, ch, r, '↺');
+  }
+
+  // Waste pile (show top card, peek second)
+  var wasteX = L.topRowXs[1];
+  if (g.waste.length > 1) {
+    // Peek — slightly offset, face down visually shows as face up (it's been dealt)
+    drawCard(pal, wasteX + 3, topY + 2, cw, ch, r,
+             { id: g.waste[g.waste.length - 2].id, faceUp: true }, false);
+  }
+  if (g.waste.length > 0) {
+    drawCard(pal, wasteX, topY, cw, ch, r, g.waste[g.waste.length - 1], false);
+  } else {
+    drawEmptySlot(pal, wasteX, topY, cw, ch, r, '');
+  }
+
+  // Foundations (slots 3-6, one per suit)
+  for (var f = 0; f < 4; f++) {
+    var fx = L.topRowXs[3 + f];
+    var fnd = g.foundations[f];
+    if (fnd.length > 0) {
+      drawCard(pal, fx, topY, cw, ch, r, fnd[fnd.length - 1], false);
+    } else {
+      drawEmptySlot(pal, fx, topY, cw, ch, r, SUITS[f]);
+    }
+  }
+
+  // ── Tableau ───────────────────────────────────────────────────────────────────
+  for (var col = 0; col < NUM_TABLEAU; col++) {
+    var cx2 = L.topRowXs[col];
+    var pile = g.tableau[col];
+
+    if (pile.length === 0) {
+      drawEmptySlot(pal, cx2, L.tableauY, cw, ch, r, '');
+      continue;
+    }
+
+    var rects2 = tableauCardRects(pile, cx2, L);
+    for (var ci2 = 0; ci2 < pile.length; ci2++) {
+      // Skip cards that are currently being dragged
+      if (g.drag && g.drag.fromPile === pile && ci2 >= g.drag.fromIndex) continue;
+      drawCard(pal, rects2[ci2].x, rects2[ci2].y, cw, ch, r, pile[ci2], false);
+    }
+  }
+
+  // ── Dragged cards (drawn on top of everything) ────────────────────────────────
+  if (g.drag) {
+    var dy2 = g.drag.y;
+    for (var dc = 0; dc < g.drag.cards.length; dc++) {
+      drawCard(pal, g.drag.x, dy2, cw, ch, r, g.drag.cards[dc], dc === 0);
+      dy2 += L.faceUpOffset;
+    }
+  }
+
+  // ── Status bar ──────────────────────────────────────────────────────────────
+  var statStr = 'Moves: ' + g.moveCount;
+  if (g.won) statStr = '✓ You won! (' + g.moveCount + ' moves)';
+  var sColor = g.won ? pal.wonBanner : pal.dimText;
+  ui.text(statStr, L.hPad, L.H - (ui.metrics.charHeight || 14) - 4, sColor);
+
+  // Hint: New Game button
+  ui.button('btn-new-game',
+    L.W - L.hPad - Math.max(90, (ui.metrics.charWidth || 10) * 12),
+    L.H - (ui.metrics.charHeight || 14) * 2 - 8,
+    Math.max(90, (ui.metrics.charWidth || 10) * 12),
+    (ui.metrics.charHeight || 14) * 2 + 4,
+    'New Game');
+}
+```
+
+```js on:init
+term.layerID = 'default';
+term.clear();
+newGame();
+scope._layout = null;
+
+// Activate the felt fiber post-process shader (auto-registered from wgsl block above).
+var _feltList = shader.list();
+var _feltName = null;
+for (var _fi = 0; _fi < _feltList.length; _fi++) {
+  if (String(_feltList[_fi]).indexOf('klondike-felt') >= 0) { _feltName = _feltList[_fi]; break; }
+}
+if (_feltName) {
+  shader.setUniform(_feltName, 'grainAmt', 0.09);
+  shader.setActive(_feltName);
+}
+```
+
+```js on:update
+if (!scope.gs) { newGame(); return; }
+
+var L = computeLayout();
+scope._layout = L;
+
+// Handle New Game button click
+if (ui.button('btn-new-game',
+    L.W - L.hPad - Math.max(90, (ui.metrics.charWidth || 10) * 12),
+    L.H - (ui.metrics.charHeight || 14) * 2 - 8,
+    Math.max(90, (ui.metrics.charWidth || 10) * 12),
+    (ui.metrics.charHeight || 14) * 2 + 4,
+    'New Game')) {
+  newGame();
+  scope._layout = null;
+  return;
+}
+
+if (!scope.gs.won) {
+  handleInput(L);
+}
+```
+
+```js on:render
+if (!scope.gs) return;
+
+term.clear();
+ui.clear();
+
+var L = scope._layout || computeLayout();
+var pal = getPalette();
+
+try {
+  drawGame(L, pal);
+} catch(_e) {
+  // Keep UI alive if rendering fails
+  ui.clear(pal.felt);
+  var now = Date.now();
+  scope._lastErrAt = scope._lastErrAt || 0;
+  if (now - scope._lastErrAt > 1000) {
+    scope._lastErrAt = now;
+    try { console.warn('[klondike] render error:', _e); } catch { /* ignore */ }
+  }
+}
+```
