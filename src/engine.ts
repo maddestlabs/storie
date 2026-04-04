@@ -377,6 +377,9 @@ export class StorieEngine {
   private readonly audioUrlInFlightCache: Map<string, Promise<AudioBuffer | null>> = new Map();
   private readonly uiImageUrlCache: Map<string, string> = new Map(); // resolvedUrl -> registered imageId
   private readonly uiImageUrlInFlight: Map<string, Promise<string | null>> = new Map();
+  // Decoded images whose id has been allocated but whose registration is deferred until
+  // ensureWebGPUUI() first becomes available (i.e. on:init fires before WebGPU is ready).
+  private readonly uiImagePending: Map<string, RenderableImageSource> = new Map();
   private readonly backgroundImageUrlCache: Map<string, RenderableImageSource> = new Map();
   private readonly backgroundImageUrlInFlightCache: Map<string, Promise<RenderableImageSource | null>> = new Map();
   private readonly backgroundImageUrlFailures: Set<string> = new Set();
@@ -1507,11 +1510,16 @@ export class StorieEngine {
         const image = await this.decodeRenderableImageFromBytes(new Uint8Array(arrayBuffer), mime);
         if (!image) return null;
 
-        const ui = this.ensureWebGPUUI();
-        if (!ui) return null;
-
         const id = alloc();
-        ui.registerImage(id, image);
+        const ui = this.ensureWebGPUUI();
+        if (ui) {
+          ui.registerImage(id, image);
+        } else {
+          // WebGPU UI isn't ready yet (on:init fires before the GPU device is online).
+          // Park the decoded image; ui.image() will register it lazily on first draw.
+          this.uiImagePending.set(id, image);
+          console.log(`[ui.loadImageFromURL] WebGPU UI not ready; deferring registration for "${id}"`);
+        }
         this.uiImageUrlCache.set(resolvedUrl, id);
         return id;
       } catch (error) {
@@ -4651,9 +4659,19 @@ export class StorieEngine {
          * Returns null if the image has not been registered yet.
          */
         getImageSize: (imageId: string): { width: number; height: number } | null => {
+          const key = String(imageId ?? '');
+          if (!key) return null;
+          // If the image is pending lazy-registration (decoded before GPU was ready),
+          // return its natural dimensions directly from the source object.
+          const pending = engine.uiImagePending.get(key);
+          if (pending) {
+            const w = (pending as any).width ?? (pending as any).naturalWidth ?? 0;
+            const h = (pending as any).height ?? (pending as any).naturalHeight ?? 0;
+            if (w > 0 && h > 0) return { width: w, height: h };
+          }
           const ui = engine.ensureWebGPUUI();
           if (!ui) return null;
-          return ui.getImageSize(String(imageId ?? ''));
+          return ui.getImageSize(key);
         },
 
         /**
@@ -4665,6 +4683,13 @@ export class StorieEngine {
 
           const key = String(imageId ?? '');
           if (!key) return;
+
+          // Lazy-register any images that were decoded before the WebGPU UI was ready.
+          const pending = engine.uiImagePending.get(key);
+          if (pending) {
+            ui.registerImage(key, pending);
+            engine.uiImagePending.delete(key);
+          }
 
           // Fast path: draw if already registered.
           if (ui.getImageSize(key)) {

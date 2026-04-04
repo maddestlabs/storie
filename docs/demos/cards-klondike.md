@@ -2,7 +2,7 @@
 name: "Klondike Solitaire"
 theme: "nord"
 font: "Cutive+Mono"
-shaders: "lightsoft+blurgradual"
+shaders: "lightsoft+blurgradual+lightvignette"
 ---
 
 Classic Klondike solitaire. Drag cards between tableau columns, move runs to foundations, deal from the stock.
@@ -12,90 +12,6 @@ Classic Klondike solitaire. Drag cards between tableau columns, move runs to fou
 - **Click stock** (top-left) to deal; click through empty stock to reset
 - Cards render via `ui` immediate-mode + `pushMaskRoundedRect` for proper card shapes
 - Card ranks and suit glyphs are drawn with `ui.text`; no textures required
-- A WGSL post-process shader adds felt fiber microstructure to the table background
-
-```wgsl fragment:klondike-felt
-struct Uniforms {
-  time: f32,
-  resolution: vec2f,
-  grainAmt: f32,
-  noiseScale: f32,   // 1.0 = default; higher = coarser nap, lower = finer
-};
-@group(0) @binding(2) var<uniform> uniforms: Uniforms;
-@group(0) @binding(0) var inputTexture: texture_2d<f32>;
-@group(0) @binding(1) var inputSampler: sampler;
-
-struct VertexOutput {
-  @builtin(position) position: vec4f,
-  @location(0) uv: vec2f,
-};
-
-@vertex
-fn vertexMain(@location(0) pos: vec2f) -> VertexOutput {
-  var out: VertexOutput;
-  out.position = vec4f(pos, 0.0, 1.0);
-  out.uv = vec2f(pos.x * 0.5 + 0.5, 1.0 - (pos.y * 0.5 + 0.5));
-  return out;
-}
-
-// ── 2D Simplex noise (Stefan Gustavson) ──────────────────────────────────────
-fn _sn_m289v2(x: vec2f) -> vec2f { return x - floor(x * (1.0/289.0)) * 289.0; }
-fn _sn_m289v3(x: vec3f) -> vec3f { return x - floor(x * (1.0/289.0)) * 289.0; }
-fn _sn_perm(x: vec3f)   -> vec3f { return _sn_m289v3(((x * 34.0) + 10.0) * x); }
-
-// Returns roughly [-1, 1].
-fn snoise2(v: vec2f) -> f32 {
-  let C  = vec4f(0.211324865405187, 0.366025403784439,
-                -0.577350269189626, 0.024390243902439);
-  var i  = floor(v + dot(v, C.yy));
-  let x0 = v - i + dot(i, C.xx);
-  let i1  = select(vec2f(0.0, 1.0), vec2f(1.0, 0.0), x0.x > x0.y);
-  var x12 = x0.xyxy + C.xxzz;
-  x12.x  -= i1.x;  x12.y -= i1.y;
-  i = _sn_m289v2(i);
-  let p  = _sn_perm(_sn_perm(i.y + vec3f(0.0, i1.y, 1.0)) + i.x + vec3f(0.0, i1.x, 1.0));
-  var m  = max(0.5 - vec3f(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), vec3f(0.0));
-  m = m * m;  m = m * m;
-  let x  = 2.0 * fract(p * C.www) - 1.0;
-  let h  = abs(x) - 0.5;
-  let a0 = x - floor(x + 0.5);
-  m *= 1.79284291400159 - 0.85373472095314 * (a0*a0 + h*h);
-  let g = vec3f(a0.x  * x0.x   + h.x  * x0.y,
-                a0.yz * x12.xz + h.yz * x12.yw);
-  return 130.0 * dot(m, g);
-}
-
-@fragment
-fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
-  let uv  = input.uv;
-  var col = textureSample(inputTexture, inputSampler, uv).rgb;
-
-  // Aspect-corrected UV so noise features are physically square on screen.
-  let sc     = uniforms.resolution.y;
-  let aspect = uniforms.resolution.x / uniforms.resolution.y;
-  let uvA    = vec2f(uv.x * aspect, uv.y);
-
-  // Two octaves: coarse nap (~43 features across height ≈ 17px each at 720p)
-  // and fine fiber detail (~144 features ≈ 5px each).
-  // Combined they read as compressed wool felt rather than a digital pattern.
-  let n0    = snoise2(uvA * sc * uniforms.noiseScale * 0.06);
-  let n1    = snoise2(uvA * sc * uniforms.noiseScale * 0.20 + vec2f(3.7, 1.3));
-  let noise = n0 * 0.55 + n1 * 0.45;
-
-  // ── Felt-only mask ────────────────────────────────────────────────────────
-  // Don't apply grain to cards — only to the felt table.
-  //   • Card faces  → high luma (warm off-white ≈ 0.97)
-  //   • Card backs  → vibrant navy rgb(28,54,115): blue–red bias ≈ 0.34
-  //     Nord felt   → muted blue-grey #3b4252:     blue–red bias ≈ 0.09
-  let luma       = dot(col, vec3f(0.299, 0.587, 0.114));
-  let isCardFace = smoothstep(0.55, 0.72, luma);
-  let isCardBack = smoothstep(0.14, 0.26, col.b - col.r);
-  let feltMask   = 1.0 - max(isCardFace, isCardBack);
-
-  let grain = noise * uniforms.grainAmt * feltMask;
-  return vec4f(clamp(col + vec3f(grain), vec3f(0.0), vec3f(1.0)), 1.0);
-}
-```
 
 ## Demo
 
@@ -117,12 +33,12 @@ function rankLabel(r)       { return RANKS[r]; }
 function suitLabel(s)       { return SUITS[s]; }
 function cardLabel(id)      { return rankLabel(cardRank(id)) + suitLabel(cardSuit(id)); }
 
-function shuffledDeck() {
+function shuffledDeck(rng) {
   var deck = [];
   for (var i = 0; i < 52; i++) deck.push(i);
-  // Fisher-Yates
+  // Seeded Fisher-Yates
   for (var i2 = deck.length - 1; i2 > 0; i2--) {
-    var j = Math.floor(Math.random() * (i2 + 1));
+    var j = Math.floor(rng() * (i2 + 1));
     var tmp = deck[i2]; deck[i2] = deck[j]; deck[j] = tmp;
   }
   return deck;
@@ -134,8 +50,11 @@ function shuffledDeck() {
 // Tableau: 7 columns. Stock: face-down draw pile. Waste: face-up discard.
 scope.gs = scope.gs || null;
 
-function newGame() {
-  var deck = shuffledDeck();
+// newGame(seed?) — pass a seed to replay a known game, or omit for a fresh random one.
+function newGame(seed) {
+  var useSeed = (seed !== undefined && seed !== null) ? (seed >>> 0) : random.seed();
+  var rng = random.rng(useSeed);
+  var deck = shuffledDeck(rng);
   var di = 0;
 
   var tableau = [];
@@ -159,6 +78,7 @@ function newGame() {
     dblTap:      null,   // { id, at } — for double-click detection
     won:         false,
     moveCount:   0,
+    seed:        useSeed,
   };
 }
 
@@ -665,16 +585,17 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
     ui.text(rankStr, jx + 4, jy + 3, ink);
     ui.text(suitStr, jx + 4, jy + 3 + (ui.metrics.charHeight || 14), ink);
 
-    // Center suit symbol — scaled up
-    var cx3 = jx + Math.floor((cw - (ui.metrics.charWidth || 10)) * 0.5);
-    var cy3 = jy + Math.floor((ch - (ui.metrics.charHeight || 14)) * 0.5) - 2;
-    ui.text(suitStr, cx3, cy3, ink, 1.6);
+    // Center suit symbol — scaled up, centered using measured width
+    var _mw = ui.metrics.measureTextWidth ? ui.metrics.measureTextWidth : function(s) { return (ui.metrics.charWidth || 10) * s.length; };
+    var centerScale = 1.6;
+    var cx3 = jx + Math.floor((cw - _mw(suitStr) * centerScale) * 0.5);
+    var cy3 = jy + Math.floor((ch - (ui.metrics.charHeight || 14) * centerScale) * 0.5) - 2;
+    ui.text(suitStr, cx3, cy3, ink, centerScale);
 
-    // Bottom-right corner
-    var brx = jx + cw - 4 - (ui.metrics.charWidth || 10);
+    // Bottom-right corner — right-aligned using measured widths
     var bry = jy + ch - 4 - (ui.metrics.charHeight || 14) * 2;
-    ui.text(rankStr, brx, bry, ink);
-    ui.text(suitStr, brx, bry + (ui.metrics.charHeight || 14), ink);
+    ui.text(rankStr, jx + cw - 4 - _mw(rankStr), bry, ink);
+    ui.text(suitStr, jx + cw - 4 - _mw(suitStr), bry + (ui.metrics.charHeight || 14), ink);
 
     // Foxing / age spots on card face: tiny warm-brown marks scattered across
     // the print. Count grows cubically with age; placed before the vignette so
@@ -705,7 +626,7 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
     // matching the natural laminate curvature of a real card.
     // No shader needed: 6 strips per edge is fine-grained enough to read as smooth.
     var vDepth = Math.max(5, Math.round(Math.min(cw, ch) * 0.50));
-    var vN = 16; var vBaseA = 48;
+    var vN = 32; var vBaseA = 48;
     for (var vi = 0; vi < vN; vi++) {
       var vt = (vN - vi) / vN;                   // 1.0 at outermost, steps to 0
       var va = Math.round(vBaseA * vt * vt * vt); // cubic: fast fade, subtle tail
@@ -765,7 +686,7 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
 
     // Edge vignette — same cubic fade as card face
     var vDepth = Math.max(5, Math.round(Math.min(cw, ch) * 0.40));
-    var vN = 16; var vBaseA = 48;
+    var vN = 32; var vBaseA = 48;
     for (var vi = 0; vi < vN; vi++) {
       var vt = (vN - vi) / vN;
       var va = Math.round(vBaseA * vt * vt * vt);
@@ -907,26 +828,38 @@ function drawGame(L, pal) {
   var sColor = g.won ? pal.wonBanner : pal.dimText;
   ui.text(statStr, L.hPad, L.H - (ui.metrics.charHeight || 14) - 4, sColor);
 
-  // Hint: New Game button
+  // Seed display (bottom-center)
+  var seedStr = 'Seed: ' + g.seed;
+  var _mwFn = ui.metrics.measureTextWidth ? ui.metrics.measureTextWidth : function(s) { return (ui.metrics.charWidth || 10) * s.length; };
+  ui.text(seedStr,
+    Math.floor((L.W - _mwFn(seedStr)) * 0.5),
+    L.H - (ui.metrics.charHeight || 14) - 4,
+    pal.dimText);
+
+  // Hint: Replay and New Game buttons
+  var _bH   = (ui.metrics.charHeight || 14) * 2 + 4;
+  var _bW   = Math.max(90, (ui.metrics.charWidth || 10) * 10);
+  var _gap  = 6;
+  var _bY   = L.H - _bH - 4;
+  ui.button('btn-replay-game',
+    L.W - L.hPad - (_bW * 2 + _gap),
+    _bY, _bW, _bH, 'Replay');
   ui.button('btn-new-game',
-    L.W - L.hPad - Math.max(90, (ui.metrics.charWidth || 10) * 12),
-    L.H - (ui.metrics.charHeight || 14) * 2 - 8,
-    Math.max(90, (ui.metrics.charWidth || 10) * 12),
-    (ui.metrics.charHeight || 14) * 2 + 4,
-    'New Game');
+    L.W - L.hPad - _bW,
+    _bY, _bW, _bH, 'New Game');
 }
 ```
 
 ```js on:init
 term.layerID = 'default';
 term.clear();
-newGame();
+newGame(); // fresh random seed on first load
 scope._layout   = null;
 scope._bgTexId  = null;  // paper texture image id once loaded
 scope._bgTexW   = 0;
 scope._bgTexH   = 0;
 // Kick off async texture load.
-ui.loadImageFromURL('assets/img/paper_seamless_texture_3197.jpg').then(function(id) {
+ui.loadImageFromURL('assets/img/Paper004_1K-JPG_Color.jpg').then(function(id) {
   console.log('[klondike] bg texture load result:', id);
   if (!id) { console.warn('[klondike] bg texture failed to load'); return; }
   scope._bgTexId = id;
@@ -945,18 +878,27 @@ scope._layout = L;
 // ── Mouse light-follow ───────────────────────────────────────────────────────
 var _mW = ui.metrics.canvasWidth  || 1280;
 var _mH = ui.metrics.canvasHeight || 720;
-shader.setUniform('lightsoft', 'lightX',   ui.pointer.x() / _mW);
-shader.setUniform('lightsoft', 'lightY',   ui.pointer.y() / _mH);
-shader.setUniform('lightsoft', 'swayAmp',  0.0);
+shader.setUniform('lightsobel', 'lightX', ui.pointer.x() / _mW);
+shader.setUniform('lightsobel', 'lightY', ui.pointer.y() / _mH);
+shader.setUniform('lightsoft', 'lightX', ui.pointer.x() / _mW);
+shader.setUniform('lightsoft', 'lightY', ui.pointer.y() / _mH);
 // ── End mouse light-follow ────────────────────────────────────────────────────
 
-// Handle New Game button click
+// Handle Replay / New Game button clicks
+var _bH2   = (ui.metrics.charHeight || 14) * 2 + 4;
+var _bW2   = Math.max(90, (ui.metrics.charWidth || 10) * 10);
+var _gap2  = 6;
+var _bY2   = L.H - _bH2 - 4;
+if (ui.button('btn-replay-game',
+    L.W - L.hPad - (_bW2 * 2 + _gap2),
+    _bY2, _bW2, _bH2, 'Replay')) {
+  newGame(scope.gs ? scope.gs.seed : undefined);
+  scope._layout = null;
+  return;
+}
 if (ui.button('btn-new-game',
-    L.W - L.hPad - Math.max(90, (ui.metrics.charWidth || 10) * 12),
-    L.H - (ui.metrics.charHeight || 14) * 2 - 8,
-    Math.max(90, (ui.metrics.charWidth || 10) * 12),
-    (ui.metrics.charHeight || 14) * 2 + 4,
-    'New Game')) {
+    L.W - L.hPad - _bW2,
+    _bY2, _bW2, _bH2, 'New Game')) {
   newGame();
   scope._layout = null;
   return;

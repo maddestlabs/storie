@@ -26914,6 +26914,9 @@ class StorieEngine {
     __publicField(this, "uiImageUrlCache", /* @__PURE__ */ new Map());
     // resolvedUrl -> registered imageId
     __publicField(this, "uiImageUrlInFlight", /* @__PURE__ */ new Map());
+    // Decoded images whose id has been allocated but whose registration is deferred until
+    // ensureWebGPUUI() first becomes available (i.e. on:init fires before WebGPU is ready).
+    __publicField(this, "uiImagePending", /* @__PURE__ */ new Map());
     __publicField(this, "backgroundImageUrlCache", /* @__PURE__ */ new Map());
     __publicField(this, "backgroundImageUrlInFlightCache", /* @__PURE__ */ new Map());
     __publicField(this, "backgroundImageUrlFailures", /* @__PURE__ */ new Set());
@@ -27730,10 +27733,14 @@ class StorieEngine {
         }
         const image = await this.decodeRenderableImageFromBytes(new Uint8Array(arrayBuffer), mime);
         if (!image) return null;
-        const ui = this.ensureWebGPUUI();
-        if (!ui) return null;
         const id = alloc();
-        ui.registerImage(id, image);
+        const ui = this.ensureWebGPUUI();
+        if (ui) {
+          ui.registerImage(id, image);
+        } else {
+          this.uiImagePending.set(id, image);
+          console.log(`[ui.loadImageFromURL] WebGPU UI not ready; deferring registration for "${id}"`);
+        }
         this.uiImageUrlCache.set(resolvedUrl, id);
         return id;
       } catch (error) {
@@ -30552,9 +30559,17 @@ class StorieEngine {
          * Returns null if the image has not been registered yet.
          */
         getImageSize: (imageId) => {
+          const key = String(imageId ?? "");
+          if (!key) return null;
+          const pending = engine.uiImagePending.get(key);
+          if (pending) {
+            const w = pending.width ?? pending.naturalWidth ?? 0;
+            const h = pending.height ?? pending.naturalHeight ?? 0;
+            if (w > 0 && h > 0) return { width: w, height: h };
+          }
           const ui = engine.ensureWebGPUUI();
           if (!ui) return null;
-          return ui.getImageSize(String(imageId ?? ""));
+          return ui.getImageSize(key);
         },
         /**
          * Draw a loaded image by id.
@@ -30564,6 +30579,11 @@ class StorieEngine {
           if (!ui) return;
           const key = String(imageId ?? "");
           if (!key) return;
+          const pending = engine.uiImagePending.get(key);
+          if (pending) {
+            ui.registerImage(key, pending);
+            engine.uiImagePending.delete(key);
+          }
           if (ui.getImageSize(key)) {
             ui.image(key, x, y, w, h, options);
             return;
