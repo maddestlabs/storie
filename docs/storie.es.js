@@ -1150,6 +1150,79 @@ class GlyphAtlas {
     return this.glyphCache.get(char);
   }
   /**
+   * Cache and return a glyph rasterized at a specific pixel size rather than
+   * the atlas base fontSize.  Keyed as `${char}@${sizeInPx}` so it does not
+   * collide with the base-size cache entries.
+   *
+   * Use this when rendering at a scale significantly different from 1.0 so the
+   * GPU samples a sharp, correctly-sized texture rather than stretching a small
+   * rasterization.
+   */
+  cacheGlyphAtSize(char, sizeInPx) {
+    const key = `${char}@${sizeInPx}`;
+    if (this.glyphCache.has(key)) {
+      return this.glyphCache.get(key);
+    }
+    const fontString = this.fontFamily.includes(",") ? this.fontFamily : `'${this.fontFamily}'`;
+    const prevFont = this.atlasCtx.font;
+    this.atlasCtx.font = `${sizeInPx}px ${fontString}`;
+    this.atlasCtx.textBaseline = "top";
+    const metrics = this.atlasCtx.measureText(char);
+    const glyphWidth = Math.ceil(metrics.width);
+    const rawAscent = metrics.actualBoundingBoxAscent;
+    const rawDescent = metrics.actualBoundingBoxDescent;
+    const ascent = typeof rawAscent === "number" && isFinite(rawAscent) ? Math.max(0, Math.ceil(rawAscent)) : Math.round(sizeInPx * 0.05);
+    const descent = typeof rawDescent === "number" && isFinite(rawDescent) && rawDescent > 0 ? Math.ceil(rawDescent) : sizeInPx;
+    const actualGlyphH = ascent + descent;
+    const padding = 4;
+    const sidePad = 4;
+    const width = glyphWidth + sidePad * 2;
+    const height = actualGlyphH + padding * 2;
+    if (this.atlasX + width > this.atlasWidth) {
+      this.atlasX = 0;
+      this.atlasY += this.atlasRowHeight;
+      this.atlasRowHeight = 0;
+    }
+    if (this.atlasY + height > this.atlasHeight) {
+      console.warn("[GlyphAtlas] Atlas full — cannot cache sized glyph, falling back to base size.");
+      this.atlasCtx.font = prevFont;
+      return this.getGlyph(char);
+    }
+    this.atlasCtx.clearRect(this.atlasX, this.atlasY, width, height);
+    this.atlasCtx.fillStyle = "#ffffff";
+    this.atlasCtx.fillText(
+      char,
+      Math.floor(this.atlasX + sidePad),
+      Math.floor(this.atlasY + padding + ascent)
+    );
+    const info = {
+      u: (this.atlasX + sidePad) / this.atlasWidth,
+      v: (this.atlasY + padding) / this.atlasHeight,
+      // top of actual bbox
+      w: glyphWidth / this.atlasWidth,
+      h: actualGlyphH / this.atlasHeight,
+      // exact visual height
+      pixelWidth: glyphWidth,
+      pixelHeight: actualGlyphH
+    };
+    this.glyphCache.set(key, info);
+    this.atlasX += width;
+    this.atlasRowHeight = Math.max(this.atlasRowHeight, height);
+    this.atlasNeedsUpload = true;
+    this.atlasCtx.font = prevFont;
+    return info;
+  }
+  /**
+   * Get a glyph at a specific pixel size (caches if not present).
+   * Falls back to the base-size glyph when sizeInPx equals the atlas fontSize.
+   */
+  getGlyphAtSize(char, sizeInPx) {
+    if (Math.abs(sizeInPx - this.fontSize) < 0.5) {
+      return this.getGlyph(char);
+    }
+    return this.cacheGlyphAtSize(char, Math.round(sizeInPx));
+  }
+  /**
    * Upload atlas to GPU texture
    */
   uploadToGPU(device) {
@@ -9807,6 +9880,12 @@ class ScriptSandbox {
           if (typeof uiRef.loadImageFromBlob !== "function") return uiRef;
           const ui = Object.create(uiRef);
           ui.loadImageFromBlob = (name) => uiRef.loadImageFromBlob(name, documentId);
+          if (typeof uiRef.loadImageFromURL === "function") {
+            ui.loadImageFromURL = (url) => uiRef.loadImageFromURL(url);
+          }
+          if (typeof uiRef.getImageSize === "function") {
+            ui.getImageSize = (imageId) => uiRef.getImageSize(imageId);
+          }
           return ui;
         })(),
         // 3D Canvas API
@@ -19508,10 +19587,17 @@ class WebGPUUIRenderer {
     if (!text) return 0;
     const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
     const charW = this.atlas.getCharWidth();
+    const useSizedGlyph = Math.abs(s - 1) > 0.15;
+    const targetFontPx = useSizedGlyph ? Math.max(4, Math.round(this.atlas.getFontSize() * s / 2) * 2) : 0;
     let total = 0;
     for (const ch of text) {
-      const glyph = this.atlas.getGlyph(ch);
-      total += Math.max(charW, glyph.pixelWidth || 0) * s;
+      if (useSizedGlyph) {
+        const glyph = this.atlas.getGlyphAtSize(ch, targetFontPx);
+        total += glyph.pixelWidth || charW * s;
+      } else {
+        const glyph = this.atlas.getGlyph(ch);
+        total += Math.max(charW, glyph.pixelWidth || 0) * s;
+      }
     }
     return total;
   }
@@ -19850,19 +19936,23 @@ class WebGPUUIRenderer {
     const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
     const [r2, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color));
     const baseCharW = this.atlas.getCharWidth();
+    const baseCharH = this.atlas.getCharHeight();
     const charW = baseCharW * s;
-    const charH = this.atlas.getCharHeight() * s;
+    const charH = baseCharH * s;
+    const useSizedGlyph = Math.abs(s - 1) > 0.15;
+    const targetFontPx = useSizedGlyph ? Math.max(4, Math.round(this.atlas.getFontSize() * s / 2) * 2) : 0;
     const start = this.textCount;
     let cursorX = x;
     for (const ch of text) {
       if (this.textCount >= 4096) break;
-      const glyph = this.atlas.getGlyph(ch);
-      const glyphWidth = Math.max(baseCharW, glyph.pixelWidth || 0) * s;
+      const glyph = useSizedGlyph ? this.atlas.getGlyphAtSize(ch, targetFontPx) : this.atlas.getGlyph(ch);
+      const quadW = useSizedGlyph ? glyph.pixelWidth || charW : Math.max(baseCharW, glyph.pixelWidth || 0) * s;
+      const quadH = useSizedGlyph ? glyph.pixelHeight || charH : charH;
       const o = this.textCount * 12;
       this.textData[o + 0] = cursorX;
       this.textData[o + 1] = y;
-      this.textData[o + 2] = glyphWidth;
-      this.textData[o + 3] = charH;
+      this.textData[o + 2] = quadW;
+      this.textData[o + 3] = quadH;
       this.textData[o + 4] = r2;
       this.textData[o + 5] = g;
       this.textData[o + 6] = b;
@@ -21305,6 +21395,10 @@ class ShaderChainManager {
     // Active chain
     __publicField(this, "activeChain", []);
     __publicField(this, "chainSource", "none");
+    // Background shader — runs before the main chain, independent of setChain().
+    // Use setBackground(name) to apply a persistent pre-pass (e.g. felt grain)
+    // without coupling it to the post-process chain configuration.
+    __publicField(this, "backgroundShaderName", null);
     // Intermediate textures for multi-pass rendering
     __publicField(this, "intermediateTextures", []);
     // WGSL include cache (URL -> resolved text)
@@ -21403,6 +21497,38 @@ class ShaderChainManager {
     this.releaseIntermediateTextures();
   }
   /**
+   * Set (or clear) a persistent background shader that always runs before the
+   * main chain, independent of setChain() configuration.  Pass null to remove.
+   */
+  async setBackground(name) {
+    if (!name) {
+      this.backgroundShaderName = null;
+      console.log("[ShaderChain] Background shader cleared");
+      return true;
+    }
+    if (!this.shaderManager.hasShader(name)) {
+      try {
+        await this.loadBuiltinShader(name);
+      } catch (error) {
+        console.warn(`[ShaderChain] Background shader "${name}" not found:`, error);
+        return false;
+      }
+    }
+    if (!this.shaderManager.hasShader(name)) {
+      console.warn(`[ShaderChain] Background shader "${name}" could not be loaded`);
+      return false;
+    }
+    this.backgroundShaderName = name;
+    console.log(`[ShaderChain] Background shader set: ${name}`);
+    return true;
+  }
+  /**
+   * Return the current background shader name, or null if none is set.
+   */
+  getBackground() {
+    return this.backgroundShaderName;
+  }
+  /**
    * Load a built-in shader from the shader library
    * Attempts to load from ./shaders/{name}.wgsl.js
    */
@@ -21494,10 +21620,10 @@ ${resolved}
     return resolveOne(code, /* @__PURE__ */ new Set());
   }
   /**
-   * Check if there's an active chain
+   * Check if there's an active chain or background shader
    */
   hasActiveChain() {
-    return this.activeChain.length > 0;
+    return this.activeChain.length > 0 || this.backgroundShaderName !== null;
   }
   /**
    * Get the active chain
@@ -21512,31 +21638,32 @@ ${resolved}
     return this.chainSource;
   }
   /**
-   * Apply the shader chain to an input texture, writing to output texture
-   * 
-   * This performs multi-pass rendering:
-   * 1. First shader: inputTexture → intermediate1
-   * 2. Second shader: intermediate1 → intermediate2
-   * 3. ...
-   * N. Last shader: intermediateN-1 → outputTexture
+   * Apply the shader chain to an input texture, writing to output texture.
+   *
+   * If a background shader is set it always runs first (before the chain),
+   * independent of the chain configuration.  Full pass order:
+   *   background (optional) → chain[0] → chain[1] → … → outputTexture
    */
   applyChain(inputTexture, outputTexture, commandEncoder) {
-    if (this.activeChain.length === 0) {
+    const effectivePasses = [];
+    if (this.backgroundShaderName) effectivePasses.push(this.backgroundShaderName);
+    effectivePasses.push(...this.activeChain);
+    if (effectivePasses.length === 0) {
       return false;
     }
-    if (this.activeChain.length === 1) {
-      this.shaderManager.setActiveShader(this.activeChain[0]);
+    if (effectivePasses.length === 1) {
+      this.shaderManager.setActiveShader(effectivePasses[0]);
       return this.shaderManager.applyShader(inputTexture, outputTexture, commandEncoder);
     }
     this.ensureIntermediateTextures(
-      this.activeChain.length - 1,
+      effectivePasses.length - 1,
       inputTexture.width,
       inputTexture.height
     );
     let currentInput = inputTexture;
-    for (let i = 0; i < this.activeChain.length; i++) {
-      const shaderName = this.activeChain[i];
-      const isLast = i === this.activeChain.length - 1;
+    for (let i = 0; i < effectivePasses.length; i++) {
+      const shaderName = effectivePasses[i];
+      const isLast = i === effectivePasses.length - 1;
       const currentOutput = isLast ? outputTexture : this.intermediateTextures[i];
       this.shaderManager.setActiveShader(shaderName);
       const success = this.shaderManager.applyShader(
@@ -26784,6 +26911,9 @@ class StorieEngine {
     __publicField(this, "audioContext");
     __publicField(this, "audioUrlBufferCache", /* @__PURE__ */ new Map());
     __publicField(this, "audioUrlInFlightCache", /* @__PURE__ */ new Map());
+    __publicField(this, "uiImageUrlCache", /* @__PURE__ */ new Map());
+    // resolvedUrl -> registered imageId
+    __publicField(this, "uiImageUrlInFlight", /* @__PURE__ */ new Map());
     __publicField(this, "backgroundImageUrlCache", /* @__PURE__ */ new Map());
     __publicField(this, "backgroundImageUrlInFlightCache", /* @__PURE__ */ new Map());
     __publicField(this, "backgroundImageUrlFailures", /* @__PURE__ */ new Set());
@@ -27529,6 +27659,92 @@ class StorieEngine {
       throw new Error(`[audio.loadSound] Cross-origin audio blocked: ${resolved.origin}`);
     }
     return resolved.toString();
+  }
+  resolveSandboxImageUrl(rawUrl) {
+    var _a, _b;
+    const trimmed = String(rawUrl ?? "").trim();
+    if (!trimmed) {
+      throw new Error("[ui.loadImageFromURL] Missing URL");
+    }
+    if (this.untrustedContent) {
+      const allowedPrefix = /^(?:\.\/)?assets\/img\//;
+      if (!allowedPrefix.test(trimmed) || trimmed.includes("..") || trimmed.startsWith("/") || trimmed.startsWith("\\")) {
+        throw new Error('[ui.loadImageFromURL] Untrusted mode allows only relative URLs under "assets/img/"');
+      }
+      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
+        throw new Error("[ui.loadImageFromURL] Untrusted mode blocks URL schemes");
+      }
+    }
+    let resolved;
+    try {
+      resolved = new URL(trimmed, ((_a = globalThis.location) == null ? void 0 : _a.href) ?? "http://localhost/");
+    } catch (error) {
+      throw new Error(`[ui.loadImageFromURL] Invalid URL: ${String((error == null ? void 0 : error.message) ?? error)}`);
+    }
+    const protocol = resolved.protocol.toLowerCase();
+    if (protocol === "data:" || protocol === "blob:" || protocol === "javascript:" || protocol === "file:") {
+      throw new Error(`[ui.loadImageFromURL] Unsupported URL scheme: ${protocol}`);
+    }
+    if (resolved.username || resolved.password) {
+      throw new Error("[ui.loadImageFromURL] Credentials in URLs are not supported");
+    }
+    const origin = (_b = globalThis.location) == null ? void 0 : _b.origin;
+    if (origin && origin !== "null" && resolved.origin !== origin) {
+      throw new Error(`[ui.loadImageFromURL] Cross-origin images blocked: ${resolved.origin}`);
+    }
+    return resolved.toString();
+  }
+  async loadUIImageFromUrl(rawUrl, alloc) {
+    const MAX_IMAGE_URL_BYTES = 32 * 1024 * 1024;
+    let resolvedUrl;
+    try {
+      resolvedUrl = this.resolveSandboxImageUrl(rawUrl);
+    } catch (error) {
+      console.warn(error);
+      return null;
+    }
+    const cached = this.uiImageUrlCache.get(resolvedUrl);
+    if (cached) return cached;
+    const inFlight = this.uiImageUrlInFlight.get(resolvedUrl);
+    if (inFlight) return await inFlight;
+    const promise = (async () => {
+      try {
+        const response = await fetch(resolvedUrl, {
+          mode: "same-origin",
+          credentials: "same-origin"
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} ${response.statusText}`);
+        }
+        const contentLength = Number(response.headers.get("content-length"));
+        if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_URL_BYTES) {
+          throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (server reported ${contentLength})`);
+        }
+        const mime = String(response.headers.get("content-type") ?? "").split(";")[0].toLowerCase().trim();
+        if (!mime.startsWith("image/")) {
+          throw new Error(`Unsupported content type: ${mime || "unknown"}`);
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        if (arrayBuffer.byteLength > MAX_IMAGE_URL_BYTES) {
+          throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (downloaded ${arrayBuffer.byteLength})`);
+        }
+        const image = await this.decodeRenderableImageFromBytes(new Uint8Array(arrayBuffer), mime);
+        if (!image) return null;
+        const ui = this.ensureWebGPUUI();
+        if (!ui) return null;
+        const id = alloc();
+        ui.registerImage(id, image);
+        this.uiImageUrlCache.set(resolvedUrl, id);
+        return id;
+      } catch (error) {
+        console.warn(`[ui.loadImageFromURL] Failed to load image from "${resolvedUrl}":`, error);
+        return null;
+      } finally {
+        this.uiImageUrlInFlight.delete(resolvedUrl);
+      }
+    })();
+    this.uiImageUrlInFlight.set(resolvedUrl, promise);
+    return await promise;
   }
   async loadSoundFromUrl(rawUrl) {
     const MAX_AUDIO_URL_BYTES = 128 * 1024 * 1024;
@@ -30309,10 +30525,10 @@ class StorieEngine {
           if (!ui) return;
           ui.rect(x, y, w, h, color);
         },
-        text: (text, x, y, color) => {
+        text: (text, x, y, color, scale) => {
           const ui = engine.ensureWebGPUUI();
           if (!ui) return;
-          ui.text(text, x, y, color);
+          ui.text(text, x, y, color, scale);
         },
         // NOTE: URL-based image loading is intentionally not exposed to sandboxed
         // user code. Use `ui.loadImageFromBlob()` instead.
@@ -30322,6 +30538,23 @@ class StorieEngine {
          */
         loadImageFromBlob: async (name, documentId) => {
           return await loadImageFromBlobInternal(name, documentId);
+        },
+        /**
+         * Load an image from a same-origin URL (e.g. "assets/img/texture.jpg").
+         * In untrusted mode only relative URLs under "assets/img/" are allowed.
+         * Returns a stable imageId that can be passed to `ui.image()`, or null on failure.
+         */
+        loadImageFromURL: async (url) => {
+          return await engine.loadUIImageFromUrl(url, () => `uiurl_${nextUIImageId++}`);
+        },
+        /**
+         * Get the pixel dimensions of a previously loaded image by its id.
+         * Returns null if the image has not been registered yet.
+         */
+        getImageSize: (imageId) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return null;
+          return ui.getImageSize(String(imageId ?? ""));
         },
         /**
          * Draw a loaded image by id.
@@ -30651,6 +30884,30 @@ class StorieEngine {
         chainInfo: () => {
           if (!engine.shaderChainManager) return null;
           return engine.shaderChainManager.getChainInfo();
+        },
+        // Background shader — runs before the chain, independent of setChain().
+        // Use this for persistent scene-level effects (e.g. felt grain) so the
+        // main chain can be configured freely for post-process effects.
+        setBackground: async (shaderName) => {
+          if (!engine.shaderChainManager) {
+            console.warn("ShaderChainManager not available (WebGPU not initialized)");
+            return false;
+          }
+          try {
+            return await engine.shaderChainManager.setBackground(shaderName);
+          } catch (error) {
+            console.error(`Failed to set background shader "${shaderName}":`, error);
+            return false;
+          }
+        },
+        clearBackground: () => {
+          if (engine.shaderChainManager) {
+            engine.shaderChainManager.setBackground(null);
+          }
+        },
+        getBackground: () => {
+          if (!engine.shaderChainManager) return null;
+          return engine.shaderChainManager.getBackground();
         }
       },
       // Compositor API (Phase 1: Auto-compositing, future: manual mode)

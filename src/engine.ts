@@ -375,6 +375,8 @@ export class StorieEngine {
   private audioContext: AudioContext;
   private readonly audioUrlBufferCache: Map<string, AudioBuffer> = new Map();
   private readonly audioUrlInFlightCache: Map<string, Promise<AudioBuffer | null>> = new Map();
+  private readonly uiImageUrlCache: Map<string, string> = new Map(); // resolvedUrl -> registered imageId
+  private readonly uiImageUrlInFlight: Map<string, Promise<string | null>> = new Map();
   private readonly backgroundImageUrlCache: Map<string, RenderableImageSource> = new Map();
   private readonly backgroundImageUrlInFlightCache: Map<string, Promise<RenderableImageSource | null>> = new Map();
   private readonly backgroundImageUrlFailures: Set<string> = new Set();
@@ -1418,6 +1420,110 @@ export class StorieEngine {
     }
 
     return resolved.toString();
+  }
+
+  private resolveSandboxImageUrl(rawUrl: string): string {
+    const trimmed = String(rawUrl ?? '').trim();
+    if (!trimmed) {
+      throw new Error('[ui.loadImageFromURL] Missing URL');
+    }
+
+    if (this.untrustedContent) {
+      const allowedPrefix = /^(?:\.\/)?assets\/img\//;
+      if (!allowedPrefix.test(trimmed) || trimmed.includes('..') || trimmed.startsWith('/') || trimmed.startsWith('\\')) {
+        throw new Error('[ui.loadImageFromURL] Untrusted mode allows only relative URLs under "assets/img/"');
+      }
+      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
+        throw new Error('[ui.loadImageFromURL] Untrusted mode blocks URL schemes');
+      }
+    }
+
+    let resolved: URL;
+    try {
+      resolved = new URL(trimmed, globalThis.location?.href ?? 'http://localhost/');
+    } catch (error: any) {
+      throw new Error(`[ui.loadImageFromURL] Invalid URL: ${String(error?.message ?? error)}`);
+    }
+
+    const protocol = resolved.protocol.toLowerCase();
+    if (protocol === 'data:' || protocol === 'blob:' || protocol === 'javascript:' || protocol === 'file:') {
+      throw new Error(`[ui.loadImageFromURL] Unsupported URL scheme: ${protocol}`);
+    }
+    if (resolved.username || resolved.password) {
+      throw new Error('[ui.loadImageFromURL] Credentials in URLs are not supported');
+    }
+
+    const origin = globalThis.location?.origin;
+    if (origin && origin !== 'null' && resolved.origin !== origin) {
+      throw new Error(`[ui.loadImageFromURL] Cross-origin images blocked: ${resolved.origin}`);
+    }
+
+    return resolved.toString();
+  }
+
+  private async loadUIImageFromUrl(rawUrl: string, alloc: () => string): Promise<string | null> {
+    const MAX_IMAGE_URL_BYTES = 32 * 1024 * 1024;
+
+    let resolvedUrl: string;
+    try {
+      resolvedUrl = this.resolveSandboxImageUrl(rawUrl);
+    } catch (error) {
+      console.warn(error);
+      return null;
+    }
+
+    const cached = this.uiImageUrlCache.get(resolvedUrl);
+    if (cached) return cached;
+
+    const inFlight = this.uiImageUrlInFlight.get(resolvedUrl);
+    if (inFlight) return await inFlight;
+
+    const promise = (async () => {
+      try {
+        const response = await fetch(resolvedUrl, {
+          mode: 'same-origin',
+          credentials: 'same-origin',
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} ${response.statusText}`);
+        }
+
+        const contentLength = Number(response.headers.get('content-length'));
+        if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_URL_BYTES) {
+          throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (server reported ${contentLength})`);
+        }
+
+        const mime = String(response.headers.get('content-type') ?? '').split(';')[0].toLowerCase().trim();
+        if (!mime.startsWith('image/')) {
+          throw new Error(`Unsupported content type: ${mime || 'unknown'}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        if (arrayBuffer.byteLength > MAX_IMAGE_URL_BYTES) {
+          throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (downloaded ${arrayBuffer.byteLength})`);
+        }
+
+        const image = await this.decodeRenderableImageFromBytes(new Uint8Array(arrayBuffer), mime);
+        if (!image) return null;
+
+        const ui = this.ensureWebGPUUI();
+        if (!ui) return null;
+
+        const id = alloc();
+        ui.registerImage(id, image);
+        this.uiImageUrlCache.set(resolvedUrl, id);
+        return id;
+      } catch (error) {
+        console.warn(`[ui.loadImageFromURL] Failed to load image from "${resolvedUrl}":`, error);
+        return null;
+      } finally {
+        this.uiImageUrlInFlight.delete(resolvedUrl);
+      }
+    })();
+
+    this.uiImageUrlInFlight.set(resolvedUrl, promise);
+    return await promise;
   }
 
   private async loadSoundFromUrl(rawUrl: string): Promise<AudioBuffer | null> {
@@ -4514,10 +4620,10 @@ export class StorieEngine {
           if (!ui) return;
           ui.rect(x, y, w, h, color);
         },
-        text: (text: string, x: number, y: number, color: Color) => {
+        text: (text: string, x: number, y: number, color: Color, scale?: number) => {
           const ui = engine.ensureWebGPUUI();
           if (!ui) return;
-          ui.text(text, x, y, color);
+          ui.text(text, x, y, color, scale);
         },
 
         // NOTE: URL-based image loading is intentionally not exposed to sandboxed
@@ -4529,6 +4635,25 @@ export class StorieEngine {
          */
         loadImageFromBlob: async (name: string, documentId?: string): Promise<string | null> => {
           return await loadImageFromBlobInternal(name, documentId);
+        },
+
+        /**
+         * Load an image from a same-origin URL (e.g. "assets/img/texture.jpg").
+         * In untrusted mode only relative URLs under "assets/img/" are allowed.
+         * Returns a stable imageId that can be passed to `ui.image()`, or null on failure.
+         */
+        loadImageFromURL: async (url: string): Promise<string | null> => {
+          return await engine.loadUIImageFromUrl(url, () => `uiurl_${nextUIImageId++}`);
+        },
+
+        /**
+         * Get the pixel dimensions of a previously loaded image by its id.
+         * Returns null if the image has not been registered yet.
+         */
+        getImageSize: (imageId: string): { width: number; height: number } | null => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return null;
+          return ui.getImageSize(String(imageId ?? ''));
         },
 
         /**
@@ -4915,7 +5040,34 @@ export class StorieEngine {
         chainInfo: () => {
           if (!engine.shaderChainManager) return null;
           return engine.shaderChainManager.getChainInfo();
-        }
+        },
+
+        // Background shader — runs before the chain, independent of setChain().
+        // Use this for persistent scene-level effects (e.g. felt grain) so the
+        // main chain can be configured freely for post-process effects.
+        setBackground: async (shaderName: string | null) => {
+          if (!engine.shaderChainManager) {
+            console.warn('ShaderChainManager not available (WebGPU not initialized)');
+            return false;
+          }
+          try {
+            return await engine.shaderChainManager.setBackground(shaderName);
+          } catch (error) {
+            console.error(`Failed to set background shader "${shaderName}":`, error);
+            return false;
+          }
+        },
+
+        clearBackground: () => {
+          if (engine.shaderChainManager) {
+            engine.shaderChainManager.setBackground(null);
+          }
+        },
+
+        getBackground: () => {
+          if (!engine.shaderChainManager) return null;
+          return engine.shaderChainManager.getBackground();
+        },
       },
       
       // Compositor API (Phase 1: Auto-compositing, future: manual mode)

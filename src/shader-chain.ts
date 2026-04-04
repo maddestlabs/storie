@@ -40,6 +40,11 @@ export class ShaderChainManager {
   // Active chain
   private activeChain: string[] = [];
   private chainSource: string = 'none';
+
+  // Background shader — runs before the main chain, independent of setChain().
+  // Use setBackground(name) to apply a persistent pre-pass (e.g. felt grain)
+  // without coupling it to the post-process chain configuration.
+  private backgroundShaderName: string | null = null;
   
   // Intermediate textures for multi-pass rendering
   private intermediateTextures: GPUTexture[] = [];
@@ -169,6 +174,41 @@ export class ShaderChainManager {
   }
 
   /**
+   * Set (or clear) a persistent background shader that always runs before the
+   * main chain, independent of setChain() configuration.  Pass null to remove.
+   */
+  async setBackground(name: string | null): Promise<boolean> {
+    if (!name) {
+      this.backgroundShaderName = null;
+      console.log('[ShaderChain] Background shader cleared');
+      return true;
+    }
+    // Load if not already available
+    if (!this.shaderManager.hasShader(name)) {
+      try {
+        await this.loadBuiltinShader(name);
+      } catch (error) {
+        console.warn(`[ShaderChain] Background shader "${name}" not found:`, error);
+        return false;
+      }
+    }
+    if (!this.shaderManager.hasShader(name)) {
+      console.warn(`[ShaderChain] Background shader "${name}" could not be loaded`);
+      return false;
+    }
+    this.backgroundShaderName = name;
+    console.log(`[ShaderChain] Background shader set: ${name}`);
+    return true;
+  }
+
+  /**
+   * Return the current background shader name, or null if none is set.
+   */
+  getBackground(): string | null {
+    return this.backgroundShaderName;
+  }
+
+  /**
    * Load a built-in shader from the shader library
    * Attempts to load from ./shaders/{name}.wgsl.js
    */
@@ -293,10 +333,10 @@ export class ShaderChainManager {
   }
 
   /**
-   * Check if there's an active chain
+   * Check if there's an active chain or background shader
    */
   hasActiveChain(): boolean {
-    return this.activeChain.length > 0;
+    return this.activeChain.length > 0 || this.backgroundShaderName !== null;
   }
 
   /**
@@ -314,63 +354,65 @@ export class ShaderChainManager {
   }
 
   /**
-   * Apply the shader chain to an input texture, writing to output texture
-   * 
-   * This performs multi-pass rendering:
-   * 1. First shader: inputTexture → intermediate1
-   * 2. Second shader: intermediate1 → intermediate2
-   * 3. ...
-   * N. Last shader: intermediateN-1 → outputTexture
+   * Apply the shader chain to an input texture, writing to output texture.
+   *
+   * If a background shader is set it always runs first (before the chain),
+   * independent of the chain configuration.  Full pass order:
+   *   background (optional) → chain[0] → chain[1] → … → outputTexture
    */
   applyChain(
     inputTexture: GPUTexture,
     outputTexture: GPUTexture,
     commandEncoder: GPUCommandEncoder
   ): boolean {
-    if (this.activeChain.length === 0) {
-      return false; // No chain active
+    // Build the effective pass list: [background?, ...chain]
+    const effectivePasses: string[] = [];
+    if (this.backgroundShaderName) effectivePasses.push(this.backgroundShaderName);
+    effectivePasses.push(...this.activeChain);
+
+    if (effectivePasses.length === 0) {
+      return false; // Nothing to apply
     }
-    
-    // Single shader - simple pass-through
-    if (this.activeChain.length === 1) {
-      this.shaderManager.setActiveShader(this.activeChain[0]);
+
+    // Single pass — simple case
+    if (effectivePasses.length === 1) {
+      this.shaderManager.setActiveShader(effectivePasses[0]);
       return this.shaderManager.applyShader(inputTexture, outputTexture, commandEncoder);
     }
+
+    // Keep original activeChain references for the intermediate texture check below.
+    // The effective list may be longer than activeChain by 1 (background prepended).
     
     // Multi-pass rendering
-    // Ensure we have enough intermediate textures
     this.ensureIntermediateTextures(
-      this.activeChain.length - 1,
+      effectivePasses.length - 1,
       inputTexture.width,
       inputTexture.height
     );
-    
+
     let currentInput = inputTexture;
-    
-    for (let i = 0; i < this.activeChain.length; i++) {
-      const shaderName = this.activeChain[i];
-      const isLast = (i === this.activeChain.length - 1);
-      
-      // Determine output texture for this pass
+
+    for (let i = 0; i < effectivePasses.length; i++) {
+      const shaderName = effectivePasses[i];
+      const isLast = (i === effectivePasses.length - 1);
+
       const currentOutput = isLast ? outputTexture : this.intermediateTextures[i];
-      
-      // Apply this shader
+
       this.shaderManager.setActiveShader(shaderName);
       const success = this.shaderManager.applyShader(
         currentInput,
         currentOutput,
         commandEncoder
       );
-      
+
       if (!success) {
         console.error(`[ShaderChain] Failed to apply shader: ${shaderName}`);
         return false;
       }
-      
-      // Next input is this output
+
       currentInput = currentOutput;
     }
-    
+
     return true;
   }
 

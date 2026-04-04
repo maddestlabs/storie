@@ -86,10 +86,19 @@ export class WebGPUUIRenderer {
     if (!text) return 0;
     const s = (Number.isFinite(scale) && (scale as number) > 0) ? (scale as number) : 1;
     const charW = this.atlas.getCharWidth();
+    const useSizedGlyph = Math.abs(s - 1.0) > 0.15;
+    const targetFontPx = useSizedGlyph
+      ? Math.max(4, Math.round(this.atlas.getFontSize() * s / 2) * 2)
+      : 0;
     let total = 0;
     for (const ch of text) {
-      const glyph = this.atlas.getGlyph(ch);
-      total += Math.max(charW, glyph.pixelWidth || 0) * s;
+      if (useSizedGlyph) {
+        const glyph = this.atlas.getGlyphAtSize(ch, targetFontPx);
+        total += glyph.pixelWidth || charW * s;
+      } else {
+        const glyph = this.atlas.getGlyph(ch);
+        total += Math.max(charW, glyph.pixelWidth || 0) * s;
+      }
     }
     return total;
   }
@@ -645,8 +654,18 @@ export class WebGPUUIRenderer {
 
     const [r, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color as any));
     const baseCharW = this.atlas.getCharWidth();
-    const charW = baseCharW * s;
-    const charH = this.atlas.getCharHeight() * s;
+    const baseCharH = this.atlas.getCharHeight();
+    const charW = baseCharW * s;         // cursor advance (always scale-based)
+    const charH = baseCharH * s;         // nominal cell height for layout
+
+    // When scale differs meaningfully from 1.0, rasterize into the atlas at the
+    // target size so the GPU samples a crisp native-resolution glyph rather than
+    // stretching a small base-size rasterization.  Snap to the nearest 2px to
+    // limit unique atlas entries while still covering most practical sizes.
+    const useSizedGlyph = Math.abs(s - 1.0) > 0.15;
+    const targetFontPx = useSizedGlyph
+      ? Math.max(4, Math.round(this.atlas.getFontSize() * s / 2) * 2)
+      : 0;
 
     const start = this.textCount;
 
@@ -654,13 +673,24 @@ export class WebGPUUIRenderer {
     for (const ch of text) {
       if (this.textCount >= 4096) break;
 
-      const glyph = this.atlas.getGlyph(ch);
-      const glyphWidth = Math.max(baseCharW, glyph.pixelWidth || 0) * s;
+      const glyph = useSizedGlyph
+        ? this.atlas.getGlyphAtSize(ch, targetFontPx)
+        : this.atlas.getGlyph(ch);
+
+      // Quad dimensions: use rasterized size when available (no GPU upscale),
+      // otherwise fall back to scaled base-size dimensions.
+      const quadW = useSizedGlyph
+        ? (glyph.pixelWidth || charW)
+        : Math.max(baseCharW, glyph.pixelWidth || 0) * s;
+      const quadH = useSizedGlyph
+        ? (glyph.pixelHeight || charH)
+        : charH;
+
       const o = this.textCount * 12;
       this.textData[o + 0] = cursorX;
       this.textData[o + 1] = y;
-      this.textData[o + 2] = glyphWidth;
-      this.textData[o + 3] = charH;
+      this.textData[o + 2] = quadW;
+      this.textData[o + 3] = quadH;
       this.textData[o + 4] = r;
       this.textData[o + 5] = g;
       this.textData[o + 6] = b;

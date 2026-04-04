@@ -1,7 +1,8 @@
 ---
 name: "Klondike Solitaire"
 theme: "nord"
-font: "Rye"
+font: "Cutive+Mono"
+shaders: "lightsoft+blurgradual"
 ---
 
 Classic Klondike solitaire. Drag cards between tableau columns, move runs to foundations, deal from the stock.
@@ -18,6 +19,7 @@ struct Uniforms {
   time: f32,
   resolution: vec2f,
   grainAmt: f32,
+  noiseScale: f32,   // 1.0 = default; higher = coarser nap, lower = finer
 };
 @group(0) @binding(2) var<uniform> uniforms: Uniforms;
 @group(0) @binding(0) var inputTexture: texture_2d<f32>;
@@ -36,24 +38,61 @@ fn vertexMain(@location(0) pos: vec2f) -> VertexOutput {
   return out;
 }
 
-fn _felt_h21(p: vec2f) -> f32 {
-  var q = fract(p * vec2f(127.1, 311.7));
-  q += dot(q, q + 19.19);
-  return fract(q.x * q.y);
+// ── 2D Simplex noise (Stefan Gustavson) ──────────────────────────────────────
+fn _sn_m289v2(x: vec2f) -> vec2f { return x - floor(x * (1.0/289.0)) * 289.0; }
+fn _sn_m289v3(x: vec3f) -> vec3f { return x - floor(x * (1.0/289.0)) * 289.0; }
+fn _sn_perm(x: vec3f)   -> vec3f { return _sn_m289v3(((x * 34.0) + 10.0) * x); }
+
+// Returns roughly [-1, 1].
+fn snoise2(v: vec2f) -> f32 {
+  let C  = vec4f(0.211324865405187, 0.366025403784439,
+                -0.577350269189626, 0.024390243902439);
+  var i  = floor(v + dot(v, C.yy));
+  let x0 = v - i + dot(i, C.xx);
+  let i1  = select(vec2f(0.0, 1.0), vec2f(1.0, 0.0), x0.x > x0.y);
+  var x12 = x0.xyxy + C.xxzz;
+  x12.x  -= i1.x;  x12.y -= i1.y;
+  i = _sn_m289v2(i);
+  let p  = _sn_perm(_sn_perm(i.y + vec3f(0.0, i1.y, 1.0)) + i.x + vec3f(0.0, i1.x, 1.0));
+  var m  = max(0.5 - vec3f(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), vec3f(0.0));
+  m = m * m;  m = m * m;
+  let x  = 2.0 * fract(p * C.www) - 1.0;
+  let h  = abs(x) - 0.5;
+  let a0 = x - floor(x + 0.5);
+  m *= 1.79284291400159 - 0.85373472095314 * (a0*a0 + h*h);
+  let g = vec3f(a0.x  * x0.x   + h.x  * x0.y,
+                a0.yz * x12.xz + h.yz * x12.yw);
+  return 130.0 * dot(m, g);
 }
 
 @fragment
 fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
-  let uv = input.uv;
+  let uv  = input.uv;
   var col = textureSample(inputTexture, inputSampler, uv).rgb;
 
-  // Two orthogonal felt-fiber directions: horizontal threads + vertical threads.
-  // Each direction quantises one UV axis so nearby pixels share the same fiber.
-  let sc = uniforms.resolution.y * 0.20;
-  let f1 = _felt_h21(vec2f(floor(uv.x * sc), uv.y * sc * 2.5));
-  let f2 = _felt_h21(vec2f(uv.x * sc * 2.5, floor(uv.y * sc)));
-  let grain = ((f1 + f2) * 0.5 - 0.5) * uniforms.grainAmt;
+  // Aspect-corrected UV so noise features are physically square on screen.
+  let sc     = uniforms.resolution.y;
+  let aspect = uniforms.resolution.x / uniforms.resolution.y;
+  let uvA    = vec2f(uv.x * aspect, uv.y);
 
+  // Two octaves: coarse nap (~43 features across height ≈ 17px each at 720p)
+  // and fine fiber detail (~144 features ≈ 5px each).
+  // Combined they read as compressed wool felt rather than a digital pattern.
+  let n0    = snoise2(uvA * sc * uniforms.noiseScale * 0.06);
+  let n1    = snoise2(uvA * sc * uniforms.noiseScale * 0.20 + vec2f(3.7, 1.3));
+  let noise = n0 * 0.55 + n1 * 0.45;
+
+  // ── Felt-only mask ────────────────────────────────────────────────────────
+  // Don't apply grain to cards — only to the felt table.
+  //   • Card faces  → high luma (warm off-white ≈ 0.97)
+  //   • Card backs  → vibrant navy rgb(28,54,115): blue–red bias ≈ 0.34
+  //     Nord felt   → muted blue-grey #3b4252:     blue–red bias ≈ 0.09
+  let luma       = dot(col, vec3f(0.299, 0.587, 0.114));
+  let isCardFace = smoothstep(0.55, 0.72, luma);
+  let isCardBack = smoothstep(0.14, 0.26, col.b - col.r);
+  let feltMask   = 1.0 - max(isCardFace, isCardBack);
+
+  let grain = noise * uniforms.grainAmt * feltMask;
   return vec4f(clamp(col + vec3f(grain), vec3f(0.0), vec3f(1.0)), 1.0);
 }
 ```
@@ -67,6 +106,7 @@ var RANKS       = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
 var SUIT_RED    = [false, true, true, false]; // index matches SUITS
 var NUM_TABLEAU = 7;
 var STOCK_DEAL  = 1;   // cards dealt per click (set to 3 for draw-3 variant)
+var DECK_AGE    = 0.6; // 0 = pristine (no aging), 1 = very worn; scales all card age effects
 
 // ─── Card helpers ─────────────────────────────────────────────────────────────
 function cardId(suit, rank) { return suit * 13 + rank; }         // 0-51
@@ -180,9 +220,16 @@ function computeLayout() {
   var maxCH  = portrait ? Math.floor(H * 0.22) : Math.floor(H * 0.28);
   if (ch > maxCH) { ch = maxCH; cw = Math.round(ch * (2.5 / 3.5)); }
 
-  // Vertical card offset within a tableau column (how much of card is exposed)
-  var stackOffset = Math.max(Math.round(ch * 0.28), 18);
-  var faceUpOffset = Math.max(Math.round(ch * 0.38), 24);
+  // Vertical card offset within a tableau column (how much of card is exposed).
+  // Clamp to available height so the deepest initial column (col 7: 6 stacked
+  // cards + 1 face-up top) always fits on screen regardless of window shape.
+  // tableauY = 2*vPad + ch, so available height = H - tableauY - vPad - ch
+  //                                              = H - 3*vPad - 2*ch
+  var tableauAvailH = H - 3 * vPad - 2 * ch;
+  var maxColOffset  = tableauAvailH > 0 ? Math.floor(tableauAvailH / 6) : 10;
+  var stackOffset   = Math.min(Math.max(Math.round(ch * 0.28), 18), maxColOffset);
+  var faceUpOffset  = Math.min(Math.max(Math.round(ch * 0.38), 24), maxColOffset);
+  faceUpOffset = Math.max(faceUpOffset, stackOffset); // never collapse below stack
 
   // Top row: stock (col 0), waste (col 1), gap, foundations (cols 3-6)
   var topRowY = vPad;
@@ -260,14 +307,35 @@ function hitTest(px, py, layout) {
   return null;
 }
 
+// Compute per-column stack/faceUp offsets that guarantee the column fits within
+// the available tableau height. Counts only the n-1 inter-card gaps (the top card
+// needs no offset below it). If the preferred offsets already fit, they're returned
+// unchanged — compression only kicks in when the column is tall enough to overflow.
+function colOffsets(pile, L) {
+  var nFD = 0, nFU = 0;
+  for (var i = 0; i < pile.length - 1; i++) {
+    if (pile[i].faceUp) nFU++; else nFD++;
+  }
+  var availH = L.H - L.tableauY - L.vPad - L.ch;
+  if (availH <= 0 || nFD + nFU === 0) return { so: L.stackOffset, fo: L.faceUpOffset };
+  var prefTotal = nFD * L.stackOffset + nFU * L.faceUpOffset;
+  if (prefTotal <= availH) return { so: L.stackOffset, fo: L.faceUpOffset };
+  var scale = availH / prefTotal;
+  return {
+    so: Math.max(8,  Math.floor(L.stackOffset  * scale)),
+    fo: Math.max(10, Math.floor(L.faceUpOffset * scale)),
+  };
+}
+
 // Compute y positions for each card in a tableau column
 function tableauCardRects(pile, colX, L) {
   var rects = [];
   var y = L.tableauY;
+  var offs = colOffsets(pile, L);
   for (var i = 0; i < pile.length; i++) {
     rects.push({ x: colX, y: y });
     if (i < pile.length - 1) {
-      y += pile[i].faceUp ? L.faceUpOffset : L.stackOffset;
+      y += pile[i].faceUp ? offs.fo : offs.so;
     }
   }
   return rects;
@@ -322,7 +390,8 @@ function handleInput(L) {
         var colPile = g.tableau[col];
         // Generous drop zone: anywhere over the column strip
         var colTop = L.tableauY;
-        var colBot = colTop + L.ch + colPile.length * L.faceUpOffset + 40;
+        var _coffs = colOffsets(colPile, L);
+        var colBot = colTop + L.ch + colPile.length * _coffs.fo + 40;
         if (mx >= cx2 && mx < cx2 + L.cw && my >= colTop - 20 && my < colBot) {
           if (canPlaceOnTableau(topDragCard, colPile)) {
             g.drag.fromPile.splice(g.drag.fromIndex, dragCards.length);
@@ -459,21 +528,31 @@ function getPalette() {
     var b2 = (c >>> 8) & 255;
     return ui.colors.rgba(r, g2, b2, Math.max(0, Math.min(255, Math.round(alpha * 255))));
   }
+  // Lighten accent1.fg 70% towards white for a pale theme-tinted card back.
+  // Computed as a packed 0xRRGGBBAA int so there's no alpha scaling bug.
+  var _a1 = accent1.fg;
+  var _a1r = (_a1 >>> 24) & 255, _a1g = (_a1 >>> 16) & 255, _a1b = (_a1 >>> 8) & 255;
+  var _lt = 0.70;
+  var _cbR = Math.round(_a1r + (255 - _a1r) * _lt);
+  var _cbG = Math.round(_a1g + (255 - _a1g) * _lt);
+  var _cbB = Math.round(_a1b + (255 - _a1b) * _lt);
+  var _cardBack = ((_cbR & 255) * 0x1000000 + (_cbG & 255) * 0x10000 + (_cbB & 255) * 0x100 + 255) >>> 0;
+
   return {
     // Table
     bg:           base.bg,
     felt:         a(bgAlt.bg, 1.0),
     // Card face — fixed warm off-white, fully opaque
     cardFace:     ui.colors.rgba(250, 248, 242, 255),
-    // Card back — classic deep blue, fully opaque
-    cardBack:     ui.colors.rgba(28,  54, 115, 255),
-    cardBackMid:  ui.colors.rgba(42,  72, 148, 255),
-    cardBackPat:  ui.colors.rgba(58,  94, 172, 255),
+    // Card back — accent1 lightened 70% towards white, with full accent1 panel.
+    // Both are packed 0xRRGGBBAA integers to avoid the legacy alpha scaling bug.
+    cardBack:    _cardBack,   // pale accent1 tint
+    cardBackInv: accent1.fg,  // full accent1 for center panel
     // Borders — fixed grays
     cardBorder:   ui.colors.rgba(160, 154, 142, 255),
     cardBorderSel:a(accent1.fg, 1.0),
     // Shadow — fixed dark, fully opaque
-    cardShadow:   ui.colors.rgba(0,   0,   0,  80),
+    cardShadow:   ui.colors.rgba(0,   0,   0,  10),
     // Suit ink — fixed classic red and near-black
     red:          ui.colors.rgba(196,  28,  28, 255),
     black:        ui.colors.rgba(18,   18,  22, 255),
@@ -486,24 +565,95 @@ function getPalette() {
   };
 }
 
+// ─── Card jitter helpers ──────────────────────────────────────────────────────
+// Stable deterministic {dx, dy, angleDeg} per card ID — based on sin hash so it
+// never changes for a given card, giving the "human-dealt" Hardwood Solitaire feel.
+function cardJitter(id) {
+  var a = Math.sin((id + 1) * 127.1)        * 43758.5453;
+  var b = Math.sin((id + 1) * 311.7 + 1.0) * 43758.5453;
+  var c = Math.sin((id + 1) *  74.3 + 2.0) * 43758.5453;
+  var dx    = (a - Math.floor(a)) * 2.0 - 1.0;   // [-1, 1]
+  var dy    = (b - Math.floor(b)) * 2.0 - 1.0;   // [-1, 1]
+  var aFrac = (c - Math.floor(c)) * 2.0 - 1.0;   // [-1, 1]
+  return { dx: dx * 2.4, dy: dy * 2.4, angleDeg: aFrac * 1.5 };
+}
+
+// Returns a stable 0–1 "worn-ness" factor per card id (sin-hash, same approach
+// as cardJitter). 0 = pristine, 1 = very worn. Cards vary across the deck to
+// simulate a set that's been shuffled many times with uneven wear.
+function cardAge(id) {
+  if (DECK_AGE <= 0) return 0;
+  var h = Math.sin((id + 1) * 209.3 + 5.7) * 43758.5453;
+  return (h - Math.floor(h)) * DECK_AGE;  // per-card variation scaled by DECK_AGE
+}
+
+function _rotPt(ptx, pty, cx, cy, cosA, sinA) {
+  var rx = ptx - cx; var ry = pty - cy;
+  return { x: cx + rx * cosA - ry * sinA, y: cy + rx * sinA + ry * cosA };
+}
+
+// Smooth rounded-rect polygon (N arc steps per corner) rotated around card centre.
+// 4 corners × (N+1) points = 28-point polygon — visually indistinguishable from
+// pushMaskRoundedRect, but supports arbitrary rotation via _rotPt.
+function roundedRectPoly(x, y, w, h, r, cx, cy, cosA, sinA) {
+  var pts = [];
+  var N = 6; // arc subdivisions per corner
+  // Each entry: [corner-centre x, corner-centre y, start angle (rad), end angle (rad)]
+  // Angles measured in screen coords (y-down): 0=right, π/2=down, π=left, 3π/2=up.
+  var corners = [
+    [x+r,   y+r,   Math.PI,       3*Math.PI/2],  // top-left
+    [x+w-r, y+r,   3*Math.PI/2,   2*Math.PI  ],  // top-right
+    [x+w-r, y+h-r, 0,             Math.PI/2  ],  // bottom-right
+    [x+r,   y+h-r, Math.PI/2,     Math.PI    ],  // bottom-left
+  ];
+  for (var ci = 0; ci < 4; ci++) {
+    var ocx = corners[ci][0]; var ocy = corners[ci][1];
+    var a0  = corners[ci][2]; var a1  = corners[ci][3];
+    for (var s = 0; s <= N; s++) {
+      var a = a0 + (a1 - a0) * s / N;
+      pts.push(_rotPt(ocx + Math.cos(a) * r, ocy + Math.sin(a) * r, cx, cy, cosA, sinA));
+    }
+  }
+  return pts;
+}
+
 // ─── Card drawing ─────────────────────────────────────────────────────────────
 // drawCard renders a single playing card at (x, y) using ui primitives only.
-// faceUp=true draws front; false draws back (simple crosshatch via rects).
-function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging) {
+// faceUp=true draws front; false draws back (double-border frame + crosshatch).
+// Optional jitter: { dx, dy, angleDeg } — positional + rotational deviation.
+function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
   var id = cardObj ? cardObj.id : -1;
   var faceUp = cardObj ? cardObj.faceUp : false;
+  var _age = (age > 0) ? Math.min(age, 1.0) : 0;
 
-  // Shadow (offset rect, no mask needed)
+  // Stable positional + rotational deviation (simulates human-dealt card placement).
+  var jx = jitter ? x + (jitter.dx || 0) : x;
+  var jy = jitter ? y + (jitter.dy || 0) : y;
+  var angDeg = (jitter && !isDragging) ? (jitter.angleDeg || 0) : 0;
+  var angRad = angDeg * Math.PI / 180;
+  var cosA = Math.cos(angRad); var sinA = Math.sin(angRad);
+  var jcx = jx + cw * 0.5; var jcy = jy + ch * 0.5;
+
+  // Shadow (not rotated — fine at small angles)
   if (!isDragging) {
-    ui.rect(x + 3, y + 3, cw, ch, pal.cardShadow);
+    ui.rect(jx + 3, jy + 3, cw, ch, pal.cardShadow);
   }
 
-  // Card body with rounded-rect stencil mask
-  ui.pushMaskRoundedRect(x, y, cw, ch, radius);
+  // Card mask — rotated beveled polygon when angle is significant, else rounded rect
+  if (Math.abs(angDeg) > 0.05) {
+    ui.pushMaskPolygon(roundedRectPoly(jx, jy, cw, ch, radius, jcx, jcy, cosA, sinA));
+  } else {
+    ui.pushMaskRoundedRect(jx, jy, cw, ch, radius);
+  }
 
   if (faceUp && id >= 0) {
     // ── Face ──────────────────────────────────────────────────────
-    ui.rect(x, y, cw, ch, pal.cardFace);
+    ui.rect(jx, jy, cw, ch, pal.cardFace);
+    // Sepia yellowing: warm amber wash over the face paper — quadratic so young
+    // cards stay white and only well-worn cards show a visible warm cast.
+    if (_age > 0) {
+      ui.rect(jx, jy, cw, ch, ui.colors.rgba(200, 160, 80, Math.round(_age * _age * 36)));
+    }
 
     var suit = cardSuit(id);
     var rank = cardRank(id);
@@ -512,47 +662,124 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging) {
     var suitStr = suitLabel(suit);
 
     // Corner rank label (top-left)
-    ui.text(rankStr, x + 4, y + 3, ink);
-    ui.text(suitStr, x + 4, y + 3 + (ui.metrics.charHeight || 14), ink);
+    ui.text(rankStr, jx + 4, jy + 3, ink);
+    ui.text(suitStr, jx + 4, jy + 3 + (ui.metrics.charHeight || 14), ink);
 
     // Center suit symbol — scaled up
-    var cx3 = x + Math.floor((cw - (ui.metrics.charWidth || 10)) * 0.5);
-    var cy3 = y + Math.floor((ch - (ui.metrics.charHeight || 14)) * 0.5) - 2;
+    var cx3 = jx + Math.floor((cw - (ui.metrics.charWidth || 10)) * 0.5);
+    var cy3 = jy + Math.floor((ch - (ui.metrics.charHeight || 14)) * 0.5) - 2;
     ui.text(suitStr, cx3, cy3, ink, 1.6);
 
-    // Bottom-right corner (rotated, approximated by drawing near bottom-right)
-    var brx = x + cw - 4 - (ui.metrics.charWidth || 10);
-    var bry = y + ch - 4 - (ui.metrics.charHeight || 14) * 2;
+    // Bottom-right corner
+    var brx = jx + cw - 4 - (ui.metrics.charWidth || 10);
+    var bry = jy + ch - 4 - (ui.metrics.charHeight || 14) * 2;
     ui.text(rankStr, brx, bry, ink);
     ui.text(suitStr, brx, bry + (ui.metrics.charHeight || 14), ink);
 
-  } else {
-    // ── Back: classic double-border frame + crosshatch center ─────
-    // Base fill
-    ui.rect(x, y, cw, ch, pal.cardBack);
-    // Outer border band (lighter strip)
-    var bOuter = Math.max(2, Math.round(cw * 0.07));
-    ui.rect(x + bOuter, y + bOuter, cw - bOuter * 2, ch - bOuter * 2, pal.cardBackMid);
-    // Inner field (back to dark)
-    var bInner = Math.max(4, Math.round(cw * 0.14));
-    ui.rect(x + bInner, y + bInner, cw - bInner * 2, ch - bInner * 2, pal.cardBack);
-    // Fine crosshatch inside the inner field
-    var step = Math.max(4, Math.round(cw * 0.13));
-    var fm = bInner + 2;
-    for (var bx = x + fm; bx < x + cw - fm; bx += step) {
-      ui.rect(bx, y + fm, 1, ch - fm * 2, pal.cardBackPat);
+    // Foxing / age spots on card face: tiny warm-brown marks scattered across
+    // the print. Count grows cubically with age; placed before the vignette so
+    // edge marks are naturally darkened by it. Two hues alternate (foxing =
+    // warm amber, stain = cooler brown).
+    if (_age > 0) {
+      var _fN = Math.round(_age * _age * _age * 50);
+      var _fhs = ((id * 2654435761) >>> 0);
+      for (var _fi = 0; _fi < _fN; _fi++) {
+        _fhs = ((_fhs * 1664525 + 1013904223) >>> 0);  var _fx = jx + Math.round((_fhs / 4294967296) * (cw - 4));
+        _fhs = ((_fhs * 1664525 + 1013904223) >>> 0);  var _fy = jy + Math.round((_fhs / 4294967296) * (ch - 4));
+        _fhs = ((_fhs * 1664525 + 1013904223) >>> 0);  var _fw = 1 + Math.round((_fhs / 4294967296) * 2.5);
+        _fhs = ((_fhs * 1664525 + 1013904223) >>> 0);  var _ft = 1 + Math.round((_fhs / 4294967296) * 2.5);
+        _fhs = ((_fhs * 1664525 + 1013904223) >>> 0);
+        var _fa = Math.round((0.08 + (_fhs / 4294967296) * 0.22) * _age * 255);
+        _fhs = ((_fhs * 1664525 + 1013904223) >>> 0);
+        var _fc = (_fhs / 4294967296) > 0.55
+          ? ui.colors.rgba(175, 135, 58, _fa)   // warm foxing
+          : ui.colors.rgba(110, 82, 48, _fa);    // cooler stain
+        ui.rect(_fx, _fy, _fw, _ft, _fc);
+      }
     }
-    for (var bby = y + fm; bby < y + ch - fm; bby += step) {
-      ui.rect(x + fm, bby, cw - fm * 2, 1, pal.cardBackPat);
+
+    // Edge vignette: N graduated strips per edge with cubic alpha falloff.
+    // Each strip is ~3px thick; the alpha steps from ~48 at the card edge
+    // down to ~0 at vDepth pixels in. Corners double-overlap (top+left strips
+    // composite together) giving ~32% darkening there vs ~19% on a plain edge —
+    // matching the natural laminate curvature of a real card.
+    // No shader needed: 6 strips per edge is fine-grained enough to read as smooth.
+    var vDepth = Math.max(5, Math.round(Math.min(cw, ch) * 0.50));
+    var vN = 16; var vBaseA = 48;
+    for (var vi = 0; vi < vN; vi++) {
+      var vt = (vN - vi) / vN;                   // 1.0 at outermost, steps to 0
+      var va = Math.round(vBaseA * vt * vt * vt); // cubic: fast fade, subtle tail
+      if (va < 1) continue;
+      var vc = ui.colors.rgba(75, 70, 0, va);
+      var vd0 = Math.round(vi       * vDepth / vN);
+      var vd1 = Math.round((vi + 1) * vDepth / vN);
+      var vth = Math.max(1, vd1 - vd0);
+      ui.rect(jx,             jy + vd0,       cw,  vth, vc);  // top
+      ui.rect(jx,             jy+ch-vd0-vth,  cw,  vth, vc);  // bottom
+      ui.rect(jx + vd0,       jy,             vth, ch,  vc);  // left
+      ui.rect(jx+cw-vd0-vth,  jy,             vth, ch,  vc);  // right
+    }
+
+  } else {
+    // ── Back: off-white base, accent1 center panel, icon glyph ───
+    ui.rect(jx, jy, cw, ch, pal.cardBack);
+    // Sepia yellowing on the border area — same formula as face
+    if (_age > 0) {
+      ui.rect(jx, jy, cw, ch, ui.colors.rgba(200, 160, 80, Math.round(_age * _age * 36)));
+    }
+    // Inset center panel
+    var bMarX = Math.max(5, Math.round(cw * 0.12));
+    var bMarY = Math.max(5, Math.round(ch * 0.12));
+    var bPanX = jx + bMarX;  var bPanY = jy + bMarY;
+    var bPanW = cw - bMarX * 2;  var bPanH = ch - bMarY * 2;
+    ui.rect(bPanX, bPanY, bPanW, bPanH, pal.cardBackInv);
+    // Glyph centered in the panel at 25% of its panel-filling scale.
+    // Use measureTextWidth for the actual emoji render width (may exceed charWidth),
+    // which is why the old _bCw-based centering drifted rightward.
+    var _bCh = ui.metrics.charHeight || 14;
+    var _bGW = ui.metrics.measureTextWidth('🎕') || (ui.metrics.charWidth || 10);
+    var _bFillScale = Math.min(bPanW / _bGW, bPanH / _bCh);
+    var _bScale = _bFillScale * 0.95;
+    ui.text('🎕', bPanX + Math.floor((bPanW - _bGW * _bScale) * 0.5),
+                  bPanY + Math.floor((bPanH - _bCh * _bScale) * 0.5),
+                  pal.cardBack, _bScale);
+
+    // Age spots — border margin only so they don't obscure the panel glyph
+    if (_age > 0) {
+      var _bN = Math.round(_age * _age * _age * 35);
+      var _bhs = ((id * 2654435761 + 9999) >>> 0);
+      for (var _bi = 0; _bi < _bN; _bi++) {
+        _bhs = ((_bhs * 1664525 + 1013904223) >>> 0);  var _bsx = _bhs / 4294967296;
+        _bhs = ((_bhs * 1664525 + 1013904223) >>> 0);  var _bsy = _bhs / 4294967296;
+        _bhs = ((_bhs * 1664525 + 1013904223) >>> 0);  var _bw = 1 + Math.round((_bhs / 4294967296) * 2.0);
+        _bhs = ((_bhs * 1664525 + 1013904223) >>> 0);  var _bt = 1 + Math.round((_bhs / 4294967296) * 2.0);
+        _bhs = ((_bhs * 1664525 + 1013904223) >>> 0);
+        var _ba = Math.round((0.06 + (_bhs / 4294967296) * 0.18) * _age * 255);
+        // Map into card coords; skip spots that fall inside the center panel
+        var _bx = jx + Math.round(_bsx * (cw - 3));
+        var _by = jy + Math.round(_bsy * (ch - 3));
+        if (_bx >= bPanX && _bx < bPanX + bPanW && _by >= bPanY && _by < bPanY + bPanH) continue;
+        ui.rect(_bx, _by, _bw, _bt, ui.colors.rgba(140, 120, 90, _ba));
+      }
+    }
+
+    // Edge vignette — same cubic fade as card face
+    var vDepth = Math.max(5, Math.round(Math.min(cw, ch) * 0.40));
+    var vN = 16; var vBaseA = 48;
+    for (var vi = 0; vi < vN; vi++) {
+      var vt = (vN - vi) / vN;
+      var va = Math.round(vBaseA * vt * vt * vt);
+      if (va < 1) continue;
+      var vc = ui.colors.rgba(0, 0, 0, va);
+      var vd0 = Math.round(vi       * vDepth / vN);
+      var vd1 = Math.round((vi + 1) * vDepth / vN);
+      var vth = Math.max(1, vd1 - vd0);
+      ui.rect(jx,             jy + vd0,       cw,  vth, vc);
+      ui.rect(jx,             jy+ch-vd0-vth,  cw,  vth, vc);
+      ui.rect(jx + vd0,       jy,             vth, ch,  vc);
+      ui.rect(jx+cw-vd0-vth,  jy,             vth, ch,  vc);
     }
   }
-
-  // Border drawn inside the mask so it clips to rounded corners
-  var bc = isDragging ? pal.cardBorderSel : pal.cardBorder;
-  ui.rect(x,          y,          cw, 1,  bc);
-  ui.rect(x,          y + ch - 1, cw, 1,  bc);
-  ui.rect(x,          y,          1,  ch, bc);
-  ui.rect(x + cw - 1, y,          1,  ch, bc);
 
   ui.popMask();
 }
@@ -579,8 +806,31 @@ function drawGame(L, pal) {
   var g = scope.gs;
   var cw = L.cw; var ch = L.ch; var r = L.radius;
 
-  // Felt background
-  ui.rect(0, 0, L.W, L.H, pal.felt);
+  // Paper texture background – tiled at native image resolution.
+  // Falls back to a solid felt colour while the texture is loading (or if unavailable).
+  var _bgId = scope._bgTexId;
+  var _bgW  = scope._bgTexW;
+  var _bgH  = scope._bgTexH;
+  if (!scope.__bgLogged && _bgId) {
+    console.log('[klondike] drawGame: bgId=' + _bgId + ' bgW=' + _bgW + ' bgH=' + _bgH);
+    scope.__bgLogged = true;
+  }
+  if (_bgId && _bgW > 0 && _bgH > 0) {
+    for (var _ty = 0; _ty < L.H; _ty += _bgH) {
+      for (var _tx = 0; _tx < L.W; _tx += _bgW) {
+        var _tw = Math.min(_bgW, L.W - _tx);
+        var _th = Math.min(_bgH, L.H - _ty);
+        if (_tw === _bgW && _th === _bgH) {
+          ui.image(_bgId, _tx, _ty, _bgW, _bgH);
+        } else {
+          // Partial tile at right/bottom edges – draw with a cropped UV region.
+          ui.image(_bgId, _tx, _ty, _tw, _th, { uv: { u: 0, v: 0, w: _tw / _bgW, h: _th / _bgH } });
+        }
+      }
+    }
+  } else {
+    ui.rect(0, 0, L.W, L.H, pal.felt);
+  }
 
   // ── Top row ──────────────────────────────────────────────────────────────────
 
@@ -601,10 +851,12 @@ function drawGame(L, pal) {
   if (g.waste.length > 1) {
     // Peek — slightly offset, face down visually shows as face up (it's been dealt)
     drawCard(pal, wasteX + 3, topY + 2, cw, ch, r,
-             { id: g.waste[g.waste.length - 2].id, faceUp: true }, false);
+             { id: g.waste[g.waste.length - 2].id, faceUp: true }, false,
+             null, cardAge(g.waste[g.waste.length - 2].id));
   }
   if (g.waste.length > 0) {
-    drawCard(pal, wasteX, topY, cw, ch, r, g.waste[g.waste.length - 1], false);
+    drawCard(pal, wasteX, topY, cw, ch, r, g.waste[g.waste.length - 1], false,
+             null, cardAge(g.waste[g.waste.length - 1].id));
   } else {
     drawEmptySlot(pal, wasteX, topY, cw, ch, r, '');
   }
@@ -614,7 +866,8 @@ function drawGame(L, pal) {
     var fx = L.topRowXs[3 + f];
     var fnd = g.foundations[f];
     if (fnd.length > 0) {
-      drawCard(pal, fx, topY, cw, ch, r, fnd[fnd.length - 1], false);
+      drawCard(pal, fx, topY, cw, ch, r, fnd[fnd.length - 1], false,
+               null, cardAge(fnd[fnd.length - 1].id));
     } else {
       drawEmptySlot(pal, fx, topY, cw, ch, r, SUITS[f]);
     }
@@ -634,7 +887,7 @@ function drawGame(L, pal) {
     for (var ci2 = 0; ci2 < pile.length; ci2++) {
       // Skip cards that are currently being dragged
       if (g.drag && g.drag.fromPile === pile && ci2 >= g.drag.fromIndex) continue;
-      drawCard(pal, rects2[ci2].x, rects2[ci2].y, cw, ch, r, pile[ci2], false);
+      drawCard(pal, rects2[ci2].x, rects2[ci2].y, cw, ch, r, pile[ci2], false, cardJitter(pile[ci2].id), cardAge(pile[ci2].id));
     }
   }
 
@@ -642,7 +895,8 @@ function drawGame(L, pal) {
   if (g.drag) {
     var dy2 = g.drag.y;
     for (var dc = 0; dc < g.drag.cards.length; dc++) {
-      drawCard(pal, g.drag.x, dy2, cw, ch, r, g.drag.cards[dc], dc === 0);
+      drawCard(pal, g.drag.x, dy2, cw, ch, r, g.drag.cards[dc], dc === 0,
+               null, cardAge(g.drag.cards[dc].id));
       dy2 += L.faceUpOffset;
     }
   }
@@ -667,18 +921,19 @@ function drawGame(L, pal) {
 term.layerID = 'default';
 term.clear();
 newGame();
-scope._layout = null;
-
-// Activate the felt fiber post-process shader (auto-registered from wgsl block above).
-var _feltList = shader.list();
-var _feltName = null;
-for (var _fi = 0; _fi < _feltList.length; _fi++) {
-  if (String(_feltList[_fi]).indexOf('klondike-felt') >= 0) { _feltName = _feltList[_fi]; break; }
-}
-if (_feltName) {
-  shader.setUniform(_feltName, 'grainAmt', 0.09);
-  shader.setActive(_feltName);
-}
+scope._layout   = null;
+scope._bgTexId  = null;  // paper texture image id once loaded
+scope._bgTexW   = 0;
+scope._bgTexH   = 0;
+// Kick off async texture load.
+ui.loadImageFromURL('assets/img/paper_seamless_texture_3197.jpg').then(function(id) {
+  console.log('[klondike] bg texture load result:', id);
+  if (!id) { console.warn('[klondike] bg texture failed to load'); return; }
+  scope._bgTexId = id;
+  var sz = ui.getImageSize(id);
+  console.log('[klondike] bg texture size:', sz);
+  if (sz) { scope._bgTexW = sz.width; scope._bgTexH = sz.height; }
+});
 ```
 
 ```js on:update
@@ -686,6 +941,14 @@ if (!scope.gs) { newGame(); return; }
 
 var L = computeLayout();
 scope._layout = L;
+
+// ── Mouse light-follow ───────────────────────────────────────────────────────
+var _mW = ui.metrics.canvasWidth  || 1280;
+var _mH = ui.metrics.canvasHeight || 720;
+shader.setUniform('lightsoft', 'lightX',   ui.pointer.x() / _mW);
+shader.setUniform('lightsoft', 'lightY',   ui.pointer.y() / _mH);
+shader.setUniform('lightsoft', 'swayAmp',  0.0);
+// ── End mouse light-follow ────────────────────────────────────────────────────
 
 // Handle New Game button click
 if (ui.button('btn-new-game',

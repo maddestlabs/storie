@@ -266,6 +266,106 @@ export class GlyphAtlas {
   }
 
   /**
+   * Cache and return a glyph rasterized at a specific pixel size rather than
+   * the atlas base fontSize.  Keyed as `${char}@${sizeInPx}` so it does not
+   * collide with the base-size cache entries.
+   *
+   * Use this when rendering at a scale significantly different from 1.0 so the
+   * GPU samples a sharp, correctly-sized texture rather than stretching a small
+   * rasterization.
+   */
+  cacheGlyphAtSize(char: string, sizeInPx: number): GlyphInfo {
+    const key = `${char}@${sizeInPx}`;
+    if (this.glyphCache.has(key)) {
+      return this.glyphCache.get(key)!;
+    }
+
+    const fontString = this.fontFamily.includes(',')
+      ? this.fontFamily
+      : `'${this.fontFamily}'`;
+
+    const prevFont = this.atlasCtx.font;
+    this.atlasCtx.font = `${sizeInPx}px ${fontString}`;
+    this.atlasCtx.textBaseline = 'top';
+
+    const metrics = this.atlasCtx.measureText(char);
+    const glyphWidth = Math.ceil(metrics.width);
+
+    // With textBaseline='top', actualBoundingBoxAscent > 0 means the glyph has
+    // pixels ABOVE the draw y coordinate.  The original fixed 4px padding was
+    // often not enough at large sizes, causing those top pixels to fall outside
+    // the UV region and appear clipped.  We now:
+    //   1. Measure the exact above/below extents from the browser.
+    //   2. Shift the draw y DOWN by `ascent` so above-baseline pixels land
+    //      exactly at the top of the UV region (atlasY + padding).
+    //   3. Size the UV to the actual visual height (ascent + descent).
+    const rawAscent  = (metrics as any).actualBoundingBoxAscent;
+    const rawDescent = (metrics as any).actualBoundingBoxDescent;
+    const ascent  = (typeof rawAscent  === 'number' && isFinite(rawAscent))
+      ? Math.max(0, Math.ceil(rawAscent))
+      : Math.round(sizeInPx * 0.05);          // conservative 5% fallback
+    const descent = (typeof rawDescent === 'number' && isFinite(rawDescent) && rawDescent > 0)
+      ? Math.ceil(rawDescent)
+      : sizeInPx;                              // fallback: full font size
+    const actualGlyphH = ascent + descent;
+
+    const padding = 4;
+    const sidePad = 4;
+    const width  = glyphWidth + sidePad * 2;
+    const height = actualGlyphH + padding * 2;
+
+    if (this.atlasX + width > this.atlasWidth) {
+      this.atlasX = 0;
+      this.atlasY += this.atlasRowHeight;
+      this.atlasRowHeight = 0;
+    }
+
+    if (this.atlasY + height > this.atlasHeight) {
+      console.warn('[GlyphAtlas] Atlas full — cannot cache sized glyph, falling back to base size.');
+      this.atlasCtx.font = prevFont;
+      return this.getGlyph(char);
+    }
+
+    this.atlasCtx.clearRect(this.atlasX, this.atlasY, width, height);
+    this.atlasCtx.fillStyle = '#ffffff';
+    // Draw at (padding + ascent) from the row top so the above-baseline pixels
+    // land exactly at atlasY + padding — the start of the UV region.
+    this.atlasCtx.fillText(
+      char,
+      Math.floor(this.atlasX + sidePad),
+      Math.floor(this.atlasY + padding + ascent)
+    );
+
+    const info: GlyphInfo = {
+      u: (this.atlasX + sidePad) / this.atlasWidth,
+      v: (this.atlasY + padding)  / this.atlasHeight,   // top of actual bbox
+      w: glyphWidth               / this.atlasWidth,
+      h: actualGlyphH             / this.atlasHeight,    // exact visual height
+      pixelWidth:  glyphWidth,
+      pixelHeight: actualGlyphH,
+    };
+
+    this.glyphCache.set(key, info);
+    this.atlasX += width;
+    this.atlasRowHeight = Math.max(this.atlasRowHeight, height);
+    this.atlasNeedsUpload = true;
+
+    this.atlasCtx.font = prevFont;
+    return info;
+  }
+
+  /**
+   * Get a glyph at a specific pixel size (caches if not present).
+   * Falls back to the base-size glyph when sizeInPx equals the atlas fontSize.
+   */
+  getGlyphAtSize(char: string, sizeInPx: number): GlyphInfo {
+    if (Math.abs(sizeInPx - this.fontSize) < 0.5) {
+      return this.getGlyph(char);
+    }
+    return this.cacheGlyphAtSize(char, Math.round(sizeInPx));
+  }
+
+  /**
    * Upload atlas to GPU texture
    */
   uploadToGPU(device: GPUDevice): void {

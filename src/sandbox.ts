@@ -553,6 +553,12 @@ export interface SandboxAPI {
     hasChain: () => boolean;
     // Get detailed info about the active chain
     chainInfo: () => any;
+    // Background shader — runs before the chain, independent of setChain().
+    // Use for persistent scene-level effects (e.g. felt grain, scanlines) so
+    // the post-process chain can be configured freely without coupling it.
+    setBackground: (shaderName: string | null) => Promise<boolean>;
+    clearBackground: () => void;
+    getBackground: () => string | null;
   };
   
   compositor: {
@@ -1281,6 +1287,14 @@ export class ScriptSandbox {
           if (typeof uiRef.loadImageFromBlob !== 'function') return uiRef;
           const ui = Object.create(uiRef);
           ui.loadImageFromBlob = (name: string) => uiRef.loadImageFromBlob(name, documentId);
+          // These must be own-properties so SES-hardened prototypes don't block
+          // access from inside the Compartment (same pattern as audio.captureForExport).
+          if (typeof uiRef.loadImageFromURL === 'function') {
+            ui.loadImageFromURL = (url: string) => uiRef.loadImageFromURL(url);
+          }
+          if (typeof uiRef.getImageSize === 'function') {
+            ui.getImageSize = (imageId: string) => uiRef.getImageSize(imageId);
+          }
           return ui;
         })(),
         
