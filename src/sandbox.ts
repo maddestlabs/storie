@@ -934,6 +934,9 @@ export interface SandboxAPI {
     getSectionLayout: (sectionIndex: number) => any;
     setSectionTransform: (sectionIndex: number, transform: any) => void;
     setSectionVisible: (sectionIndex: number, visible: boolean) => void;
+    setSectionLive: (section: number | string, live?: boolean) => void;
+    _isLive: (idx: number) => boolean;
+    readonly _activeLiveSectionIndex: number | null;
     getSectionCount: () => number;
     setSectionSize: (sectionIndex: number, width: number, height: number) => void;
     getScreenQuad: (sectionIndex: number) => Array<{ x: number; y: number }> | null;

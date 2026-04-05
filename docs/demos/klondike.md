@@ -1,19 +1,74 @@
 ---
 name: "Klondike Solitaire"
 theme: "nord"
-font: "Cutive+Mono"
 shaders: "filmfx+lightvignette"
 ---
 
-Classic Klondike solitaire. Drag cards between tableau columns, move runs to foundations, deal from the stock.
+# Klondike {"x":"0","y":"-80","z":"0","width":"44","height":"22","opacity":"0.92"}
 
-- **Drag** a card (or run) to move it
-- **Double-click** a card to auto-move it to a foundation
-- **Click stock** (top-left) to deal; click through empty stock to reset
-- Cards render via `ui` immediate-mode + `pushMaskRoundedRect` for proper card shapes
-- Card ranks and suit glyphs are drawn with `ui.text`; no textures required
+Classic Klondike Solitaire. Build four foundations from Ace to King.
 
-## Demo
+- [▶ Play](#play)
+- [⚙ Settings](#settings)
+- [? Help](#help)
+
+```js on:enter
+scope.sections = scope.sections || {};
+if (typeof worlds.currentSection === 'number') {
+  scope.sections.title = worlds.currentSection;
+}
+```
+
+# Play {"x":"0","y":"0","z":"0","width":"44","height":"28","opacity":"0.92","sectionBackground":"texture:assets/img/Fabric030_1K.jpg;tilePx=512;blendMode=multiply;blendStrength=0.85"}
+
+```js on:enter
+scope.sections = scope.sections || {};
+if (typeof worlds.currentSection === 'number') {
+  scope.sections.play = worlds.currentSection;
+}
+```
+
+# Settings {"x":"0","y":"90","z":"0","width":"44","height":"28","sectionOverflow":"fit-y"}
+
+Draw mode: :gui{type:label,id:settings-draw-label,text:"Draw: 1 card",width:90%,align:left,scale:worlds}
+
+- [Draw 1 card](action:draw-1) | [Draw 3 cards](action:draw-3)
+
+Theme:
+:gui{type:slider,id:settings-theme-slider,min:0,max:0,value:0,step:1,showValue:false,width:100%,align:center,scale:worlds}
+
+- [New Game](action:new-game)
+- [⇦ Back](action:history-back)
+
+```js on:enter
+scope.sections = scope.sections || {};
+if (typeof worlds.currentSection === 'number') {
+  scope.sections.settings = worlds.currentSection;
+}
+syncSettingsWidgets();
+```
+
+# Help {"x":"0","y":"190","z":"0","width":"44","height":"36"}
+
+**Goal:** Move all 52 cards to the four foundations (♠ ♥ ♦ ♣), built Ace → King by suit.
+
+**Tableau:** Build columns alternating red/black, descending rank. Only Kings may start empty columns.
+
+**Drag** a face-up card (or an entire run) to move it. **Double-click** the top card of a pile to auto-move it to a foundation.
+
+**Stock** (top-left): click to deal; click through an empty stock to reset the waste.
+
+**Keys:** `N` new game · `R` replay · `Esc` / `S` settings · `H` help
+
+- [▶ Play](#play)
+- [⇦ Back](action:history-back)
+
+```js on:enter
+scope.sections = scope.sections || {};
+if (typeof worlds.currentSection === 'number') {
+  scope.sections.help = worlds.currentSection;
+}
+```
 
 ```js
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -23,8 +78,7 @@ var SUIT_RED    = [false, true, true, false]; // index matches SUITS
 var NUM_TABLEAU = 7;
 var STOCK_DEAL  = 1;   // cards dealt per click (set to 3 for draw-3 variant)
 var DECK_AGE    = 1.0; // 0 = pristine (no aging), 1 = very worn; scales all card age effects
-var FELT_TINT   = 0.5; // 0 = original texture unaltered, 1 = fully recoloured by theme felt colour
-var BG_SCALE    = 0.5; // tile size multiplier: >1 zooms in (larger tiles), <1 zooms out (more tiles)
+
 
 // ─── Card helpers ─────────────────────────────────────────────────────────────
 function cardId(suit, rank) { return suit * 13 + rank; }         // 0-51
@@ -764,49 +818,9 @@ function drawGame(L, pal) {
   var g = scope.gs;
   var cw = L.cw; var ch = L.ch; var r = L.radius;
 
-  // Paper texture background – tiled at native image resolution.
-  // Falls back to a solid felt colour while the texture is loading (or if unavailable).
-  var _bgId = scope._bgTexId;
-  var _bgW  = scope._bgTexW;
-  var _bgH  = scope._bgTexH;
-  if (!scope.__bgLogged && _bgId) {
-    console.log('[klondike] drawGame: bgId=' + _bgId + ' bgW=' + _bgW + ' bgH=' + _bgH);
-    scope.__bgLogged = true;
-  }
-  if (_bgId && _bgW > 0 && _bgH > 0) {
-    // Background texture: full Sobel bump on the wood/cloth image.
-    // roughness:0.9 → low roughDepth Z → steep gradients → noticeable ridge relief.
-    // normalScale:1.0 → Sobel gradients fully unscaled.
-    ui.setMaterial({ roughness: 0.9, normalScale: 1.0 });
-    // Compute blended tint: lerp each channel from 255 (white = no-op) toward pal.felt.
-    var _ft = Math.max(0, Math.min(1, FELT_TINT));
-    var _fR = (_ft <= 0) ? 255 : Math.round(255 + (((pal.felt >>> 24) & 255) - 255) * _ft);
-    var _fG = (_ft <= 0) ? 255 : Math.round(255 + (((pal.felt >>> 16) & 255) - 255) * _ft);
-    var _fB = (_ft <= 0) ? 255 : Math.round(255 + (((pal.felt >>>  8) & 255) - 255) * _ft);
-    var _bgTint = ui.colors.rgba(_fR, _fG, _fB, 255);
-    // Scaled tile dimensions: native size × BG_SCALE. Loop step uses scaled size;
-    // UV crop fractions are relative to the scaled tile so edges stay seamless.
-    var _bgTW = Math.max(1, Math.round(_bgW * BG_SCALE));
-    var _bgTH = Math.max(1, Math.round(_bgH * BG_SCALE));
-    for (var _ty = 0; _ty < L.H; _ty += _bgTH) {
-      for (var _tx = 0; _tx < L.W; _tx += _bgTW) {
-        var _tw = Math.min(_bgTW, L.W - _tx);
-        var _th = Math.min(_bgTH, L.H - _ty);
-        if (_tw === _bgTW && _th === _bgTH) {
-          ui.image(_bgId, _tx, _ty, _bgTW, _bgTH, { tint: _bgTint });
-        } else {
-          // Partial tile at right/bottom edges – draw with a cropped UV region.
-          ui.image(_bgId, _tx, _ty, _tw, _th, { tint: _bgTint, uv: { u: 0, v: 0, w: _tw / _bgTW, h: _th / _bgTH } });
-        }
-      }
-    }
-  } else {
-    // Solid felt fallback: rough textile. normalScale:1.0 ready for when a
-    // patterned felt texture is added; solid color has no Sobel gradient so
-    // it renders flat either way.
-    ui.setMaterial({ roughness: 0.95, normalScale: 1.0 });
-    ui.rect(0, 0, L.W, L.H, pal.felt);
-  }
+  // sectionBackground handles the felt texture — just paint a translucent felt
+  // wash so the card colour comes through theme-reactive.
+  ui.rect(0, 0, L.W, L.H, pal.felt & 0xffffff80);
 
   // ── Top row ──────────────────────────────────────────────────────────────────
 
@@ -903,28 +917,174 @@ function drawGame(L, pal) {
     L.W - L.hPad - _bW,
     _bY, _bW, _bH, 'New Game');
 }
+
+var TITLE_SECTION_FIT      = 0.92;
+var PLAY_SECTION_FIT       = 0.96;
+var CARD_SECTION_FIT       = 0.92;
+var SETTINGS_THEME_SLIDER_ID = 'settings-theme-slider';
+var SETTINGS_DRAW_LABEL_ID   = 'settings-draw-label';
+
+var _navBackStack = [];
+
+function focusWorldSection(target) {
+  if (!worlds || !worlds.camera || typeof worlds.camera.focusOnSectionFit !== 'function') return;
+  var fill = target === 'Play' ? PLAY_SECTION_FIT : CARD_SECTION_FIT;
+  worlds.camera.focusOnSectionFit(target, fill, { keepRotation: true });
+}
+
+function currentSectionIndex() {
+  return worlds && typeof worlds.currentSection === 'number' ? worlds.currentSection : null;
+}
+
+function getNavigationSourceSection(activated) {
+  if (activated && typeof activated.sectionIndex === 'number') return activated.sectionIndex;
+  return currentSectionIndex();
+}
+
+function rememberSectionForBack(sectionIndex) {
+  if (typeof sectionIndex !== 'number') return;
+  if (_navBackStack.length && _navBackStack[_navBackStack.length - 1] === sectionIndex) return;
+  _navBackStack.push(sectionIndex);
+  if (_navBackStack.length > 24) _navBackStack.splice(0, _navBackStack.length - 24);
+}
+
+function navigateToSectionWithHistory(target, fromSectionIndex) {
+  rememberSectionForBack(fromSectionIndex);
+  focusWorldSection(target);
+}
+
+function goBackInHistory(fallbackTarget) {
+  if (!_navBackStack.length) { if (fallbackTarget) focusWorldSection(fallbackTarget); return; }
+  focusWorldSection(_navBackStack.pop());
+}
+
+function syncSettingsWidgets() {
+  if (!worlds || !worlds.widgets) return;
+  var sectionRef = (scope.sections && typeof scope.sections.settings === 'number')
+    ? scope.sections.settings : undefined;
+  if (typeof worlds.widgets.configure === 'function') {
+    var themeCount = (theme && typeof theme.list === 'function') ? theme.list().length : 1;
+    worlds.widgets.configure(SETTINGS_THEME_SLIDER_ID, { max: Math.max(0, themeCount - 1) });
+  }
+  if (typeof worlds.widgets.setValue === 'function') {
+    worlds.widgets.setValue(
+      SETTINGS_DRAW_LABEL_ID,
+      'Draw: ' + scope.STOCK_DEAL + (scope.STOCK_DEAL === 1 ? ' card' : ' cards'),
+      sectionRef
+    );
+    if (scope._settings) {
+      worlds.widgets.setValue(SETTINGS_THEME_SLIDER_ID, scope._settings.themeIndex, sectionRef);
+    }
+  }
+}
+
+function handleSettingsWorldWidgetEvents() {
+  if (!worlds || !worlds.widgets || typeof worlds.widgets.popEvent !== 'function') return;
+  for (;;) {
+    var widgetEvent = worlds.widgets.popEvent();
+    if (!widgetEvent) break;
+    if (widgetEvent.id === SETTINGS_THEME_SLIDER_ID) {
+      if (!scope._settings) scope._settings = { themeIndex: 0 };
+      scope._settings.themeIndex = widgetEvent.value;
+      var names = (theme && typeof theme.list === 'function') ? theme.list() : [];
+      var name = names[widgetEvent.value];
+      if (name && theme && typeof theme.set === 'function') theme.set(name);
+    }
+  }
+}
+
+function handleWorldLinkActions() {
+  if (!worlds || !worlds.links || typeof worlds.links.popActivated !== 'function') return;
+  for (;;) {
+    var activated = worlds.links.popActivated();
+    if (!activated) break;
+    var fromSection = getNavigationSourceSection(activated);
+    if (activated.url === 'action:new-game') {
+      scope.newGame();
+      focusWorldSection('Play');
+    } else if (activated.url === 'action:replay-game') {
+      scope.newGame(scope.gs ? scope.gs.seed : undefined);
+      focusWorldSection('Play');
+    } else if (activated.url === 'action:draw-1') {
+      scope.STOCK_DEAL = 1;
+      syncSettingsWidgets();
+    } else if (activated.url === 'action:draw-3') {
+      scope.STOCK_DEAL = 3;
+      syncSettingsWidgets();
+    } else if (activated.url === 'action:history-back') {
+      goBackInHistory('Klondike');
+    }
+  }
+}
 ```
 
 ```js on:init
 term.layerID = 'default';
-term.clear();
-newGame(); // fresh random seed on first load
-scope._layout   = null;
-scope._bgTexId  = null;  // paper texture image id once loaded
-scope._bgTexW   = 0;
-scope._bgTexH   = 0;
-// Kick off async texture load.
-ui.loadImageFromURL('assets/img/Metal032_1K.jpg').then(function(id) {
-  console.log('[klondike] bg texture load result:', id);
-  if (!id) { console.warn('[klondike] bg texture failed to load'); return; }
-  scope._bgTexId = id;
-  var sz = ui.getImageSize(id);
-  console.log('[klondike] bg texture size:', sz);
-  if (sz) { scope._bgTexW = sz.width; scope._bgTexH = sz.height; }
+scope.sections = {};
+scope._settings = scope._settings || { themeIndex: 0 };
+
+worlds.enable();
+worlds.controls.setEnabled(false);
+if (worlds.links && typeof worlds.links.setKeyHandlingEnabled === 'function') {
+  worlds.links.setKeyHandlingEnabled(true);
+}
+worlds.config.setDefaults({
+  keepRotation:             true,
+  sectionOverflow:          'fit-y',
+  sectionClickFocusEnabled: false,
+  defaultSectionWidth:      44,
+  defaultSectionHeight:     28,
+  autoLayoutSpacing:        150,
+  sectionBorderEnabled:     true,
 });
+worlds.camera.setPosition(0, -80, 260);
+worlds.camera.setRotation(-8 * Math.PI / 180, 3 * Math.PI / 180, 0);
+worlds.camera.setEaseSpeed(0.08, 0.12);
+
+worlds.camera.shake.setParams({
+  strength:  0.4,
+  rate:      0.12,
+  translate: { x: 0.6, y: 0.5, z: 0.2 },
+  rotate:    { x: 1.2 * Math.PI / 180, y: 1.2 * Math.PI / 180, z: 0.008 },
+});
+worlds.camera.shake.setEnabled(true);
+
+// Mark Play as a live section: on:render section:play draws into the 3D card texture.
+worlds.setSectionLive('Play');
+
+scope.newGame(); // fresh random seed on first load
+scope._layout  = null;
+
+worlds.camera.focusOnSectionFit('Klondike', TITLE_SECTION_FIT, { keepRotation: true });
+```
+
+```js on:input
+if (!event || event.type !== 'keydown') return;
+var k  = event.key;
+var cs = currentSectionIndex();
+var onPlay = scope.sections && cs === scope.sections.play;
+
+if (k === 'Escape') {
+  if (onPlay) navigateToSectionWithHistory('Settings', cs);
+  else goBackInHistory('Klondike');
+} else if ((k === 's' || k === 'S') && onPlay) {
+  navigateToSectionWithHistory('Settings', cs);
+} else if ((k === 'h' || k === 'H' || k === '?') && onPlay) {
+  navigateToSectionWithHistory('Help', cs);
+} else if (k === 'n' || k === 'N') {
+  scope.newGame();
+  focusWorldSection('Play');
+} else if (k === 'r' || k === 'R') {
+  scope.newGame(scope.gs ? scope.gs.seed : undefined);
+  focusWorldSection('Play');
+}
 ```
 
 ```js on:update
+handleWorldLinkActions();
+handleSettingsWorldWidgetEvents();
+```
+```js on:update section:play
 if (!scope.gs) { newGame(); return; }
 
 var L = computeLayout();
@@ -939,21 +1099,25 @@ var _mH = ui.metrics.canvasHeight || 720;
 //shader.setUniform('lightsoft', 'lightY', ui.pointer.y() / _mH);
 // ── End mouse light-follow ────────────────────────────────────────────────────
 
-// Handle Replay / New Game button clicks
+// Handle Replay / New Game button clicks.
+// Buttons are drawn by drawGame() in the render pass; here we only test input
+// using section-local pointer coordinates (ui.pointer.x/y are section-space
+// in live sections so hit tests match the rendered button positions).
 var _bH2   = (ui.metrics.charHeight || 14) * 2 + 4;
 var _bW2   = Math.max(90, (ui.metrics.charWidth || 10) * 10);
 var _gap2  = 6;
 var _bY2   = L.H - _bH2 - 4;
-if (ui.button('btn-replay-game',
-    L.W - L.hPad - (_bW2 * 2 + _gap2),
-    _bY2, _bW2, _bH2, 'Replay')) {
+var _mx2   = ui.pointer.x();
+var _my2   = ui.pointer.y();
+var _click2 = ui.pointer.clicked(0);
+var _replayX2 = L.W - L.hPad - (_bW2 * 2 + _gap2);
+var _newX2    = L.W - L.hPad - _bW2;
+if (_click2 && _mx2 >= _replayX2 && _mx2 < _replayX2 + _bW2 && _my2 >= _bY2 && _my2 < _bY2 + _bH2) {
   newGame(scope.gs ? scope.gs.seed : undefined);
   scope._layout = null;
   return;
 }
-if (ui.button('btn-new-game',
-    L.W - L.hPad - _bW2,
-    _bY2, _bW2, _bH2, 'New Game')) {
+if (_click2 && _mx2 >= _newX2 && _mx2 < _newX2 + _bW2 && _my2 >= _bY2 && _my2 < _bY2 + _bH2) {
   newGame();
   scope._layout = null;
   return;
@@ -965,12 +1129,18 @@ if (!scope.gs.won) {
 ```
 
 ```js on:render
-if (!scope.gs) return;
-
+term.layerID = 'default';
 term.clear();
 ui.clear();
+```
 
-var L = scope._layout || computeLayout();
+```js on:render section:play
+if (!scope.gs) return;
+
+// Always recompute layout fresh in render so ui.metrics.canvasWidth/Height
+// return the current live-section texture dimensions (not a stale cached value
+// from the update pass which may have used different canvas dimensions).
+var L = computeLayout();
 var pal = getPalette();
 
 try {

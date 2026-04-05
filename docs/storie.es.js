@@ -27163,6 +27163,13 @@ class StorieEngine {
     // WebGPU UI (optional)
     __publicField(this, "webgpuUIRenderer", null);
     __publicField(this, "sectionWebGPUUIRenderer", null);
+    // Live section rendering: user on:render callbacks draw into 3D section textures.
+    __publicField(this, "_liveSections", /* @__PURE__ */ new Set());
+    __publicField(this, "_liveRenderCtx", null);
+    __publicField(this, "_liveUIOverride", null);
+    // Coordinate context for the update phase: makes ui.pointer/metrics section-local
+    // when the current section is a live section, so hit testing matches the card geometry.
+    __publicField(this, "_liveSectionInputCtx", null);
     // WebGPU shader management
     __publicField(this, "shaderManager", null);
     __publicField(this, "shaderChainManager", null);
@@ -28256,6 +28263,7 @@ class StorieEngine {
     console.log("✓ Compositor initialized (terminal layer)");
   }
   ensureWebGPUUI() {
+    if (this._liveUIOverride) return this._liveUIOverride;
     if (!(this.renderer instanceof WebGPURenderer)) return null;
     if (!this.compositor) return null;
     if (this.webgpuUIRenderer) return this.webgpuUIRenderer;
@@ -30715,17 +30723,39 @@ class StorieEngine {
       // WebGPU UI API (GPU-native immediate-mode helpers)
       ui: {
         pointer: {
-          x: () => engine.input.getMouseX(),
-          y: () => engine.input.getMouseY(),
+          x: () => {
+            const ctx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+            return ctx !== null ? ctx.localMouseX : engine.input.getMouseX();
+          },
+          y: () => {
+            const ctx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+            return ctx !== null ? ctx.localMouseY : engine.input.getMouseY();
+          },
           down: (button = 0) => engine.input.isMouseDown(button),
-          clicked: (button = 0) => engine.input.isMouseClicked(button)
+          clicked: (button = 0) => {
+            if (!engine.input.isMouseClicked(button)) return false;
+            const inputCtx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+            if (inputCtx !== null) {
+              const lx = inputCtx.localMouseX;
+              const ly = inputCtx.localMouseY;
+              const margin = 4;
+              return lx >= -margin && lx < inputCtx.width + margin && ly >= -margin && ly < inputCtx.height + margin;
+            }
+            const curSectionIdx = engine.getResolvedCurrent3DSectionIndex();
+            if (typeof curSectionIdx === "number" && engine._liveSections.has(curSectionIdx)) {
+              return false;
+            }
+            return true;
+          }
         },
         metrics: {
           get canvasWidth() {
-            return engine.canvas.width;
+            const ctx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+            return (ctx == null ? void 0 : ctx.width) ?? engine.canvas.width;
           },
           get canvasHeight() {
-            return engine.canvas.height;
+            const ctx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+            return (ctx == null ? void 0 : ctx.height) ?? engine.canvas.height;
           },
           get safeAreaInsets() {
             return engine.getSafeAreaInsetsCss();
@@ -30734,23 +30764,48 @@ class StorieEngine {
             const value = String(text ?? "");
             const ui = engine.ensureWebGPUUI();
             if (ui && typeof ui.measureTextWidth === "function") {
-              return ui.measureTextWidth(value);
+              const ctx2 = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+              return ui.measureTextWidth(value) / Math.max(1, (ctx2 == null ? void 0 : ctx2.baseMetricScale) ?? 1);
             }
             const atlas = engine.renderer instanceof WebGPURenderer ? engine.renderer.getAtlas() : null;
-            const charW = (atlas == null ? void 0 : atlas.getCharWidth()) ?? 10;
+            const ctx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+            const metricScale = Math.max(1, (ctx == null ? void 0 : ctx.baseMetricScale) ?? 1);
+            const charW = ((atlas == null ? void 0 : atlas.getCharWidth()) ?? 10) / metricScale;
             if (!atlas) return value.length * charW;
             let total = 0;
             for (const ch of value) {
               const glyph = atlas.getGlyph(ch);
-              total += Math.max(charW, glyph.pixelWidth || 0);
+              total += Math.max(charW, (glyph.pixelWidth || 0) / metricScale);
             }
             return total;
           },
           get charWidth() {
-            return engine.renderer instanceof WebGPURenderer ? engine.renderer.getAtlas().getCharWidth() : 0;
+            const ctx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+            const metricScale = Math.max(1, (ctx == null ? void 0 : ctx.baseMetricScale) ?? 1);
+            return engine.renderer instanceof WebGPURenderer ? engine.renderer.getAtlas().getCharWidth() / metricScale : 0;
           },
           get charHeight() {
-            return engine.renderer instanceof WebGPURenderer ? engine.renderer.getAtlas().getCharHeight() : 0;
+            const ctx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+            const metricScale = Math.max(1, (ctx == null ? void 0 : ctx.baseMetricScale) ?? 1);
+            return engine.renderer instanceof WebGPURenderer ? engine.renderer.getAtlas().getCharHeight() / metricScale : 0;
+          }
+        },
+        /**
+         * Dimensions of the current live section texture during an on:render
+         * section bake. Returns { width: 0, height: 0, isLive: false } when
+         * called outside of a live section render context.
+         */
+        section: {
+          get width() {
+            var _a;
+            return ((_a = engine._liveRenderCtx ?? engine._liveSectionInputCtx) == null ? void 0 : _a.width) ?? 0;
+          },
+          get height() {
+            var _a;
+            return ((_a = engine._liveRenderCtx ?? engine._liveSectionInputCtx) == null ? void 0 : _a.height) ?? 0;
+          },
+          get isLive() {
+            return engine._liveRenderCtx !== null || engine._liveSectionInputCtx !== null;
           }
         },
         clear: (color) => {
@@ -30776,12 +30831,18 @@ class StorieEngine {
         rect: (x, y, w, h, color) => {
           const ui = engine.ensureWebGPUUI();
           if (!ui) return;
-          ui.rect(x, y, w, h, color);
+          const ctx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+          const s = (ctx == null ? void 0 : ctx.textureScale) ?? 1;
+          ui.rect(x * s, y * s, w * s, h * s, color);
         },
         text: (text, x, y, color, scale) => {
           const ui = engine.ensureWebGPUUI();
           if (!ui) return;
-          ui.text(text, x, y, color, scale);
+          const ctx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+          const textureScale = (ctx == null ? void 0 : ctx.textureScale) ?? 1;
+          const metricScale = Math.max(1, (ctx == null ? void 0 : ctx.baseMetricScale) ?? 1);
+          const scaledText = scale !== void 0 ? scale * (textureScale / metricScale) : ctx ? textureScale / metricScale : void 0;
+          ui.text(text, x * textureScale, y * textureScale, color, scaledText);
         },
         // NOTE: URL-based image loading is intentionally not exposed to sandboxed
         // user code. Use `ui.loadImageFromBlob()` instead.
@@ -30823,6 +30884,8 @@ class StorieEngine {
         image: (imageId, x, y, w, h, options) => {
           const ui = engine.ensureWebGPUUI();
           if (!ui) return;
+          const ctx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+          const s = (ctx == null ? void 0 : ctx.textureScale) ?? 1;
           const key = String(imageId ?? "");
           if (!key) return;
           const pending = engine.uiImagePending.get(key);
@@ -30831,14 +30894,14 @@ class StorieEngine {
             engine.uiImagePending.delete(key);
           }
           if (ui.getImageSize(key)) {
-            ui.image(key, x, y, w, h, options);
+            ui.image(key, x * s, y * s, w * s, h * s, options);
             return;
           }
           const cache = getUIBlobImageCache();
           if (!cache) return;
           const resolved = cache.resolved.get(key);
           if (resolved && ui.getImageSize(resolved)) {
-            ui.image(resolved, x, y, w, h, options);
+            ui.image(resolved, x * s, y * s, w * s, h * s, options);
             return;
           }
           if (cache.failed.has(key)) return;
@@ -30866,7 +30929,9 @@ class StorieEngine {
         pushClipRect: (x, y, w, h) => {
           const ui = engine.ensureWebGPUUI();
           if (!ui) return;
-          ui.pushClipRect(x, y, w, h);
+          const ctx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+          const s = (ctx == null ? void 0 : ctx.textureScale) ?? 1;
+          ui.pushClipRect(x * s, y * s, w * s, h * s);
         },
         popClipRect: () => {
           const ui = engine.ensureWebGPUUI();
@@ -30876,17 +30941,23 @@ class StorieEngine {
         pushMaskRect: (x, y, w, h) => {
           const ui = engine.ensureWebGPUUI();
           if (!ui) return;
-          ui.pushMaskRect(x, y, w, h);
+          const ctx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+          const s = (ctx == null ? void 0 : ctx.textureScale) ?? 1;
+          ui.pushMaskRect(x * s, y * s, w * s, h * s);
         },
         pushMaskRoundedRect: (x, y, w, h, radius) => {
           const ui = engine.ensureWebGPUUI();
           if (!ui) return;
-          ui.pushMaskRoundedRect(x, y, w, h, radius);
+          const ctx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+          const s = (ctx == null ? void 0 : ctx.textureScale) ?? 1;
+          ui.pushMaskRoundedRect(x * s, y * s, w * s, h * s, radius * s);
         },
         pushMaskPolygon: (points) => {
           const ui = engine.ensureWebGPUUI();
           if (!ui) return;
-          ui.pushMaskPolygon(points);
+          const ctx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+          const s = (ctx == null ? void 0 : ctx.textureScale) ?? 1;
+          ui.pushMaskPolygon(points.map((point) => ({ x: point.x * s, y: point.y * s })));
         },
         popMask: () => {
           const ui = engine.ensureWebGPUUI();
@@ -30896,29 +30967,32 @@ class StorieEngine {
         button: (_id, x, y, w, h, label) => {
           const ui = engine.ensureWebGPUUI();
           if (!ui) return false;
-          const mx = engine.input.getMouseX();
-          const my = engine.input.getMouseY();
+          const _ptrCtx = engine._liveRenderCtx ?? engine._liveSectionInputCtx;
+          const textureScale = (_ptrCtx == null ? void 0 : _ptrCtx.textureScale) ?? 1;
+          const metricScale = Math.max(1, (_ptrCtx == null ? void 0 : _ptrCtx.baseMetricScale) ?? 1);
+          const mx = _ptrCtx !== null ? _ptrCtx.localMouseX : engine.input.getMouseX();
+          const my = _ptrCtx !== null ? _ptrCtx.localMouseY : engine.input.getMouseY();
           const hovered = mx >= x && mx < x + w && my >= y && my < y + h;
           const clicked = hovered && engine.input.isMouseClicked(0);
           const base = engine.getStyle("button");
           const border = engine.getStyle("border");
           const fg = base.fg;
           const bg = hovered ? engine.currentTheme.accent1 : base.bg;
-          ui.rect(x, y, w, h, bg);
-          ui.rect(x, y, w, 1, border.fg);
-          ui.rect(x, y + h - 1, w, 1, border.fg);
-          ui.rect(x, y, 1, h, border.fg);
-          ui.rect(x + w - 1, y, 1, h, border.fg);
+          ui.rect(x * textureScale, y * textureScale, w * textureScale, h * textureScale, bg);
+          ui.rect(x * textureScale, y * textureScale, w * textureScale, Math.max(1, textureScale), border.fg);
+          ui.rect(x * textureScale, (y + h - 1) * textureScale, w * textureScale, Math.max(1, textureScale), border.fg);
+          ui.rect(x * textureScale, y * textureScale, Math.max(1, textureScale), h * textureScale, border.fg);
+          ui.rect((x + w - 1) * textureScale, y * textureScale, Math.max(1, textureScale), h * textureScale, border.fg);
           const atlas = engine.renderer instanceof WebGPURenderer ? engine.renderer.getAtlas() : null;
-          const charW = atlas ? atlas.getCharWidth() : 10;
-          const charH = atlas ? atlas.getCharHeight() : 16;
+          const charW = atlas ? atlas.getCharWidth() / metricScale : 10;
+          const charH = atlas ? atlas.getCharHeight() / metricScale : 16;
           let labelW = label.length * charW;
           if (ui && typeof ui.measureTextWidth === "function") {
-            labelW = ui.measureTextWidth(label);
+            labelW = ui.measureTextWidth(label) / metricScale;
           }
           const tx = x + Math.max(0, (w - labelW) / 2);
           const ty = y + Math.max(0, (h - charH) / 2);
-          ui.text(label, tx, ty, fg);
+          ui.text(label, tx * textureScale, ty * textureScale, fg, textureScale / metricScale);
           return clicked;
         },
         colors: {
@@ -31870,6 +31944,37 @@ class StorieEngine {
           }
           layout.visible = visible;
           engine.getOrCreateSectionRuntimeOverride(layout.sectionId).visible = visible;
+        },
+        /**
+         * Mark a section as a "live" section whose on:render callback draws
+         * directly into the section's 3D card texture every frame, so that
+         * game/animation content participates in the Worlds 3D perspective.
+         *
+         * When live, on:render section:N is called during section texture
+         * baking (not the flat 2D overlay), and ui.metrics.canvasWidth/Height
+         * return the section texture dimensions. Use ui.section.width/height
+         * for the same values explicitly.
+         *
+         * @param section Section index, title string, or section id.
+         * @param live    true (default) to enable; false to remove live mode.
+         */
+        setSectionLive: (section, live) => {
+          const ref = engine.resolveWorldsContentSectionRef(section);
+          if (!ref) {
+            console.warn(`worlds.setSectionLive: section "${section}" not found`);
+            return;
+          }
+          if (live === false) {
+            engine._liveSections.delete(ref.sectionIndex);
+          } else {
+            engine._liveSections.add(ref.sectionIndex);
+          }
+        },
+        // Internal helpers used by the generated section guard in on:render blocks.
+        _isLive: (idx) => engine._liveSections.has(idx),
+        get _activeLiveSectionIndex() {
+          var _a, _b;
+          return ((_a = engine._liveRenderCtx) == null ? void 0 : _a.sectionIndex) ?? ((_b = engine._liveSectionInputCtx) == null ? void 0 : _b.sectionIndex) ?? null;
         },
         getSectionCount: () => {
           return engine.section3DLayouts.length;
@@ -33435,7 +33540,12 @@ class StorieEngine {
           );
           return block.code;
         }
-        return `if (worlds.currentSection === ${sectionIdx}) {
+        if (hook === "render") {
+          return `if ((worlds._activeLiveSectionIndex === ${sectionIdx}) || (worlds._activeLiveSectionIndex === null && !worlds._isLive(${sectionIdx}) && worlds.currentSection === ${sectionIdx})) {
+${block.code}
+}`;
+        }
+        return `if (worlds.currentSection === ${sectionIdx} || worlds._activeLiveSectionIndex === ${sectionIdx}) {
 ${block.code}
 }`;
       };
@@ -34745,6 +34855,88 @@ ${exportVars}
       }
     }
   }
+  /**
+   * Bake a live section texture by calling the user's on:render section:N
+   * callback with routing overrides so that all ui.* draw calls land in the
+   * section's offscreen GPU texture instead of the flat screen overlay.
+   *
+   * @returns true if baking succeeded and layout.texture was updated.
+   */
+  bakeLiveSectionTexture(layout, device, baseLineHeight) {
+    var _a;
+    if (!(this.renderer instanceof WebGPURenderer)) return false;
+    const atlas = this.renderer.getAtlas();
+    if (!atlas) return false;
+    if (!this.sectionWebGPUUIRenderer) {
+      this.sectionWebGPUUIRenderer = new WebGPUUIRenderer(device, atlas, 1, 1);
+    }
+    const sectionUI = this.sectionWebGPUUIRenderer;
+    const baseMetricScale = this.getWorldsTextureScale();
+    const textureScale = Math.max(2, baseMetricScale);
+    const texturePadding = 12;
+    const charW = atlas.getCharWidth() / Math.max(1, baseMetricScale);
+    const units = this.worldsConfig.sectionSizeUnits === "px" ? "px" : "text";
+    let logicalWidthPx = units === "px" ? Math.round(layout.width + texturePadding * 2) : Math.round(layout.width * charW + texturePadding * 2);
+    let logicalHeightPx = units === "px" ? Math.round(layout.height + texturePadding * 2) : Math.round(layout.height * baseLineHeight + texturePadding * 2);
+    logicalWidthPx = Math.max(64, logicalWidthPx);
+    logicalHeightPx = Math.max(64, logicalHeightPx);
+    const widthPx = Math.max(1, Math.round(logicalWidthPx * textureScale));
+    const heightPx = Math.max(1, Math.round(logicalHeightPx * textureScale));
+    this.sectionTextureCache.set(layout.sectionId, { width: widthPx, height: heightPx, activeLinkIndex: null });
+    let localMouseX = 0;
+    let localMouseY = 0;
+    const xform = this.getWorldsSectionTextureToScreenAffine(layout);
+    if (xform) {
+      const mx = this.input.getMouseX();
+      const my = this.input.getMouseY();
+      localMouseX = (xform.localFromScreenTexPx.a * mx + xform.localFromScreenTexPx.c * my + xform.localFromScreenTexPx.e) / textureScale;
+      localMouseY = (xform.localFromScreenTexPx.b * mx + xform.localFromScreenTexPx.d * my + xform.localFromScreenTexPx.f) / textureScale;
+    }
+    const format = sectionUI.getTextureFormat();
+    const existingOk = layout.texture && (() => {
+      const d = this.sectionTextureCache.get(layout.sectionId);
+      return d && d.width === widthPx && d.height === heightPx;
+    })();
+    if (!existingOk) {
+      if (layout.texture) {
+        try {
+          layout.texture.destroy();
+        } catch {
+        }
+        layout.texture = null;
+      }
+      layout.texture = device.createTexture({
+        size: { width: widthPx, height: heightPx, depthOrArrayLayers: 1 },
+        format,
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+      });
+    }
+    this._liveRenderCtx = {
+      sectionIndex: layout.sectionIndex,
+      width: logicalWidthPx,
+      height: logicalHeightPx,
+      localMouseX,
+      localMouseY,
+      textureScale,
+      baseMetricScale
+    };
+    this._liveUIOverride = sectionUI;
+    sectionUI.clearCommands();
+    const doc = this.getActiveDocument();
+    if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.render) {
+      try {
+        doc.handlers.render();
+      } catch (e) {
+        console.error("[Worlds] Error in live section render:", e);
+      }
+    }
+    this._liveRenderCtx = null;
+    this._liveUIOverride = null;
+    sectionUI.flushTo(layout.texture, widthPx, heightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
+    this.sectionTextureCache.set(layout.sectionId, { width: widthPx, height: heightPx, activeLinkIndex: null });
+    this.set3DLayoutWorldSizeFromPixels(layout, logicalWidthPx, logicalHeightPx, baseLineHeight);
+    return true;
+  }
   ensure3DSectionTextures(device) {
     var _a, _b, _c, _d;
     if (!this.worldsEnabled || !this.camera3D) return;
@@ -34797,6 +34989,13 @@ ${exportVars}
     for (const layout of this.section3DLayouts) {
       const needsBakedGui = bakedGuiSections.size > 0 && bakedGuiSections.has(layout.sectionIndex);
       if (!layout.visible && !needsBakedGui) continue;
+      if (this._liveSections.has(layout.sectionIndex)) {
+        if (layout.visible && this.is3DCardPossiblyVisible(viewProj, layout)) {
+          const liveChanged = this.bakeLiveSectionTexture(layout, device, baseLineHeight);
+          if (liveChanged) worldSizeChanged = true;
+        }
+        continue;
+      }
       const activeLink = this.getActive3DLink();
       const activeLinkIndex = activeLink && activeLink.sectionIndex === layout.sectionIndex ? activeLink.linkIndex : null;
       if (!needsBakedGui) {
@@ -35580,6 +35779,13 @@ ${exportVars}
     this.evictDistantSectionTextures();
     for (const layout of this.section3DLayouts) {
       if (!layout.visible) continue;
+      if (this._liveSections.has(layout.sectionIndex)) {
+        if (this.is3DCardPossiblyVisible(viewProj, layout)) {
+          const liveChanged = this.bakeLiveSectionTexture(layout, device, baseLineHeight);
+          if (liveChanged) worldSizeChanged = true;
+        }
+        continue;
+      }
       const activeLink = this.getActive3DLink();
       const activeLinkIndex = activeLink && activeLink.sectionIndex === layout.sectionIndex ? activeLink.linkIndex : null;
       if (!this.is3DCardPossiblyVisible(viewProj, layout)) {
@@ -35816,12 +36022,41 @@ ${exportVars}
     }
     const doc = this.getActiveDocument();
     if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.update) {
+      const hoveredPick = this.pick3DAt(this.input.getMouseX(), this.input.getMouseY());
+      const hoveredLiveLayout = hoveredPick && this._liveSections.has(hoveredPick.layout.sectionIndex) ? hoveredPick.layout : null;
+      const selectedSectionIdx = this.getResolvedSelected3DSectionIndex();
+      const selectedLiveLayout = typeof selectedSectionIdx === "number" && this._liveSections.has(selectedSectionIdx) ? this.getSectionLayoutByIndex(selectedSectionIdx) : null;
+      const curSectionIdx = this.getResolvedCurrent3DSectionIndex();
+      const currentLiveLayout = typeof curSectionIdx === "number" && this._liveSections.has(curSectionIdx) ? this.getSectionLayoutByIndex(curSectionIdx) : null;
+      const liveLayout = hoveredLiveLayout ?? selectedLiveLayout ?? currentLiveLayout;
+      if (liveLayout) {
+        const cached = this.sectionTextureCache.get(liveLayout.sectionId);
+        if (cached && cached.width > 0 && cached.height > 0) {
+          const xform = this.getWorldsSectionTextureToScreenAffine(liveLayout);
+          if (xform) {
+            const mx = this.input.getMouseX();
+            const my = this.input.getMouseY();
+            const textureScale = Math.max(2, this.getWorldsTextureScale());
+            const baseMetricScale = this.getWorldsTextureScale();
+            this._liveSectionInputCtx = {
+              sectionIndex: liveLayout.sectionIndex,
+              width: Math.max(1, Math.round(cached.width / textureScale)),
+              height: Math.max(1, Math.round(cached.height / textureScale)),
+              localMouseX: (xform.localFromScreenTexPx.a * mx + xform.localFromScreenTexPx.c * my + xform.localFromScreenTexPx.e) / textureScale,
+              localMouseY: (xform.localFromScreenTexPx.b * mx + xform.localFromScreenTexPx.d * my + xform.localFromScreenTexPx.f) / textureScale,
+              textureScale,
+              baseMetricScale
+            };
+          }
+        }
+      }
       try {
         doc.handlers.update(this.deltaTime);
       } catch (error) {
         console.error("Error in update handler:", error);
         this.recordUserHandlerError("update", error);
       }
+      this._liveSectionInputCtx = null;
     }
     this.syncHiddenTextInputBridge(false);
   }
