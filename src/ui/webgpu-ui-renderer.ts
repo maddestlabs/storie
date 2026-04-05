@@ -33,6 +33,16 @@ export class WebGPUUIRenderer {
   private depthStencilW: number = 0;
   private depthStencilH: number = 0;
 
+  // Second render target for per-pixel material properties: { roughness, normalScale, metallic, emissive }
+  // Format: rgba8unorm — matches GLTF metallic-roughness channel layout.
+  private materialTexture: GPUTexture | null = null;
+  private materialW: number = 0;
+  private materialH: number = 0;
+
+  // Pending material for the next draw call. Reset to defaults after each draw.
+  // Default: roughness=0.5, normalScale=1.0, metallic=0.0, emissive=0.0
+  private pendingMaterial: [number, number, number, number] = [0.5, 1.0, 0.0, 0.0];
+
   private rectPipeline: GPURenderPipeline;
   private textPipeline: GPURenderPipeline;
   private maskPushPipeline: GPURenderPipeline;
@@ -62,7 +72,7 @@ export class WebGPUUIRenderer {
   private polyVertexCount: number = 0;
 
   // Per-instance data
-  // Rect: 8 floats => x,y,w,h + r,g,b,a
+  // Rect: 12 floats => x,y,w,h + r,g,b,a + matR,matG,matB,matA
   private rectData: Float32Array;
   private rectCount: number = 0;
 
@@ -72,7 +82,7 @@ export class WebGPUUIRenderer {
   // Per-instance stencil reference (mask depth)
   private rectStencilRef: Int32Array;
 
-  // Text: 12 floats => x,y,w,h + r,g,b,a + u,v,uw,uh
+  // Text: 16 floats => x,y,w,h + r,g,b,a + u,v,uw,uh + matR,matG,matB,matA
   private textData: Float32Array;
   private textCount: number = 0;
 
@@ -103,7 +113,7 @@ export class WebGPUUIRenderer {
     return total;
   }
 
-  // Image: 12 floats => x,y,w,h + r,g,b,a + u,v,uw,uh
+  // Image: 16 floats => x,y,w,h + r,g,b,a + u,v,uw,uh + matR,matG,matB,matA
   private imageData: Float32Array;
   private imageCount: number = 0;
   private imageClipData: Int32Array;
@@ -206,17 +216,17 @@ export class WebGPUUIRenderer {
     });
 
     this.rectInstanceBuffer = this.device.createBuffer({
-      size: 8 * 4 * 4096,
+      size: 12 * 4 * 4096,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
 
     this.textInstanceBuffer = this.device.createBuffer({
-      size: 12 * 4 * 4096,
+      size: 16 * 4 * 4096,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
 
     this.imageInstanceBuffer = this.device.createBuffer({
-      size: 12 * 4 * 4096,
+      size: 16 * 4 * 4096,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
 
@@ -227,9 +237,9 @@ export class WebGPUUIRenderer {
     });
     this.polyData = new Float32Array(2 * 8192);
 
-    this.rectData = new Float32Array(8 * 4096);
-    this.textData = new Float32Array(12 * 4096);
-    this.imageData = new Float32Array(12 * 4096);
+    this.rectData = new Float32Array(12 * 4096);
+    this.textData = new Float32Array(16 * 4096);
+    this.imageData = new Float32Array(16 * 4096);
 
     this.rectClipData = new Int32Array(4 * 4096);
     this.textClipData = new Int32Array(4 * 4096);
@@ -261,6 +271,41 @@ export class WebGPUUIRenderer {
     return this.textureFormat;
   }
 
+  /**
+   * Return the current material render target, or null if not yet created
+   * (first flush() hasn't run yet). Sized to match the last flush target.
+   * Thread this through Compositor → ShaderChainManager for PBR lighting.
+   */
+  getMaterialTexture(): GPUTexture | null {
+    return this.materialTexture;
+  }
+
+  /**
+   * Set the material properties for all subsequent draw calls until changed again.
+   * Behaves like a colour setting — sticky until overridden, not one-shot.
+   * Call `setMaterial(null)` to restore defaults.
+   *
+   * Channel layout (matches GLTF metallic-roughness):
+   *   roughness   — R channel, 0=mirror-smooth, 1=fully diffuse   (default 0.5)
+   *   normalScale — G channel, Sobel/normal-map strength           (default 1.0)
+   *   metallic    — B channel, specular tint toward albedo colour  (default 0.0)
+   *   emissive    — A channel, additive glow bypass               (default 0.0)
+   *
+   * Pass null to immediately restore defaults.
+   */
+  setMaterial(mat: { roughness?: number; normalScale?: number; metallic?: number; emissive?: number } | null): void {
+    if (!mat) {
+      this.pendingMaterial = [0.5, 1.0, 0.0, 0.0];
+      return;
+    }
+    this.pendingMaterial = [
+      mat.roughness   !== undefined ? Math.max(0, Math.min(1, mat.roughness))   : 0.5,
+      mat.normalScale !== undefined ? Math.max(0, Math.min(1, mat.normalScale)) : 1.0,
+      mat.metallic    !== undefined ? Math.max(0, Math.min(1, mat.metallic))    : 0.0,
+      mat.emissive    !== undefined ? Math.max(0, Math.min(1, mat.emissive))    : 0.0,
+    ];
+  }
+
   resize(width: number, height: number): void {
     const nextWidth = Math.max(1, Math.floor(width));
     const nextHeight = Math.max(1, Math.floor(height));
@@ -276,6 +321,15 @@ export class WebGPUUIRenderer {
     }
     this.texture = this.createRenderTexture(this.width, this.height);
     this.writeUniforms(this.width, this.height);
+
+    // Material texture is sized on-demand in flushTo(); mark stale so it is
+    // recreated at the next flush with the correct dimensions.
+    this.materialW = 0;
+    this.materialH = 0;
+    if (this.materialTexture) {
+      try { this.materialTexture.destroy(); } catch { /* ignore */ }
+      this.materialTexture = null;
+    }
 
     // Depth-stencil texture is sized on-demand in flushTo().
   }
@@ -322,6 +376,32 @@ export class WebGPUUIRenderer {
       usage: GPUTextureUsage.RENDER_ATTACHMENT
     });
     return this.depthStencilTexture;
+  }
+
+  /**
+   * Ensure the material render target exists and matches the requested dimensions.
+   * Recreated lazily on first use and after resize().
+   */
+  private ensureMaterialTexture(width: number, height: number): GPUTexture {
+    const w = Math.max(1, Math.floor(width));
+    const h = Math.max(1, Math.floor(height));
+    if (this.materialTexture && this.materialW === w && this.materialH === h) {
+      return this.materialTexture;
+    }
+    try {
+      this.materialTexture?.destroy();
+    } catch {
+      // ignore
+    }
+    this.materialW = w;
+    this.materialH = h;
+    this.materialTexture = this.device.createTexture({
+      size: { width: w, height: h },
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      label: 'ui_materialTexture'
+    });
+    return this.materialTexture;
   }
 
   private writeRectClip(index: number, clipOverride?: { x: number; y: number; w: number; h: number } | null): void {
@@ -387,7 +467,7 @@ export class WebGPUUIRenderer {
 
     // Record the mask push draw (increments stencil where stencil == depthBefore).
     const [r, g, b] = [0, 0, 0];
-    const o = this.rectCount * 8;
+    const o = this.rectCount * 12;
     this.rectData[o + 0] = x;
     this.rectData[o + 1] = y;
     this.rectData[o + 2] = w;
@@ -397,6 +477,9 @@ export class WebGPUUIRenderer {
     this.rectData[o + 6] = b;
     // Radius is packed into alpha for the mask shader (0 = sharp rect).
     this.rectData[o + 7] = 0;
+    // Material floats (o+8..+11) are ignored by mask pipelines (writeMask=0).
+    this.rectData[o + 8] = 0.5; this.rectData[o + 9] = 1.0;
+    this.rectData[o + 10] = 0.0; this.rectData[o + 11] = 0.0;
     this.writeRectClip(this.rectCount, clip);
     this.rectStencilRef[this.rectCount] = depthBefore;
     this.drawCommands.push({ kind: 'rect', mode: 'maskPush', start: this.rectCount, count: 1 });
@@ -466,7 +549,7 @@ export class WebGPUUIRenderer {
 
       // Record the mask pop draw (decrements stencil where stencil == current depth).
       const [r, g, b, _a] = [0, 0, 0, 0];
-      const o = this.rectCount * 8;
+      const o = this.rectCount * 12;
       this.rectData[o + 0] = rect.x;
       this.rectData[o + 1] = rect.y;
       this.rectData[o + 2] = rect.w;
@@ -476,6 +559,9 @@ export class WebGPUUIRenderer {
       this.rectData[o + 6] = b;
       // Store radius so pop matches push.
       this.rectData[o + 7] = rect.radius;
+      // Material floats (o+8..+11) are ignored by mask pipelines (writeMask=0).
+      this.rectData[o + 8] = 0.5; this.rectData[o + 9] = 1.0;
+      this.rectData[o + 10] = 0.0; this.rectData[o + 11] = 0.0;
       this.writeRectClip(this.rectCount, rect.clip);
       this.rectStencilRef[this.rectCount] = depthAtPop;
       this.drawCommands.push({ kind: 'rect', mode: 'maskPop', start: this.rectCount, count: 1 });
@@ -632,7 +718,7 @@ export class WebGPUUIRenderer {
     if (this.rectCount >= 4096) return;
 
     const [r, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color as any));
-    const o = this.rectCount * 8;
+    const o = this.rectCount * 12;
     this.rectData[o + 0] = x;
     this.rectData[o + 1] = y;
     this.rectData[o + 2] = w;
@@ -641,6 +727,11 @@ export class WebGPUUIRenderer {
     this.rectData[o + 5] = g;
     this.rectData[o + 6] = b;
     this.rectData[o + 7] = a;
+    // Material: write current material (sticky — persists until setMaterial() is called again).
+    this.rectData[o + 8]  = this.pendingMaterial[0];
+    this.rectData[o + 9]  = this.pendingMaterial[1];
+    this.rectData[o + 10] = this.pendingMaterial[2];
+    this.rectData[o + 11] = this.pendingMaterial[3];
 
     this.writeRectClip(this.rectCount);
     this.rectStencilRef[this.rectCount] = this.maskDepth;
@@ -686,7 +777,7 @@ export class WebGPUUIRenderer {
         ? (glyph.pixelHeight || charH)
         : charH;
 
-      const o = this.textCount * 12;
+      const o = this.textCount * 16;
       this.textData[o + 0] = cursorX;
       this.textData[o + 1] = y;
       this.textData[o + 2] = quadW;
@@ -699,6 +790,11 @@ export class WebGPUUIRenderer {
       this.textData[o + 9] = glyph.v;
       this.textData[o + 10] = glyph.w;
       this.textData[o + 11] = glyph.h;
+      // Material: write current material (sticky — same material applies to all glyphs in this call).
+      this.textData[o + 12] = this.pendingMaterial[0];
+      this.textData[o + 13] = this.pendingMaterial[1];
+      this.textData[o + 14] = this.pendingMaterial[2];
+      this.textData[o + 15] = this.pendingMaterial[3];
 
       this.writeTextClip(this.textCount);
       this.textStencilRef[this.textCount] = this.maskDepth;
@@ -770,7 +866,7 @@ export class WebGPUUIRenderer {
     const [r, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(tint as any));
     const uv = options?.uv ?? { u: 0, v: 0, w: 1, h: 1 };
 
-    const o = this.imageCount * 12;
+    const o = this.imageCount * 16;
     this.imageData[o + 0] = x;
     this.imageData[o + 1] = y;
     this.imageData[o + 2] = w;
@@ -783,6 +879,11 @@ export class WebGPUUIRenderer {
     this.imageData[o + 9] = uv.v;
     this.imageData[o + 10] = uv.w;
     this.imageData[o + 11] = uv.h;
+    // Material: write current material (sticky — persists until setMaterial() is called again).
+    this.imageData[o + 12] = this.pendingMaterial[0];
+    this.imageData[o + 13] = this.pendingMaterial[1];
+    this.imageData[o + 14] = this.pendingMaterial[2];
+    this.imageData[o + 15] = this.pendingMaterial[3];
 
     this.writeImageClip(this.imageCount);
     this.imageStencilRef[this.imageCount] = this.maskDepth;
@@ -844,7 +945,7 @@ export class WebGPUUIRenderer {
 
     // Upload instance buffers
     if (this.rectCount > 0) {
-      const byteCount = this.rectCount * 8 * 4;
+      const byteCount = this.rectCount * 12 * 4;
       this.device.queue.writeBuffer(
         this.rectInstanceBuffer,
         0,
@@ -854,7 +955,7 @@ export class WebGPUUIRenderer {
       );
     }
     if (this.textCount > 0) {
-      const byteCount = this.textCount * 12 * 4;
+      const byteCount = this.textCount * 16 * 4;
       this.device.queue.writeBuffer(
         this.textInstanceBuffer,
         0,
@@ -865,7 +966,7 @@ export class WebGPUUIRenderer {
     }
 
     if (this.imageCount > 0) {
-      const byteCount = this.imageCount * 12 * 4;
+      const byteCount = this.imageCount * 16 * 4;
       this.device.queue.writeBuffer(
         this.imageInstanceBuffer,
         0,
@@ -888,13 +989,23 @@ export class WebGPUUIRenderer {
     }
 
     const commandEncoder = this.device.createCommandEncoder();
+    const matTex = this.ensureMaterialTexture(tw, th);
     const pass = commandEncoder.beginRenderPass({
-      colorAttachments: [{
-        view: targetTexture.createView(),
-        clearValue: clear,
-        loadOp: 'clear',
-        storeOp: 'store'
-      }],
+      colorAttachments: [
+        {
+          view: targetTexture.createView(),
+          clearValue: clear,
+          loadOp: 'clear',
+          storeOp: 'store'
+        },
+        {
+          // Material render target: clear to defaults (roughness=0.5, normalScale=1.0, metallic=0, emissive=0)
+          view: matTex.createView(),
+          clearValue: { r: 0.5, g: 1.0, b: 0.0, a: 0.0 },
+          loadOp: 'clear',
+          storeOp: 'store'
+        }
+      ],
       depthStencilAttachment: {
         view: depthStencil.createView(),
         depthClearValue: 1.0,
@@ -1162,6 +1273,12 @@ export class WebGPUUIRenderer {
         struct VSOut {
           @builtin(position) position: vec4f,
           @location(0) color: vec4f,
+          @location(1) material: vec4f,
+        }
+
+        struct FSOut {
+          @location(0) color: vec4f,
+          @location(1) material: vec4f,
         }
 
         @vertex
@@ -1170,6 +1287,7 @@ export class WebGPUUIRenderer {
           @builtin(instance_index) instanceIndex: u32,
           @location(0) posSize: vec4f,
           @location(1) color: vec4f,
+          @location(2) material: vec4f,
         ) -> VSOut {
           var quad = array<vec2f, 6>(
             vec2f(0.0, 0.0),
@@ -1193,12 +1311,16 @@ export class WebGPUUIRenderer {
           var out: VSOut;
           out.position = vec4f(clip, 0.0, 1.0);
           out.color = color;
+          out.material = material;
           return out;
         }
 
         @fragment
-        fn fs_main(input: VSOut) -> @location(0) vec4f {
-          return input.color;
+        fn fs_main(input: VSOut) -> FSOut {
+          var out: FSOut;
+          out.color = input.color;
+          out.material = input.material;
+          return out;
         }
       `
     });
@@ -1209,24 +1331,31 @@ export class WebGPUUIRenderer {
         module: shader,
         entryPoint: 'vs_main',
         buffers: [{
-          arrayStride: 32,
+          arrayStride: 48,
           stepMode: 'instance',
           attributes: [
-            { shaderLocation: 0, offset: 0, format: 'float32x4' },
-            { shaderLocation: 1, offset: 16, format: 'float32x4' },
+            { shaderLocation: 0, offset: 0,  format: 'float32x4' },  // posSize
+            { shaderLocation: 1, offset: 16, format: 'float32x4' },  // color
+            { shaderLocation: 2, offset: 32, format: 'float32x4' },  // material
           ]
         }]
       },
       fragment: {
         module: shader,
         entryPoint: 'fs_main',
-        targets: [{
-          format: this.textureFormat,
-          blend: {
-            color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
+        targets: [
+          {
+            format: this.textureFormat,
+            blend: {
+              color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+              alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
+            }
+          },
+          {
+            // Material target: no blending — last drawn element's material wins.
+            format: 'rgba8unorm'
           }
-        }]
+        ]
       },
       depthStencil: {
         format: 'depth24plus-stencil8',
@@ -1326,10 +1455,10 @@ export class WebGPUUIRenderer {
         module: shader,
         entryPoint: 'vs_main',
         buffers: [{
-          arrayStride: 32,
+          arrayStride: 48,  // 12 floats; shader only reads first 8 (posSize + color), rest ignored
           stepMode: 'instance',
           attributes: [
-            { shaderLocation: 0, offset: 0, format: 'float32x4' },
+            { shaderLocation: 0, offset: 0,  format: 'float32x4' },
             { shaderLocation: 1, offset: 16, format: 'float32x4' },
           ]
         }]
@@ -1337,10 +1466,11 @@ export class WebGPUUIRenderer {
       fragment: {
         module: shader,
         entryPoint: 'fs_main',
-        targets: [{
-          format: this.textureFormat,
-          writeMask: 0
-        }]
+        targets: [
+          { format: this.textureFormat, writeMask: 0 },
+          // Material target: writeMask=0 — mask passes do not write material data.
+          { format: 'rgba8unorm', writeMask: 0 }
+        ]
       },
       depthStencil: {
         format: 'depth24plus-stencil8',
@@ -1399,10 +1529,11 @@ export class WebGPUUIRenderer {
       fragment: {
         module: shader,
         entryPoint: 'fs_main',
-        targets: [{
-          format: this.textureFormat,
-          writeMask: 0
-        }]
+        targets: [
+          { format: this.textureFormat, writeMask: 0 },
+          // Material target: writeMask=0 — poly mask passes do not write material data.
+          { format: 'rgba8unorm', writeMask: 0 }
+        ]
       },
       depthStencil: {
         format: 'depth24plus-stencil8',
@@ -1429,6 +1560,12 @@ export class WebGPUUIRenderer {
           @builtin(position) position: vec4f,
           @location(0) uv: vec2f,
           @location(1) color: vec4f,
+          @location(2) material: vec4f,
+        }
+
+        struct FSOut {
+          @location(0) color: vec4f,
+          @location(1) material: vec4f,
         }
 
         @vertex
@@ -1438,6 +1575,7 @@ export class WebGPUUIRenderer {
           @location(0) posSize: vec4f,
           @location(1) color: vec4f,
           @location(2) uvRect: vec4f,
+          @location(3) material: vec4f,
         ) -> VSOut {
           var quad = array<vec2f, 6>(
             vec2f(0.0, 0.0),
@@ -1462,13 +1600,17 @@ export class WebGPUUIRenderer {
           out.position = vec4f(clip, 0.0, 1.0);
           out.uv = uvRect.xy + quad[vertexIndex] * uvRect.zw;
           out.color = color;
+          out.material = material;
           return out;
         }
 
         @fragment
-        fn fs_main(input: VSOut) -> @location(0) vec4f {
+        fn fs_main(input: VSOut) -> FSOut {
           let c = textureSample(tex, texSampler, input.uv);
-          return vec4f(input.color.rgb * c.rgb, input.color.a * c.a);
+          var out: FSOut;
+          out.color = vec4f(input.color.rgb * c.rgb, input.color.a * c.a);
+          out.material = input.material;
+          return out;
         }
       `
     });
@@ -1479,25 +1621,32 @@ export class WebGPUUIRenderer {
         module: shader,
         entryPoint: 'vs_main',
         buffers: [{
-          arrayStride: 48,
+          arrayStride: 64,  // 16 floats: posSize + color + uvRect + material
           stepMode: 'instance',
           attributes: [
-            { shaderLocation: 0, offset: 0, format: 'float32x4' },
-            { shaderLocation: 1, offset: 16, format: 'float32x4' },
-            { shaderLocation: 2, offset: 32, format: 'float32x4' },
+            { shaderLocation: 0, offset: 0,  format: 'float32x4' },  // posSize
+            { shaderLocation: 1, offset: 16, format: 'float32x4' },  // color
+            { shaderLocation: 2, offset: 32, format: 'float32x4' },  // uvRect
+            { shaderLocation: 3, offset: 48, format: 'float32x4' },  // material
           ]
         }]
       },
       fragment: {
         module: shader,
         entryPoint: 'fs_main',
-        targets: [{
-          format: this.textureFormat,
-          blend: {
-            color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
+        targets: [
+          {
+            format: this.textureFormat,
+            blend: {
+              color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+              alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
+            }
+          },
+          {
+            // Material target: no blending — last drawn element's material wins.
+            format: 'rgba8unorm'
           }
-        }]
+        ]
       },
       depthStencil: {
         format: 'depth24plus-stencil8',

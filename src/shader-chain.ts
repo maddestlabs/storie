@@ -359,11 +359,16 @@ export class ShaderChainManager {
    * If a background shader is set it always runs first (before the chain),
    * independent of the chain configuration.  Full pass order:
    *   background (optional) → chain[0] → chain[1] → … → outputTexture
+   *
+   * @param materialTexture  Optional material render target from WebGPUUIRenderer.
+   *   Passed through to each shader pass so lighting shaders can read per-pixel
+   *   material properties (roughness, normalScale, metallic, emissive).
    */
   applyChain(
     inputTexture: GPUTexture,
     outputTexture: GPUTexture,
-    commandEncoder: GPUCommandEncoder
+    commandEncoder: GPUCommandEncoder,
+    materialTexture?: GPUTexture
   ): boolean {
     // Build the effective pass list: [background?, ...chain]
     const effectivePasses: string[] = [];
@@ -377,7 +382,7 @@ export class ShaderChainManager {
     // Single pass — simple case
     if (effectivePasses.length === 1) {
       this.shaderManager.setActiveShader(effectivePasses[0]);
-      return this.shaderManager.applyShader(inputTexture, outputTexture, commandEncoder);
+      return this.shaderManager.applyShader(inputTexture, outputTexture, commandEncoder, materialTexture);
     }
 
     // Keep original activeChain references for the intermediate texture check below.
@@ -402,7 +407,8 @@ export class ShaderChainManager {
       const success = this.shaderManager.applyShader(
         currentInput,
         currentOutput,
-        commandEncoder
+        commandEncoder,
+        materialTexture
       );
 
       if (!success) {

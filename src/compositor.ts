@@ -73,6 +73,10 @@ export class Compositor {
   // External shader chain manager (for multi-pass effects)
   private shaderChainManager: ShaderChainManager | null = null;
 
+  // Material render target produced by WebGPUUIRenderer; threaded to the shader chain
+  // so lighting shaders can read per-pixel material properties (roughness, normalScale, etc.).
+  private materialTexture: GPUTexture | null = null;
+
   // Offscreen render target used when applying a post-process shader
   private postProcessTexture: GPUTexture | null = null;
   
@@ -124,6 +128,15 @@ export class Compositor {
    */
   setShaderChainManager(manager: ShaderChainManager | null): void {
     this.shaderChainManager = manager;
+  }
+
+  /**
+   * Set the material render target produced by WebGPUUIRenderer.
+   * Called each frame (after ui.flush()) so the shader chain receives the
+   * freshly-rendered per-pixel material properties for the current frame.
+   */
+  setMaterialTexture(texture: GPUTexture | null): void {
+    this.materialTexture = texture;
   }
 
   private ensurePostProcessTexture(): GPUTexture {
@@ -496,7 +509,8 @@ export class Compositor {
           applied = this.shaderChainManager.applyChain(
             compositeTargetTexture,
             currentTexture,
-            commandEncoder
+            commandEncoder,
+            this.materialTexture ?? undefined
           );
         } catch (error) {
           console.error('[Compositor] Failed to apply shader chain:', error);
@@ -509,7 +523,8 @@ export class Compositor {
           applied = (this.shaderManager as any).applyShader(
             compositeTargetTexture,
             currentTexture,
-            commandEncoder
+            commandEncoder,
+            this.materialTexture ?? undefined
           );
         } catch (error) {
           console.error('[Compositor] Failed to apply ShaderManager post-process:', error);

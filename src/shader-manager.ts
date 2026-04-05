@@ -25,6 +25,8 @@ interface CompiledShader {
   uniformLayout: Map<string, { offset: number; size: number }>;
   uniformValues: Map<string, number | number[]>;
   bindGroupLayout: GPUBindGroupLayout;
+  /** True when the WGSL code declares a materialTexture binding. */
+  usesMaterialTexture: boolean;
 }
 
 interface ShaderRenderResources {
@@ -79,6 +81,9 @@ export class ShaderManager {
   // Support pairing `wgsl vertex:name` + `wgsl fragment:name`
   private pendingVertexShaders: Map<string, WGSLShader> = new Map();
 
+  // 1×1 rgba8unorm fallback used when a shader declares materialTexture but none is available.
+  private defaultMaterialTexture: GPUTexture | null = null;
+
   constructor(device: GPUDevice, format?: GPUTextureFormat) {
     this.device = device;
     this.format = format || navigator.gpu.getPreferredCanvasFormat();
@@ -117,6 +122,22 @@ export class ShaderManager {
     });
     
     this.resources = { vertexBuffer, sampler };
+
+    // Create a 1×1 default material texture (roughness=0.5, normalScale=1.0, metallic=0, emissive=0).
+    // Used as a fallback when a shader declares materialTexture but none has been provided.
+    this.defaultMaterialTexture = this.device.createTexture({
+      size: { width: 1, height: 1 },
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      label: 'defaultMaterialTexture'
+    });
+    this.device.queue.writeTexture(
+      { texture: this.defaultMaterialTexture },
+      new Uint8Array([128, 255, 0, 0]),  // roughness≈0.5, normalScale≈1.0, metallic=0, emissive=0
+      { bytesPerRow: 4 },
+      { width: 1, height: 1 }
+    );
+
     this.initialized = true;
     
     console.log('[ShaderManager] Initialized');
@@ -271,28 +292,60 @@ export class ShaderManager {
         label: `${shader.name}_uniforms`
       });
       
+      // Detect whether the WGSL code declares a materialTexture binding.
+      // Shaders that opt-in get a 4-entry bind group layout:
+      //   0=contentTexture, 1=sampler, 2=materialTexture, 3=uniforms
+      // All other shaders keep the existing 3-entry layout (0=texture, 1=sampler, 2=uniforms).
+      const usesMaterialTexture = /\bmaterialTexture\b/.test(mergedCode);
+
       // Create bind group layout
-      const bindGroupLayout = this.device.createBindGroupLayout({
-        label: `${shader.name}_bindGroupLayout`,
-        entries: [
-          {
-            binding: 0,
-            visibility: GPUShaderStage.FRAGMENT,
-            texture: { sampleType: 'float' }
-          },
-          {
-            binding: 1,
-            visibility: GPUShaderStage.FRAGMENT,
-            sampler: { type: 'filtering' }
-          },
-          {
-            binding: 2,
-            // Allow vertex shaders to use time/resolution/custom uniforms too.
-            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-            buffer: { type: 'uniform' }
-          }
-        ]
-      });
+      const bindGroupLayout = usesMaterialTexture
+        ? this.device.createBindGroupLayout({
+            label: `${shader.name}_bindGroupLayout`,
+            entries: [
+              {
+                binding: 0,
+                visibility: GPUShaderStage.FRAGMENT,
+                texture: { sampleType: 'float' }
+              },
+              {
+                binding: 1,
+                visibility: GPUShaderStage.FRAGMENT,
+                sampler: { type: 'filtering' }
+              },
+              {
+                binding: 2,
+                visibility: GPUShaderStage.FRAGMENT,
+                texture: { sampleType: 'float' }
+              },
+              {
+                binding: 3,
+                visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                buffer: { type: 'uniform' }
+              }
+            ]
+          })
+        : this.device.createBindGroupLayout({
+            label: `${shader.name}_bindGroupLayout`,
+            entries: [
+              {
+                binding: 0,
+                visibility: GPUShaderStage.FRAGMENT,
+                texture: { sampleType: 'float' }
+              },
+              {
+                binding: 1,
+                visibility: GPUShaderStage.FRAGMENT,
+                sampler: { type: 'filtering' }
+              },
+              {
+                binding: 2,
+                // Allow vertex shaders to use time/resolution/custom uniforms too.
+                visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                buffer: { type: 'uniform' }
+              }
+            ]
+          });
       
       // Create pipeline layout
       const pipelineLayout = this.device.createPipelineLayout({
@@ -336,7 +389,8 @@ export class ShaderManager {
         uniformBuffer,
         uniformLayout,
         uniformValues: new Map(),
-        bindGroupLayout
+        bindGroupLayout,
+        usesMaterialTexture
       };
       
       // Initialize default uniform values
@@ -545,12 +599,18 @@ export class ShaderManager {
   }
 
   /**
-   * Apply the active shader to a texture and render to output
+   * Apply the active shader to a texture and render to output.
+   *
+   * @param materialTexture  Optional per-pixel material data from WebGPUUIRenderer.
+   *   Bound at slot 2 for shaders that declare `materialTexture` (uniforms shift to slot 3).
+   *   Shaders that do not declare `materialTexture` use the classic 3-entry layout and this
+   *   parameter is silently ignored.
    */
   applyShader(
     inputTexture: GPUTexture,
     outputTexture: GPUTexture,
-    commandEncoder: GPUCommandEncoder
+    commandEncoder: GPUCommandEncoder,
+    materialTexture?: GPUTexture
   ): boolean {
     if (!this.activeShader) return false;
     
@@ -559,16 +619,32 @@ export class ShaderManager {
     
     // Update uniform buffer with current values
     this.updateUniformBuffer(shader, outputTexture.width, outputTexture.height);
-    
-    // Create bind group
-    const bindGroup = this.device.createBindGroup({
-      layout: shader.bindGroupLayout,
-      entries: [
-        { binding: 0, resource: inputTexture.createView() },
-        { binding: 1, resource: this.resources.sampler },
-        { binding: 2, resource: { buffer: shader.uniformBuffer } }
-      ]
-    });
+
+    // Create bind group — layout depends on whether the shader uses materialTexture.
+    let bindGroup: GPUBindGroup;
+    if (shader.usesMaterialTexture) {
+      const matTex = materialTexture ?? this.defaultMaterialTexture;
+      bindGroup = this.device.createBindGroup({
+        layout: shader.bindGroupLayout,
+        entries: [
+          { binding: 0, resource: inputTexture.createView() },
+          { binding: 1, resource: this.resources.sampler },
+          { binding: 2, resource: matTex
+              ? matTex.createView()
+              : (this.defaultMaterialTexture?.createView() ?? inputTexture.createView()) },
+          { binding: 3, resource: { buffer: shader.uniformBuffer } }
+        ]
+      });
+    } else {
+      bindGroup = this.device.createBindGroup({
+        layout: shader.bindGroupLayout,
+        entries: [
+          { binding: 0, resource: inputTexture.createView() },
+          { binding: 1, resource: this.resources.sampler },
+          { binding: 2, resource: { buffer: shader.uniformBuffer } }
+        ]
+      });
+    }
     
     // Render pass
     const renderPass = commandEncoder.beginRenderPass({

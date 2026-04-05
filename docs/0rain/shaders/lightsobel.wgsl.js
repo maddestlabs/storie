@@ -28,6 +28,7 @@ fn vertexMain(@location(0) position: vec2f) -> VertexOutput {
 
         fragmentShader: `@group(0) @binding(0) var contentTexture: texture_2d<f32>;
 @group(0) @binding(1) var contentTextureSampler: sampler;
+@group(0) @binding(2) var materialTexture: texture_2d<f32>;
 
 // ── Uniform layout ────────────────────────────────────────────────────────────
 //  offset  0 : time        (system)
@@ -49,7 +50,7 @@ struct Uniforms {
     diffuseAmt:     f32,   // scales the Lambertian diffuse contribution
     ambient:        f32,   // additive brightness floor so dark regions stay readable
 }
-@group(0) @binding(2) var<uniform> uniforms: Uniforms;
+@group(0) @binding(3) var<uniform> uniforms: Uniforms;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 fn _avg(c: vec3f) -> f32 { return (c.r + c.g + c.b) / 3.0; }
@@ -68,6 +69,21 @@ fn fragmentMain(@location(0) vUv: vec2f) -> @location(0) vec4f {
     let col    = textureSampleLevel(contentTexture, contentTextureSampler, uv, 0.0);
     let invRes = 1.0 / max(uniforms.resolution, vec2f(1.0));
 
+    // ── Per-pixel material properties (from WebGPUUIRenderer material target) ─
+    //   R = roughness  (0=mirror, 1=fully diffuse)
+    //   G = normalScale (0=no bump, 1=full bump)
+    //   B = metallic    (not used in this pass)
+    //   A = emissive    (not used in this pass)
+    let mat        = textureSampleLevel(materialTexture, contentTextureSampler, uv, 0.0);
+    let roughness  = mat.r;   // [0,1]
+    let normalScale = mat.g;  // [0,1]
+
+    // Modulate the uniform depth by roughness:
+    //   rough surfaces (paper, felt) = lower depth value = stronger bump relief
+    //   smooth surfaces (card back, lacquer) = higher depth = flatter normal
+    // Mapping: roughness 1.0 → depth*0.4,  roughness 0.0 → depth*4.0
+    let roughDepth = uniforms.depth * mix(4.0, 0.4, roughness);
+
     // ── Sobel 3×3 gradient (matches lacquer.glsl kernelX / kernelY) ──────────
     //  kernelX:  [+1  0 -1]    kernelY:  [+1 +2 +1]
     //            [+2  0 -2]              [ 0  0  0]
@@ -84,8 +100,12 @@ fn fragmentMain(@location(0) vUv: vec2f) -> @location(0) vec4f {
     let gx = (s00 - s20) + 2.0 * (s01 - s21) + (s02 - s22);
     let gy = (s00 + 2.0 * s10 + s20) - (s02 + 2.0 * s12 + s22);
 
+    // normalScale gates the Sobel gradient: 0 = flat normal (no bump), 1 = full bump.
+    let scaledGx = gx * normalScale;
+    let scaledGy = gy * normalScale;
+
     // ── Bump normal (lacquer: normalize(vec3(gradX, gradY, depth))) ───────────
-    let normal = normalize(vec3f(gx, gy, uniforms.depth));
+    let normal = normalize(vec3f(scaledGx, scaledGy, roughDepth));
 
     // ── Light & view directions (lacquer style) ───────────────────────────────
     let lightPos = vec2f(uniforms.lightX, uniforms.lightY);
@@ -95,10 +115,12 @@ fn fragmentMain(@location(0) vUv: vec2f) -> @location(0) vec4f {
     // ── Lambertian diffuse ────────────────────────────────────────────────────
     let diff = max(dot(normal, lightDir), 0.0) * uniforms.diffuseAmt;
 
-    // ── Phong specular (reflect, not half-vector — matches lacquer.glsl) ──────
+    // ── Phong specular — roughness narrows/dims the highlight ──────────────────
+    // Smooth surfaces (roughness≈0) → tight bright gloss; rough (≈1) → broad dim scatter
+    let specExp = uniforms.lightSize * mix(64.0, 1.0, roughness);
+    let specAmt = uniforms.lightIntensity * mix(1.0, 0.1, roughness);
     let reflectDir = reflect(-lightDir, normal);
-    let spec = pow(max(dot(viewDir, reflectDir), 0.0), uniforms.lightSize)
-               * uniforms.lightIntensity;
+    let spec = pow(max(dot(viewDir, reflectDir), 0.0), specExp) * specAmt;
 
     // ── Composite (lacquer: texColor * diff + white * spec) ───────────────────
     // ambient lifts the dark floor so unlit regions stay readable.
@@ -112,19 +134,24 @@ fn fragmentMain(@location(0) vUv: vec2f) -> @location(0) vec4f {
             lightX:         0.5,   // default: screen centre
             lightY:         0.5,
 
-            // ── surface bumpiness (ZGEdepth in lacquer) ────────────────────────
-            depth:          2.5,   // ~1.0 gives a good raised feel; higher = flatter
+            // ── surface bumpiness ─────────────────────────────────────────────
+            // Lower depth = smaller Z in normalize(gx, gy, Z) = steeper tilts
+            // from Sobel gradients = more visible bump relief on the background.
+            // Cards use normalScale:0.0 so depth has no effect on them.
+            depth:          0.5,
 
             // ── light elevation ────────────────────────────────────────────────
             lightZ:         0.5,   // Z component of lightDir vec3 (as in lacquer)
 
-            // ── specular (ZGElightSize / ZGElightIntensity in lacquer) ─────────
-            lightSize:      1.0,  // shininess exponent; higher = tighter gloss
-            lightIntensity:  0.1,  // specular multiplier
+            // ── specular ──────────────────────────────────────────────────────
+            lightSize:      1.5,   // tighter specular base for card gloss
+            lightIntensity: 0.18,  // slightly stronger peak for glossy card backs
 
             // ── diffuse & ambient ──────────────────────────────────────────────
-            diffuseAmt:     0.85,   // full Lambertian; reduce for subtler roll
-            ambient:        0.3,   // small floor so unlit areas are not pure black
+            // Full Lambertian so background ridges roll clearly across the surface.
+            // Lower ambient creates more shadow contrast between bump facets.
+            diffuseAmt:     1.0,
+            ambient:        0.18,
         }
     };
 }

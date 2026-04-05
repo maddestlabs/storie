@@ -2,7 +2,7 @@
 name: "Klondike Solitaire"
 theme: "nord"
 font: "Cutive+Mono"
-shaders: "lightsoft+blurgradual+lightvignette"
+shaders: "filmfx+lightvignette"
 ---
 
 Classic Klondike solitaire. Drag cards between tableau columns, move runs to foundations, deal from the stock.
@@ -22,7 +22,9 @@ var RANKS       = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
 var SUIT_RED    = [false, true, true, false]; // index matches SUITS
 var NUM_TABLEAU = 7;
 var STOCK_DEAL  = 1;   // cards dealt per click (set to 3 for draw-3 variant)
-var DECK_AGE    = 0.6; // 0 = pristine (no aging), 1 = very worn; scales all card age effects
+var DECK_AGE    = 1.0; // 0 = pristine (no aging), 1 = very worn; scales all card age effects
+var FELT_TINT   = 0.5; // 0 = original texture unaltered, 1 = fully recoloured by theme felt colour
+var BG_SCALE    = 0.5; // tile size multiplier: >1 zooms in (larger tiles), <1 zooms out (more tiles)
 
 // ─── Card helpers ─────────────────────────────────────────────────────────────
 function cardId(suit, rank) { return suit * 13 + rank; }         // 0-51
@@ -554,9 +556,43 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
   var cosA = Math.cos(angRad); var sinA = Math.sin(angRad);
   var jcx = jx + cw * 0.5; var jcy = jy + ch * 0.5;
 
-  // Shadow (not rotated — fine at small angles)
-  if (!isDragging) {
+  // Drag lift: scale the card up ~4% when being dragged, simulating it held above the
+  // felt. The card grows outward from the pick-up centre point. jx/jy/cw/ch are all
+  // local copies so this is safe; jcx/jcy are recomputed after rounding.
+  if (isDragging) {
+    var _liftS = 1.04;
+    cw = Math.round(cw * _liftS);
+    ch = Math.round(ch * _liftS);
+    jx = Math.round(jcx - cw * 0.5);
+    jy = Math.round(jcy - ch * 0.5);
+    jcx = jx + cw * 0.5;
+    jcy = jy + ch * 0.5;
+  }
+
+  // Shadow — three-layer spread when dragging (simulates card ~15px above the felt);
+  // single tight rect when at rest. Offsets and alphas chosen so the total perceived
+  // shadow density is comparable to the resting shadow despite the larger spread.
+  if (isDragging) {
+    ui.rect(jx + 14, jy + 18, cw, ch, ui.colors.rgba(0, 0, 0, 3));  // wide penumbra
+    ui.rect(jx + 10, jy + 13, cw, ch, ui.colors.rgba(0, 0, 0, 5));  // mid shadow
+    ui.rect(jx + 6,  jy + 8,  cw, ch, ui.colors.rgba(0, 0, 0, 8));  // umbra core
+  } else {
     ui.rect(jx + 3, jy + 3, cw, ch, pal.cardShadow);
+  }
+
+  // Set material before the mask so ALL draws inside (base, vignette strips,
+  // sepia overlays, text glyphs) share the same flat-or-bumpy surface intent.
+  // Material is now sticky — one call covers everything until the next setMaterial.
+  if (faceUp && id >= 0) {
+    // Card face: subtle paper relief — Sobel picks up the card border, text, and
+    // vignette edges as very gentle ridges. normalScale:0.12 is enough to feel
+    // slightly textured without looking bumpy. roughness:0.55 → soft diffuse roll.
+    ui.setMaterial({ roughness: 0.55, normalScale: 0.18 });
+  } else {
+    // Card back: slightly smoother than the face (laminated surface).
+    // A little normalScale lets the center panel edge and border show as a
+    // faint raised frame under raking light. Low roughness → visible gloss.
+    ui.setMaterial({ roughness: 0.3, normalScale: 0.18 });
   }
 
   // Card mask — rotated beveled polygon when angle is significant, else rounded rect
@@ -658,10 +694,11 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
     // Use measureTextWidth for the actual emoji render width (may exceed charWidth),
     // which is why the old _bCw-based centering drifted rightward.
     var _bCh = ui.metrics.charHeight || 14;
-    var _bGW = ui.metrics.measureTextWidth('🎕') || (ui.metrics.charWidth || 10);
+    var char = '⚜';
+    var _bGW = ui.metrics.measureTextWidth(char) || (ui.metrics.charWidth || 10);
     var _bFillScale = Math.min(bPanW / _bGW, bPanH / _bCh);
     var _bScale = _bFillScale * 0.95;
-    ui.text('🎕', bPanX + Math.floor((bPanW - _bGW * _bScale) * 0.5),
+    ui.text(char, bPanX + Math.floor((bPanW - _bGW * _bScale) * 0.5),
                   bPanY + Math.floor((bPanH - _bCh * _bScale) * 0.5),
                   pal.cardBack, _bScale);
 
@@ -737,19 +774,37 @@ function drawGame(L, pal) {
     scope.__bgLogged = true;
   }
   if (_bgId && _bgW > 0 && _bgH > 0) {
-    for (var _ty = 0; _ty < L.H; _ty += _bgH) {
-      for (var _tx = 0; _tx < L.W; _tx += _bgW) {
-        var _tw = Math.min(_bgW, L.W - _tx);
-        var _th = Math.min(_bgH, L.H - _ty);
-        if (_tw === _bgW && _th === _bgH) {
-          ui.image(_bgId, _tx, _ty, _bgW, _bgH);
+    // Background texture: full Sobel bump on the wood/cloth image.
+    // roughness:0.9 → low roughDepth Z → steep gradients → noticeable ridge relief.
+    // normalScale:1.0 → Sobel gradients fully unscaled.
+    ui.setMaterial({ roughness: 0.9, normalScale: 1.0 });
+    // Compute blended tint: lerp each channel from 255 (white = no-op) toward pal.felt.
+    var _ft = Math.max(0, Math.min(1, FELT_TINT));
+    var _fR = (_ft <= 0) ? 255 : Math.round(255 + (((pal.felt >>> 24) & 255) - 255) * _ft);
+    var _fG = (_ft <= 0) ? 255 : Math.round(255 + (((pal.felt >>> 16) & 255) - 255) * _ft);
+    var _fB = (_ft <= 0) ? 255 : Math.round(255 + (((pal.felt >>>  8) & 255) - 255) * _ft);
+    var _bgTint = ui.colors.rgba(_fR, _fG, _fB, 255);
+    // Scaled tile dimensions: native size × BG_SCALE. Loop step uses scaled size;
+    // UV crop fractions are relative to the scaled tile so edges stay seamless.
+    var _bgTW = Math.max(1, Math.round(_bgW * BG_SCALE));
+    var _bgTH = Math.max(1, Math.round(_bgH * BG_SCALE));
+    for (var _ty = 0; _ty < L.H; _ty += _bgTH) {
+      for (var _tx = 0; _tx < L.W; _tx += _bgTW) {
+        var _tw = Math.min(_bgTW, L.W - _tx);
+        var _th = Math.min(_bgTH, L.H - _ty);
+        if (_tw === _bgTW && _th === _bgTH) {
+          ui.image(_bgId, _tx, _ty, _bgTW, _bgTH, { tint: _bgTint });
         } else {
           // Partial tile at right/bottom edges – draw with a cropped UV region.
-          ui.image(_bgId, _tx, _ty, _tw, _th, { uv: { u: 0, v: 0, w: _tw / _bgW, h: _th / _bgH } });
+          ui.image(_bgId, _tx, _ty, _tw, _th, { tint: _bgTint, uv: { u: 0, v: 0, w: _tw / _bgTW, h: _th / _bgTH } });
         }
       }
     }
   } else {
+    // Solid felt fallback: rough textile. normalScale:1.0 ready for when a
+    // patterned felt texture is added; solid color has no Sobel gradient so
+    // it renders flat either way.
+    ui.setMaterial({ roughness: 0.95, normalScale: 1.0 });
     ui.rect(0, 0, L.W, L.H, pal.felt);
   }
 
@@ -859,7 +914,7 @@ scope._bgTexId  = null;  // paper texture image id once loaded
 scope._bgTexW   = 0;
 scope._bgTexH   = 0;
 // Kick off async texture load.
-ui.loadImageFromURL('assets/img/Paper004_1K-JPG_Color.jpg').then(function(id) {
+ui.loadImageFromURL('assets/img/Fabric030_1K.jpg').then(function(id) {
   console.log('[klondike] bg texture load result:', id);
   if (!id) { console.warn('[klondike] bg texture failed to load'); return; }
   scope._bgTexId = id;
@@ -878,10 +933,10 @@ scope._layout = L;
 // ── Mouse light-follow ───────────────────────────────────────────────────────
 var _mW = ui.metrics.canvasWidth  || 1280;
 var _mH = ui.metrics.canvasHeight || 720;
-shader.setUniform('lightsobel', 'lightX', ui.pointer.x() / _mW);
-shader.setUniform('lightsobel', 'lightY', ui.pointer.y() / _mH);
-shader.setUniform('lightsoft', 'lightX', ui.pointer.x() / _mW);
-shader.setUniform('lightsoft', 'lightY', ui.pointer.y() / _mH);
+//shader.setUniform('lightsobel', 'lightX', ui.pointer.x() / _mW);
+//shader.setUniform('lightsobel', 'lightY', ui.pointer.y() / _mH);
+//shader.setUniform('lightsoft', 'lightX', ui.pointer.x() / _mW);
+//shader.setUniform('lightsoft', 'lightY', ui.pointer.y() / _mH);
 // ── End mouse light-follow ────────────────────────────────────────────────────
 
 // Handle Replay / New Game button clicks

@@ -4623,6 +4623,21 @@ export class StorieEngine {
           if (!ui) return;
           ui.setClearColor(color);
         },
+        /**
+         * Set material properties for all subsequent draw calls (rect / text / image).
+         * Behaves like a colour setting — sticky until overridden, not one-shot.
+         * The values are written into the material render target so post-process
+         * lighting shaders can perform per-pixel PBR shading.
+         *
+         * Pass `null` to reset to defaults (roughness=0.5, normalScale=1.0, metallic=0, emissive=0).
+         *
+         * All values are clamped to [0, 1].
+         */
+        setMaterial: (mat: { roughness?: number; normalScale?: number; metallic?: number; emissive?: number } | null) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.setMaterial(mat);
+        },
         rect: (x: number, y: number, w: number, h: number, color: Color) => {
           const ui = engine.ensureWebGPUUI();
           if (!ui) return;
@@ -9465,6 +9480,10 @@ ${exportVars}
           }
           
           this.webgpuUIRenderer.flush();
+
+          // Thread the material render target to the compositor so the shader
+          // chain can access per-pixel material properties (Phase 1 PBR).
+          this.compositor.setMaterialTexture(this.webgpuUIRenderer.getMaterialTexture());
         }
 
         // Only auto-composite in auto mode. In manual mode, user code controls

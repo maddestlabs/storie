@@ -2031,6 +2031,9 @@ class Compositor {
     __publicField(this, "shaderManager", null);
     // External shader chain manager (for multi-pass effects)
     __publicField(this, "shaderChainManager", null);
+    // Material render target produced by WebGPUUIRenderer; threaded to the shader chain
+    // so lighting shaders can read per-pixel material properties (roughness, normalScale, etc.).
+    __publicField(this, "materialTexture", null);
     // Offscreen render target used when applying a post-process shader
     __publicField(this, "postProcessTexture", null);
     __publicField(this, "initialized", false);
@@ -2072,6 +2075,14 @@ class Compositor {
    */
   setShaderChainManager(manager) {
     this.shaderChainManager = manager;
+  }
+  /**
+   * Set the material render target produced by WebGPUUIRenderer.
+   * Called each frame (after ui.flush()) so the shader chain receives the
+   * freshly-rendered per-pixel material properties for the current frame.
+   */
+  setMaterialTexture(texture) {
+    this.materialTexture = texture;
   }
   ensurePostProcessTexture() {
     const width = this.canvas.width;
@@ -2372,7 +2383,8 @@ class Compositor {
           applied = this.shaderChainManager.applyChain(
             compositeTargetTexture,
             currentTexture,
-            commandEncoder
+            commandEncoder,
+            this.materialTexture ?? void 0
           );
         } catch (error) {
           console.error("[Compositor] Failed to apply shader chain:", error);
@@ -2383,7 +2395,8 @@ class Compositor {
           applied = this.shaderManager.applyShader(
             compositeTargetTexture,
             currentTexture,
-            commandEncoder
+            commandEncoder,
+            this.materialTexture ?? void 0
           );
         } catch (error) {
           console.error("[Compositor] Failed to apply ShaderManager post-process:", error);
@@ -19448,6 +19461,14 @@ class WebGPUUIRenderer {
     __publicField(this, "depthStencilTexture", null);
     __publicField(this, "depthStencilW", 0);
     __publicField(this, "depthStencilH", 0);
+    // Second render target for per-pixel material properties: { roughness, normalScale, metallic, emissive }
+    // Format: rgba8unorm — matches GLTF metallic-roughness channel layout.
+    __publicField(this, "materialTexture", null);
+    __publicField(this, "materialW", 0);
+    __publicField(this, "materialH", 0);
+    // Pending material for the next draw call. Reset to defaults after each draw.
+    // Default: roughness=0.5, normalScale=1.0, metallic=0.0, emissive=0.0
+    __publicField(this, "pendingMaterial", [0.5, 1, 0, 0]);
     __publicField(this, "rectPipeline");
     __publicField(this, "textPipeline");
     __publicField(this, "maskPushPipeline");
@@ -19470,21 +19491,21 @@ class WebGPUUIRenderer {
     __publicField(this, "polyData");
     __publicField(this, "polyVertexCount", 0);
     // Per-instance data
-    // Rect: 8 floats => x,y,w,h + r,g,b,a
+    // Rect: 12 floats => x,y,w,h + r,g,b,a + matR,matG,matB,matA
     __publicField(this, "rectData");
     __publicField(this, "rectCount", 0);
     // Per-instance clip rect (x,y,w,h) in pixels; -1 means no clip
     __publicField(this, "rectClipData");
     // Per-instance stencil reference (mask depth)
     __publicField(this, "rectStencilRef");
-    // Text: 12 floats => x,y,w,h + r,g,b,a + u,v,uw,uh
+    // Text: 16 floats => x,y,w,h + r,g,b,a + u,v,uw,uh + matR,matG,matB,matA
     __publicField(this, "textData");
     __publicField(this, "textCount", 0);
     // Per-instance clip rect (x,y,w,h) in pixels; -1 means no clip
     __publicField(this, "textClipData");
     // Per-instance stencil reference (mask depth)
     __publicField(this, "textStencilRef");
-    // Image: 12 floats => x,y,w,h + r,g,b,a + u,v,uw,uh
+    // Image: 16 floats => x,y,w,h + r,g,b,a + u,v,uw,uh + matR,matG,matB,matA
     __publicField(this, "imageData");
     __publicField(this, "imageCount", 0);
     __publicField(this, "imageClipData");
@@ -19550,15 +19571,15 @@ class WebGPUUIRenderer {
       bindGroupLayouts: [this.texturedBindGroupLayout]
     });
     this.rectInstanceBuffer = this.device.createBuffer({
-      size: 8 * 4 * 4096,
+      size: 12 * 4 * 4096,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
     this.textInstanceBuffer = this.device.createBuffer({
-      size: 12 * 4 * 4096,
+      size: 16 * 4 * 4096,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
     this.imageInstanceBuffer = this.device.createBuffer({
-      size: 12 * 4 * 4096,
+      size: 16 * 4 * 4096,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
     this.polyVertexBuffer = this.device.createBuffer({
@@ -19566,9 +19587,9 @@ class WebGPUUIRenderer {
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
     this.polyData = new Float32Array(2 * 8192);
-    this.rectData = new Float32Array(8 * 4096);
-    this.textData = new Float32Array(12 * 4096);
-    this.imageData = new Float32Array(12 * 4096);
+    this.rectData = new Float32Array(12 * 4096);
+    this.textData = new Float32Array(16 * 4096);
+    this.imageData = new Float32Array(16 * 4096);
     this.rectClipData = new Int32Array(4 * 4096);
     this.textClipData = new Int32Array(4 * 4096);
     this.imageClipData = new Int32Array(4 * 4096);
@@ -19611,6 +19632,39 @@ class WebGPUUIRenderer {
   getTextureFormat() {
     return this.textureFormat;
   }
+  /**
+   * Return the current material render target, or null if not yet created
+   * (first flush() hasn't run yet). Sized to match the last flush target.
+   * Thread this through Compositor → ShaderChainManager for PBR lighting.
+   */
+  getMaterialTexture() {
+    return this.materialTexture;
+  }
+  /**
+   * Set the material properties for all subsequent draw calls until changed again.
+   * Behaves like a colour setting — sticky until overridden, not one-shot.
+   * Call `setMaterial(null)` to restore defaults.
+   *
+   * Channel layout (matches GLTF metallic-roughness):
+   *   roughness   — R channel, 0=mirror-smooth, 1=fully diffuse   (default 0.5)
+   *   normalScale — G channel, Sobel/normal-map strength           (default 1.0)
+   *   metallic    — B channel, specular tint toward albedo colour  (default 0.0)
+   *   emissive    — A channel, additive glow bypass               (default 0.0)
+   *
+   * Pass null to immediately restore defaults.
+   */
+  setMaterial(mat) {
+    if (!mat) {
+      this.pendingMaterial = [0.5, 1, 0, 0];
+      return;
+    }
+    this.pendingMaterial = [
+      mat.roughness !== void 0 ? Math.max(0, Math.min(1, mat.roughness)) : 0.5,
+      mat.normalScale !== void 0 ? Math.max(0, Math.min(1, mat.normalScale)) : 1,
+      mat.metallic !== void 0 ? Math.max(0, Math.min(1, mat.metallic)) : 0,
+      mat.emissive !== void 0 ? Math.max(0, Math.min(1, mat.emissive)) : 0
+    ];
+  }
   resize(width, height) {
     const nextWidth = Math.max(1, Math.floor(width));
     const nextHeight = Math.max(1, Math.floor(height));
@@ -19623,6 +19677,15 @@ class WebGPUUIRenderer {
     }
     this.texture = this.createRenderTexture(this.width, this.height);
     this.writeUniforms(this.width, this.height);
+    this.materialW = 0;
+    this.materialH = 0;
+    if (this.materialTexture) {
+      try {
+        this.materialTexture.destroy();
+      } catch {
+      }
+      this.materialTexture = null;
+    }
   }
   setClearColor(color) {
     if (color === void 0 || color === null) {
@@ -19662,6 +19725,31 @@ class WebGPUUIRenderer {
       usage: GPUTextureUsage.RENDER_ATTACHMENT
     });
     return this.depthStencilTexture;
+  }
+  /**
+   * Ensure the material render target exists and matches the requested dimensions.
+   * Recreated lazily on first use and after resize().
+   */
+  ensureMaterialTexture(width, height) {
+    var _a;
+    const w = Math.max(1, Math.floor(width));
+    const h = Math.max(1, Math.floor(height));
+    if (this.materialTexture && this.materialW === w && this.materialH === h) {
+      return this.materialTexture;
+    }
+    try {
+      (_a = this.materialTexture) == null ? void 0 : _a.destroy();
+    } catch {
+    }
+    this.materialW = w;
+    this.materialH = h;
+    this.materialTexture = this.device.createTexture({
+      size: { width: w, height: h },
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      label: "ui_materialTexture"
+    });
+    return this.materialTexture;
   }
   writeRectClip(index, clipOverride) {
     const co = index * 4;
@@ -19717,7 +19805,7 @@ class WebGPUUIRenderer {
     const clip = this.currentClip ? { x: this.currentClip.x, y: this.currentClip.y, w: this.currentClip.w, h: this.currentClip.h } : null;
     this.maskStack.push({ kind: "rect", x, y, w, h, radius: 0, clip, depthBeforePush: depthBefore });
     const [r2, g, b] = [0, 0, 0];
-    const o = this.rectCount * 8;
+    const o = this.rectCount * 12;
     this.rectData[o + 0] = x;
     this.rectData[o + 1] = y;
     this.rectData[o + 2] = w;
@@ -19726,6 +19814,10 @@ class WebGPUUIRenderer {
     this.rectData[o + 5] = g;
     this.rectData[o + 6] = b;
     this.rectData[o + 7] = 0;
+    this.rectData[o + 8] = 0.5;
+    this.rectData[o + 9] = 1;
+    this.rectData[o + 10] = 0;
+    this.rectData[o + 11] = 0;
     this.writeRectClip(this.rectCount, clip);
     this.rectStencilRef[this.rectCount] = depthBefore;
     this.drawCommands.push({ kind: "rect", mode: "maskPush", start: this.rectCount, count: 1 });
@@ -19778,7 +19870,7 @@ class WebGPUUIRenderer {
     if (!top || top.kind === "rect") {
       const rect = top ?? { x: 0, y: 0, w: 0, h: 0, radius: 0, clip: null, depthBeforePush: this.maskDepth - 1 };
       const [r2, g, b] = [0, 0, 0, 0];
-      const o = this.rectCount * 8;
+      const o = this.rectCount * 12;
       this.rectData[o + 0] = rect.x;
       this.rectData[o + 1] = rect.y;
       this.rectData[o + 2] = rect.w;
@@ -19787,6 +19879,10 @@ class WebGPUUIRenderer {
       this.rectData[o + 5] = g;
       this.rectData[o + 6] = b;
       this.rectData[o + 7] = rect.radius;
+      this.rectData[o + 8] = 0.5;
+      this.rectData[o + 9] = 1;
+      this.rectData[o + 10] = 0;
+      this.rectData[o + 11] = 0;
       this.writeRectClip(this.rectCount, rect.clip);
       this.rectStencilRef[this.rectCount] = depthAtPop;
       this.drawCommands.push({ kind: "rect", mode: "maskPop", start: this.rectCount, count: 1 });
@@ -19917,7 +20013,7 @@ class WebGPUUIRenderer {
     if (w <= 0 || h <= 0) return;
     if (this.rectCount >= 4096) return;
     const [r2, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color));
-    const o = this.rectCount * 8;
+    const o = this.rectCount * 12;
     this.rectData[o + 0] = x;
     this.rectData[o + 1] = y;
     this.rectData[o + 2] = w;
@@ -19926,6 +20022,10 @@ class WebGPUUIRenderer {
     this.rectData[o + 5] = g;
     this.rectData[o + 6] = b;
     this.rectData[o + 7] = a;
+    this.rectData[o + 8] = this.pendingMaterial[0];
+    this.rectData[o + 9] = this.pendingMaterial[1];
+    this.rectData[o + 10] = this.pendingMaterial[2];
+    this.rectData[o + 11] = this.pendingMaterial[3];
     this.writeRectClip(this.rectCount);
     this.rectStencilRef[this.rectCount] = this.maskDepth;
     this.drawCommands.push({ kind: "rect", mode: "fill", start: this.rectCount, count: 1 });
@@ -19948,7 +20048,7 @@ class WebGPUUIRenderer {
       const glyph = useSizedGlyph ? this.atlas.getGlyphAtSize(ch, targetFontPx) : this.atlas.getGlyph(ch);
       const quadW = useSizedGlyph ? glyph.pixelWidth || charW : Math.max(baseCharW, glyph.pixelWidth || 0) * s;
       const quadH = useSizedGlyph ? glyph.pixelHeight || charH : charH;
-      const o = this.textCount * 12;
+      const o = this.textCount * 16;
       this.textData[o + 0] = cursorX;
       this.textData[o + 1] = y;
       this.textData[o + 2] = quadW;
@@ -19961,6 +20061,10 @@ class WebGPUUIRenderer {
       this.textData[o + 9] = glyph.v;
       this.textData[o + 10] = glyph.w;
       this.textData[o + 11] = glyph.h;
+      this.textData[o + 12] = this.pendingMaterial[0];
+      this.textData[o + 13] = this.pendingMaterial[1];
+      this.textData[o + 14] = this.pendingMaterial[2];
+      this.textData[o + 15] = this.pendingMaterial[3];
       this.writeTextClip(this.textCount);
       this.textStencilRef[this.textCount] = this.maskDepth;
       this.textCount++;
@@ -20019,7 +20123,7 @@ class WebGPUUIRenderer {
     const tint = (options == null ? void 0 : options.tint) ?? { r: 255, g: 255, b: 255, a: 1 };
     const [r2, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(tint));
     const uv = (options == null ? void 0 : options.uv) ?? { u: 0, v: 0, w: 1, h: 1 };
-    const o = this.imageCount * 12;
+    const o = this.imageCount * 16;
     this.imageData[o + 0] = x;
     this.imageData[o + 1] = y;
     this.imageData[o + 2] = w;
@@ -20032,6 +20136,10 @@ class WebGPUUIRenderer {
     this.imageData[o + 9] = uv.v;
     this.imageData[o + 10] = uv.w;
     this.imageData[o + 11] = uv.h;
+    this.imageData[o + 12] = this.pendingMaterial[0];
+    this.imageData[o + 13] = this.pendingMaterial[1];
+    this.imageData[o + 14] = this.pendingMaterial[2];
+    this.imageData[o + 15] = this.pendingMaterial[3];
     this.writeImageClip(this.imageCount);
     this.imageStencilRef[this.imageCount] = this.maskDepth;
     this.drawCommands.push({ kind: "image", imageId, start: this.imageCount, count: 1 });
@@ -20069,7 +20177,7 @@ class WebGPUUIRenderer {
       this.lastAtlasSampler = null;
     }
     if (this.rectCount > 0) {
-      const byteCount = this.rectCount * 8 * 4;
+      const byteCount = this.rectCount * 12 * 4;
       this.device.queue.writeBuffer(
         this.rectInstanceBuffer,
         0,
@@ -20079,7 +20187,7 @@ class WebGPUUIRenderer {
       );
     }
     if (this.textCount > 0) {
-      const byteCount = this.textCount * 12 * 4;
+      const byteCount = this.textCount * 16 * 4;
       this.device.queue.writeBuffer(
         this.textInstanceBuffer,
         0,
@@ -20089,7 +20197,7 @@ class WebGPUUIRenderer {
       );
     }
     if (this.imageCount > 0) {
-      const byteCount = this.imageCount * 12 * 4;
+      const byteCount = this.imageCount * 16 * 4;
       this.device.queue.writeBuffer(
         this.imageInstanceBuffer,
         0,
@@ -20109,13 +20217,23 @@ class WebGPUUIRenderer {
       );
     }
     const commandEncoder = this.device.createCommandEncoder();
+    const matTex = this.ensureMaterialTexture(tw, th);
     const pass = commandEncoder.beginRenderPass({
-      colorAttachments: [{
-        view: targetTexture.createView(),
-        clearValue: clear,
-        loadOp: "clear",
-        storeOp: "store"
-      }],
+      colorAttachments: [
+        {
+          view: targetTexture.createView(),
+          clearValue: clear,
+          loadOp: "clear",
+          storeOp: "store"
+        },
+        {
+          // Material render target: clear to defaults (roughness=0.5, normalScale=1.0, metallic=0, emissive=0)
+          view: matTex.createView(),
+          clearValue: { r: 0.5, g: 1, b: 0, a: 0 },
+          loadOp: "clear",
+          storeOp: "store"
+        }
+      ],
       depthStencilAttachment: {
         view: depthStencil.createView(),
         depthClearValue: 1,
@@ -20314,6 +20432,12 @@ class WebGPUUIRenderer {
         struct VSOut {
           @builtin(position) position: vec4f,
           @location(0) color: vec4f,
+          @location(1) material: vec4f,
+        }
+
+        struct FSOut {
+          @location(0) color: vec4f,
+          @location(1) material: vec4f,
         }
 
         @vertex
@@ -20322,6 +20446,7 @@ class WebGPUUIRenderer {
           @builtin(instance_index) instanceIndex: u32,
           @location(0) posSize: vec4f,
           @location(1) color: vec4f,
+          @location(2) material: vec4f,
         ) -> VSOut {
           var quad = array<vec2f, 6>(
             vec2f(0.0, 0.0),
@@ -20345,12 +20470,16 @@ class WebGPUUIRenderer {
           var out: VSOut;
           out.position = vec4f(clip, 0.0, 1.0);
           out.color = color;
+          out.material = material;
           return out;
         }
 
         @fragment
-        fn fs_main(input: VSOut) -> @location(0) vec4f {
-          return input.color;
+        fn fs_main(input: VSOut) -> FSOut {
+          var out: FSOut;
+          out.color = input.color;
+          out.material = input.material;
+          return out;
         }
       `
     });
@@ -20360,24 +20489,34 @@ class WebGPUUIRenderer {
         module: shader,
         entryPoint: "vs_main",
         buffers: [{
-          arrayStride: 32,
+          arrayStride: 48,
           stepMode: "instance",
           attributes: [
             { shaderLocation: 0, offset: 0, format: "float32x4" },
-            { shaderLocation: 1, offset: 16, format: "float32x4" }
+            // posSize
+            { shaderLocation: 1, offset: 16, format: "float32x4" },
+            // color
+            { shaderLocation: 2, offset: 32, format: "float32x4" }
+            // material
           ]
         }]
       },
       fragment: {
         module: shader,
         entryPoint: "fs_main",
-        targets: [{
-          format: this.textureFormat,
-          blend: {
-            color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
-            alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" }
+        targets: [
+          {
+            format: this.textureFormat,
+            blend: {
+              color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+              alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" }
+            }
+          },
+          {
+            // Material target: no blending — last drawn element's material wins.
+            format: "rgba8unorm"
           }
-        }]
+        ]
       },
       depthStencil: {
         format: "depth24plus-stencil8",
@@ -20474,7 +20613,8 @@ class WebGPUUIRenderer {
         module: shader,
         entryPoint: "vs_main",
         buffers: [{
-          arrayStride: 32,
+          arrayStride: 48,
+          // 12 floats; shader only reads first 8 (posSize + color), rest ignored
           stepMode: "instance",
           attributes: [
             { shaderLocation: 0, offset: 0, format: "float32x4" },
@@ -20485,10 +20625,11 @@ class WebGPUUIRenderer {
       fragment: {
         module: shader,
         entryPoint: "fs_main",
-        targets: [{
-          format: this.textureFormat,
-          writeMask: 0
-        }]
+        targets: [
+          { format: this.textureFormat, writeMask: 0 },
+          // Material target: writeMask=0 — mask passes do not write material data.
+          { format: "rgba8unorm", writeMask: 0 }
+        ]
       },
       depthStencil: {
         format: "depth24plus-stencil8",
@@ -20544,10 +20685,11 @@ class WebGPUUIRenderer {
       fragment: {
         module: shader,
         entryPoint: "fs_main",
-        targets: [{
-          format: this.textureFormat,
-          writeMask: 0
-        }]
+        targets: [
+          { format: this.textureFormat, writeMask: 0 },
+          // Material target: writeMask=0 — poly mask passes do not write material data.
+          { format: "rgba8unorm", writeMask: 0 }
+        ]
       },
       depthStencil: {
         format: "depth24plus-stencil8",
@@ -20573,6 +20715,12 @@ class WebGPUUIRenderer {
           @builtin(position) position: vec4f,
           @location(0) uv: vec2f,
           @location(1) color: vec4f,
+          @location(2) material: vec4f,
+        }
+
+        struct FSOut {
+          @location(0) color: vec4f,
+          @location(1) material: vec4f,
         }
 
         @vertex
@@ -20582,6 +20730,7 @@ class WebGPUUIRenderer {
           @location(0) posSize: vec4f,
           @location(1) color: vec4f,
           @location(2) uvRect: vec4f,
+          @location(3) material: vec4f,
         ) -> VSOut {
           var quad = array<vec2f, 6>(
             vec2f(0.0, 0.0),
@@ -20606,13 +20755,17 @@ class WebGPUUIRenderer {
           out.position = vec4f(clip, 0.0, 1.0);
           out.uv = uvRect.xy + quad[vertexIndex] * uvRect.zw;
           out.color = color;
+          out.material = material;
           return out;
         }
 
         @fragment
-        fn fs_main(input: VSOut) -> @location(0) vec4f {
+        fn fs_main(input: VSOut) -> FSOut {
           let c = textureSample(tex, texSampler, input.uv);
-          return vec4f(input.color.rgb * c.rgb, input.color.a * c.a);
+          var out: FSOut;
+          out.color = vec4f(input.color.rgb * c.rgb, input.color.a * c.a);
+          out.material = input.material;
+          return out;
         }
       `
     });
@@ -20622,25 +20775,37 @@ class WebGPUUIRenderer {
         module: shader,
         entryPoint: "vs_main",
         buffers: [{
-          arrayStride: 48,
+          arrayStride: 64,
+          // 16 floats: posSize + color + uvRect + material
           stepMode: "instance",
           attributes: [
             { shaderLocation: 0, offset: 0, format: "float32x4" },
+            // posSize
             { shaderLocation: 1, offset: 16, format: "float32x4" },
-            { shaderLocation: 2, offset: 32, format: "float32x4" }
+            // color
+            { shaderLocation: 2, offset: 32, format: "float32x4" },
+            // uvRect
+            { shaderLocation: 3, offset: 48, format: "float32x4" }
+            // material
           ]
         }]
       },
       fragment: {
         module: shader,
         entryPoint: "fs_main",
-        targets: [{
-          format: this.textureFormat,
-          blend: {
-            color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
-            alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" }
+        targets: [
+          {
+            format: this.textureFormat,
+            blend: {
+              color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha", operation: "add" },
+              alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha", operation: "add" }
+            }
+          },
+          {
+            // Material target: no blending — last drawn element's material wins.
+            format: "rgba8unorm"
           }
-        }]
+        ]
       },
       depthStencil: {
         format: "depth24plus-stencil8",
@@ -20785,6 +20950,8 @@ class ShaderManager {
     __publicField(this, "initialized", false);
     // Support pairing `wgsl vertex:name` + `wgsl fragment:name`
     __publicField(this, "pendingVertexShaders", /* @__PURE__ */ new Map());
+    // 1×1 rgba8unorm fallback used when a shader declares materialTexture but none is available.
+    __publicField(this, "defaultMaterialTexture", null);
     this.device = device;
     this.format = format || navigator.gpu.getPreferredCanvasFormat();
   }
@@ -20828,6 +20995,19 @@ class ShaderManager {
       addressModeV: "clamp-to-edge"
     });
     this.resources = { vertexBuffer, sampler };
+    this.defaultMaterialTexture = this.device.createTexture({
+      size: { width: 1, height: 1 },
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      label: "defaultMaterialTexture"
+    });
+    this.device.queue.writeTexture(
+      { texture: this.defaultMaterialTexture },
+      new Uint8Array([128, 255, 0, 0]),
+      // roughness≈0.5, normalScale≈1.0, metallic=0, emissive=0
+      { bytesPerRow: 4 },
+      { width: 1, height: 1 }
+    );
     this.initialized = true;
     console.log("[ShaderManager] Initialized");
   }
@@ -20940,7 +21120,32 @@ class ShaderManager {
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         label: `${shader.name}_uniforms`
       });
-      const bindGroupLayout = this.device.createBindGroupLayout({
+      const usesMaterialTexture = /\bmaterialTexture\b/.test(mergedCode);
+      const bindGroupLayout = usesMaterialTexture ? this.device.createBindGroupLayout({
+        label: `${shader.name}_bindGroupLayout`,
+        entries: [
+          {
+            binding: 0,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: { sampleType: "float" }
+          },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.FRAGMENT,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: { sampleType: "float" }
+          },
+          {
+            binding: 3,
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+            buffer: { type: "uniform" }
+          }
+        ]
+      }) : this.device.createBindGroupLayout({
         label: `${shader.name}_bindGroupLayout`,
         entries: [
           {
@@ -21001,7 +21206,8 @@ class ShaderManager {
         uniformBuffer,
         uniformLayout,
         uniformValues: /* @__PURE__ */ new Map(),
-        bindGroupLayout
+        bindGroupLayout,
+        usesMaterialTexture
       };
       for (const uniformName of mergedShader.uniforms) {
         compiled.uniformValues.set(uniformName, 0);
@@ -21166,21 +21372,41 @@ ${frag}`;
     return this.activeShader;
   }
   /**
-   * Apply the active shader to a texture and render to output
+   * Apply the active shader to a texture and render to output.
+   *
+   * @param materialTexture  Optional per-pixel material data from WebGPUUIRenderer.
+   *   Bound at slot 2 for shaders that declare `materialTexture` (uniforms shift to slot 3).
+   *   Shaders that do not declare `materialTexture` use the classic 3-entry layout and this
+   *   parameter is silently ignored.
    */
-  applyShader(inputTexture, outputTexture, commandEncoder) {
+  applyShader(inputTexture, outputTexture, commandEncoder, materialTexture) {
+    var _a;
     if (!this.activeShader) return false;
     const shader = this.shaders.get(this.activeShader);
     if (!shader || !this.resources) return false;
     this.updateUniformBuffer(shader, outputTexture.width, outputTexture.height);
-    const bindGroup = this.device.createBindGroup({
-      layout: shader.bindGroupLayout,
-      entries: [
-        { binding: 0, resource: inputTexture.createView() },
-        { binding: 1, resource: this.resources.sampler },
-        { binding: 2, resource: { buffer: shader.uniformBuffer } }
-      ]
-    });
+    let bindGroup;
+    if (shader.usesMaterialTexture) {
+      const matTex = materialTexture ?? this.defaultMaterialTexture;
+      bindGroup = this.device.createBindGroup({
+        layout: shader.bindGroupLayout,
+        entries: [
+          { binding: 0, resource: inputTexture.createView() },
+          { binding: 1, resource: this.resources.sampler },
+          { binding: 2, resource: matTex ? matTex.createView() : ((_a = this.defaultMaterialTexture) == null ? void 0 : _a.createView()) ?? inputTexture.createView() },
+          { binding: 3, resource: { buffer: shader.uniformBuffer } }
+        ]
+      });
+    } else {
+      bindGroup = this.device.createBindGroup({
+        layout: shader.bindGroupLayout,
+        entries: [
+          { binding: 0, resource: inputTexture.createView() },
+          { binding: 1, resource: this.resources.sampler },
+          { binding: 2, resource: { buffer: shader.uniformBuffer } }
+        ]
+      });
+    }
     const renderPass = commandEncoder.beginRenderPass({
       colorAttachments: [{
         // If the output texture has mipmaps, the default view can include
@@ -21643,8 +21869,12 @@ ${resolved}
    * If a background shader is set it always runs first (before the chain),
    * independent of the chain configuration.  Full pass order:
    *   background (optional) → chain[0] → chain[1] → … → outputTexture
+   *
+   * @param materialTexture  Optional material render target from WebGPUUIRenderer.
+   *   Passed through to each shader pass so lighting shaders can read per-pixel
+   *   material properties (roughness, normalScale, metallic, emissive).
    */
-  applyChain(inputTexture, outputTexture, commandEncoder) {
+  applyChain(inputTexture, outputTexture, commandEncoder, materialTexture) {
     const effectivePasses = [];
     if (this.backgroundShaderName) effectivePasses.push(this.backgroundShaderName);
     effectivePasses.push(...this.activeChain);
@@ -21653,7 +21883,7 @@ ${resolved}
     }
     if (effectivePasses.length === 1) {
       this.shaderManager.setActiveShader(effectivePasses[0]);
-      return this.shaderManager.applyShader(inputTexture, outputTexture, commandEncoder);
+      return this.shaderManager.applyShader(inputTexture, outputTexture, commandEncoder, materialTexture);
     }
     this.ensureIntermediateTextures(
       effectivePasses.length - 1,
@@ -21669,7 +21899,8 @@ ${resolved}
       const success = this.shaderManager.applyShader(
         currentInput,
         currentOutput,
-        commandEncoder
+        commandEncoder,
+        materialTexture
       );
       if (!success) {
         console.error(`[ShaderChain] Failed to apply shader: ${shaderName}`);
@@ -30527,6 +30758,21 @@ class StorieEngine {
           if (!ui) return;
           ui.setClearColor(color);
         },
+        /**
+         * Set material properties for all subsequent draw calls (rect / text / image).
+         * Behaves like a colour setting — sticky until overridden, not one-shot.
+         * The values are written into the material render target so post-process
+         * lighting shaders can perform per-pixel PBR shading.
+         *
+         * Pass `null` to reset to defaults (roughness=0.5, normalScale=1.0, metallic=0, emissive=0).
+         *
+         * All values are clamped to [0, 1].
+         */
+        setMaterial: (mat) => {
+          const ui = engine.ensureWebGPUUI();
+          if (!ui) return;
+          ui.setMaterial(mat);
+        },
         rect: (x, y, w, h, color) => {
           const ui = engine.ensureWebGPUUI();
           if (!ui) return;
@@ -34268,6 +34514,7 @@ ${exportVars}
             }
           }
           this.webgpuUIRenderer.flush();
+          this.compositor.setMaterialTexture(this.webgpuUIRenderer.getMaterialTexture());
         }
         if (this.compositor.mode === "auto") {
           this.syncTerminalCellSizeToShaders();
