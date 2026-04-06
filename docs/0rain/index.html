@@ -58,12 +58,31 @@
     <canvas id="canvas"></canvas>
   </div>
 
+  <!-- S|torie Overlay (top-right corner, disable with storieOverlay: false in frontmatter) -->
+  <div id="storie-overlay">
+    <button id="storie-overlay-btn" title="S|torie options" aria-label="S|torie options" aria-expanded="false">S|</button>
+    <div id="storie-overlay-panel" class="hidden" role="dialog" aria-label="S|torie options">
+      <div class="sov-row">
+        <span class="sov-label">FPS</span>
+        <span id="storie-overlay-fps" class="sov-value">—</span>
+      </div>
+      <div class="sov-divider"></div>
+      <div class="sov-row">
+        <label class="sov-label" for="storie-overlay-theme">Theme</label>
+        <select id="storie-overlay-theme" class="sov-select"></select>
+      </div>
+      <div class="sov-divider"></div>
+      <a class="sov-link" id="storie-overlay-export" href="#" title="Ctrl+Shift+E">Export Video…</a>
+      <a class="sov-link" href="https://github.com/maddestlabs/storie" target="_blank" rel="noopener noreferrer">GitHub →</a>
+    </div>
+  </div>
+
   <script type="module">
-    import { startStorieApp } from './bootstrap.js?v=2026-04-05T10:43:20.228Z';
+    import { startStorieApp } from './bootstrap.js?v=2026-04-06T12:17:03.725Z';
 
     startStorieApp({
-      engineModuleUrl: './storie.es.js?v=2026-04-05T10:43:20.228Z',
-      buildId: '2026-04-05T10:43:20.228Z',
+      engineModuleUrl: './storie.es.js?v=2026-04-06T12:17:03.725Z',
+      buildId: '2026-04-06T12:17:03.725Z',
       serviceWorker: { url: './sw.js', scope: './' },
       demoBaseUrl: './demos/',
       indexMdUrl: './demos/0rain.md',

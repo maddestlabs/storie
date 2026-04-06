@@ -1,6 +1,6 @@
 ---
 name: "Klondike Solitaire"
-theme: "nord"
+theme: "stonegarden"
 font: "Cutive+Mono"
 shaders: "filmfx+lightvignette"
 ---
@@ -24,7 +24,7 @@ var NUM_TABLEAU = 7;
 var STOCK_DEAL  = 1;   // cards dealt per click (set to 3 for draw-3 variant)
 var DECK_AGE    = 1.0; // 0 = pristine (no aging), 1 = very worn; scales all card age effects
 var FELT_TINT   = 0.5; // 0 = original texture unaltered, 1 = fully recoloured by theme felt colour
-var BG_SCALE    = 0.5; // tile size multiplier: >1 zooms in (larger tiles), <1 zooms out (more tiles)
+var BG_SCALE    = 0.75; // tile size multiplier: >1 zooms in (larger tiles), <1 zooms out (more tiles)
 
 // ─── Card helpers ─────────────────────────────────────────────────────────────
 function cardId(suit, rank) { return suit * 13 + rank; }         // 0-51
@@ -127,8 +127,8 @@ function checkWin() {
 // Returns a layout descriptor based on current canvas size.
 // All coordinates in physical pixels (what ui.rect uses).
 function computeLayout() {
-  var W  = ui.metrics.canvasWidth  || 1280;
-  var H  = ui.metrics.canvasHeight || 720;
+  var W  = ui.metrics.canvasWidth  || 1920;
+  var H  = ui.metrics.canvasHeight || 1080;
   var portrait = H > W;
 
   // Card dimensions: standard 2.5:3.5 ratio, scaled to fit.
@@ -660,9 +660,9 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
     // down to ~0 at vDepth pixels in. Corners double-overlap (top+left strips
     // composite together) giving ~32% darkening there vs ~19% on a plain edge —
     // matching the natural laminate curvature of a real card.
-    // No shader needed: 6 strips per edge is fine-grained enough to read as smooth.
+    // 16 strips per edge (64 rect calls total per card).
     var vDepth = Math.max(5, Math.round(Math.min(cw, ch) * 0.50));
-    var vN = 32; var vBaseA = 48;
+    var vN = 16; var vBaseA = 48;
     for (var vi = 0; vi < vN; vi++) {
       var vt = (vN - vi) / vN;                   // 1.0 at outermost, steps to 0
       var va = Math.round(vBaseA * vt * vt * vt); // cubic: fast fade, subtle tail
@@ -723,7 +723,7 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
 
     // Edge vignette — same cubic fade as card face
     var vDepth = Math.max(5, Math.round(Math.min(cw, ch) * 0.40));
-    var vN = 32; var vBaseA = 48;
+    var vN = 16; var vBaseA = 48;
     for (var vi = 0; vi < vN; vi++) {
       var vt = (vN - vi) / vN;
       var va = Math.round(vBaseA * vt * vt * vt);
@@ -914,7 +914,7 @@ scope._bgTexId  = null;  // paper texture image id once loaded
 scope._bgTexW   = 0;
 scope._bgTexH   = 0;
 // Kick off async texture load.
-ui.loadImageFromURL('assets/img/Metal032_1K.jpg').then(function(id) {
+ui.loadImageFromURL('assets/img/Moss002_1K.jpg').then(function(id) {
   console.log('[klondike] bg texture load result:', id);
   if (!id) { console.warn('[klondike] bg texture failed to load'); return; }
   scope._bgTexId = id;

@@ -19571,7 +19571,7 @@ class WebGPUUIRenderer {
       bindGroupLayouts: [this.texturedBindGroupLayout]
     });
     this.rectInstanceBuffer = this.device.createBuffer({
-      size: 12 * 4 * 4096,
+      size: 12 * 4 * 16384,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
     this.textInstanceBuffer = this.device.createBuffer({
@@ -19587,13 +19587,13 @@ class WebGPUUIRenderer {
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
     this.polyData = new Float32Array(2 * 8192);
-    this.rectData = new Float32Array(12 * 4096);
+    this.rectData = new Float32Array(12 * 16384);
     this.textData = new Float32Array(16 * 4096);
     this.imageData = new Float32Array(16 * 4096);
-    this.rectClipData = new Int32Array(4 * 4096);
+    this.rectClipData = new Int32Array(4 * 16384);
     this.textClipData = new Int32Array(4 * 4096);
     this.imageClipData = new Int32Array(4 * 4096);
-    this.rectStencilRef = new Int32Array(4096);
+    this.rectStencilRef = new Int32Array(16384);
     this.textStencilRef = new Int32Array(4096);
     this.imageStencilRef = new Int32Array(4096);
     this.rectPipeline = this.createRectPipeline();
@@ -19800,7 +19800,7 @@ class WebGPUUIRenderer {
    * Push a stencil mask rect. Subsequent draws are masked until popMask().
    */
   pushMaskRect(x, y, w, h) {
-    if (this.rectCount >= 4096) return;
+    if (this.rectCount >= 16384) return;
     const depthBefore = this.maskDepth;
     const clip = this.currentClip ? { x: this.currentClip.x, y: this.currentClip.y, w: this.currentClip.w, h: this.currentClip.h } : null;
     this.maskStack.push({ kind: "rect", x, y, w, h, radius: 0, clip, depthBeforePush: depthBefore });
@@ -19864,7 +19864,7 @@ class WebGPUUIRenderer {
       this.maskStack.length = 0;
       return;
     }
-    if (this.rectCount >= 4096) return;
+    if (this.rectCount >= 16384) return;
     const top = this.maskStack.pop();
     const depthAtPop = this.maskDepth;
     if (!top || top.kind === "rect") {
@@ -20011,7 +20011,7 @@ class WebGPUUIRenderer {
   }
   rect(x, y, w, h, color) {
     if (w <= 0 || h <= 0) return;
-    if (this.rectCount >= 4096) return;
+    if (this.rectCount >= 16384) return;
     const [r2, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color));
     const o = this.rectCount * 12;
     this.rectData[o + 0] = x;
@@ -20914,6 +20914,20 @@ function resolveBuiltinShaderBaseUrl$1(baseUrl) {
   const s = u.toString();
   return s.endsWith("/") ? s : `${s}/`;
 }
+class XorShift32 {
+  constructor(seed) {
+    __publicField(this, "state");
+    this.state = seed >>> 0 || 1831565813;
+  }
+  next() {
+    let value = this.state;
+    value ^= value << 13;
+    value ^= value >>> 17;
+    value ^= value << 5;
+    this.state = value >>> 0;
+    return this.state / 4294967296;
+  }
+}
 const DEFAULT_VERTEX_WGSL = `
 struct DefaultVertexIn {
   @location(0) pos: vec2f,
@@ -20952,6 +20966,8 @@ class ShaderManager {
     __publicField(this, "pendingVertexShaders", /* @__PURE__ */ new Map());
     // 1×1 rgba8unorm fallback used when a shader declares materialTexture but none is available.
     __publicField(this, "defaultMaterialTexture", null);
+    // Tiled fallback blue-noise texture used by film-grain style shaders.
+    __publicField(this, "defaultBlueNoiseTexture", null);
     this.device = device;
     this.format = format || navigator.gpu.getPreferredCanvasFormat();
   }
@@ -20994,7 +21010,14 @@ class ShaderManager {
       addressModeU: "clamp-to-edge",
       addressModeV: "clamp-to-edge"
     });
-    this.resources = { vertexBuffer, sampler };
+    const blueNoiseSampler = this.device.createSampler({
+      magFilter: "nearest",
+      minFilter: "nearest",
+      mipmapFilter: "nearest",
+      addressModeU: "repeat",
+      addressModeV: "repeat"
+    });
+    this.resources = { vertexBuffer, sampler, blueNoiseSampler };
     this.defaultMaterialTexture = this.device.createTexture({
       size: { width: 1, height: 1 },
       format: "rgba8unorm",
@@ -21007,6 +21030,20 @@ class ShaderManager {
       // roughness≈0.5, normalScale≈1.0, metallic=0, emissive=0
       { bytesPerRow: 4 },
       { width: 1, height: 1 }
+    );
+    const blueNoiseSize = 64;
+    const blueNoiseData = new Uint8Array(this.generateBlueNoiseTextureData(blueNoiseSize));
+    this.defaultBlueNoiseTexture = this.device.createTexture({
+      size: { width: blueNoiseSize, height: blueNoiseSize },
+      format: "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      label: "defaultBlueNoiseTexture"
+    });
+    this.device.queue.writeTexture(
+      { texture: this.defaultBlueNoiseTexture },
+      blueNoiseData,
+      { bytesPerRow: blueNoiseSize * 4 },
+      { width: blueNoiseSize, height: blueNoiseSize }
     );
     this.initialized = true;
     console.log("[ShaderManager] Initialized");
@@ -21027,7 +21064,7 @@ class ShaderManager {
         const base = resolveBuiltinShaderBaseUrl$1(baseUrl);
         const shaderPath = new URL(`${shaderName}.wgsl.js`, base).toString();
         console.log(`[ShaderManager] Loading built-in shader: ${shaderPath}`);
-        const response = await fetch(shaderPath);
+        const response = await fetch(shaderPath, { cache: "no-store" });
         if (!response.ok) {
           throw new Error(`Failed to fetch shader: ${response.status} ${response.statusText}`);
         }
@@ -21121,7 +21158,37 @@ class ShaderManager {
         label: `${shader.name}_uniforms`
       });
       const usesMaterialTexture = /\bmaterialTexture\b/.test(mergedCode);
-      const bindGroupLayout = usesMaterialTexture ? this.device.createBindGroupLayout({
+      const usesBlueNoiseTexture = /\bblueNoiseTexture\b/.test(mergedCode);
+      const bindGroupLayout = usesBlueNoiseTexture ? this.device.createBindGroupLayout({
+        label: `${shader.name}_bindGroupLayout`,
+        entries: [
+          {
+            binding: 0,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: { sampleType: "float" }
+          },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.FRAGMENT,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: { sampleType: "float" }
+          },
+          {
+            binding: 3,
+            visibility: GPUShaderStage.FRAGMENT,
+            sampler: { type: "filtering" }
+          },
+          {
+            binding: 4,
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+            buffer: { type: "uniform" }
+          }
+        ]
+      }) : usesMaterialTexture ? this.device.createBindGroupLayout({
         label: `${shader.name}_bindGroupLayout`,
         entries: [
           {
@@ -21207,7 +21274,8 @@ class ShaderManager {
         uniformLayout,
         uniformValues: /* @__PURE__ */ new Map(),
         bindGroupLayout,
-        usesMaterialTexture
+        usesMaterialTexture,
+        usesBlueNoiseTexture
       };
       for (const uniformName of mergedShader.uniforms) {
         compiled.uniformValues.set(uniformName, 0);
@@ -21247,7 +21315,7 @@ class ShaderManager {
         }
         let text = this.includeCache.get(url);
         if (text === void 0) {
-          const resp = await fetch(url);
+          const resp = await fetch(url, { cache: "no-store" });
           if (!resp.ok) {
             throw new Error(`[ShaderManager] Failed to fetch #include: ${url} (${resp.status} ${resp.statusText})`);
           }
@@ -21386,7 +21454,19 @@ ${frag}`;
     if (!shader || !this.resources) return false;
     this.updateUniformBuffer(shader, outputTexture.width, outputTexture.height);
     let bindGroup;
-    if (shader.usesMaterialTexture) {
+    if (shader.usesBlueNoiseTexture) {
+      const blueNoiseTexture = this.defaultBlueNoiseTexture ?? inputTexture;
+      bindGroup = this.device.createBindGroup({
+        layout: shader.bindGroupLayout,
+        entries: [
+          { binding: 0, resource: inputTexture.createView() },
+          { binding: 1, resource: this.resources.sampler },
+          { binding: 2, resource: blueNoiseTexture.createView() },
+          { binding: 3, resource: this.resources.blueNoiseSampler },
+          { binding: 4, resource: { buffer: shader.uniformBuffer } }
+        ]
+      });
+    } else if (shader.usesMaterialTexture) {
       const matTex = materialTexture ?? this.defaultMaterialTexture;
       bindGroup = this.device.createBindGroup({
         layout: shader.bindGroupLayout,
@@ -21423,6 +21503,64 @@ ${frag}`;
     renderPass.draw(4, 1, 0, 0);
     renderPass.end();
     return true;
+  }
+  generateBlueNoiseTextureData(size) {
+    const total = size * size;
+    const ordered = new Int32Array(total);
+    ordered.fill(-1);
+    const pointsX = new Int16Array(total);
+    const pointsY = new Int16Array(total);
+    const occupied = new Uint8Array(total);
+    const rng = new XorShift32(1374772855);
+    const toroidalDistanceSq = (ax, ay, bx, by) => {
+      let dx = Math.abs(ax - bx);
+      let dy = Math.abs(ay - by);
+      if (dx > size * 0.5) dx = size - dx;
+      if (dy > size * 0.5) dy = size - dy;
+      return dx * dx + dy * dy;
+    };
+    for (let index = 0; index < total; index++) {
+      const candidateCount = index < 64 ? 24 : index < 512 ? 16 : 8;
+      let bestX = 0;
+      let bestY = 0;
+      let bestScore = -1;
+      for (let candidateIndex = 0; candidateIndex < candidateCount; candidateIndex++) {
+        let x = 0;
+        let y = 0;
+        let slot = 0;
+        do {
+          x = Math.floor(rng.next() * size);
+          y = Math.floor(rng.next() * size);
+          slot = y * size + x;
+        } while (occupied[slot] !== 0);
+        let nearest = Number.POSITIVE_INFINITY;
+        for (let pointIndex = 0; pointIndex < index; pointIndex++) {
+          const distSq = toroidalDistanceSq(x, y, pointsX[pointIndex], pointsY[pointIndex]);
+          if (distSq < nearest) nearest = distSq;
+        }
+        if (index === 0 || nearest > bestScore) {
+          bestScore = nearest;
+          bestX = x;
+          bestY = y;
+        }
+      }
+      const bestSlot = bestY * size + bestX;
+      occupied[bestSlot] = 1;
+      pointsX[index] = bestX;
+      pointsY[index] = bestY;
+      ordered[bestSlot] = index;
+    }
+    const rgbaBuffer = new ArrayBuffer(total * 4);
+    const rgba = new Uint8Array(rgbaBuffer);
+    for (let pixelIndex = 0; pixelIndex < total; pixelIndex++) {
+      const value = Math.round(ordered[pixelIndex] / Math.max(1, total - 1) * 255);
+      const offset = pixelIndex * 4;
+      rgba[offset] = value;
+      rgba[offset + 1] = value;
+      rgba[offset + 2] = value;
+      rgba[offset + 3] = 255;
+    }
+    return rgbaBuffer;
   }
   /**
    * Calculate uniform buffer layout with proper alignment
@@ -21763,7 +21901,7 @@ class ShaderChainManager {
       const baseUrl = resolveBuiltinShaderBaseUrl();
       const shaderPath = new URL(`${name}.wgsl.js`, baseUrl).toString();
       console.log(`[ShaderChain] Loading: ${shaderPath}`);
-      const response = await fetch(shaderPath);
+      const response = await fetch(shaderPath, { cache: "no-store" });
       if (!response.ok) {
         throw new Error(`Failed to fetch shader: ${response.status} ${response.statusText}`);
       }
@@ -21824,7 +21962,7 @@ class ShaderChainManager {
         }
         let text = this.includeCache.get(url);
         if (text === void 0) {
-          const resp = await fetch(url);
+          const resp = await fetch(url, { cache: "no-store" });
           if (!resp.ok) {
             throw new Error(`[ShaderChain] Failed to fetch #include: ${url} (${resp.status} ${resp.statusText})`);
           }
@@ -28481,6 +28619,10 @@ class StorieEngine {
       if (config.autoLayoutSpacing !== void 0) {
         engine.worldsConfig.autoLayoutSpacing = config.autoLayoutSpacing;
       }
+      if (config.liveTextureScale !== void 0) {
+        const v2 = Number(config.liveTextureScale);
+        engine.worldsConfig.liveTextureScale = Number.isFinite(v2) ? Math.max(1, Math.min(4, v2)) : void 0;
+      }
       if (config.sectionTextureMode !== void 0) {
         const prev = engine.worldsConfig.sectionTextureMode;
         engine.worldsConfig.sectionTextureMode = config.sectionTextureMode;
@@ -34863,7 +35005,7 @@ ${exportVars}
    * @returns true if baking succeeded and layout.texture was updated.
    */
   bakeLiveSectionTexture(layout, device, baseLineHeight) {
-    var _a;
+    var _a, _b;
     if (!(this.renderer instanceof WebGPURenderer)) return false;
     const atlas = this.renderer.getAtlas();
     if (!atlas) return false;
@@ -34872,7 +35014,8 @@ ${exportVars}
     }
     const sectionUI = this.sectionWebGPUUIRenderer;
     const baseMetricScale = this.getWorldsTextureScale();
-    const textureScale = Math.max(2, baseMetricScale);
+    const liveMin = Number.isFinite(this.worldsConfig.liveTextureScale) ? Math.max(1, Math.min(4, this.worldsConfig.liveTextureScale)) : 2;
+    const textureScale = Math.max(liveMin, baseMetricScale);
     const texturePadding = 12;
     const charW = atlas.getCharWidth() / Math.max(1, baseMetricScale);
     const units = this.worldsConfig.sectionSizeUnits === "px" ? "px" : "text";
@@ -34885,12 +35028,18 @@ ${exportVars}
     this.sectionTextureCache.set(layout.sectionId, { width: widthPx, height: heightPx, activeLinkIndex: null });
     let localMouseX = 0;
     let localMouseY = 0;
-    const xform = this.getWorldsSectionTextureToScreenAffine(layout);
-    if (xform) {
-      const mx = this.input.getMouseX();
-      const my = this.input.getMouseY();
-      localMouseX = (xform.localFromScreenTexPx.a * mx + xform.localFromScreenTexPx.c * my + xform.localFromScreenTexPx.e) / textureScale;
-      localMouseY = (xform.localFromScreenTexPx.b * mx + xform.localFromScreenTexPx.d * my + xform.localFromScreenTexPx.f) / textureScale;
+    const hoveredPick = this.pick3DAt(this.input.getMouseX(), this.input.getMouseY());
+    if (((_a = hoveredPick == null ? void 0 : hoveredPick.layout) == null ? void 0 : _a.sectionId) === layout.sectionId) {
+      localMouseX = hoveredPick.u * logicalWidthPx;
+      localMouseY = hoveredPick.v * logicalHeightPx;
+    } else {
+      const xform = this.getWorldsSectionTextureToScreenAffine(layout);
+      if (xform) {
+        const mx = this.input.getMouseX();
+        const my = this.input.getMouseY();
+        localMouseX = (xform.localFromScreenTexPx.a * mx + xform.localFromScreenTexPx.c * my + xform.localFromScreenTexPx.e) / textureScale;
+        localMouseY = (xform.localFromScreenTexPx.b * mx + xform.localFromScreenTexPx.d * my + xform.localFromScreenTexPx.f) / textureScale;
+      }
     }
     const format = sectionUI.getTextureFormat();
     const existingOk = layout.texture && (() => {
@@ -34923,7 +35072,7 @@ ${exportVars}
     this._liveUIOverride = sectionUI;
     sectionUI.clearCommands();
     const doc = this.getActiveDocument();
-    if ((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.render) {
+    if ((_b = doc == null ? void 0 : doc.handlers) == null ? void 0 : _b.render) {
       try {
         doc.handlers.render();
       } catch (e) {
@@ -35965,7 +36114,7 @@ ${exportVars}
    * Update phase - call user's update handler
    */
   update() {
-    var _a;
+    var _a, _b;
     this.moduleLoader.update(this.deltaTime);
     if (this.worldsEnabled && this.worldsControlsEnabled && this.camera3D) {
       const dt = this.deltaTime;
@@ -36032,18 +36181,32 @@ ${exportVars}
       if (liveLayout) {
         const cached = this.sectionTextureCache.get(liveLayout.sectionId);
         if (cached && cached.width > 0 && cached.height > 0) {
-          const xform = this.getWorldsSectionTextureToScreenAffine(liveLayout);
-          if (xform) {
-            const mx = this.input.getMouseX();
-            const my = this.input.getMouseY();
-            const textureScale = Math.max(2, this.getWorldsTextureScale());
-            const baseMetricScale = this.getWorldsTextureScale();
+          const mx = this.input.getMouseX();
+          const my = this.input.getMouseY();
+          const baseMetricScale = this.getWorldsTextureScale();
+          const _liveMinUpd = Number.isFinite(this.worldsConfig.liveTextureScale) ? Math.max(1, Math.min(4, this.worldsConfig.liveTextureScale)) : 2;
+          const textureScale = Math.max(_liveMinUpd, baseMetricScale);
+          const logicalWidth = Math.max(1, Math.round(cached.width / textureScale));
+          const logicalHeight = Math.max(1, Math.round(cached.height / textureScale));
+          let localMouseX = null;
+          let localMouseY = null;
+          if (((_b = hoveredPick == null ? void 0 : hoveredPick.layout) == null ? void 0 : _b.sectionId) === liveLayout.sectionId) {
+            localMouseX = hoveredPick.u * logicalWidth;
+            localMouseY = hoveredPick.v * logicalHeight;
+          } else {
+            const xform = this.getWorldsSectionTextureToScreenAffine(liveLayout);
+            if (xform) {
+              localMouseX = (xform.localFromScreenTexPx.a * mx + xform.localFromScreenTexPx.c * my + xform.localFromScreenTexPx.e) / textureScale;
+              localMouseY = (xform.localFromScreenTexPx.b * mx + xform.localFromScreenTexPx.d * my + xform.localFromScreenTexPx.f) / textureScale;
+            }
+          }
+          if (localMouseX !== null && localMouseY !== null) {
             this._liveSectionInputCtx = {
               sectionIndex: liveLayout.sectionIndex,
-              width: Math.max(1, Math.round(cached.width / textureScale)),
-              height: Math.max(1, Math.round(cached.height / textureScale)),
-              localMouseX: (xform.localFromScreenTexPx.a * mx + xform.localFromScreenTexPx.c * my + xform.localFromScreenTexPx.e) / textureScale,
-              localMouseY: (xform.localFromScreenTexPx.b * mx + xform.localFromScreenTexPx.d * my + xform.localFromScreenTexPx.f) / textureScale,
+              width: logicalWidth,
+              height: logicalHeight,
+              localMouseX,
+              localMouseY,
               textureScale,
               baseMetricScale
             };
@@ -38156,6 +38319,20 @@ ${exportVars}
   /** Clear any stored user handler error (call before starting an export). */
   clearLastUserHandlerError() {
     this._lastUserHandlerError = null;
+  }
+  /** Return all available built-in theme names. */
+  getThemeNames() {
+    return Object.keys(THEMES);
+  }
+  /** Return the current theme name (e.g. 'neotopia'). */
+  getThemeName() {
+    return this.currentThemeLabel;
+  }
+  /** Switch to a named built-in theme at runtime. No-op for unknown names. */
+  setTheme(name) {
+    const key = String(name ?? "").trim().toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(THEMES, key)) return;
+    this.applyThemeColors(getTheme(key), key, "runtime");
   }
 }
 var BuiltInModules = /* @__PURE__ */ ((BuiltInModules2) => {

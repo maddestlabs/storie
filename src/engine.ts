@@ -2126,6 +2126,10 @@ export class StorieEngine {
       if (config.autoLayoutSpacing !== undefined) {
         engine.worldsConfig.autoLayoutSpacing = config.autoLayoutSpacing;
       }
+      if (config.liveTextureScale !== undefined) {
+        const v = Number(config.liveTextureScale);
+        engine.worldsConfig.liveTextureScale = Number.isFinite(v) ? Math.max(1, Math.min(4, v)) : undefined;
+      }
       if (config.sectionTextureMode !== undefined) {
         const prev = engine.worldsConfig.sectionTextureMode;
         engine.worldsConfig.sectionTextureMode = config.sectionTextureMode;
@@ -9930,7 +9934,10 @@ ${exportVars}
     }
     const sectionUI = this.sectionWebGPUUIRenderer;
     const baseMetricScale = this.getWorldsTextureScale();
-    const textureScale = Math.max(2, baseMetricScale);
+    const liveMin = Number.isFinite(this.worldsConfig.liveTextureScale as number)
+      ? Math.max(1, Math.min(4, this.worldsConfig.liveTextureScale as number))
+      : 2;
+    const textureScale = Math.max(liveMin, baseMetricScale);
 
     // Compute logical texture size — must match the same formula used in
     // premeasure3DCardWorldSize() so the card's world dimensions are stable
@@ -9954,12 +9961,18 @@ ${exportVars}
     this.sectionTextureCache.set(layout.sectionId, { width: widthPx, height: heightPx, activeLinkIndex: null });
     let localMouseX = 0;
     let localMouseY = 0;
-    const xform = this.getWorldsSectionTextureToScreenAffine(layout);
-    if (xform) {
-      const mx = this.input.getMouseX();
-      const my = this.input.getMouseY();
-      localMouseX = (xform.localFromScreenTexPx.a * mx + xform.localFromScreenTexPx.c * my + xform.localFromScreenTexPx.e) / textureScale;
-      localMouseY = (xform.localFromScreenTexPx.b * mx + xform.localFromScreenTexPx.d * my + xform.localFromScreenTexPx.f) / textureScale;
+    const hoveredPick = this.pick3DAt(this.input.getMouseX(), this.input.getMouseY());
+    if (hoveredPick?.layout?.sectionId === layout.sectionId) {
+      localMouseX = hoveredPick.u * logicalWidthPx;
+      localMouseY = hoveredPick.v * logicalHeightPx;
+    } else {
+      const xform = this.getWorldsSectionTextureToScreenAffine(layout);
+      if (xform) {
+        const mx = this.input.getMouseX();
+        const my = this.input.getMouseY();
+        localMouseX = (xform.localFromScreenTexPx.a * mx + xform.localFromScreenTexPx.c * my + xform.localFromScreenTexPx.e) / textureScale;
+        localMouseY = (xform.localFromScreenTexPx.b * mx + xform.localFromScreenTexPx.d * my + xform.localFromScreenTexPx.f) / textureScale;
+      }
     }
 
     // Create or reuse the section GPU texture.
@@ -11464,18 +11477,37 @@ ${exportVars}
       if (liveLayout) {
         const cached = this.sectionTextureCache.get(liveLayout.sectionId);
         if (cached && cached.width > 0 && cached.height > 0) {
-          const xform = this.getWorldsSectionTextureToScreenAffine(liveLayout);
-          if (xform) {
-            const mx = this.input.getMouseX();
-            const my = this.input.getMouseY();
-            const textureScale = Math.max(2, this.getWorldsTextureScale());
-            const baseMetricScale = this.getWorldsTextureScale();
+          const mx = this.input.getMouseX();
+          const my = this.input.getMouseY();
+          const baseMetricScale = this.getWorldsTextureScale();
+          const _liveMinUpd = Number.isFinite(this.worldsConfig.liveTextureScale as number)
+            ? Math.max(1, Math.min(4, this.worldsConfig.liveTextureScale as number))
+            : 2;
+          const textureScale = Math.max(_liveMinUpd, baseMetricScale);
+          const logicalWidth = Math.max(1, Math.round(cached.width / textureScale));
+          const logicalHeight = Math.max(1, Math.round(cached.height / textureScale));
+
+          let localMouseX: number | null = null;
+          let localMouseY: number | null = null;
+
+          if (hoveredPick?.layout?.sectionId === liveLayout.sectionId) {
+            localMouseX = hoveredPick.u * logicalWidth;
+            localMouseY = hoveredPick.v * logicalHeight;
+          } else {
+            const xform = this.getWorldsSectionTextureToScreenAffine(liveLayout);
+            if (xform) {
+              localMouseX = (xform.localFromScreenTexPx.a * mx + xform.localFromScreenTexPx.c * my + xform.localFromScreenTexPx.e) / textureScale;
+              localMouseY = (xform.localFromScreenTexPx.b * mx + xform.localFromScreenTexPx.d * my + xform.localFromScreenTexPx.f) / textureScale;
+            }
+          }
+
+          if (localMouseX !== null && localMouseY !== null) {
             this._liveSectionInputCtx = {
               sectionIndex: liveLayout.sectionIndex,
-              width: Math.max(1, Math.round(cached.width / textureScale)),
-              height: Math.max(1, Math.round(cached.height / textureScale)),
-              localMouseX: (xform.localFromScreenTexPx.a * mx + xform.localFromScreenTexPx.c * my + xform.localFromScreenTexPx.e) / textureScale,
-              localMouseY: (xform.localFromScreenTexPx.b * mx + xform.localFromScreenTexPx.d * my + xform.localFromScreenTexPx.f) / textureScale,
+              width: logicalWidth,
+              height: logicalHeight,
+              localMouseX,
+              localMouseY,
               textureScale,
               baseMetricScale,
             };
@@ -14218,5 +14250,22 @@ ${exportVars}
   /** Clear any stored user handler error (call before starting an export). */
   clearLastUserHandlerError(): void {
     this._lastUserHandlerError = null;
+  }
+
+  /** Return all available built-in theme names. */
+  getThemeNames(): string[] {
+    return Object.keys(THEMES);
+  }
+
+  /** Return the current theme name (e.g. 'neotopia'). */
+  getThemeName(): string {
+    return this.currentThemeLabel;
+  }
+
+  /** Switch to a named built-in theme at runtime. No-op for unknown names. */
+  setTheme(name: string): void {
+    const key = String(name ?? '').trim().toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(THEMES, key)) return;
+    this.applyThemeColors(getTheme(key), key, 'runtime');
   }
 }

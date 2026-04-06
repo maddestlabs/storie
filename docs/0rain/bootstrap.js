@@ -1086,6 +1086,7 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
         if (loadingEl) loadingEl.style.display = 'none';
 
         installExportPanel(engine);
+        installStorieOverlay(engine, fm);
 
         const shaderChain = parseShaderChain();
         if (shaderChain) {
@@ -1098,6 +1099,111 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
       } catch (error) {
         console.error(`✗ Error: ${error.message}`, error);
       }
+    }
+
+    // ── S|torie Overlay ────────────────────────────────────────────────────────
+    // A small top-right corner widget with FPS counter, theme switcher, and links.
+    // Opt out in frontmatter with: storieOverlay: false
+    function installStorieOverlay(engine, fm) {
+      const parseFmBool = (val) => {
+        const v = String(val ?? '').trim().toLowerCase();
+        return v === '0' || v === 'false' || v === 'no' || v === 'off';
+      };
+      if (Object.prototype.hasOwnProperty.call(fm, 'storieOverlay') && parseFmBool(fm.storieOverlay)) {
+        const wrap = document.getElementById('storie-overlay');
+        if (wrap) wrap.style.display = 'none';
+        return;
+      }
+
+      const wrap      = document.getElementById('storie-overlay');
+      const btn       = document.getElementById('storie-overlay-btn');
+      const panel     = document.getElementById('storie-overlay-panel');
+      const fpsEl     = document.getElementById('storie-overlay-fps');
+      const themeEl   = document.getElementById('storie-overlay-theme');
+      const exportLnk = document.getElementById('storie-overlay-export');
+
+      if (!wrap || !btn || !panel || !fpsEl || !themeEl) return;
+
+      // ── FPS ring-buffer ──────────────────────────────────────────
+      const _fpsBuf = new Float64Array(30);
+      let _fpsIdx = 0, _fpsLast = 0;
+      const _tickFPS = (now) => {
+        if (_fpsLast) _fpsBuf[_fpsIdx++ % 30] = now - _fpsLast;
+        _fpsLast = now;
+        requestAnimationFrame(_tickFPS);
+      };
+      requestAnimationFrame(_tickFPS);
+      const getDisplayFPS = () => {
+        const filled = Math.min(_fpsIdx, 30);
+        if (!filled) return '—';
+        let sum = 0;
+        for (let i = 0; i < filled; i++) sum += _fpsBuf[i];
+        return sum ? String(Math.round(1000 / (sum / filled))) : '—';
+      };
+      setInterval(() => { fpsEl.textContent = getDisplayFPS(); }, 500);
+
+      // ── Theme select ─────────────────────────────────────────────
+      const populateThemes = () => {
+        themeEl.replaceChildren();
+        let names = [];
+        try {
+          if (typeof engine.getThemeNames === 'function') names = engine.getThemeNames();
+        } catch {}
+        let current = 'neotopia';
+        try {
+          if (typeof engine.getThemeName === 'function') current = engine.getThemeName();
+        } catch {}
+        for (const name of names) {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name;
+          if (name === current) opt.selected = true;
+          themeEl.appendChild(opt);
+        }
+      };
+      populateThemes();
+      themeEl.addEventListener('change', () => {
+        try { engine.setTheme(themeEl.value); } catch {}
+      });
+
+      // ── Export Video link ────────────────────────────────────────
+      if (exportLnk) {
+        exportLnk.addEventListener('click', (e) => {
+          e.preventDefault();
+          closePanel();
+          // Reuse the existing export panel keyboard shortcut logic by
+          // dispatching the same Ctrl+Shift+E keyboard event into the window.
+          try {
+            window.dispatchEvent(new KeyboardEvent('keydown', {
+              key: 'E', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true
+            }));
+          } catch {}
+        });
+      }
+
+      // ── Panel toggle ─────────────────────────────────────────────
+      let open = false;
+      const openPanel = () => {
+        open = true;
+        panel.classList.remove('hidden');
+        btn.setAttribute('aria-expanded', 'true');
+        populateThemes();
+      };
+      const closePanel = () => {
+        open = false;
+        panel.classList.add('hidden');
+        btn.setAttribute('aria-expanded', 'false');
+      };
+
+      btn.addEventListener('click', () => { open ? closePanel() : openPanel(); });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && open) closePanel();
+      });
+
+      document.addEventListener('pointerdown', (e) => {
+        if (open && !wrap.contains(e.target)) closePanel();
+      }, { capture: true });
     }
 
     // ── Video Export Panel ──────────────────────────────────────────────────────

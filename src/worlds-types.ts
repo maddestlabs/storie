@@ -239,6 +239,21 @@ export interface WorldsConfig {
   sectionTextureMode: 'canvas2d' | 'webgpu-ui';
 
   /**
+   * Minimum texture scale multiplier for live sections (those marked with
+   * `worlds.setSectionLive()`). The engine normally uses `max(2, devicePixelRatio)`
+   * so that 3D cards look crisp when small on screen. For a full-viewport live
+   * game this is unnecessary — the section fills the screen and a 2× bake doubles
+   * the fill-rate cost for no visible benefit on standard displays.
+   *
+   * Set to `1` to render live section textures at exactly `max(1, devicePixelRatio)`
+   * — pixel-perfect on 1× displays, still HiDPI-correct on 2× displays.
+   * Set to `2` (default) to keep the original behaviour.
+   *
+   * Range: 1–4. Values below 1 or above 4 are clamped.
+   */
+  liveTextureScale?: number;
+
+  /**
    * Optional border around each section card.
    * Defaults to enabled with a 2px border using the theme's `border` style.
    */

@@ -1,25 +1,11 @@
 ---
 name: "Klondike Solitaire"
-theme: "nord"
-shaders: "filmfx+lightvignette"
+theme: "stonegarden"
+font: "Cutive+Mono"
+shaders: "blur+grain+blurgradual"
 ---
 
-# Klondike {"x":"0","y":"-80","z":"0","width":"44","height":"22","opacity":"0.92"}
-
-Classic Klondike Solitaire. Build four foundations from Ace to King.
-
-- [▶ Play](#play)
-- [⚙ Settings](#settings)
-- [? Help](#help)
-
-```js on:enter
-scope.sections = scope.sections || {};
-if (typeof worlds.currentSection === 'number') {
-  scope.sections.title = worlds.currentSection;
-}
-```
-
-# Play {"x":"0","y":"0","z":"0","width":"44","height":"28","opacity":"0.92","sectionBackground":"texture:assets/img/Fabric030_1K.jpg;tilePx=512;blendMode=multiply;blendStrength=0.85"}
+# Play {"x":"0","y":"0","z":"0"}
 
 ```js on:enter
 scope.sections = scope.sections || {};
@@ -28,7 +14,7 @@ if (typeof worlds.currentSection === 'number') {
 }
 ```
 
-# Settings {"x":"0","y":"90","z":"0","width":"44","height":"28","sectionOverflow":"fit-y"}
+# Settings {"x":"0","y":"-45","z":"0","width":"44","height":"28","sectionOverflow":"fit-y"}
 
 Draw mode: :gui{type:label,id:settings-draw-label,text:"Draw: 1 card",width:90%,align:left,scale:worlds}
 
@@ -37,8 +23,10 @@ Draw mode: :gui{type:label,id:settings-draw-label,text:"Draw: 1 card",width:90%,
 Theme:
 :gui{type:slider,id:settings-theme-slider,min:0,max:0,value:0,step:1,showValue:false,width:100%,align:center,scale:worlds}
 
-- [New Game](action:new-game)
-- [⇦ Back](action:history-back)
+Card jitter: :gui{type:label,id:settings-jitter-label,text:"Normal",width:40%,align:left,scale:worlds}
+:gui{type:slider,id:settings-jitter-slider,min:0,max:4,value:2,step:1,showValue:false,width:100%,align:center,scale:worlds}
+
+- [⇦ Back](#play)
 
 ```js on:enter
 scope.sections = scope.sections || {};
@@ -48,7 +36,7 @@ if (typeof worlds.currentSection === 'number') {
 syncSettingsWidgets();
 ```
 
-# Help {"x":"0","y":"190","z":"0","width":"44","height":"36"}
+# Help {"x":"0","y":"45","z":"0"}
 
 **Goal:** Move all 52 cards to the four foundations (♠ ♥ ♦ ♣), built Ace → King by suit.
 
@@ -60,7 +48,7 @@ syncSettingsWidgets();
 
 **Keys:** `N` new game · `R` replay · `Esc` / `S` settings · `H` help
 
-- [▶ Play](#play)
+- [▶ Play]()
 - [⇦ Back](action:history-back)
 
 ```js on:enter
@@ -78,6 +66,9 @@ var SUIT_RED    = [false, true, true, false]; // index matches SUITS
 var NUM_TABLEAU = 7;
 var STOCK_DEAL  = 1;   // cards dealt per click (set to 3 for draw-3 variant)
 var DECK_AGE    = 1.0; // 0 = pristine (no aging), 1 = very worn; scales all card age effects
+var JITTER       = 1.0; // positional and angular scatter scale; 0 = none, 1 = default, 3 = chaotic
+var JITTER_STEPS = [0, 0.5, 1.0, 2.0, 3.0];   // scale factors per step
+var JITTER_NAMES = ['None', 'Subtle', 'Normal', 'Wild', 'Chaotic'];
 
 
 // ─── Card helpers ─────────────────────────────────────────────────────────────
@@ -551,7 +542,7 @@ function cardJitter(id) {
   var dx    = (a - Math.floor(a)) * 2.0 - 1.0;   // [-1, 1]
   var dy    = (b - Math.floor(b)) * 2.0 - 1.0;   // [-1, 1]
   var aFrac = (c - Math.floor(c)) * 2.0 - 1.0;   // [-1, 1]
-  return { dx: dx * 2.4, dy: dy * 2.4, angleDeg: aFrac * 1.5 };
+  return { dx: dx * 2.4 * JITTER, dy: dy * 2.4 * JITTER, angleDeg: aFrac * 1.5 * JITTER };
 }
 
 // Returns a stable 0–1 "worn-ness" factor per card id (sin-hash, same approach
@@ -594,6 +585,27 @@ function roundedRectPoly(x, y, w, h, r, cx, cy, cosA, sinA) {
 }
 
 // ─── Card drawing ─────────────────────────────────────────────────────────────
+// Graduated edge vignette drawn against the axis-aligned bounding box of the card.
+// The caller's active mask (rotated polygon or rounded rect) clips the strips to
+// the exact card outline, so the vignette naturally follows rotated card edges.
+// vr/vg/vb: RGB of the shadow tint (face uses warm ~75,70,0; back uses 0,0,0).
+function drawCardVignette(bbX, bbY, bbW, bbH, vDepth, vr, vg, vb) {
+  var vN = 16; var vBaseA = 48;
+  for (var vi = 0; vi < vN; vi++) {
+    var vt = (vN - vi) / vN;
+    var va = Math.round(vBaseA * vt * vt * vt);
+    if (va < 1) continue;
+    var vc = ui.colors.rgba(vr, vg, vb, va);
+    var vd0 = Math.round(vi       * vDepth / vN);
+    var vd1 = Math.round((vi + 1) * vDepth / vN);
+    var vth = Math.max(1, vd1 - vd0);
+    ui.rect(bbX,              bbY + vd0,          bbW, vth, vc);  // top
+    ui.rect(bbX,              bbY+bbH-vd0-vth,    bbW, vth, vc);  // bottom
+    ui.rect(bbX + vd0,        bbY,                vth, bbH, vc);  // left
+    ui.rect(bbX+bbW-vd0-vth,  bbY,                vth, bbH, vc);  // right
+  }
+}
+
 // drawCard renders a single playing card at (x, y) using ui primitives only.
 // faceUp=true draws front; false draws back (double-border frame + crosshatch).
 // Optional jitter: { dx, dy, angleDeg } — positional + rotational deviation.
@@ -623,6 +635,16 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
     jcy = jy + ch * 0.5;
   }
 
+  // Bounding box of the rotated card — the smallest axis-aligned rect that fully
+  // contains the rotated polygon. Used for full-card fill rects so that the mask
+  // corners (which extend beyond the unrotated card rect when tilted) are never
+  // left unfilled. For dragged cards angDeg=0 so bbW/bbH === cw/ch exactly.
+  var _absS = Math.abs(sinA); var _absC = Math.abs(cosA);
+  var bbW = Math.ceil(cw * _absC + ch * _absS);
+  var bbH = Math.ceil(cw * _absS + ch * _absC);
+  var bbX = Math.floor(jcx - bbW * 0.5);
+  var bbY = Math.floor(jcy - bbH * 0.5);
+
   // Shadow — three-layer spread when dragging (simulates card ~15px above the felt);
   // single tight rect when at rest. Offsets and alphas chosen so the total perceived
   // shadow density is comparable to the resting shadow despite the larger spread.
@@ -631,7 +653,7 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
     ui.rect(jx + 10, jy + 13, cw, ch, ui.colors.rgba(0, 0, 0, 5));  // mid shadow
     ui.rect(jx + 6,  jy + 8,  cw, ch, ui.colors.rgba(0, 0, 0, 8));  // umbra core
   } else {
-    ui.rect(jx + 3, jy + 3, cw, ch, pal.cardShadow);
+    ui.rect(bbX + 3, bbY + 3, bbW, bbH, pal.cardShadow);
   }
 
   // Set material before the mask so ALL draws inside (base, vignette strips,
@@ -658,11 +680,11 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
 
   if (faceUp && id >= 0) {
     // ── Face ──────────────────────────────────────────────────────
-    ui.rect(jx, jy, cw, ch, pal.cardFace);
+    ui.rect(bbX, bbY, bbW, bbH, pal.cardFace);
     // Sepia yellowing: warm amber wash over the face paper — quadratic so young
     // cards stay white and only well-worn cards show a visible warm cast.
     if (_age > 0) {
-      ui.rect(jx, jy, cw, ch, ui.colors.rgba(200, 160, 80, Math.round(_age * _age * 36)));
+      ui.rect(bbX, bbY, bbW, bbH, ui.colors.rgba(200, 160, 80, Math.round(_age * _age * 36)));
     }
 
     var suit = cardSuit(id);
@@ -709,34 +731,15 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
       }
     }
 
-    // Edge vignette: N graduated strips per edge with cubic alpha falloff.
-    // Each strip is ~3px thick; the alpha steps from ~48 at the card edge
-    // down to ~0 at vDepth pixels in. Corners double-overlap (top+left strips
-    // composite together) giving ~32% darkening there vs ~19% on a plain edge —
-    // matching the natural laminate curvature of a real card.
-    // No shader needed: 6 strips per edge is fine-grained enough to read as smooth.
-    var vDepth = Math.max(5, Math.round(Math.min(cw, ch) * 0.50));
-    var vN = 32; var vBaseA = 48;
-    for (var vi = 0; vi < vN; vi++) {
-      var vt = (vN - vi) / vN;                   // 1.0 at outermost, steps to 0
-      var va = Math.round(vBaseA * vt * vt * vt); // cubic: fast fade, subtle tail
-      if (va < 1) continue;
-      var vc = ui.colors.rgba(75, 70, 0, va);
-      var vd0 = Math.round(vi       * vDepth / vN);
-      var vd1 = Math.round((vi + 1) * vDepth / vN);
-      var vth = Math.max(1, vd1 - vd0);
-      ui.rect(jx,             jy + vd0,       cw,  vth, vc);  // top
-      ui.rect(jx,             jy+ch-vd0-vth,  cw,  vth, vc);  // bottom
-      ui.rect(jx + vd0,       jy,             vth, ch,  vc);  // left
-      ui.rect(jx+cw-vd0-vth,  jy,             vth, ch,  vc);  // right
-    }
+    // Edge vignette — warm tint, 50% depth on face (more immersive inner glow).
+    drawCardVignette(bbX, bbY, bbW, bbH, Math.max(5, Math.round(Math.min(cw, ch) * 0.50)), 75, 70, 0);
 
   } else {
     // ── Back: off-white base, accent1 center panel, icon glyph ───
-    ui.rect(jx, jy, cw, ch, pal.cardBack);
+    ui.rect(bbX, bbY, bbW, bbH, pal.cardBack);
     // Sepia yellowing on the border area — same formula as face
     if (_age > 0) {
-      ui.rect(jx, jy, cw, ch, ui.colors.rgba(200, 160, 80, Math.round(_age * _age * 36)));
+      ui.rect(bbX, bbY, bbW, bbH, ui.colors.rgba(200, 160, 80, Math.round(_age * _age * 36)));
     }
     // Inset center panel
     var bMarX = Math.max(5, Math.round(cw * 0.12));
@@ -775,22 +778,8 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
       }
     }
 
-    // Edge vignette — same cubic fade as card face
-    var vDepth = Math.max(5, Math.round(Math.min(cw, ch) * 0.40));
-    var vN = 32; var vBaseA = 48;
-    for (var vi = 0; vi < vN; vi++) {
-      var vt = (vN - vi) / vN;
-      var va = Math.round(vBaseA * vt * vt * vt);
-      if (va < 1) continue;
-      var vc = ui.colors.rgba(0, 0, 0, va);
-      var vd0 = Math.round(vi       * vDepth / vN);
-      var vd1 = Math.round((vi + 1) * vDepth / vN);
-      var vth = Math.max(1, vd1 - vd0);
-      ui.rect(jx,             jy + vd0,       cw,  vth, vc);
-      ui.rect(jx,             jy+ch-vd0-vth,  cw,  vth, vc);
-      ui.rect(jx + vd0,       jy,             vth, ch,  vc);
-      ui.rect(jx+cw-vd0-vth,  jy,             vth, ch,  vc);
-    }
+    // Edge vignette — neutral tint, 40% depth on back (laminated surface).
+    drawCardVignette(bbX, bbY, bbW, bbH, Math.max(5, Math.round(Math.min(cw, ch) * 0.40)), 0, 0, 0);
   }
 
   ui.popMask();
@@ -817,10 +806,6 @@ function drawEmptySlot(pal, x, y, cw, ch, radius, label) {
 function drawGame(L, pal) {
   var g = scope.gs;
   var cw = L.cw; var ch = L.ch; var r = L.radius;
-
-  // sectionBackground handles the felt texture — just paint a translucent felt
-  // wash so the card colour comes through theme-reactive.
-  ui.rect(0, 0, L.W, L.H, pal.felt & 0xffffff80);
 
   // ── Top row ──────────────────────────────────────────────────────────────────
 
@@ -918,13 +903,38 @@ function drawGame(L, pal) {
     _bY, _bW, _bH, 'New Game');
 }
 
-var TITLE_SECTION_FIT      = 0.92;
 var PLAY_SECTION_FIT       = 0.96;
 var CARD_SECTION_FIT       = 0.92;
-var SETTINGS_THEME_SLIDER_ID = 'settings-theme-slider';
-var SETTINGS_DRAW_LABEL_ID   = 'settings-draw-label';
+var PAN_SNAP_PX            = 60;  // section-pixels of drag needed to snap to next section
+var SETTINGS_THEME_SLIDER_ID  = 'settings-theme-slider';
+var SETTINGS_DRAW_LABEL_ID    = 'settings-draw-label';
+var SETTINGS_JITTER_SLIDER_ID = 'settings-jitter-slider';
+var SETTINGS_JITTER_LABEL_ID  = 'settings-jitter-label';
 
 var _navBackStack = [];
+
+function getThemeNames() {
+  if (typeof themes !== 'undefined' && themes && typeof themes.list === 'function') {
+    var names = themes.list() || [];
+    if (Array.isArray(names) && names.length > 0) return names;
+  }
+  return ['nord'];
+}
+
+function getCurrentThemeName() {
+  if (typeof themes !== 'undefined' && themes && typeof themes.getName === 'function') {
+    return themes.getName() || 'nord';
+  }
+  return 'nord';
+}
+
+function syncThemeSelectorState() {
+  if (!scope._settings) scope._settings = { themeIndex: 0 };
+  var names = getThemeNames();
+  var currentName = getCurrentThemeName();
+  var index = names.indexOf(currentName);
+  scope._settings.themeIndex = index >= 0 ? index : 0;
+}
 
 function focusWorldSection(target) {
   if (!worlds || !worlds.camera || typeof worlds.camera.focusOnSectionFit !== 'function') return;
@@ -960,11 +970,22 @@ function goBackInHistory(fallbackTarget) {
 
 function syncSettingsWidgets() {
   if (!worlds || !worlds.widgets) return;
+  syncThemeSelectorState();
   var sectionRef = (scope.sections && typeof scope.sections.settings === 'number')
     ? scope.sections.settings : undefined;
   if (typeof worlds.widgets.configure === 'function') {
-    var themeCount = (theme && typeof theme.list === 'function') ? theme.list().length : 1;
-    worlds.widgets.configure(SETTINGS_THEME_SLIDER_ID, { max: Math.max(0, themeCount - 1) });
+    var themeCount = getThemeNames().length;
+    worlds.widgets.configure(SETTINGS_THEME_SLIDER_ID, {
+      min: 0,
+      max: Math.max(0, themeCount - 1),
+      step: 1,
+      showValue: false,
+    }, sectionRef);
+  }
+  if (typeof worlds.widgets.configure === 'function') {
+    worlds.widgets.configure(SETTINGS_JITTER_SLIDER_ID, {
+      min: 0, max: JITTER_STEPS.length - 1, step: 1, showValue: false,
+    }, sectionRef);
   }
   if (typeof worlds.widgets.setValue === 'function') {
     worlds.widgets.setValue(
@@ -974,6 +995,9 @@ function syncSettingsWidgets() {
     );
     if (scope._settings) {
       worlds.widgets.setValue(SETTINGS_THEME_SLIDER_ID, scope._settings.themeIndex, sectionRef);
+      var _jIdx = scope._settings.jitterIndex !== undefined ? scope._settings.jitterIndex : 2;
+      worlds.widgets.setValue(SETTINGS_JITTER_SLIDER_ID, _jIdx, sectionRef);
+      worlds.widgets.setValue(SETTINGS_JITTER_LABEL_ID, JITTER_NAMES[_jIdx] || 'Normal', sectionRef);
     }
   }
 }
@@ -983,12 +1007,22 @@ function handleSettingsWorldWidgetEvents() {
   for (;;) {
     var widgetEvent = worlds.widgets.popEvent();
     if (!widgetEvent) break;
-    if (widgetEvent.id === SETTINGS_THEME_SLIDER_ID) {
-      if (!scope._settings) scope._settings = { themeIndex: 0 };
-      scope._settings.themeIndex = widgetEvent.value;
-      var names = (theme && typeof theme.list === 'function') ? theme.list() : [];
-      var name = names[widgetEvent.value];
-      if (name && theme && typeof theme.set === 'function') theme.set(name);
+    if (widgetEvent.id === SETTINGS_THEME_SLIDER_ID && widgetEvent.action === 'change' && typeof widgetEvent.value === 'number') {
+      if (!scope._settings) scope._settings = { themeIndex: 0, jitterIndex: 2 };
+      var names = getThemeNames();
+      var nextIndex = Math.max(0, Math.min(names.length - 1, Math.round(widgetEvent.value)));
+      var name = names[nextIndex];
+      if (name && typeof themes !== 'undefined' && themes && typeof themes.set === 'function') {
+        if (!themes.set(name)) continue;
+      }
+      scope._settings.themeIndex = nextIndex;
+      syncSettingsWidgets();
+    } else if (widgetEvent.id === SETTINGS_JITTER_SLIDER_ID && widgetEvent.action === 'change' && typeof widgetEvent.value === 'number') {
+      if (!scope._settings) scope._settings = { themeIndex: 0, jitterIndex: 2 };
+      var jIdx = Math.max(0, Math.min(JITTER_STEPS.length - 1, Math.round(widgetEvent.value)));
+      scope._settings.jitterIndex = jIdx;
+      JITTER = JITTER_STEPS[jIdx];
+      syncSettingsWidgets();
     }
   }
 }
@@ -1012,7 +1046,7 @@ function handleWorldLinkActions() {
       scope.STOCK_DEAL = 3;
       syncSettingsWidgets();
     } else if (activated.url === 'action:history-back') {
-      goBackInHistory('Klondike');
+      goBackInHistory('Play');
     }
   }
 }
@@ -1021,7 +1055,10 @@ function handleWorldLinkActions() {
 ```js on:init
 term.layerID = 'default';
 scope.sections = {};
-scope._settings = scope._settings || { themeIndex: 0 };
+scope._settings = scope._settings || { themeIndex: 0, jitterIndex: 2 };
+if (scope._settings.jitterIndex === undefined) scope._settings.jitterIndex = 2;
+JITTER = JITTER_STEPS[scope._settings.jitterIndex];
+scope._worldSwipe = null;  // { startY, lastY, totalDy } — background swipe-to-pan gesture
 
 worlds.enable();
 worlds.controls.setEnabled(false);
@@ -1029,16 +1066,25 @@ if (worlds.links && typeof worlds.links.setKeyHandlingEnabled === 'function') {
   worlds.links.setKeyHandlingEnabled(true);
 }
 worlds.config.setDefaults({
-  keepRotation:             true,
   sectionOverflow:          'fit-y',
-  sectionClickFocusEnabled: false,
-  defaultSectionWidth:      44,
-  defaultSectionHeight:     28,
-  autoLayoutSpacing:        150,
-  sectionBorderEnabled:     true,
+  keepRotation: true,
+  straightenOnFocus: true,
+  screenSpaceRecenter: true,
+  screenSpaceRecenterIters: 2,
+  sectionSizeUnits: 'px',
+  sectionOverflow: 'fit-y',
+  sectionListMarker: '➵',
+  sectionListMarkerGapPx: 12,
+  sectionListHangIndentPx: 24,
+  defaultSectionWidth: 960,
+  defaultSectionHeight: 700,
+  autoLayoutSpacing:        100,
+  sectionBorderEnabled:     false,
+  sectionBackground: 'texture:assets/img/PaintedWood008C_1K.jpg;tilePx=640;paperPlaneZ=focus',
+  liveTextureScale: 1,
 });
 worlds.camera.setPosition(0, -80, 260);
-worlds.camera.setRotation(-8 * Math.PI / 180, 3 * Math.PI / 180, 0);
+worlds.camera.setRotation(-9 * Math.PI / 180, 2 * Math.PI / 180, 0);
 worlds.camera.setEaseSpeed(0.08, 0.12);
 
 worlds.camera.shake.setParams({
@@ -1055,18 +1101,56 @@ worlds.setSectionLive('Play');
 scope.newGame(); // fresh random seed on first load
 scope._layout  = null;
 
-worlds.camera.focusOnSectionFit('Klondike', TITLE_SECTION_FIT, { keepRotation: true });
+worlds.camera.focusOnSectionFit('Play', PLAY_SECTION_FIT, { keepRotation: true });
 ```
 
 ```js on:input
-if (!event || event.type !== 'keydown') return;
+if (!event) return;
+
+// ── World-background swipe-to-pan (desktop mouse outside live section) ────────
+// 'mouse' events fire on button press/release; 'mouse_move' fires during drag.
+// We only claim the gesture when it isn't already owned by the section handler.
+if (event.type === 'mouse') {
+  var _lmb = !!(event.buttons & 1);
+  if (_lmb && !scope._worldSwipe) {
+    scope._worldSwipe = { startY: event.y, lastY: event.y, totalDy: 0 };
+  } else if (!_lmb && scope._worldSwipe) {
+    var _gDy = scope._worldSwipe.totalDy;
+    scope._worldSwipe = null;
+    var _gCs = currentSectionIndex();
+    var _onPlay     = scope.sections && _gCs === scope.sections.play;
+    var _onSettings = scope.sections && _gCs === scope.sections.settings;
+    var _onHelp     = scope.sections && _gCs === scope.sections.help;
+    if (_onPlay) {
+      // Settings is above Play (y<0): swipe up → Settings; Help is below: swipe down → Help
+      if      (_gDy < -PAN_SNAP_PX) navigateToSectionWithHistory('Settings', _gCs);
+      else if (_gDy >  PAN_SNAP_PX) navigateToSectionWithHistory('Help', _gCs);
+    } else if (_onSettings && _gDy > PAN_SNAP_PX) {
+      // Settings is above Play: swipe down returns to Play
+      goBackInHistory('Play');
+    } else if (_onHelp && _gDy < -PAN_SNAP_PX) {
+      // Help is below Play: swipe up returns to Play
+      goBackInHistory('Play');
+    }
+  }
+  return;
+}
+if (event.type === 'mouse_move') {
+  if (scope._worldSwipe) {
+    scope._worldSwipe.totalDy += (event.y || 0) - scope._worldSwipe.lastY;
+    scope._worldSwipe.lastY    = (event.y || 0);
+  }
+  return;
+}
+
+if (event.type !== 'keydown') return;
 var k  = event.key;
 var cs = currentSectionIndex();
 var onPlay = scope.sections && cs === scope.sections.play;
 
 if (k === 'Escape') {
   if (onPlay) navigateToSectionWithHistory('Settings', cs);
-  else goBackInHistory('Klondike');
+  else goBackInHistory('Play');
 } else if ((k === 's' || k === 'S') && onPlay) {
   navigateToSectionWithHistory('Settings', cs);
 } else if ((k === 'h' || k === 'H' || k === '?') && onPlay) {
@@ -1124,7 +1208,71 @@ if (_click2 && _mx2 >= _newX2 && _mx2 < _newX2 + _bW2 && _my2 >= _bY2 && _my2 < 
 }
 
 if (!scope.gs.won) {
+  // ── Background swipe-to-pan: detect drags on game felt (no card hit) ──────
+  // Swiping up   (dy < -PAN_SNAP_PX) navigates to Settings (section above).
+  // Swiping down (dy >  PAN_SNAP_PX) navigates to Help    (section below).
+  // A live card drag cancels any in-progress swipe gesture.
+  var _pmx = ui.pointer.x();
+  var _pmy = ui.pointer.y();
+  var _pdn = ui.pointer.down(0);
+  if (scope.gs.drag) {
+    // Card drag in progress — cancel any background swipe so they don't conflict.
+    scope._worldSwipe = null;
+  } else if (_pdn && !scope._worldSwipe) {
+    // New press: only start a world-swipe if the pointer is on empty felt.
+    if (!hitTest(_pmx, _pmy, L)) {
+      scope._worldSwipe = { startY: _pmy, lastY: _pmy, totalDy: 0 };
+    }
+  } else if (_pdn && scope._worldSwipe) {
+    // Ongoing drag — accumulate vertical delta.
+    scope._worldSwipe.totalDy += _pmy - scope._worldSwipe.lastY;
+    scope._worldSwipe.lastY    = _pmy;
+  } else if (!_pdn && scope._worldSwipe) {
+    // Released — snap to the appropriate section.
+    var _swipeDy = scope._worldSwipe.totalDy;
+    scope._worldSwipe = null;
+    if (_swipeDy < -PAN_SNAP_PX) {
+      navigateToSectionWithHistory('Settings', scope.sections.play);
+    } else if (_swipeDy > PAN_SNAP_PX) {
+      navigateToSectionWithHistory('Help', scope.sections.play);
+    }
+  }
+
   handleInput(L);
+}
+```
+
+```js on:update section:settings
+// Swipe down (dy > PAN_SNAP_PX) from Settings returns to Play.
+// Settings is above Play in world space, so dragging down moves camera toward Play.
+var _sdn = ui.pointer.down(0);
+var _spy = ui.pointer.y();
+if (_sdn && !scope._worldSwipe) {
+  scope._worldSwipe = { startY: _spy, lastY: _spy, totalDy: 0 };
+} else if (_sdn && scope._worldSwipe) {
+  scope._worldSwipe.totalDy += _spy - scope._worldSwipe.lastY;
+  scope._worldSwipe.lastY    = _spy;
+} else if (!_sdn && scope._worldSwipe) {
+  var _sDy = scope._worldSwipe.totalDy;
+  scope._worldSwipe = null;
+  if (_sDy > PAN_SNAP_PX) goBackInHistory('Play');
+}
+```
+
+```js on:update section:help
+// Swipe up (dy < -PAN_SNAP_PX) from Help returns to Play.
+// Help is below Play in world space, so dragging up moves camera toward Play.
+var _hdn = ui.pointer.down(0);
+var _hpy = ui.pointer.y();
+if (_hdn && !scope._worldSwipe) {
+  scope._worldSwipe = { startY: _hpy, lastY: _hpy, totalDy: 0 };
+} else if (_hdn && scope._worldSwipe) {
+  scope._worldSwipe.totalDy += _hpy - scope._worldSwipe.lastY;
+  scope._worldSwipe.lastY    = _hpy;
+} else if (!_hdn && scope._worldSwipe) {
+  var _hDy = scope._worldSwipe.totalDy;
+  scope._worldSwipe = null;
+  if (_hDy < -PAN_SNAP_PX) goBackInHistory('Play');
 }
 ```
 

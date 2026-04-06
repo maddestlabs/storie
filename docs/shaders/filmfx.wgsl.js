@@ -200,7 +200,7 @@ fn fragmentMain(@location(0) vUv: vec2f) -> @location(0) vec4f {
         let noise  = hash21(coord) * 0.75
                    + hash21(coord * 0.5 + vec2f(17.3, 41.9)) * 0.25;
         let weight = 4.0 * filmLuma(col) * (1.0 - filmLuma(col));
-        col += vec3f((noise - 0.5) * uniforms.grainAmount * weight * 0.35);
+        //col += vec3f((noise - 0.5) * uniforms.grainAmount * weight * 0.35);
     }
 
     return vec4f(clamp(col, vec3f(0.0), vec3f(1.0)), c0v.a);
@@ -225,15 +225,15 @@ fn fragmentMain(@location(0) vUv: vec2f) -> @location(0) vec4f {
             shadowTintB:    0.72,
 
             // ── Blur ──────────────────────────────────────────────────────────
-            blurRadius:     1.5,     // 1.5px cross: just takes the CG edge off
+            blurRadius:     2.5,     // 1.5px cross: just takes the CG edge off
 
             // ── Desaturation ──────────────────────────────────────────────────
             saturation:     0.62,    // slight fade — aged photographic print feel
 
             // ── Grain ─────────────────────────────────────────────────────────
-            grainAmount:    0.2,
-            grainSize:      1.0,     // 1px grain — sharpest / most film-like
-            grainAnimate:   1.0,     // animated; set 0.0 for static paper texture
+            grainAmount:    0.6,
+            grainSize:      4.0,     // 1px grain — sharpest / most film-like
+            grainAnimate:   0.0,     // animated; set 0.0 for static paper texture
         }
     };
 }

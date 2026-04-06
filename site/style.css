@@ -242,3 +242,111 @@ body {
   color: #999;
   margin: 0;
 }
+
+/* ─── S|torie Overlay ────────────────────────────────────────── */
+
+#storie-overlay {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 8000;
+  font-family: '3270-regular', 'Consolas', 'Monaco', monospace;
+  user-select: none;
+}
+
+#storie-overlay-btn {
+  display: block;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border: 0;
+  border-bottom-left-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  padding: 5px 9px;
+  cursor: pointer;
+  outline: none;
+  line-height: 1;
+  transition: background 0.12s;
+}
+
+#storie-overlay-btn:hover,
+#storie-overlay-btn[aria-expanded="true"] { background: rgba(0, 0, 0, 0.82); }
+
+#storie-overlay-btn:focus-visible {
+  outline: 1px solid rgba(255,255,255,0.4);
+  outline-offset: -2px;
+}
+
+#storie-overlay-panel {
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-top: none;
+  border-right: none;
+  border-bottom-left-radius: 5px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+  padding: 10px 12px;
+  min-width: 172px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#storie-overlay-panel.hidden { display: none; }
+
+.sov-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sov-label {
+  font-size: 10px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: #666;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.sov-value {
+  font-size: 12px;
+  color: #ccc;
+  text-align: right;
+  min-width: 32px;
+}
+
+.sov-select {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 3px;
+  color: #ddd;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 5px;
+  flex: 1;
+  min-width: 0;
+  outline: none;
+  cursor: pointer;
+}
+
+.sov-select:focus { border-color: #555; }
+
+.sov-divider {
+  height: 1px;
+  background: #1e1e1e;
+  margin: 2px 0;
+}
+
+.sov-link {
+  display: block;
+  font-size: 11px;
+  color: #666;
+  text-decoration: none;
+  letter-spacing: 0.04em;
+  padding: 1px 0;
+  transition: color 0.1s;
+}
+
+.sov-link:hover { color: #aaa; }

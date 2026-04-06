@@ -216,7 +216,7 @@ export class WebGPUUIRenderer {
     });
 
     this.rectInstanceBuffer = this.device.createBuffer({
-      size: 12 * 4 * 4096,
+      size: 12 * 4 * 16384,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
 
@@ -237,15 +237,15 @@ export class WebGPUUIRenderer {
     });
     this.polyData = new Float32Array(2 * 8192);
 
-    this.rectData = new Float32Array(12 * 4096);
+    this.rectData = new Float32Array(12 * 16384);
     this.textData = new Float32Array(16 * 4096);
     this.imageData = new Float32Array(16 * 4096);
 
-    this.rectClipData = new Int32Array(4 * 4096);
+    this.rectClipData = new Int32Array(4 * 16384);
     this.textClipData = new Int32Array(4 * 4096);
     this.imageClipData = new Int32Array(4 * 4096);
 
-    this.rectStencilRef = new Int32Array(4096);
+    this.rectStencilRef = new Int32Array(16384);
     this.textStencilRef = new Int32Array(4096);
     this.imageStencilRef = new Int32Array(4096);
 
@@ -456,7 +456,7 @@ export class WebGPUUIRenderer {
    * Push a stencil mask rect. Subsequent draws are masked until popMask().
    */
   pushMaskRect(x: number, y: number, w: number, h: number): void {
-    if (this.rectCount >= 4096) return;
+    if (this.rectCount >= 16384) return;
 
     const depthBefore = this.maskDepth;
 
@@ -539,7 +539,7 @@ export class WebGPUUIRenderer {
       this.maskStack.length = 0;
       return;
     }
-    if (this.rectCount >= 4096) return;
+    if (this.rectCount >= 16384) return;
 
     const top = this.maskStack.pop();
     const depthAtPop = this.maskDepth;
@@ -715,7 +715,7 @@ export class WebGPUUIRenderer {
 
   rect(x: number, y: number, w: number, h: number, color: Color): void {
     if (w <= 0 || h <= 0) return;
-    if (this.rectCount >= 4096) return;
+    if (this.rectCount >= 16384) return;
 
     const [r, g, b, a] = ColorUtils.rgbaNorm(ColorUtils.from(color as any));
     const o = this.rectCount * 12;

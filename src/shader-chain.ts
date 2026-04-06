@@ -219,7 +219,7 @@ export class ShaderChainManager {
       const shaderPath = new URL(`${name}.wgsl.js`, baseUrl).toString();
       console.log(`[ShaderChain] Loading: ${shaderPath}`);
       
-      const response = await fetch(shaderPath);
+      const response = await fetch(shaderPath, { cache: 'no-store' });
       if (!response.ok) {
         throw new Error(`Failed to fetch shader: ${response.status} ${response.statusText}`);
       }
@@ -310,7 +310,7 @@ export class ShaderChainManager {
 
         let text = this.includeCache.get(url);
         if (text === undefined) {
-          const resp = await fetch(url);
+          const resp = await fetch(url, { cache: 'no-store' });
           if (!resp.ok) {
             throw new Error(`[ShaderChain] Failed to fetch #include: ${url} (${resp.status} ${resp.statusText})`);
           }
