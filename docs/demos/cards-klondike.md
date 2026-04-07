@@ -2,7 +2,7 @@
 name: "Klondike Solitaire"
 theme: "stonegarden"
 font: "Cutive+Mono"
-shaders: "filmfx+lightvignette"
+shaders: "vintage"
 ---
 
 Classic Klondike solitaire. Drag cards between tableau columns, move runs to foundations, deal from the stock.

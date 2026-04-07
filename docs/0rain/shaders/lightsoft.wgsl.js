@@ -6,9 +6,6 @@
 //   • Lambertian diffuse  — broad rolling light across the table surface
 //   • Blinn-Phong specular — highlight centred on the light's UV position
 //   • Swaying animation   — sin-driven pendulum orbit along the X axis
-//
-// For Sobel-derived surface normals (bump-mapped edges), chain sobel.wgsl.js
-// upstream — lightsoft reads the already-processed frame.
 
 function getShaderConfig() {
     return {
@@ -62,9 +59,6 @@ struct Uniforms {
 fn fragmentMain(@location(0) vUv: vec2f) -> @location(0) vec4f {
     let uv  = vUv;
     let col = textureSampleLevel(contentTexture, contentTextureSampler, uv, 0.0);
-
-    // Flat surface normal — camera-facing. For Sobel-derived bump normals,
-    // place sobel.wgsl.js upstream in the shader chain.
     let normal = vec3f(0.0, 0.0, 1.0);
 
     // ── Swaying overhead light ───────────────────────────────────────────────
@@ -102,11 +96,11 @@ fn fragmentMain(@location(0) vUv: vec2f) -> @location(0) vec4f {
 
         uniforms: {
             // ── pendulum motion ────────────────────────────────────────────────
-            swayAmp:    0.22,   // ~ 22% of screen width total arc
-            swaySpeed:  0.42,   // ≈ one full swing every 15 s  (2π / 0.42)
+            swayAmp:    1.22,   // ~ 22% of screen width total arc
+            swaySpeed:  0.8,   // ≈ one full swing every 15 s  (2π / 0.42)
 
             // ── light source position ──────────────────────────────────────────
-            lightY:     0.35,   // sits above the foundation / top-card row
+            lightY:     0.15,   // sits above the foundation / top-card row
             lightHeight: 0.55,  // mid-height: wide enough to illuminate the whole table
 
             // ── shading strengths ──────────────────────────────────────────────
@@ -116,7 +110,7 @@ fn fragmentMain(@location(0) vUv: vec2f) -> @location(0) vec4f {
             ambient:    0.82,   // high floor — scene stays bright overall
 
             // ── light x anchor (sway oscillates around this value) ─────────────
-            lightX:     0.5,    // screen centre; mouse-follow overwrites this at runtime
+            lightX:     0.5,    // screen centre; shader sway oscillates around this anchor
         }
     };
 }

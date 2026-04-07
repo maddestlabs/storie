@@ -421,6 +421,10 @@ Focus helpers:
 - `worlds.setSectionTransform(sectionIndex, { position?, rotation?, scale? })`
 - `worlds.setSectionVisible(sectionIndex, visible)`
 - `worlds.getSectionCount()`
+- `worlds.unprojectPoint(sectionIndexOrTitle, { x, y }, options?)`
+- `worlds.projectPoint(sectionIndexOrTitle, { x, y }, options?)`
+- `worlds.projectRect(sectionIndexOrTitle, { x, y, width, height }, options?)`
+- `worlds.projectQuad(sectionIndexOrTitle, { x, y, width, height }, options?)`
 
 Experimental runtime section store helpers:
 - `worlds.sections.list()`
@@ -444,6 +448,18 @@ String selectors now resolve by stable section id first, then by heading title s
 `worlds.content.*` updates the rendered markdown for the existing card in-place. It does not create a second overlay card and it does not mutate the runtime section store unless you explicitly use `worlds.sections.update(...)`.
 
 `getSectionLayout()` also exposes `opacity`, `interactive`, and `renderMode`.
+
+Projection helpers convert between screen coordinates and the same logical section
+coordinate space used by `ui.pointer` and `ui.metrics.canvasWidth/Height`.
+They are useful when a live-section demo wants to draw a transient overlay, such as
+a drag preview, outside the section's clipped texture bounds.
+
+- `unprojectPoint(...)` converts a screen point back into logical section coordinates.
+- `projectPoint(...)` returns a single screen point.
+- `projectRect(...)` returns a screen-space AABB.
+- `projectQuad(...)` returns the projected four-corner quad for the local rect.
+
+Rect arguments accept either `{ x, y, w, h }` or `{ x, y, width, height }`.
 
 Rotation passed to `setSectionTransform` is in degrees.
 

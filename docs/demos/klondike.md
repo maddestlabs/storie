@@ -2,7 +2,7 @@
 name: "Klondike Solitaire"
 theme: "stonegarden"
 font: "Cutive+Mono"
-shaders: "blur+grain+blurgradual"
+shaders: "vintage"
 ---
 
 # Play {"x":"0","y":"0","z":"0"}
@@ -26,7 +26,7 @@ Theme:
 Card jitter: :gui{type:label,id:settings-jitter-label,text:"Normal",width:40%,align:left,scale:worlds}
 :gui{type:slider,id:settings-jitter-slider,min:0,max:4,value:2,step:1,showValue:false,width:100%,align:center,scale:worlds}
 
-- [⇦ Back](#play)
+- [Back](#play){"list-icon":"⇐"}
 
 ```js on:enter
 scope.sections = scope.sections || {};
@@ -48,8 +48,7 @@ syncSettingsWidgets();
 
 **Keys:** `N` new game · `R` replay · `Esc` / `S` settings · `H` help
 
-- [▶ Play]()
-- [⇦ Back](action:history-back)
+- [Back](#play){"list-icon":"⇐"}
 
 ```js on:enter
 scope.sections = scope.sections || {};
@@ -69,6 +68,7 @@ var DECK_AGE    = 1.0; // 0 = pristine (no aging), 1 = very worn; scales all car
 var JITTER       = 1.0; // positional and angular scatter scale; 0 = none, 1 = default, 3 = chaotic
 var JITTER_STEPS = [0, 0.5, 1.0, 2.0, 3.0];   // scale factors per step
 var JITTER_NAMES = ['None', 'Subtle', 'Normal', 'Wild', 'Chaotic'];
+var DRAG_SELECTED_SCALE = 1.2;
 
 
 // ─── Card helpers ─────────────────────────────────────────────────────────────
@@ -308,19 +308,60 @@ function tableauCardRects(pile, colX, L) {
   return rects;
 }
 
+function getPlaySectionRef() {
+  return (scope.sections && scope.sections.play !== undefined) ? scope.sections.play : 'Play';
+}
+
+function getPlayPointerLocalPoint(preferSectionPointer) {
+  if (preferSectionPointer) {
+    return { x: ui.pointer.x(), y: ui.pointer.y() };
+  }
+
+  var pixelX = null;
+  var pixelY = null;
+
+  // Use canvas pixel coordinates for unprojection.
+  // NOTE: mouse.x()/mouse.y() are terminal-cell coords, not pixels.
+  if (typeof getMousePixelX === 'function' && typeof getMousePixelY === 'function') {
+    pixelX = getMousePixelX();
+    pixelY = getMousePixelY();
+  } else if (typeof mousePixelX === 'number' && typeof mousePixelY === 'number') {
+    pixelX = mousePixelX;
+    pixelY = mousePixelY;
+  }
+
+  if (pixelX !== null && pixelY !== null && worlds && typeof worlds.unprojectPoint === 'function') {
+    var local = worlds.unprojectPoint(getPlaySectionRef(), { x: pixelX, y: pixelY }, { allowOffscreen: true });
+    if (local) return local;
+  }
+
+  return { x: ui.pointer.x(), y: ui.pointer.y() };
+}
+
+function draggedCardStep(L, index) {
+  return index === 0 ? Math.round(L.faceUpOffset * DRAG_SELECTED_SCALE) : L.faceUpOffset;
+}
+
 // ─── Input handling ────────────────────────────────────────────────────────────
 function handleInput(L) {
   var g = scope.gs;
-  var mx = ui.pointer.x();
-  var my = ui.pointer.y();
-  var clicked = ui.pointer.clicked(0);
-  var down = ui.pointer.down(0);
+  // Two pointer spaces:
+  // - section-local (ui.pointer): best for hit tests / in-bounds interactions
+  // - unprojected from screen pixels (worlds.unprojectPoint): continues working
+  //   when the cursor leaves the live section.
+  var pressPt = getPlayPointerLocalPoint(true);
+  var dragPt = getPlayPointerLocalPoint(false);
+  var mx = (g.drag && dragPt && Number.isFinite(dragPt.x)) ? dragPt.x : pressPt.x;
+  var my = (g.drag && dragPt && Number.isFinite(dragPt.y)) ? dragPt.y : pressPt.y;
+  var clicked = (mouse && typeof mouse.clicked === 'function') ? mouse.clicked(0) : ui.pointer.clicked(0);
+  var down = (mouse && typeof mouse.down === 'function') ? mouse.down(0) : ui.pointer.down(0);
   var now = Date.now();
 
   // ── Drag update ────────────────────────────────────────────────
   if (g.drag) {
-    g.drag.x = mx - g.drag.ox;
-    g.drag.y = my - g.drag.oy;
+    var dragScale = g.drag.scale || 1;
+    g.drag.x = mx - g.drag.anchorX * dragScale;
+    g.drag.y = my - g.drag.anchorY * dragScale;
   }
 
   // ── Release: try to drop dragged cards ─────────────────────────
@@ -388,7 +429,8 @@ function handleInput(L) {
   // ── Click / press ───────────────────────────────────────────────
   if (!clicked) return;
 
-  var hit = hitTest(mx, my, L);
+  // Hit-test using section-local pointer so clicks match the rendered card positions.
+  var hit = hitTest(pressPt.x, pressPt.y, L);
   if (!hit) return;
 
   // Double-click detection
@@ -429,8 +471,13 @@ function handleInput(L) {
     }
     // Start drag
     var wx = L.topRowXs[1]; var wy = L.topRowY;
+    var dmx = (dragPt && Number.isFinite(dragPt.x)) ? dragPt.x : pressPt.x;
+    var dmy = (dragPt && Number.isFinite(dragPt.y)) ? dragPt.y : pressPt.y;
     g.drag = { cards: [wTop], fromPile: g.waste, fromIndex: g.waste.length - 1,
-               ox: mx - wx, oy: my - wy, x: wx, y: wy };
+               ox: dmx - wx, oy: dmy - wy,
+               anchorX: dmx - wx, anchorY: dmy - wy,
+               scale: DRAG_SELECTED_SCALE,
+               x: wx, y: wy };
     g.waste.splice(g.waste.length - 1, 1);
     return;
   }
@@ -441,8 +488,13 @@ function handleInput(L) {
     if (fnd.length === 0) return;
     var fCard = fnd[fnd.length - 1];
     var fCardX = L.topRowXs[3 + hit.pileKey]; var fCardY = L.topRowY;
+    var dmx2 = (dragPt && Number.isFinite(dragPt.x)) ? dragPt.x : pressPt.x;
+    var dmy2 = (dragPt && Number.isFinite(dragPt.y)) ? dragPt.y : pressPt.y;
     g.drag = { cards: [fCard], fromPile: fnd, fromIndex: fnd.length - 1,
-               ox: mx - fCardX, oy: my - fCardY, x: fCardX, y: fCardY };
+               ox: dmx2 - fCardX, oy: dmy2 - fCardY,
+               anchorX: dmx2 - fCardX, anchorY: dmy2 - fCardY,
+               scale: DRAG_SELECTED_SCALE,
+               x: fCardX, y: fCardY };
     fnd.splice(fnd.length - 1, 1);
     return;
   }
@@ -469,8 +521,13 @@ function handleInput(L) {
     var rects2 = tableauCardRects(tPile, L.topRowXs[tCol], L);
     var startX = rects2[tIdx].x; var startY = rects2[tIdx].y;
     tPile.splice(tIdx, runCards.length);
+    var dmx3 = (dragPt && Number.isFinite(dragPt.x)) ? dragPt.x : pressPt.x;
+    var dmy3 = (dragPt && Number.isFinite(dragPt.y)) ? dragPt.y : pressPt.y;
     g.drag = { cards: runCards, fromPile: tPile, fromIndex: tIdx,
-               ox: mx - startX, oy: my - startY, x: startX, y: startY };
+               ox: dmx3 - startX, oy: dmy3 - startY,
+               anchorX: dmx3 - startX, anchorY: dmy3 - startY,
+               scale: DRAG_SELECTED_SCALE,
+               x: startX, y: startY };
     return;
   }
 }
@@ -585,6 +642,33 @@ function roundedRectPoly(x, y, w, h, r, cx, cy, cosA, sinA) {
 }
 
 // ─── Card drawing ─────────────────────────────────────────────────────────────
+// Renders deterministic aging marks within the card face area.
+// Spot positions are generated in unrotated card-local coords then rotated to screen
+// space via _rotPt so they distribute correctly on tilted cards.
+// twoColor=true → warm amber / cool stain alternation (face); false → single aged-brown (back).
+// exclW>0 activates an exclusion rect in unrotated coords (used for the back centre panel).
+function drawCardAgeSpots(initHash, n, jx, jy, cw, ch, age,
+                          jcx, jcy, cosA, sinA,
+                          spotScale, alphaMin, alphaRange, twoColor,
+                          exclX, exclY, exclW, exclH) {
+  var _hs = initHash;
+  for (var _i = 0; _i < n; _i++) {
+    _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sx = _hs / 4294967296;
+    _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sy = _hs / 4294967296;
+    _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sw = 1 + Math.round((_hs / 4294967296) * spotScale);
+    _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sth = 1 + Math.round((_hs / 4294967296) * spotScale);
+    _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sa = Math.round((alphaMin + (_hs / 4294967296) * alphaRange) * age * 255);
+    _hs = ((_hs * 1664525 + 1013904223) >>> 0);
+    var _ux = jx + Math.round(_sx * (cw - 4));
+    var _uy = jy + Math.round(_sy * (ch - 4));
+    if (exclW > 0 && _ux >= exclX && _ux < exclX + exclW && _uy >= exclY && _uy < exclY + exclH) continue;
+    var _rp = _rotPt(_ux, _uy, jcx, jcy, cosA, sinA);
+    ui.rect(_rp.x, _rp.y, _sw, _sth, twoColor
+      ? ((_hs / 4294967296) > 0.55 ? ui.colors.rgba(175, 135, 58, _sa) : ui.colors.rgba(110, 82, 48, _sa))
+      : ui.colors.rgba(140, 120, 90, _sa));
+  }
+}
+
 // Graduated edge vignette drawn against the axis-aligned bounding box of the card.
 // The caller's active mask (rotated polygon or rounded rect) clips the strips to
 // the exact card outline, so the vignette naturally follows rotated card edges.
@@ -609,10 +693,17 @@ function drawCardVignette(bbX, bbY, bbW, bbH, vDepth, vr, vg, vb) {
 // drawCard renders a single playing card at (x, y) using ui primitives only.
 // faceUp=true draws front; false draws back (double-border frame + crosshatch).
 // Optional jitter: { dx, dy, angleDeg } — positional + rotational deviation.
-function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
+function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age, drawScale) {
   var id = cardObj ? cardObj.id : -1;
   var faceUp = cardObj ? cardObj.faceUp : false;
   var _age = (age > 0) ? Math.min(age, 1.0) : 0;
+  var _drawScale = (drawScale && drawScale > 0) ? drawScale : 1;
+
+  if (_drawScale !== 1) {
+    cw = Math.round(cw * _drawScale);
+    ch = Math.round(ch * _drawScale);
+    radius = Math.max(3, Math.round(radius * _drawScale));
+  }
 
   // Stable positional + rotational deviation (simulates human-dealt card placement).
   var jx = jitter ? x + (jitter.dx || 0) : x;
@@ -621,19 +712,6 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
   var angRad = angDeg * Math.PI / 180;
   var cosA = Math.cos(angRad); var sinA = Math.sin(angRad);
   var jcx = jx + cw * 0.5; var jcy = jy + ch * 0.5;
-
-  // Drag lift: scale the card up ~4% when being dragged, simulating it held above the
-  // felt. The card grows outward from the pick-up centre point. jx/jy/cw/ch are all
-  // local copies so this is safe; jcx/jcy are recomputed after rounding.
-  if (isDragging) {
-    var _liftS = 1.04;
-    cw = Math.round(cw * _liftS);
-    ch = Math.round(ch * _liftS);
-    jx = Math.round(jcx - cw * 0.5);
-    jy = Math.round(jcy - ch * 0.5);
-    jcx = jx + cw * 0.5;
-    jcy = jy + ch * 0.5;
-  }
 
   // Bounding box of the rotated card — the smallest axis-aligned rect that fully
   // contains the rotated polygon. Used for full-card fill rects so that the mask
@@ -693,42 +771,34 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
     var rankStr = rankLabel(rank);
     var suitStr = suitLabel(suit);
 
-    // Corner rank label (top-left)
-    ui.text(rankStr, jx + 4, jy + 3, ink);
-    ui.text(suitStr, jx + 4, jy + 3 + (ui.metrics.charHeight || 14), ink);
+    // Corner rank label (top-left) — positions rotated to sit on the tilted card.
+    var _chH = ui.metrics.charHeight || 14;
+    var _tlA = _rotPt(jx + 4, jy + 3,        jcx, jcy, cosA, sinA);
+    var _tlB = _rotPt(jx + 4, jy + 3 + _chH, jcx, jcy, cosA, sinA);
+    ui.text(rankStr, _tlA.x, _tlA.y, ink);
+    ui.text(suitStr, _tlB.x, _tlB.y, ink);
 
-    // Center suit symbol — scaled up, centered using measured width
+    // Center suit symbol — scaled up; position rotated to the card's visual centre.
     var _mw = ui.metrics.measureTextWidth ? ui.metrics.measureTextWidth : function(s) { return (ui.metrics.charWidth || 10) * s.length; };
     var centerScale = 1.6;
-    var cx3 = jx + Math.floor((cw - _mw(suitStr) * centerScale) * 0.5);
-    var cy3 = jy + Math.floor((ch - (ui.metrics.charHeight || 14) * centerScale) * 0.5) - 2;
-    ui.text(suitStr, cx3, cy3, ink, centerScale);
+    var _cRaw = _rotPt(
+      jx + Math.floor((cw - _mw(suitStr) * centerScale) * 0.5),
+      jy + Math.floor((ch - _chH * centerScale) * 0.5) - 2,
+      jcx, jcy, cosA, sinA);
+    ui.text(suitStr, _cRaw.x, _cRaw.y, ink, centerScale);
 
-    // Bottom-right corner — right-aligned using measured widths
-    var bry = jy + ch - 4 - (ui.metrics.charHeight || 14) * 2;
-    ui.text(rankStr, jx + cw - 4 - _mw(rankStr), bry, ink);
-    ui.text(suitStr, jx + cw - 4 - _mw(suitStr), bry + (ui.metrics.charHeight || 14), ink);
+    // Bottom-right corner — positions rotated to the card-local bottom-right area.
+    var bry = jy + ch - 4 - _chH * 2;
+    var _brA = _rotPt(jx + cw - 4 - _mw(rankStr), bry,        jcx, jcy, cosA, sinA);
+    var _brB = _rotPt(jx + cw - 4 - _mw(suitStr), bry + _chH, jcx, jcy, cosA, sinA);
+    ui.text(rankStr, _brA.x, _brA.y, ink);
+    ui.text(suitStr, _brB.x, _brB.y, ink);
 
-    // Foxing / age spots on card face: tiny warm-brown marks scattered across
-    // the print. Count grows cubically with age; placed before the vignette so
-    // edge marks are naturally darkened by it. Two hues alternate (foxing =
-    // warm amber, stain = cooler brown).
+    // Foxing / age spots — two-hue warm/cool scatter, drawn before the vignette so
+    // edge marks are naturally darkened by it.
     if (_age > 0) {
-      var _fN = Math.round(_age * _age * _age * 50);
-      var _fhs = ((id * 2654435761) >>> 0);
-      for (var _fi = 0; _fi < _fN; _fi++) {
-        _fhs = ((_fhs * 1664525 + 1013904223) >>> 0);  var _fx = jx + Math.round((_fhs / 4294967296) * (cw - 4));
-        _fhs = ((_fhs * 1664525 + 1013904223) >>> 0);  var _fy = jy + Math.round((_fhs / 4294967296) * (ch - 4));
-        _fhs = ((_fhs * 1664525 + 1013904223) >>> 0);  var _fw = 1 + Math.round((_fhs / 4294967296) * 2.5);
-        _fhs = ((_fhs * 1664525 + 1013904223) >>> 0);  var _ft = 1 + Math.round((_fhs / 4294967296) * 2.5);
-        _fhs = ((_fhs * 1664525 + 1013904223) >>> 0);
-        var _fa = Math.round((0.08 + (_fhs / 4294967296) * 0.22) * _age * 255);
-        _fhs = ((_fhs * 1664525 + 1013904223) >>> 0);
-        var _fc = (_fhs / 4294967296) > 0.55
-          ? ui.colors.rgba(175, 135, 58, _fa)   // warm foxing
-          : ui.colors.rgba(110, 82, 48, _fa);    // cooler stain
-        ui.rect(_fx, _fy, _fw, _ft, _fc);
-      }
+      drawCardAgeSpots(((id * 2654435761) >>> 0), Math.round(_age * _age * _age * 50),
+        jx, jy, cw, ch, _age, jcx, jcy, cosA, sinA, 2.5, 0.08, 0.22, true, 0, 0, 0, 0);
     }
 
     // Edge vignette — warm tint, 50% depth on face (more immersive inner glow).
@@ -746,7 +816,11 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
     var bMarY = Math.max(5, Math.round(ch * 0.12));
     var bPanX = jx + bMarX;  var bPanY = jy + bMarY;
     var bPanW = cw - bMarX * 2;  var bPanH = ch - bMarY * 2;
-    ui.rect(bPanX, bPanY, bPanW, bPanH, pal.cardBackInv);
+    // Panel fill via a nested rotated mask so it follows the card's jitter angle.
+    var _bPanR = Math.max(1, Math.round(Math.min(bPanW, bPanH) * 0.03));
+    ui.pushMaskPolygon(roundedRectPoly(bPanX, bPanY, bPanW, bPanH, _bPanR, jcx, jcy, cosA, sinA));
+    ui.rect(bbX, bbY, bbW, bbH, pal.cardBackInv);
+    ui.popMask();
     // Glyph centered in the panel at 25% of its panel-filling scale.
     // Use measureTextWidth for the actual emoji render width (may exceed charWidth),
     // which is why the old _bCw-based centering drifted rightward.
@@ -755,27 +829,16 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age) {
     var _bGW = ui.metrics.measureTextWidth(char) || (ui.metrics.charWidth || 10);
     var _bFillScale = Math.min(bPanW / _bGW, bPanH / _bCh);
     var _bScale = _bFillScale * 0.95;
-    ui.text(char, bPanX + Math.floor((bPanW - _bGW * _bScale) * 0.5),
-                  bPanY + Math.floor((bPanH - _bCh * _bScale) * 0.5),
-                  pal.cardBack, _bScale);
+    var _gPt = _rotPt(bPanX + Math.floor((bPanW - _bGW * _bScale) * 0.5),
+                      bPanY + Math.floor((bPanH - _bCh * _bScale) * 0.5),
+                      jcx, jcy, cosA, sinA);
+    ui.text(char, _gPt.x, _gPt.y, pal.cardBack, _bScale);
 
-    // Age spots — border margin only so they don't obscure the panel glyph
+    // Age spots — border margin only, excludes the centre panel.
     if (_age > 0) {
-      var _bN = Math.round(_age * _age * _age * 35);
-      var _bhs = ((id * 2654435761 + 9999) >>> 0);
-      for (var _bi = 0; _bi < _bN; _bi++) {
-        _bhs = ((_bhs * 1664525 + 1013904223) >>> 0);  var _bsx = _bhs / 4294967296;
-        _bhs = ((_bhs * 1664525 + 1013904223) >>> 0);  var _bsy = _bhs / 4294967296;
-        _bhs = ((_bhs * 1664525 + 1013904223) >>> 0);  var _bw = 1 + Math.round((_bhs / 4294967296) * 2.0);
-        _bhs = ((_bhs * 1664525 + 1013904223) >>> 0);  var _bt = 1 + Math.round((_bhs / 4294967296) * 2.0);
-        _bhs = ((_bhs * 1664525 + 1013904223) >>> 0);
-        var _ba = Math.round((0.06 + (_bhs / 4294967296) * 0.18) * _age * 255);
-        // Map into card coords; skip spots that fall inside the center panel
-        var _bx = jx + Math.round(_bsx * (cw - 3));
-        var _by = jy + Math.round(_bsy * (ch - 3));
-        if (_bx >= bPanX && _bx < bPanX + bPanW && _by >= bPanY && _by < bPanY + bPanH) continue;
-        ui.rect(_bx, _by, _bw, _bt, ui.colors.rgba(140, 120, 90, _ba));
-      }
+      drawCardAgeSpots(((id * 2654435761 + 9999) >>> 0), Math.round(_age * _age * _age * 35),
+        jx, jy, cw, ch, _age, jcx, jcy, cosA, sinA,
+        2.0, 0.06, 0.18, false, bPanX, bPanY, bPanW, bPanH);
     }
 
     // Edge vignette — neutral tint, 40% depth on back (laminated surface).
@@ -803,7 +866,289 @@ function drawEmptySlot(pal, x, y, cw, ch, radius, label) {
 }
 
 // ─── Render ───────────────────────────────────────────────────────────────────
-function drawGame(L, pal) {
+function drawDraggedCardsLocal(pal, L) {
+  var g = scope.gs;
+  if (!g || !g.drag) return;
+
+  var dy2 = g.drag.y;
+  for (var dc = 0; dc < g.drag.cards.length; dc++) {
+    var dragScale = dc === 0 ? (g.drag.scale || DRAG_SELECTED_SCALE) : 1;
+    drawCard(pal, g.drag.x, dy2, L.cw, L.ch, L.radius, g.drag.cards[dc], dc === 0,
+             null, cardAge(g.drag.cards[dc].id), dragScale);
+    dy2 += draggedCardStep(L, dc);
+  }
+}
+
+function drawDraggedCardsOverlay(pal, L, sectionRef) {
+  var g = scope.gs;
+  if (!g || !g.drag || !worlds || typeof worlds.projectQuad !== 'function') return;
+
+  function _normalizePoly(poly) {
+    if (!poly || poly.length < 3) return poly;
+    var cx = 0, cy = 0;
+    for (var i = 0; i < poly.length; i++) { cx += poly[i].x; cy += poly[i].y; }
+    cx /= poly.length; cy /= poly.length;
+    var arr = [];
+    for (var j = 0; j < poly.length; j++) {
+      var p = poly[j];
+      arr.push({ p: p, a: Math.atan2(p.y - cy, p.x - cx) });
+    }
+    arr.sort(function(a, b) { return a.a - b.a; });
+    var out = [];
+    for (var k = 0; k < arr.length; k++) out.push(arr[k].p);
+    return out;
+  }
+
+  function _quadBounds(quad) {
+    var minX = quad[0].x, minY = quad[0].y, maxX = quad[0].x, maxY = quad[0].y;
+    for (var i = 1; i < quad.length; i++) {
+      var px = quad[i].x; var py = quad[i].y;
+      if (px < minX) minX = px;
+      if (py < minY) minY = py;
+      if (px > maxX) maxX = px;
+      if (py > maxY) maxY = py;
+    }
+    return { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
+  }
+
+  function _offsetQuad(quad, dx, dy) {
+    var out = [];
+    for (var i = 0; i < quad.length; i++) out.push({ x: quad[i].x + dx, y: quad[i].y + dy });
+    return out;
+  }
+
+  function _fillQuad(quad, color) {
+    if (!quad || quad.length < 3) return;
+    var q = _normalizePoly(quad);
+    var b = _quadBounds(q);
+    ui.pushMaskPolygon(q);
+    ui.rect(b.x, b.y, b.w, b.h, color);
+    ui.popMask();
+  }
+
+  function _roundedRectLocalPoly(x, y, w, h, r) {
+    var pts = [];
+    var N = 6;
+    r = Math.max(0, Math.min(r, Math.min(w, h) * 0.5));
+    if (r <= 0) {
+      pts.push({ x: x,     y: y });
+      pts.push({ x: x + w, y: y });
+      pts.push({ x: x + w, y: y + h });
+      pts.push({ x: x,     y: y + h });
+      return pts;
+    }
+    var corners = [
+      [x + r,     y + r,     Math.PI,       3 * Math.PI / 2],
+      [x + w - r, y + r,     3 * Math.PI / 2, 2 * Math.PI],
+      [x + w - r, y + h - r, 0,             Math.PI / 2],
+      [x + r,     y + h - r, Math.PI / 2,   Math.PI],
+    ];
+    for (var ci = 0; ci < 4; ci++) {
+      var ocx = corners[ci][0]; var ocy = corners[ci][1];
+      var a0  = corners[ci][2]; var a1  = corners[ci][3];
+      for (var s = 0; s <= N; s++) {
+        var a = a0 + (a1 - a0) * s / N;
+        pts.push({ x: ocx + Math.cos(a) * r, y: ocy + Math.sin(a) * r });
+      }
+    }
+    return pts;
+  }
+
+  function _projectPoly(localPoly) {
+    if (!localPoly || localPoly.length < 3 || !worlds || typeof worlds.projectPoint !== 'function') return null;
+    var out = [];
+    for (var i = 0; i < localPoly.length; i++) {
+      var sp = worlds.projectPoint(sectionRef, { x: localPoly[i].x, y: localPoly[i].y }, { allowOffscreen: true });
+      if (!sp) return null;
+      out.push(sp);
+    }
+    return out;
+  }
+
+  function _fillPoly(poly, color) {
+    if (!poly || poly.length < 3) return;
+    var p = _normalizePoly(poly);
+    var b = _quadBounds(p);
+    ui.pushMaskPolygon(p);
+    ui.rect(b.x, b.y, b.w, b.h, color);
+    ui.popMask();
+  }
+
+  function ovProjectPoint(lx, ly) {
+    if (!worlds || typeof worlds.projectPoint !== 'function') return null;
+    return worlds.projectPoint(sectionRef, { x: lx, y: ly }, { allowOffscreen: true });
+  }
+
+  function ovRect(lx, ly, lw, lh, color) {
+    var q = worlds.projectQuad(sectionRef, { x: lx, y: ly, w: lw, h: lh }, { allowOffscreen: true });
+    if (q) _fillQuad(q, color);
+  }
+
+  function ovText(text, lx, ly, color, scale) {
+    var p = ovProjectPoint(lx, ly);
+    if (!p) return;
+    ui.text(text, p.x, p.y, color, scale);
+  }
+
+  function ovPushMaskRoundedRect(lx, ly, lw, lh, lr) {
+    var polyLocal = _roundedRectLocalPoly(lx, ly, lw, lh, lr);
+    var polyScreen = _projectPoly(polyLocal);
+    if (polyScreen) {
+      ui.pushMaskPolygon(_normalizePoly(polyScreen));
+      return;
+    }
+    var q = worlds.projectQuad(sectionRef, { x: lx, y: ly, w: lw, h: lh }, { allowOffscreen: true });
+    if (q) ui.pushMaskPolygon(_normalizePoly(q));
+  }
+
+  function ovPushMaskPolygonLocal(localPoly) {
+    var polyScreen = _projectPoly(localPoly);
+    if (polyScreen) ui.pushMaskPolygon(_normalizePoly(polyScreen));
+  }
+
+  function ovPopMask() { ui.popMask(); }
+
+  function drawCardVignetteOverlay(lx, ly, lw, lh, vDepth, vr, vg, vb) {
+    var vN = 16; var vBaseA = 48;
+    for (var vi = 0; vi < vN; vi++) {
+      var vt = (vN - vi) / vN;
+      var va = Math.round(vBaseA * vt * vt * vt);
+      if (va < 1) continue;
+      var vc = ui.colors.rgba(vr, vg, vb, va);
+      var vd0 = Math.round(vi       * vDepth / vN);
+      var vd1 = Math.round((vi + 1) * vDepth / vN);
+      var vth = Math.max(1, vd1 - vd0);
+      ovRect(lx,              ly + vd0,          lw, vth, vc); // top
+      ovRect(lx,              ly + lh - vd0 - vth, lw, vth, vc); // bottom
+      ovRect(lx + vd0,        ly,                vth, lh, vc); // left
+      ovRect(lx + lw - vd0 - vth,  ly,           vth, lh, vc); // right
+    }
+  }
+
+  function drawCardAgeSpotsOverlay(initHash, n, lx, ly, lw, lh, age, twoColor,
+                                  exclX, exclY, exclW, exclH) {
+    var _hs = initHash;
+    for (var _i = 0; _i < n; _i++) {
+      _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sx = _hs / 4294967296;
+      _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sy = _hs / 4294967296;
+      _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sw = 1 + Math.round((_hs / 4294967296) * 2.5);
+      _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sth = 1 + Math.round((_hs / 4294967296) * 2.5);
+      _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sa = Math.round((0.08 + (_hs / 4294967296) * 0.22) * age * 255);
+      _hs = ((_hs * 1664525 + 1013904223) >>> 0);
+      var _ux = lx + Math.round(_sx * (lw - 4));
+      var _uy = ly + Math.round(_sy * (lh - 4));
+      if (exclW > 0 && _ux >= exclX && _ux < exclX + exclW && _uy >= exclY && _uy < exclY + exclH) continue;
+      var col = twoColor
+        ? ((_hs / 4294967296) > 0.55 ? ui.colors.rgba(175, 135, 58, _sa) : ui.colors.rgba(110, 82, 48, _sa))
+        : ui.colors.rgba(140, 120, 90, _sa);
+      ovRect(_ux, _uy, _sw, _sth, col);
+    }
+  }
+
+  function drawCardOverlay(pal2, x, y, cw, ch, radius, cardObj, isDragging, age, drawScale) {
+    var id = cardObj ? cardObj.id : -1;
+    var faceUp = cardObj ? cardObj.faceUp : false;
+    var _age = (age > 0) ? Math.min(age, 1.0) : 0;
+    var _drawScale = (drawScale && drawScale > 0) ? drawScale : 1;
+    if (_drawScale !== 1) {
+      cw = Math.round(cw * _drawScale);
+      ch = Math.round(ch * _drawScale);
+      radius = Math.max(3, Math.round(radius * _drawScale));
+    }
+
+    // Shadows in section-local space (projected), matching in-section drawCard.
+    if (isDragging) {
+      ovRect(x + 14, y + 18, cw, ch, ui.colors.rgba(0, 0, 0, 3));
+      ovRect(x + 10, y + 13, cw, ch, ui.colors.rgba(0, 0, 0, 5));
+      ovRect(x + 6,  y + 8,  cw, ch, ui.colors.rgba(0, 0, 0, 8));
+    } else {
+      ovRect(x + 3, y + 3, cw, ch, pal2.cardShadow);
+    }
+
+    if (faceUp && id >= 0) ui.setMaterial({ roughness: 0.55, normalScale: 0.18 });
+    else ui.setMaterial({ roughness: 0.3, normalScale: 0.18 });
+
+    ovPushMaskRoundedRect(x, y, cw, ch, radius);
+
+    if (faceUp && id >= 0) {
+      ovRect(x, y, cw, ch, pal2.cardFace);
+      if (_age > 0) ovRect(x, y, cw, ch, ui.colors.rgba(200, 160, 80, Math.round(_age * _age * 36)));
+
+      var suit = cardSuit(id);
+      var rank = cardRank(id);
+      var ink = SUIT_RED[suit] ? pal2.red : pal2.black;
+      var rankStr = rankLabel(rank);
+      var suitStr = suitLabel(suit);
+      var _chH = ui.metrics.charHeight || 14;
+      ovText(rankStr, x + 4, y + 3, ink);
+      ovText(suitStr, x + 4, y + 3 + _chH, ink);
+
+      var _mw = ui.metrics.measureTextWidth ? ui.metrics.measureTextWidth : function(s) { return (ui.metrics.charWidth || 10) * s.length; };
+      var centerScale = 1.6;
+      ovText(
+        suitStr,
+        x + Math.floor((cw - _mw(suitStr) * centerScale) * 0.5),
+        y + Math.floor((ch - _chH * centerScale) * 0.5) - 2,
+        ink,
+        centerScale
+      );
+
+      var bry = y + ch - 4 - _chH * 2;
+      ovText(rankStr, x + cw - 4 - _mw(rankStr), bry, ink);
+      ovText(suitStr, x + cw - 4 - _mw(suitStr), bry + _chH, ink);
+
+      if (_age > 0) {
+        drawCardAgeSpotsOverlay(((id * 2654435761) >>> 0), Math.round(_age * _age * _age * 50), x, y, cw, ch, _age, true, 0, 0, 0, 0);
+      }
+      drawCardVignetteOverlay(x, y, cw, ch, Math.max(5, Math.round(Math.min(cw, ch) * 0.50)), 75, 70, 0);
+    } else {
+      ovRect(x, y, cw, ch, pal2.cardBack);
+      if (_age > 0) ovRect(x, y, cw, ch, ui.colors.rgba(200, 160, 80, Math.round(_age * _age * 36)));
+
+      var bMarX = Math.max(5, Math.round(cw * 0.12));
+      var bMarY = Math.max(5, Math.round(ch * 0.12));
+      var bPanX = x + bMarX;  var bPanY = y + bMarY;
+      var bPanW = cw - bMarX * 2;  var bPanH = ch - bMarY * 2;
+      var _bPanR = Math.max(1, Math.round(Math.min(bPanW, bPanH) * 0.03));
+      ovPushMaskPolygonLocal(_roundedRectLocalPoly(bPanX, bPanY, bPanW, bPanH, _bPanR));
+      ovRect(x, y, cw, ch, pal2.cardBackInv);
+      ovPopMask();
+
+      var _bCh = ui.metrics.charHeight || 14;
+      var char = '⚜';
+      var _bGW = ui.metrics.measureTextWidth(char) || (ui.metrics.charWidth || 10);
+      var _bFillScale = Math.min(bPanW / _bGW, bPanH / _bCh);
+      var _bScale = _bFillScale * 0.95;
+      ovText(
+        char,
+        bPanX + Math.floor((bPanW - _bGW * _bScale) * 0.5),
+        bPanY + Math.floor((bPanH - _bCh * _bScale) * 0.5),
+        pal2.cardBack,
+        _bScale
+      );
+
+      if (_age > 0) {
+        drawCardAgeSpotsOverlay(((id * 2654435761 + 9999) >>> 0), Math.round(_age * _age * _age * 35),
+          x, y, cw, ch, _age, false, bPanX, bPanY, bPanW, bPanH);
+      }
+      drawCardVignetteOverlay(x, y, cw, ch, Math.max(5, Math.round(Math.min(cw, ch) * 0.40)), 0, 0, 0);
+    }
+
+    ovPopMask();
+  }
+
+  var localY = g.drag.y;
+  for (var dc = 0; dc < g.drag.cards.length; dc++) {
+    var dragScale = dc === 0 ? (g.drag.scale || DRAG_SELECTED_SCALE) : 1;
+    var localW = L.cw * dragScale;
+    var localH = L.ch * dragScale;
+    drawCardOverlay(pal, g.drag.x, localY, L.cw, L.ch, L.radius, g.drag.cards[dc], dc === 0,
+      cardAge(g.drag.cards[dc].id), dragScale);
+    localY += draggedCardStep(L, dc);
+  }
+}
+
+function drawGame(L, pal, includeDraggedCards) {
   var g = scope.gs;
   var cw = L.cw; var ch = L.ch; var r = L.radius;
 
@@ -867,13 +1212,8 @@ function drawGame(L, pal) {
   }
 
   // ── Dragged cards (drawn on top of everything) ────────────────────────────────
-  if (g.drag) {
-    var dy2 = g.drag.y;
-    for (var dc = 0; dc < g.drag.cards.length; dc++) {
-      drawCard(pal, g.drag.x, dy2, cw, ch, r, g.drag.cards[dc], dc === 0,
-               null, cardAge(g.drag.cards[dc].id));
-      dy2 += L.faceUpOffset;
-    }
+  if (includeDraggedCards !== false) {
+    drawDraggedCardsLocal(pal, L);
   }
 
   // ── Status bar ──────────────────────────────────────────────────────────────
@@ -971,6 +1311,12 @@ function goBackInHistory(fallbackTarget) {
 function syncSettingsWidgets() {
   if (!worlds || !worlds.widgets) return;
   syncThemeSelectorState();
+  var _jSteps = (scope && Array.isArray(scope.JITTER_STEPS) && scope.JITTER_STEPS.length)
+    ? scope.JITTER_STEPS
+    : (typeof JITTER_STEPS !== 'undefined' && Array.isArray(JITTER_STEPS) && JITTER_STEPS.length ? JITTER_STEPS : [0, 0.5, 1.0, 2.0, 3.0]);
+  var _jNames = (scope && Array.isArray(scope.JITTER_NAMES) && scope.JITTER_NAMES.length)
+    ? scope.JITTER_NAMES
+    : (typeof JITTER_NAMES !== 'undefined' && Array.isArray(JITTER_NAMES) && JITTER_NAMES.length ? JITTER_NAMES : ['None', 'Subtle', 'Normal', 'Wild', 'Chaotic']);
   var sectionRef = (scope.sections && typeof scope.sections.settings === 'number')
     ? scope.sections.settings : undefined;
   if (typeof worlds.widgets.configure === 'function') {
@@ -984,7 +1330,7 @@ function syncSettingsWidgets() {
   }
   if (typeof worlds.widgets.configure === 'function') {
     worlds.widgets.configure(SETTINGS_JITTER_SLIDER_ID, {
-      min: 0, max: JITTER_STEPS.length - 1, step: 1, showValue: false,
+      min: 0, max: _jSteps.length - 1, step: 1, showValue: false,
     }, sectionRef);
   }
   if (typeof worlds.widgets.setValue === 'function') {
@@ -997,41 +1343,50 @@ function syncSettingsWidgets() {
       worlds.widgets.setValue(SETTINGS_THEME_SLIDER_ID, scope._settings.themeIndex, sectionRef);
       var _jIdx = scope._settings.jitterIndex !== undefined ? scope._settings.jitterIndex : 2;
       worlds.widgets.setValue(SETTINGS_JITTER_SLIDER_ID, _jIdx, sectionRef);
-      worlds.widgets.setValue(SETTINGS_JITTER_LABEL_ID, JITTER_NAMES[_jIdx] || 'Normal', sectionRef);
+      worlds.widgets.setValue(SETTINGS_JITTER_LABEL_ID, _jNames[_jIdx] || 'Normal', sectionRef);
     }
   }
 }
 
 function handleSettingsWorldWidgetEvents() {
   if (!worlds || !worlds.widgets || typeof worlds.widgets.popEvent !== 'function') return;
-  for (;;) {
-    var widgetEvent = worlds.widgets.popEvent();
-    if (!widgetEvent) break;
+  var _jSteps = (scope && Array.isArray(scope.JITTER_STEPS) && scope.JITTER_STEPS.length)
+    ? scope.JITTER_STEPS
+    : (typeof JITTER_STEPS !== 'undefined' && Array.isArray(JITTER_STEPS) && JITTER_STEPS.length ? JITTER_STEPS : [0, 0.5, 1.0, 2.0, 3.0]);
+  var widgetEvent = worlds.widgets.popEvent();
+  while (widgetEvent) {
     if (widgetEvent.id === SETTINGS_THEME_SLIDER_ID && widgetEvent.action === 'change' && typeof widgetEvent.value === 'number') {
       if (!scope._settings) scope._settings = { themeIndex: 0, jitterIndex: 2 };
       var names = getThemeNames();
       var nextIndex = Math.max(0, Math.min(names.length - 1, Math.round(widgetEvent.value)));
       var name = names[nextIndex];
       if (name && typeof themes !== 'undefined' && themes && typeof themes.set === 'function') {
-        if (!themes.set(name)) continue;
+        if (themes.set(name)) {
+          scope._settings.themeIndex = nextIndex;
+          syncSettingsWidgets();
+        }
+      } else {
+        scope._settings.themeIndex = nextIndex;
+        syncSettingsWidgets();
       }
-      scope._settings.themeIndex = nextIndex;
-      syncSettingsWidgets();
     } else if (widgetEvent.id === SETTINGS_JITTER_SLIDER_ID && widgetEvent.action === 'change' && typeof widgetEvent.value === 'number') {
       if (!scope._settings) scope._settings = { themeIndex: 0, jitterIndex: 2 };
-      var jIdx = Math.max(0, Math.min(JITTER_STEPS.length - 1, Math.round(widgetEvent.value)));
+      var jIdx = Math.max(0, Math.min(_jSteps.length - 1, Math.round(widgetEvent.value)));
       scope._settings.jitterIndex = jIdx;
-      JITTER = JITTER_STEPS[jIdx];
+      scope.JITTER_STEPS = _jSteps;
+      scope.JITTER = (_jSteps[jIdx] !== undefined) ? _jSteps[jIdx] : 1.0;
+      if (typeof JITTER !== 'undefined') JITTER = scope.JITTER;
       syncSettingsWidgets();
     }
+    widgetEvent = worlds.widgets.popEvent();
   }
 }
+scope.handleSettingsWorldWidgetEvents = handleSettingsWorldWidgetEvents;
 
 function handleWorldLinkActions() {
   if (!worlds || !worlds.links || typeof worlds.links.popActivated !== 'function') return;
-  for (;;) {
-    var activated = worlds.links.popActivated();
-    if (!activated) break;
+  var activated = worlds.links.popActivated();
+  while (activated) {
     var fromSection = getNavigationSourceSection(activated);
     if (activated.url === 'action:new-game') {
       scope.newGame();
@@ -1048,8 +1403,10 @@ function handleWorldLinkActions() {
     } else if (activated.url === 'action:history-back') {
       goBackInHistory('Play');
     }
+    activated = worlds.links.popActivated();
   }
 }
+scope.handleWorldLinkActions = handleWorldLinkActions;
 ```
 
 ```js on:init
@@ -1057,7 +1414,16 @@ term.layerID = 'default';
 scope.sections = {};
 scope._settings = scope._settings || { themeIndex: 0, jitterIndex: 2 };
 if (scope._settings.jitterIndex === undefined) scope._settings.jitterIndex = 2;
-JITTER = JITTER_STEPS[scope._settings.jitterIndex];
+scope.JITTER_STEPS = (scope && Array.isArray(scope.JITTER_STEPS) && scope.JITTER_STEPS.length)
+  ? scope.JITTER_STEPS
+  : [0, 0.5, 1.0, 2.0, 3.0];
+scope.JITTER_NAMES = (scope && Array.isArray(scope.JITTER_NAMES) && scope.JITTER_NAMES.length)
+  ? scope.JITTER_NAMES
+  : ['None', 'Subtle', 'Normal', 'Wild', 'Chaotic'];
+scope.JITTER = (scope.JITTER_STEPS[scope._settings.jitterIndex] !== undefined)
+  ? scope.JITTER_STEPS[scope._settings.jitterIndex]
+  : 1.0;
+if (typeof JITTER !== 'undefined') JITTER = scope.JITTER;
 scope._worldSwipe = null;  // { startY, lastY, totalDy } — background swipe-to-pan gesture
 
 worlds.enable();
@@ -1073,7 +1439,7 @@ worlds.config.setDefaults({
   screenSpaceRecenterIters: 2,
   sectionSizeUnits: 'px',
   sectionOverflow: 'fit-y',
-  sectionListMarker: '➵',
+  sectionListMarker: '>',
   sectionListMarkerGapPx: 12,
   sectionListHangIndentPx: 24,
   defaultSectionWidth: 960,
@@ -1165,14 +1531,15 @@ if (k === 'Escape') {
 ```
 
 ```js on:update
-handleWorldLinkActions();
-handleSettingsWorldWidgetEvents();
+if (typeof scope.handleWorldLinkActions === 'function') scope.handleWorldLinkActions();
+if (typeof scope.handleSettingsWorldWidgetEvents === 'function') scope.handleSettingsWorldWidgetEvents();
 ```
 ```js on:update section:play
 if (!scope.gs) { newGame(); return; }
 
 var L = computeLayout();
 scope._layout = L;
+scope._dragNeedsOverlay = false;
 
 // ── Mouse light-follow ───────────────────────────────────────────────────────
 var _mW = ui.metrics.canvasWidth  || 1280;
@@ -1277,9 +1644,26 @@ if (_hdn && !scope._worldSwipe) {
 ```
 
 ```js on:render
-term.layerID = 'default';
-term.clear();
-ui.clear();
+// IMPORTANT: During Worlds live-section baking, the engine may invoke the
+// document render handler while ui.section.isLive is true. In that context,
+// any global overlay drawing would land in the section texture (and clip),
+// creating a duplicate of the dragged card. Only run this pass when NOT
+// inside a live section render.
+var _isLiveBake = !!(ui.section && ui.section.isLive);
+if (!_isLiveBake) {
+  term.layerID = 'default';
+  term.clear();
+  ui.clear();
+
+  if (scope.gs && scope.gs.drag && scope._playLayout) {
+    var _L = scope._playLayout;
+    // While dragging, always render the dragged cards via the global overlay.
+    // This guarantees they never clip to the live-section texture bounds and
+    // avoids any chance of double-render (section + overlay).
+    scope._dragNeedsOverlay = true;
+    drawDraggedCardsOverlay(getPalette(), _L, getPlaySectionRef());
+  }
+}
 ```
 
 ```js on:render section:play
@@ -1290,9 +1674,15 @@ if (!scope.gs) return;
 // from the update pass which may have used different canvas dimensions).
 var L = computeLayout();
 var pal = getPalette();
+scope._playLayout = L;
+
+// When dragging, the dragged cards are rendered in the global overlay pass.
+// Suppress in-section dragged-card drawing to avoid clipping and duplicates.
+var _dragActiveR = !!(scope.gs && scope.gs.drag);
+scope._dragNeedsOverlay = _dragActiveR;
 
 try {
-  drawGame(L, pal);
+  drawGame(L, pal, !_dragActiveR);
 } catch(_e) {
   // Keep UI alive if rendering fails
   ui.clear(pal.felt);

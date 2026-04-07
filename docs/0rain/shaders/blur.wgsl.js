@@ -92,7 +92,7 @@ fn fragmentMain(
 `,
 
         uniforms: {
-            blurRadius:   2.0,  // Blur spread in pixels (increase for stronger blur)
+            blurRadius:   1.0,  // Blur spread in pixels (increase for stronger blur)
             blurStrength: 1.0   // Mix factor: 0.0 = no blur, 1.0 = full blur
         }
     };

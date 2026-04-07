@@ -940,6 +940,26 @@ export interface SandboxAPI {
     getSectionCount: () => number;
     setSectionSize: (sectionIndex: number, width: number, height: number) => void;
     getScreenQuad: (sectionIndex: number) => Array<{ x: number; y: number }> | null;
+    unprojectPoint: (
+      section: number | string,
+      point: { x: number; y: number },
+      options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+    ) => { x: number; y: number } | null;
+    projectPoint: (
+      section: number | string,
+      point: { x: number; y: number },
+      options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+    ) => { x: number; y: number } | null;
+    projectRect: (
+      section: number | string,
+      rect: { x: number; y: number; w?: number; h?: number; width?: number; height?: number },
+      options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+    ) => { x: number; y: number; width: number; height: number } | null;
+    projectQuad: (
+      section: number | string,
+      rect: { x: number; y: number; w?: number; h?: number; width?: number; height?: number },
+      options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+    ) => Array<{ x: number; y: number }> | null;
     timeline: {
       compile: (entries: Array<{ ms: number; text: string }>) => CompiledWorldsTimeline;
       stateAt: (compiled: CompiledWorldsTimeline, timeSec: number) => WorldsTimelineStateEntry[];

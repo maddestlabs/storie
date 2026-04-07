@@ -8,6 +8,8 @@ export { LayerStack, Layer } from './layers.js';
 export { InputManager } from './input.js';
 export { Canvas2DRenderer } from './renderer.js';
 export { WebGPURenderer } from './webgpu-renderer.js';
+export { compileMarkdownApp } from './compile/compile.js';
+export { analyzeMarkdownDocument } from './compile/analyze.js';
 export { parseMarkdown, findSection, flattenSections } from './markdown.js';
 export { getTheme, applyTheme, getAvailableThemes, THEMES } from './themes.js';
 export { ModuleLoader } from './modules/loader.js';
@@ -35,6 +37,31 @@ export {
   lerpRotation,
   distance
 } from './worlds.js';
+
+export type {
+  CompileTarget,
+  CompileCapabilityName,
+  CompileLifecycleHook,
+  CompileAppIR,
+  CompileBehaviorBlock,
+  CompileSectionNode,
+} from './compile/ir.js';
+
+export type {
+  CompileManifest,
+  CompileWarning,
+  CompileManifestLifecycleUsage,
+  CompileManifestAssetSummary,
+} from './compile/manifest.js';
+
+export type {
+  CompileAnalysis,
+} from './compile/analyze.js';
+
+export type {
+  CompileMarkdownAppOptions,
+  CompiledMarkdownApp,
+} from './compile/compile.js';
 
 export type {
   Color,

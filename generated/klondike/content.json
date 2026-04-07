@@ -1,0 +1,39 @@
+{
+  "metadata": {
+    "name": "Klondike Solitaire",
+    "theme": "stonegarden",
+    "font": "Cutive+Mono",
+    "shaders": "blur+grain+blurgradual"
+  },
+  "sections": [
+    {
+      "id": "play-8",
+      "title": "Play",
+      "level": 1,
+      "startLine": 7,
+      "endLine": 15,
+      "children": []
+    },
+    {
+      "id": "settings-17",
+      "title": "Settings",
+      "level": 1,
+      "startLine": 16,
+      "endLine": 37,
+      "children": []
+    },
+    {
+      "id": "help-39",
+      "title": "Help",
+      "level": 1,
+      "startLine": 38,
+      "endLine": 1306,
+      "children": []
+    }
+  ],
+  "assets": {
+    "timedBlockNames": [],
+    "blobNames": [],
+    "shaderNames": []
+  }
+}

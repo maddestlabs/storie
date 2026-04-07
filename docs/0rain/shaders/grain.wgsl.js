@@ -81,8 +81,8 @@ fn fragmentMain(@location(0) vUv: vec2f) -> @location(0) vec4f {
 `,
 
         uniforms: {
-            grainAmount:  0.08,
-            grainSize:    1.0,
+            grainAmount:  0.02,
+            grainSize:    3.0,
             shadowLift:   0.35,
             chromaAmount: 0.22,
         }

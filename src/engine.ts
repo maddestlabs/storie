@@ -557,7 +557,15 @@ export class StorieEngine {
   private activated3DLinksQueue: Array<{ url: string; sectionId: string | null; sectionIndex: number | null; linkIndex: number | null }> = [];
 
   // 3D section texture rasterization cache
-  private sectionTextureCache: Map<string, { width: number; height: number; activeLinkIndex: number | null }> = new Map();
+  private sectionTextureCache: Map<string, {
+    width: number;
+    height: number;
+    logicalWidth: number;
+    logicalHeight: number;
+    textureScaleX: number;
+    textureScaleY: number;
+    activeLinkIndex: number | null;
+  }> = new Map();
   private sectionLinkRegionsCache: Map<string, LinkRegion[]> = new Map();
   private sectionWidgetPlacementsCache: Map<string, WidgetPlacement[]> = new Map();
   private worldsInlineWidgetInstances: Array<{
@@ -6137,6 +6145,74 @@ export class StorieEngine {
           return engine.getSectionScreenQuad(layout, { allowOffscreen: true });
         },
 
+        unprojectPoint: (
+          section: number | string,
+          point: { x: number; y: number },
+          options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+        ): { x: number; y: number } | null => {
+          const ref = engine.resolveRuntimeSectionRef(section);
+          if (!ref) return null;
+          const layout = engine.getSectionLayoutByIndex(ref.sectionIndex);
+          if (!layout) return null;
+          return engine.unprojectScreenPointToSectionLocal(layout, point, options);
+        },
+
+        projectPoint: (
+          section: number | string,
+          point: { x: number; y: number },
+          options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+        ): { x: number; y: number } | null => {
+          const ref = engine.resolveRuntimeSectionRef(section);
+          if (!ref) return null;
+          const layout = engine.getSectionLayoutByIndex(ref.sectionIndex);
+          if (!layout) return null;
+          return engine.projectSectionLocalPointToScreen(layout, point, options);
+        },
+
+        projectRect: (
+          section: number | string,
+          rect: { x: number; y: number; w?: number; h?: number; width?: number; height?: number },
+          options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+        ): { x: number; y: number; width: number; height: number } | null => {
+          const ref = engine.resolveRuntimeSectionRef(section);
+          if (!ref) return null;
+          const layout = engine.getSectionLayoutByIndex(ref.sectionIndex);
+          if (!layout) return null;
+          const width = Number.isFinite(rect?.w) ? Number(rect.w) : Number(rect?.width);
+          const height = Number.isFinite(rect?.h) ? Number(rect.h) : Number(rect?.height);
+          if (!Number.isFinite(rect?.x) || !Number.isFinite(rect?.y) || !Number.isFinite(width) || !Number.isFinite(height)) {
+            return null;
+          }
+          return engine.projectSectionLocalRectToScreen(layout, {
+            x: Number(rect.x),
+            y: Number(rect.y),
+            w: width,
+            h: height,
+          }, options);
+        },
+
+        projectQuad: (
+          section: number | string,
+          rect: { x: number; y: number; w?: number; h?: number; width?: number; height?: number },
+          options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+        ): Array<{ x: number; y: number }> | null => {
+          const ref = engine.resolveRuntimeSectionRef(section);
+          if (!ref) return null;
+          const layout = engine.getSectionLayoutByIndex(ref.sectionIndex);
+          if (!layout) return null;
+          const width = Number.isFinite(rect?.w) ? Number(rect.w) : Number(rect?.width);
+          const height = Number.isFinite(rect?.h) ? Number(rect.h) : Number(rect?.height);
+          if (!Number.isFinite(rect?.x) || !Number.isFinite(rect?.y) || !Number.isFinite(width) || !Number.isFinite(height)) {
+            return null;
+          }
+          return engine.projectSectionLocalRectQuadToScreen(layout, {
+            x: Number(rect.x),
+            y: Number(rect.y),
+            w: width,
+            h: height,
+          }, options);
+        },
+
         content: {
           get: (selector?: number | string) => {
             const ref = engine.resolveWorldsContentSectionRef(selector);
@@ -6708,6 +6784,121 @@ export class StorieEngine {
     return { screenFromTexPx, localFromScreenTexPx, clipRectScreen };
   }
 
+  private getSectionTextureLogicalScale(layout: Section3DLayout): {
+    textureScaleX: number;
+    textureScaleY: number;
+    logicalWidth: number;
+    logicalHeight: number;
+  } | null {
+    const dims = this.sectionTextureCache.get(layout.sectionId);
+    if (!dims || dims.width <= 0 || dims.height <= 0) return null;
+    const logicalWidth = dims.logicalWidth > 0 ? dims.logicalWidth : dims.width;
+    const logicalHeight = dims.logicalHeight > 0 ? dims.logicalHeight : dims.height;
+    const textureScaleX = dims.textureScaleX > 0 ? dims.textureScaleX : (dims.width / Math.max(1, logicalWidth));
+    const textureScaleY = dims.textureScaleY > 0 ? dims.textureScaleY : (dims.height / Math.max(1, logicalHeight));
+    return { textureScaleX, textureScaleY, logicalWidth, logicalHeight };
+  }
+
+  private projectSectionLocalPointToScreen(
+    layout: Section3DLayout,
+    point: { x: number; y: number },
+    options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+  ): { x: number; y: number } | null {
+    const scale = this.getSectionTextureLogicalScale(layout);
+    if (!scale) return null;
+    return this.project3DTexturePointToScreen(layout, {
+      x: point.x * scale.textureScaleX,
+      y: point.y * scale.textureScaleY,
+    }, options);
+  }
+
+  private projectSectionLocalRectToScreen(
+    layout: Section3DLayout,
+    rect: { x: number; y: number; w: number; h: number },
+    options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+  ): { x: number; y: number; width: number; height: number } | null {
+    const scale = this.getSectionTextureLogicalScale(layout);
+    if (!scale) return null;
+    return this.project3DTextureRectToScreen(layout, {
+      x: rect.x * scale.textureScaleX,
+      y: rect.y * scale.textureScaleY,
+      w: rect.w * scale.textureScaleX,
+      h: rect.h * scale.textureScaleY,
+    }, options);
+  }
+
+  private projectSectionLocalRectQuadToScreen(
+    layout: Section3DLayout,
+    rect: { x: number; y: number; w: number; h: number },
+    options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+  ): Array<{ x: number; y: number }> | null {
+    const scale = this.getSectionTextureLogicalScale(layout);
+    if (!scale) return null;
+    return this.project3DTextureRectQuadToScreen(layout, {
+      x: rect.x * scale.textureScaleX,
+      y: rect.y * scale.textureScaleY,
+      w: rect.w * scale.textureScaleX,
+      h: rect.h * scale.textureScaleY,
+    }, options);
+  }
+
+  private unprojectScreenPointToSectionLocal(
+    layout: Section3DLayout,
+    point: { x: number; y: number },
+    options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+  ): { x: number; y: number } | null {
+    const scale = this.getSectionTextureLogicalScale(layout);
+    if (!scale) return null;
+
+    if (!this.camera3D) return null;
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    if (canvasW <= 0 || canvasH <= 0) return null;
+
+    const ndcX = (point.x / canvasW) * 2 - 1;
+    const ndcY = 1 - (point.y / canvasH) * 2;
+    if (!Number.isFinite(ndcX) || !Number.isFinite(ndcY)) return null;
+
+    const aspect = canvasW / canvasH;
+    const view = getCameraViewMatrix(this.camera3D);
+    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+    const viewProj = mat4Multiply(proj, view);
+    const invViewProj = mat4Invert(viewProj);
+    if (!invViewProj) return null;
+
+    const nearWorld = mat4TransformPoint(invViewProj, { x: ndcX, y: ndcY, z: -1 });
+    const farWorld = mat4TransformPoint(invViewProj, { x: ndcX, y: ndcY, z: 1 });
+    const rayDirWorld = vec3Normalize(vec3Sub(farWorld, nearWorld));
+
+    const model = this.get3DCardModelMatrix(layout);
+    const invModel = mat4Invert(model);
+    if (!invModel) return null;
+
+    const rayOriginLocal = mat4TransformPoint(invModel, nearWorld);
+    const rayDirLocal = vec3Normalize(mat4TransformDirection(invModel, rayDirWorld));
+    const denom = rayDirLocal.z;
+    if (Math.abs(denom) < 1e-6) return null;
+
+    const t = -rayOriginLocal.z / denom;
+    if (t <= 0) return null;
+
+    const hitLocal = vec3Add(rayOriginLocal, vec3Scale(rayDirLocal, t));
+    let localX = (hitLocal.x + 0.5) * scale.logicalWidth;
+    let localY = (0.5 - hitLocal.y) * scale.logicalHeight;
+
+    if (!options?.allowOffscreen) {
+      const inside = localX >= 0 && localX <= scale.logicalWidth && localY >= 0 && localY <= scale.logicalHeight;
+      if (!inside) return null;
+    }
+
+    if (options?.clampToViewport) {
+      localX = Math.max(0, Math.min(scale.logicalWidth, localX));
+      localY = Math.max(0, Math.min(scale.logicalHeight, localY));
+    }
+
+    return { x: localX, y: localY };
+  }
+
   private renderWorldsSectionBoundGUI(renderer: WebGPUUIRenderer, documentId?: string): void {
     const guiAPI: any = this.api?.gui;
     const system = guiAPI?.getSystem?.();
@@ -6767,43 +6958,13 @@ export class StorieEngine {
     return { layout, placements };
   }
 
-  private project3DTextureRectToScreen(layout: Section3DLayout, rect: { x: number; y: number; w: number; h: number }): { x: number; y: number; width: number; height: number } | null {
-    if (!this.camera3D) return null;
-
-    const dims = this.sectionTextureCache.get(layout.sectionId);
-    if (!dims || dims.width <= 0 || dims.height <= 0) return null;
-
-    const canvasW = this.canvas.width;
-    const canvasH = this.canvas.height;
-    if (canvasW <= 0 || canvasH <= 0) return null;
-
-    const aspect = canvasW / canvasH;
-    const view = getCameraViewMatrix(this.camera3D);
-    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
-    const viewProj = mat4Multiply(proj, view);
-    const model = this.get3DCardModelMatrix(layout);
-    const corners = [
-      { x: rect.x, y: rect.y },
-      { x: rect.x + rect.w, y: rect.y },
-      { x: rect.x + rect.w, y: rect.y + rect.h },
-      { x: rect.x, y: rect.y + rect.h },
-    ];
-
-    const screenPoints: Array<{ x: number; y: number }> = [];
-    for (const corner of corners) {
-      const u = corner.x / dims.width;
-      const v = corner.y / dims.height;
-      const world = mat4TransformPoint(model, { x: u - 0.5, y: 0.5 - v, z: 0 });
-      const clip = mat4TransformVec4(viewProj, world.x, world.y, world.z, 1);
-      if (clip.w <= 1e-6) return null;
-      const ndcX = clip.x / clip.w;
-      const ndcY = clip.y / clip.w;
-      screenPoints.push({
-        x: (ndcX * 0.5 + 0.5) * canvasW,
-        y: (1 - (ndcY * 0.5 + 0.5)) * canvasH,
-      });
-    }
-
+  private project3DTextureRectToScreen(
+    layout: Section3DLayout,
+    rect: { x: number; y: number; w: number; h: number },
+    options?: { clampToViewport?: boolean; allowOffscreen?: boolean }
+  ): { x: number; y: number; width: number; height: number } | null {
+    const screenPoints = this.project3DTextureRectQuadToScreen(layout, rect, options);
+    if (!screenPoints) return null;
     const xs = screenPoints.map((point) => point.x);
     const ys = screenPoints.map((point) => point.y);
     const minX = Math.min(...xs);
@@ -9958,7 +10119,15 @@ ${exportVars}
 
     // Compute section-local mouse coordinates using the affine reprojection.
     // Pre-populate the cache so getWorldsSectionTextureToScreenAffine can sample it.
-    this.sectionTextureCache.set(layout.sectionId, { width: widthPx, height: heightPx, activeLinkIndex: null });
+    this.sectionTextureCache.set(layout.sectionId, {
+      width: widthPx,
+      height: heightPx,
+      logicalWidth: logicalWidthPx,
+      logicalHeight: logicalHeightPx,
+      textureScaleX: textureScale,
+      textureScaleY: textureScale,
+      activeLinkIndex: null,
+    });
     let localMouseX = 0;
     let localMouseY = 0;
     const hoveredPick = this.pick3DAt(this.input.getMouseX(), this.input.getMouseY());
@@ -10019,7 +10188,15 @@ ${exportVars}
 
     sectionUI.flushTo(layout.texture!, widthPx, heightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
 
-    this.sectionTextureCache.set(layout.sectionId, { width: widthPx, height: heightPx, activeLinkIndex: null });
+    this.sectionTextureCache.set(layout.sectionId, {
+      width: widthPx,
+      height: heightPx,
+      logicalWidth: logicalWidthPx,
+      logicalHeight: logicalHeightPx,
+      textureScaleX: textureScale,
+      textureScaleY: textureScale,
+      activeLinkIndex: null,
+    });
     this.set3DLayoutWorldSizeFromPixels(layout, logicalWidthPx, logicalHeightPx, baseLineHeight);
 
     return true;
@@ -10312,6 +10489,10 @@ ${exportVars}
       this.sectionTextureCache.set(layout.sectionId, {
         width: textureWidthPx,
         height: textureHeightPx,
+        logicalWidth: widthPx,
+        logicalHeight: heightPx,
+        textureScaleX: textureScale,
+        textureScaleY: textureScale,
         activeLinkIndex,
       });
 
@@ -10467,7 +10648,15 @@ ${exportVars}
       }
 
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionId, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
+      this.sectionTextureCache.set(layout.sectionId, {
+        width: textureWidthPx,
+        height: textureHeightPx,
+        logicalWidth: widthPx,
+        logicalHeight: heightPx,
+        textureScaleX: textureScale,
+        textureScaleY: textureScale,
+        activeLinkIndex,
+      });
       this.sectionLinkRegionsCache.set(layout.sectionId, scaledLinkRegions);
       this.sectionWidgetPlacementsCache.set(layout.sectionId, scaledWidgetPlacements);
 
@@ -11336,7 +11525,15 @@ ${exportVars}
       ui.flushTo(texture, textureWidthPx, textureHeightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
 
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionId, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
+      this.sectionTextureCache.set(layout.sectionId, {
+        width: textureWidthPx,
+        height: textureHeightPx,
+        logicalWidth: widthPx,
+        logicalHeight: heightPx,
+        textureScaleX: textureScale,
+        textureScaleY: textureScale,
+        activeLinkIndex,
+      });
 
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }

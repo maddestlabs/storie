@@ -11444,12 +11444,12 @@ function findSection(sections, title) {
   }
   return null;
 }
-function flattenSections(sections) {
+function flattenSections$1(sections) {
   const result = [];
   for (const section of sections) {
     result.push(section);
     if (section.children.length > 0) {
-      result.push(...flattenSections(section.children));
+      result.push(...flattenSections$1(section.children));
     }
   }
   return result;
@@ -29174,7 +29174,7 @@ class StorieEngine {
         sectionsFlat: () => {
           const roots = engine.getReadableSectionRoots();
           if (roots.length === 0) return [];
-          const flat = flattenSections(roots);
+          const flat = flattenSections$1(roots);
           return flat.map((s, index) => ({
             index,
             title: s.title,
@@ -29184,7 +29184,7 @@ class StorieEngine {
           }));
         },
         sectionCount: () => {
-          return flattenSections(engine.getReadableSectionRoots()).length;
+          return flattenSections$1(engine.getReadableSectionRoots()).length;
         },
         outline: () => {
           return engine.getOutlineNodes();
@@ -32145,6 +32145,54 @@ class StorieEngine {
           if (!layout) return null;
           return engine.getSectionScreenQuad(layout, { allowOffscreen: true });
         },
+        unprojectPoint: (section, point, options) => {
+          const ref = engine.resolveRuntimeSectionRef(section);
+          if (!ref) return null;
+          const layout = engine.getSectionLayoutByIndex(ref.sectionIndex);
+          if (!layout) return null;
+          return engine.unprojectScreenPointToSectionLocal(layout, point, options);
+        },
+        projectPoint: (section, point, options) => {
+          const ref = engine.resolveRuntimeSectionRef(section);
+          if (!ref) return null;
+          const layout = engine.getSectionLayoutByIndex(ref.sectionIndex);
+          if (!layout) return null;
+          return engine.projectSectionLocalPointToScreen(layout, point, options);
+        },
+        projectRect: (section, rect, options) => {
+          const ref = engine.resolveRuntimeSectionRef(section);
+          if (!ref) return null;
+          const layout = engine.getSectionLayoutByIndex(ref.sectionIndex);
+          if (!layout) return null;
+          const width = Number.isFinite(rect == null ? void 0 : rect.w) ? Number(rect.w) : Number(rect == null ? void 0 : rect.width);
+          const height = Number.isFinite(rect == null ? void 0 : rect.h) ? Number(rect.h) : Number(rect == null ? void 0 : rect.height);
+          if (!Number.isFinite(rect == null ? void 0 : rect.x) || !Number.isFinite(rect == null ? void 0 : rect.y) || !Number.isFinite(width) || !Number.isFinite(height)) {
+            return null;
+          }
+          return engine.projectSectionLocalRectToScreen(layout, {
+            x: Number(rect.x),
+            y: Number(rect.y),
+            w: width,
+            h: height
+          }, options);
+        },
+        projectQuad: (section, rect, options) => {
+          const ref = engine.resolveRuntimeSectionRef(section);
+          if (!ref) return null;
+          const layout = engine.getSectionLayoutByIndex(ref.sectionIndex);
+          if (!layout) return null;
+          const width = Number.isFinite(rect == null ? void 0 : rect.w) ? Number(rect.w) : Number(rect == null ? void 0 : rect.width);
+          const height = Number.isFinite(rect == null ? void 0 : rect.h) ? Number(rect.h) : Number(rect == null ? void 0 : rect.height);
+          if (!Number.isFinite(rect == null ? void 0 : rect.x) || !Number.isFinite(rect == null ? void 0 : rect.y) || !Number.isFinite(width) || !Number.isFinite(height)) {
+            return null;
+          }
+          return engine.projectSectionLocalRectQuadToScreen(layout, {
+            x: Number(rect.x),
+            y: Number(rect.y),
+            w: width,
+            h: height
+          }, options);
+        },
         content: {
           get: (selector) => {
             const ref = engine.resolveWorldsContentSectionRef(selector);
@@ -32608,6 +32656,84 @@ class StorieEngine {
     const clipRectScreen = { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) };
     return { screenFromTexPx, localFromScreenTexPx, clipRectScreen };
   }
+  getSectionTextureLogicalScale(layout) {
+    const dims = this.sectionTextureCache.get(layout.sectionId);
+    if (!dims || dims.width <= 0 || dims.height <= 0) return null;
+    const logicalWidth = dims.logicalWidth > 0 ? dims.logicalWidth : dims.width;
+    const logicalHeight = dims.logicalHeight > 0 ? dims.logicalHeight : dims.height;
+    const textureScaleX = dims.textureScaleX > 0 ? dims.textureScaleX : dims.width / Math.max(1, logicalWidth);
+    const textureScaleY = dims.textureScaleY > 0 ? dims.textureScaleY : dims.height / Math.max(1, logicalHeight);
+    return { textureScaleX, textureScaleY, logicalWidth, logicalHeight };
+  }
+  projectSectionLocalPointToScreen(layout, point, options) {
+    const scale = this.getSectionTextureLogicalScale(layout);
+    if (!scale) return null;
+    return this.project3DTexturePointToScreen(layout, {
+      x: point.x * scale.textureScaleX,
+      y: point.y * scale.textureScaleY
+    }, options);
+  }
+  projectSectionLocalRectToScreen(layout, rect, options) {
+    const scale = this.getSectionTextureLogicalScale(layout);
+    if (!scale) return null;
+    return this.project3DTextureRectToScreen(layout, {
+      x: rect.x * scale.textureScaleX,
+      y: rect.y * scale.textureScaleY,
+      w: rect.w * scale.textureScaleX,
+      h: rect.h * scale.textureScaleY
+    }, options);
+  }
+  projectSectionLocalRectQuadToScreen(layout, rect, options) {
+    const scale = this.getSectionTextureLogicalScale(layout);
+    if (!scale) return null;
+    return this.project3DTextureRectQuadToScreen(layout, {
+      x: rect.x * scale.textureScaleX,
+      y: rect.y * scale.textureScaleY,
+      w: rect.w * scale.textureScaleX,
+      h: rect.h * scale.textureScaleY
+    }, options);
+  }
+  unprojectScreenPointToSectionLocal(layout, point, options) {
+    const scale = this.getSectionTextureLogicalScale(layout);
+    if (!scale) return null;
+    if (!this.camera3D) return null;
+    const canvasW = this.canvas.width;
+    const canvasH = this.canvas.height;
+    if (canvasW <= 0 || canvasH <= 0) return null;
+    const ndcX = point.x / canvasW * 2 - 1;
+    const ndcY = 1 - point.y / canvasH * 2;
+    if (!Number.isFinite(ndcX) || !Number.isFinite(ndcY)) return null;
+    const aspect = canvasW / canvasH;
+    const view = getCameraViewMatrix(this.camera3D);
+    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
+    const viewProj = mat4Multiply(proj, view);
+    const invViewProj = mat4Invert(viewProj);
+    if (!invViewProj) return null;
+    const nearWorld = mat4TransformPoint(invViewProj, { x: ndcX, y: ndcY, z: -1 });
+    const farWorld = mat4TransformPoint(invViewProj, { x: ndcX, y: ndcY, z: 1 });
+    const rayDirWorld = vec3Normalize(vec3Sub(farWorld, nearWorld));
+    const model = this.get3DCardModelMatrix(layout);
+    const invModel = mat4Invert(model);
+    if (!invModel) return null;
+    const rayOriginLocal = mat4TransformPoint(invModel, nearWorld);
+    const rayDirLocal = vec3Normalize(mat4TransformDirection(invModel, rayDirWorld));
+    const denom = rayDirLocal.z;
+    if (Math.abs(denom) < 1e-6) return null;
+    const t = -rayOriginLocal.z / denom;
+    if (t <= 0) return null;
+    const hitLocal = vec3Add(rayOriginLocal, vec3Scale(rayDirLocal, t));
+    let localX = (hitLocal.x + 0.5) * scale.logicalWidth;
+    let localY = (0.5 - hitLocal.y) * scale.logicalHeight;
+    if (!(options == null ? void 0 : options.allowOffscreen)) {
+      const inside = localX >= 0 && localX <= scale.logicalWidth && localY >= 0 && localY <= scale.logicalHeight;
+      if (!inside) return null;
+    }
+    if (options == null ? void 0 : options.clampToViewport) {
+      localX = Math.max(0, Math.min(scale.logicalWidth, localX));
+      localY = Math.max(0, Math.min(scale.logicalHeight, localY));
+    }
+    return { x: localX, y: localY };
+  }
   renderWorldsSectionBoundGUI(renderer, documentId) {
     var _a, _b;
     const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
@@ -32657,38 +32783,9 @@ class StorieEngine {
     if (!placements || placements.length === 0) return null;
     return { layout, placements };
   }
-  project3DTextureRectToScreen(layout, rect) {
-    if (!this.camera3D) return null;
-    const dims = this.sectionTextureCache.get(layout.sectionId);
-    if (!dims || dims.width <= 0 || dims.height <= 0) return null;
-    const canvasW = this.canvas.width;
-    const canvasH = this.canvas.height;
-    if (canvasW <= 0 || canvasH <= 0) return null;
-    const aspect = canvasW / canvasH;
-    const view = getCameraViewMatrix(this.camera3D);
-    const proj = getCameraProjectionMatrix(this.camera3D, aspect);
-    const viewProj = mat4Multiply(proj, view);
-    const model = this.get3DCardModelMatrix(layout);
-    const corners = [
-      { x: rect.x, y: rect.y },
-      { x: rect.x + rect.w, y: rect.y },
-      { x: rect.x + rect.w, y: rect.y + rect.h },
-      { x: rect.x, y: rect.y + rect.h }
-    ];
-    const screenPoints = [];
-    for (const corner of corners) {
-      const u = corner.x / dims.width;
-      const v2 = corner.y / dims.height;
-      const world = mat4TransformPoint(model, { x: u - 0.5, y: 0.5 - v2, z: 0 });
-      const clip = mat4TransformVec4(viewProj, world.x, world.y, world.z, 1);
-      if (clip.w <= 1e-6) return null;
-      const ndcX = clip.x / clip.w;
-      const ndcY = clip.y / clip.w;
-      screenPoints.push({
-        x: (ndcX * 0.5 + 0.5) * canvasW,
-        y: (1 - (ndcY * 0.5 + 0.5)) * canvasH
-      });
-    }
+  project3DTextureRectToScreen(layout, rect, options) {
+    const screenPoints = this.project3DTextureRectQuadToScreen(layout, rect, options);
+    if (!screenPoints) return null;
     const xs = screenPoints.map((point) => point.x);
     const ys = screenPoints.map((point) => point.y);
     const minX = Math.min(...xs);
@@ -35025,7 +35122,15 @@ ${exportVars}
     logicalHeightPx = Math.max(64, logicalHeightPx);
     const widthPx = Math.max(1, Math.round(logicalWidthPx * textureScale));
     const heightPx = Math.max(1, Math.round(logicalHeightPx * textureScale));
-    this.sectionTextureCache.set(layout.sectionId, { width: widthPx, height: heightPx, activeLinkIndex: null });
+    this.sectionTextureCache.set(layout.sectionId, {
+      width: widthPx,
+      height: heightPx,
+      logicalWidth: logicalWidthPx,
+      logicalHeight: logicalHeightPx,
+      textureScaleX: textureScale,
+      textureScaleY: textureScale,
+      activeLinkIndex: null
+    });
     let localMouseX = 0;
     let localMouseY = 0;
     const hoveredPick = this.pick3DAt(this.input.getMouseX(), this.input.getMouseY());
@@ -35082,7 +35187,15 @@ ${exportVars}
     this._liveRenderCtx = null;
     this._liveUIOverride = null;
     sectionUI.flushTo(layout.texture, widthPx, heightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
-    this.sectionTextureCache.set(layout.sectionId, { width: widthPx, height: heightPx, activeLinkIndex: null });
+    this.sectionTextureCache.set(layout.sectionId, {
+      width: widthPx,
+      height: heightPx,
+      logicalWidth: logicalWidthPx,
+      logicalHeight: logicalHeightPx,
+      textureScaleX: textureScale,
+      textureScaleY: textureScale,
+      activeLinkIndex: null
+    });
     this.set3DLayoutWorldSizeFromPixels(layout, logicalWidthPx, logicalHeightPx, baseLineHeight);
     return true;
   }
@@ -35289,6 +35402,10 @@ ${exportVars}
       this.sectionTextureCache.set(layout.sectionId, {
         width: textureWidthPx,
         height: textureHeightPx,
+        logicalWidth: widthPx,
+        logicalHeight: heightPx,
+        textureScaleX: textureScale,
+        textureScaleY: textureScale,
         activeLinkIndex
       });
       ctx.clearRect(0, 0, widthPx, heightPx);
@@ -35418,7 +35535,15 @@ ${exportVars}
         continue;
       }
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionId, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
+      this.sectionTextureCache.set(layout.sectionId, {
+        width: textureWidthPx,
+        height: textureHeightPx,
+        logicalWidth: widthPx,
+        logicalHeight: heightPx,
+        textureScaleX: textureScale,
+        textureScaleY: textureScale,
+        activeLinkIndex
+      });
       this.sectionLinkRegionsCache.set(layout.sectionId, scaledLinkRegions);
       this.sectionWidgetPlacementsCache.set(layout.sectionId, scaledWidgetPlacements);
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
@@ -36084,7 +36209,15 @@ ${exportVars}
       }
       ui.flushTo(texture, textureWidthPx, textureHeightPx, { clear: { r: 0, g: 0, b: 0, a: 0 } });
       layout.texture = texture;
-      this.sectionTextureCache.set(layout.sectionId, { width: textureWidthPx, height: textureHeightPx, activeLinkIndex });
+      this.sectionTextureCache.set(layout.sectionId, {
+        width: textureWidthPx,
+        height: textureHeightPx,
+        logicalWidth: widthPx,
+        logicalHeight: heightPx,
+        textureScaleX: textureScale,
+        textureScaleY: textureScale,
+        activeLinkIndex
+      });
       this.set3DLayoutWorldSizeFromPixels(layout, widthPx, heightPx, baseLineHeight);
     }
     if (worldSizeChanged) {
@@ -38335,6 +38468,500 @@ ${exportVars}
     this.applyThemeColors(getTheme(key), key, "runtime");
   }
 }
+const CAPABILITY_PATTERNS = [
+  { name: "terminal", patterns: [/\bterm\b/, /\blayer\b/, /\btermCanvas\b/] },
+  { name: "ui", patterns: [/\bui\b/] },
+  { name: "gui", patterns: [/\bgui\b/] },
+  { name: "worlds", patterns: [/\bworlds\b/] },
+  { name: "audio", patterns: [/\baudio\b/, /\bstfxr\b/] },
+  { name: "shader", patterns: [/\bshader\b/, /\bcompositor\b/, /\bwebgpu\b/, /\bwebgl\b/] },
+  { name: "random", patterns: [/\brandom\b/] },
+  { name: "themes", patterns: [/\bthemes\b/, /\btheme\b/, /\bgetStyle\b/] },
+  { name: "modules", patterns: [/\bmodules\b/] },
+  { name: "host", patterns: [/\bhost\b/, /\bscene\b/] },
+  { name: "sys", patterns: [/\bsys\b/] },
+  { name: "input", patterns: [/\bkey\b/, /\bkeys\b/, /\bmouse\b/, /\bdrop\b/, /\bevent\b/] },
+  { name: "export", patterns: [/\bisExporting\b/, /\bcaptureForExport\b/, /\bon:export\b/] }
+];
+function normalizeModules(rawModules) {
+  if (Array.isArray(rawModules)) {
+    return rawModules.map((value) => String(value).trim()).filter(Boolean);
+  }
+  if (rawModules === void 0 || rawModules === null) return [];
+  const text = String(rawModules).trim();
+  return text ? [text] : [];
+}
+function getHook$1(block) {
+  var _a;
+  const hook = String(((_a = block.metadata) == null ? void 0 : _a.on) ?? "").trim();
+  switch (hook) {
+    case "init":
+    case "update":
+    case "render":
+    case "input":
+    case "drop":
+    case "export":
+    case "enter":
+      return hook;
+    default:
+      return "global";
+  }
+}
+function analyzeMarkdownDocument(document2) {
+  var _a, _b, _c;
+  const lifecycleUsage = {
+    global: 0,
+    init: 0,
+    update: 0,
+    render: 0,
+    input: 0,
+    drop: 0,
+    export: 0,
+    enter: 0
+  };
+  const capabilities = /* @__PURE__ */ new Set();
+  const warnings = /* @__PURE__ */ new Set();
+  const scriptBlocks = document2.codeBlocks.filter((block) => block.lang === "js" || block.lang === "javascript");
+  const allScript = scriptBlocks.map((block) => block.code).join("\n\n");
+  for (const block of scriptBlocks) {
+    lifecycleUsage[getHook$1(block)] += 1;
+  }
+  for (const { name, patterns } of CAPABILITY_PATTERNS) {
+    if (patterns.some((pattern) => pattern.test(allScript))) {
+      capabilities.add(name);
+    }
+  }
+  if ((((_a = document2.blobBlocks) == null ? void 0 : _a.length) ?? 0) > 0) capabilities.add("blobs");
+  if ((((_b = document2.timedBlocks) == null ? void 0 : _b.length) ?? 0) > 0) capabilities.add("timed");
+  if ((((_c = document2.wgslShaders) == null ? void 0 : _c.length) ?? 0) > 0 || document2.metadata.shaders) capabilities.add("shader");
+  const modules = normalizeModules(document2.metadata.modules);
+  if (modules.length > 0) capabilities.add("modules");
+  if (/\bmodules\.load(All)?\s*\(/.test(allScript)) {
+    warnings.add("Dynamic modules.load usage detected. Strict compiled mode should require explicit declarations.");
+  }
+  if (/\b(eval|Function)\s*\(/.test(allScript)) {
+    warnings.add("Dynamic code evaluation detected. Compiled backends should reject or lower this explicitly.");
+  }
+  if (/\bimport\s*\(/.test(allScript)) {
+    warnings.add("Dynamic import() detected in document code. Compiled mode will need a manifest-based allowlist.");
+  }
+  if (/\bfetch\s*\(/.test(allScript)) {
+    warnings.add("Direct fetch() detected in document code. Browser-dev semantics may not map cleanly to native backends.");
+  }
+  return {
+    capabilities: Array.from(capabilities).sort(),
+    modules,
+    lifecycleUsage,
+    warnings: Array.from(warnings)
+  };
+}
+function serializeBehaviorBlocks(blocks) {
+  return JSON.stringify(
+    blocks.map((block) => ({
+      id: block.id,
+      hook: block.hook,
+      startLine: block.startLine + 1,
+      endLine: block.endLine + 1,
+      sectionRef: block.sectionRef,
+      targetSectionRef: block.targetSectionRef,
+      metadata: block.metadata,
+      code: block.code
+    })),
+    null,
+    2
+  );
+}
+function indentCode(code, spaces) {
+  const indent = " ".repeat(spaces);
+  return code.split("\n").map((line) => line.length > 0 ? indent + line : "").join("\n");
+}
+function generateBlockFunction(block, index) {
+  const functionName = `${block.hook}Block${index}`;
+  return [
+    `function ${functionName}(runtimeCtx = {}) {`,
+    "  const delta = runtimeCtx.delta;",
+    "  const event = runtimeCtx.event;",
+    indentCode(block.code, 2),
+    "}"
+  ].join("\n");
+}
+function generateBehaviorModule(app) {
+  const behaviorJson = serializeBehaviorBlocks(app.behavior.blocks);
+  const globalBlocks = app.behavior.blocks.filter((block) => block.hook === "global");
+  const nonGlobalBlocks = app.behavior.blocks.filter((block) => block.hook !== "global");
+  const globalBindings = app.behavior.globalBindings;
+  const mutableGlobalNames = globalBindings.filter((binding) => binding.kind === "var" || binding.kind === "let").map((binding) => binding.name);
+  const exportGlobalNames = globalBindings.map((binding) => binding.name);
+  const blockFunctions = nonGlobalBlocks.map((block, index) => generateBlockFunction(block, index + 1)).join("\n\n");
+  const registrationEntries = nonGlobalBlocks.map((block, index) => {
+    const functionName = `${block.hook}Block${index + 1}`;
+    return `    { id: ${JSON.stringify(block.id)}, hook: ${JSON.stringify(block.hook)}, targetSectionRef: ${JSON.stringify(block.targetSectionRef)}, fn: ${functionName} }`;
+  }).join(",\n");
+  const syncFromScope = mutableGlobalNames.length > 0 ? mutableGlobalNames.map((name) => `      if (Object.prototype.hasOwnProperty.call(scope, ${JSON.stringify(name)})) ${name} = scope[${JSON.stringify(name)}];`).join("\n") : "";
+  const syncToScope = exportGlobalNames.length > 0 ? exportGlobalNames.map((name) => `      scope[${JSON.stringify(name)}] = ${name};`).join("\n") : "";
+  const globalSource = globalBlocks.map((block) => block.code).join("\n\n");
+  return [
+    `export const behaviorBlocks = ${behaviorJson};`,
+    "",
+    "function shouldRunBlock(runtimeCtx, targetSectionRef) {",
+    "  if (!targetSectionRef) return true;",
+    "  return runtimeCtx.currentSectionId === targetSectionRef || runtimeCtx.activeSectionId === targetSectionRef;",
+    "}",
+    "",
+    "function runRegisteredBlocks(entries, runtimeCtx, syncBindings) {",
+    "  for (const entry of entries) {",
+    "    if (!shouldRunBlock(runtimeCtx, entry.targetSectionRef)) continue;",
+    "    syncBindings.fromScope();",
+    "    entry.fn(runtimeCtx);",
+    "    syncBindings.toScope();",
+    "  }",
+    "}",
+    "",
+    "export function createCompiledBehavior(api = {}, options = {}) {",
+    "  const scope = options.scope ?? {};",
+    "  const consoleRef = options.console ?? globalThis.console;",
+    "  const MathRef = options.Math ?? globalThis.Math;",
+    "  const DateRef = options.Date ?? globalThis.Date;",
+    "  const {",
+    "    term, termCanvas, layer, key, keys, mouse, drop, doc, host, scene, tui, gui,",
+    "    getStyle, theme, themes, modules, getFrame, getTime, getDelta, audio, canvas2d, blob, ascii,",
+    "    drawAscii, figlet, drawFiglet, ansi, drawAnsi, ui, webgl, webgpu, shader, compositor, worlds,",
+    "    random, sys, mouseX, mouseY, mouseCellX, mouseCellY, mousePixelX, mousePixelY,",
+    "    termWidth, termHeight, isExporting, getIsExporting, getParam, CompressionStream, DecompressionStream,",
+    "    TextEncoder, TextDecoder, Response, atob, btoa,",
+    "  } = api;",
+    "  const console = consoleRef;",
+    "  const Math = MathRef;",
+    "  const Date = DateRef;",
+    "  const syncBindings = {",
+    "    fromScope() {",
+    syncFromScope || "    },",
+    syncFromScope ? "    }," : "",
+    "    toScope() {",
+    syncToScope || "    },",
+    syncToScope ? "    }," : "",
+    "  };",
+    "",
+    globalSource,
+    globalSource ? "" : "",
+    syncToScope ? "  syncBindings.toScope();" : "",
+    "",
+    blockFunctions,
+    blockFunctions ? "" : "",
+    "  const registeredBlocks = [",
+    registrationEntries,
+    "  ];",
+    "",
+    "  const initBlocks = registeredBlocks.filter((entry) => entry.hook === 'init');",
+    "  const updateBlocks = registeredBlocks.filter((entry) => entry.hook === 'update');",
+    "  const renderBlocks = registeredBlocks.filter((entry) => entry.hook === 'render');",
+    "  const inputBlocks = registeredBlocks.filter((entry) => entry.hook === 'input');",
+    "  const dropBlocks = registeredBlocks.filter((entry) => entry.hook === 'drop');",
+    "  const exportBlocks = registeredBlocks.filter((entry) => entry.hook === 'export');",
+    "  const enterBlocks = registeredBlocks.filter((entry) => entry.hook === 'enter');",
+    "",
+    "  return {",
+    "    scope,",
+    "    behaviorBlocks,",
+    "    init(runtimeCtx = {}) { runRegisteredBlocks(initBlocks, runtimeCtx, syncBindings); },",
+    "    update(runtimeCtx = {}) { runRegisteredBlocks(updateBlocks, runtimeCtx, syncBindings); },",
+    "    render(runtimeCtx = {}) { runRegisteredBlocks(renderBlocks, runtimeCtx, syncBindings); },",
+    "    input(runtimeCtx = {}) { runRegisteredBlocks(inputBlocks, runtimeCtx, syncBindings); },",
+    "    drop(runtimeCtx = {}) { runRegisteredBlocks(dropBlocks, runtimeCtx, syncBindings); },",
+    "    export(runtimeCtx = {}) { runRegisteredBlocks(exportBlocks, runtimeCtx, syncBindings); },",
+    "    enter(sectionId, runtimeCtx = {}) {",
+    "      const nextCtx = { ...runtimeCtx, currentSectionId: sectionId };",
+    "      runRegisteredBlocks(enterBlocks.filter((entry) => entry.targetSectionRef === null || entry.targetSectionRef === sectionId), nextCtx, syncBindings);",
+    "    },",
+    "  };",
+    "}"
+  ].filter((line) => line !== "").join("\n") + "\n";
+}
+function generateCompileScaffold(app, manifest) {
+  const documentSummary = {
+    metadata: app.content.metadata,
+    sections: app.content.sections,
+    assets: app.assets
+  };
+  const warningLines = manifest.warnings.length > 0 ? manifest.warnings.map((warning) => `- [${warning.code}] ${warning.message}`).join("\n") : "- none";
+  return [
+    {
+      path: "manifest.json",
+      contents: JSON.stringify(manifest, null, 2) + "\n"
+    },
+    {
+      path: "content.json",
+      contents: JSON.stringify(documentSummary, null, 2) + "\n"
+    },
+    {
+      path: "behavior.js",
+      contents: generateBehaviorModule(app)
+    },
+    {
+      path: "runtime.js",
+      contents: [
+        "import manifest from './manifest.json' with { type: 'json' };",
+        "import content from './content.json' with { type: 'json' };",
+        "import { createCompiledBehavior } from './behavior.js';",
+        "",
+        "export function createCompiledAppRuntime(api = {}, options = {}) {",
+        "  const scope = options.scope ?? {};",
+        "  const behavior = createCompiledBehavior(api, { ...options, scope });",
+        "  let currentSectionId = options.currentSectionId ?? null;",
+        "  return {",
+        "    manifest,",
+        "    content,",
+        "    scope,",
+        "    behavior,",
+        "    getCurrentSectionId() { return currentSectionId; },",
+        "    setCurrentSectionId(sectionId) { currentSectionId = sectionId; },",
+        "    init(extra = {}) { behavior.init({ ...extra, currentSectionId }); },",
+        "    update(delta, extra = {}) { behavior.update({ ...extra, delta, currentSectionId }); },",
+        "    render(extra = {}) { behavior.render({ ...extra, currentSectionId }); },",
+        "    input(event, extra = {}) { behavior.input({ ...extra, event, currentSectionId }); },",
+        "    drop(event, extra = {}) { behavior.drop({ ...extra, event, currentSectionId }); },",
+        "    enter(sectionId, extra = {}) { currentSectionId = sectionId; behavior.enter(sectionId, { ...extra, currentSectionId: sectionId }); },",
+        "  };",
+        "}"
+      ].join("\n") + "\n"
+    },
+    {
+      path: "main.js",
+      contents: "import manifest from './manifest.json' with { type: 'json' };\nimport content from './content.json' with { type: 'json' };\nimport { behaviorBlocks } from './behavior.js';\nimport { createCompiledAppRuntime } from './runtime.js';\n\nexport function describeCompiledApp() {\n  return { manifest, content, behaviorBlocks };\n}\n\nexport { createCompiledAppRuntime };\n"
+    },
+    {
+      path: "README.md",
+      contents: [
+        "# Generated Storie Compile Scaffold",
+        "",
+        "This directory is a compiler scaffold, not a final runnable app bundle.",
+        "",
+        "Generated artifacts:",
+        "- manifest.json: compile manifest and detected runtime packs",
+        "- content.json: normalized document content summary",
+        "- behavior.js: lowered lifecycle handlers and preserved global scope bindings",
+        "- runtime.js: small adapter that executes the compiled handlers with a supplied API context",
+        "- main.js: minimal inspection and runtime entrypoint",
+        "",
+        "Warnings:",
+        warningLines,
+        "",
+        "This output still expects the host to provide a compatible Storie API object. The next step is replacing that broad API with narrower capability-pack imports."
+      ].join("\n") + "\n"
+    }
+  ];
+}
+function sectionTreeToCompileNodes(sections) {
+  return sections.map((section) => ({
+    id: String(section.id ?? `${section.title}-${section.startLine}`),
+    title: section.title,
+    level: section.level,
+    startLine: section.startLine,
+    endLine: section.endLine,
+    children: sectionTreeToCompileNodes(section.children)
+  }));
+}
+function normalizeSourcePath(sourcePath) {
+  const normalized = String(sourcePath ?? "document.md").trim();
+  return normalized || "document.md";
+}
+function findSectionForLine(sections, line) {
+  for (const section of sections) {
+    if (line >= section.startLine && line <= section.endLine) {
+      for (const child of section.children) {
+        const nested = findSectionForLine([child], line);
+        if (nested) return nested;
+      }
+      return String(section.id ?? `${section.title}-${section.startLine}`);
+    }
+  }
+  return null;
+}
+function getHook(block) {
+  var _a;
+  const hook = String(((_a = block.metadata) == null ? void 0 : _a.on) ?? "").trim();
+  switch (hook) {
+    case "init":
+    case "update":
+    case "render":
+    case "input":
+    case "drop":
+    case "export":
+    case "enter":
+      return hook;
+    default:
+      return "global";
+  }
+}
+function slugifySectionRef(value) {
+  const slug = String(value ?? "").toLowerCase().trim().replace(/[`*_~]/g, "").replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || "section";
+}
+function flattenSections(sections) {
+  const out = [];
+  for (const section of sections) {
+    out.push(section);
+    if (section.children.length > 0) {
+      out.push(...flattenSections(section.children));
+    }
+  }
+  return out;
+}
+function resolveTargetSectionRef(document2, block) {
+  var _a;
+  const raw = String(((_a = block.metadata) == null ? void 0 : _a.section) ?? "").trim();
+  if (!raw) return null;
+  const containingSectionRef = findSectionForLine(document2.sections, block.startLine);
+  if (raw === "current") return containingSectionRef;
+  const flat = flattenSections(document2.sections);
+  const numeric = Number(raw);
+  if (Number.isInteger(numeric) && numeric >= 0 && numeric < flat.length) {
+    return String(flat[numeric].id ?? `${flat[numeric].title}-${flat[numeric].startLine}`);
+  }
+  const wantedSlug = slugifySectionRef(raw);
+  const matched = flat.find((section) => slugifySectionRef(section.title) === wantedSlug || slugifySectionRef(String(section.id ?? "")) === wantedSlug);
+  return matched ? String(matched.id ?? `${matched.title}-${matched.startLine}`) : null;
+}
+function collectGlobalBindings(blocks) {
+  const globals = blocks.filter((block) => block.hook === "global");
+  const collected = /* @__PURE__ */ new Map();
+  const reserved = /* @__PURE__ */ new Set(["true", "false", "null", "undefined", "NaN", "Infinity"]);
+  for (const block of globals) {
+    const lines = block.code.split("\n");
+    let depth = 0;
+    for (const line of lines) {
+      const withoutComment = line.replace(/\/\/.*$/, "");
+      const trimmed = withoutComment.trim();
+      if (depth === 0) {
+        const functionMatch = trimmed.match(/^function\s+([A-Za-z_$][\w$]*)\s*\(/);
+        if (functionMatch) {
+          if (!reserved.has(functionMatch[1])) collected.set(functionMatch[1], "function");
+        }
+        const declMatch = trimmed.match(/^(var|let|const)\s+(.+?);?$/);
+        if (declMatch) {
+          const kind = declMatch[1];
+          const nameMatch = declMatch[2].match(/^([A-Za-z_$][\w$]*)/);
+          if (nameMatch && !reserved.has(nameMatch[1])) collected.set(nameMatch[1], kind);
+        }
+      }
+      let inSingle = false;
+      let inDouble = false;
+      let inTemplate = false;
+      let escaped = false;
+      for (const ch of line) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (!inDouble && !inTemplate && ch === "'") {
+          inSingle = !inSingle;
+          continue;
+        }
+        if (!inSingle && !inTemplate && ch === '"') {
+          inDouble = !inDouble;
+          continue;
+        }
+        if (!inSingle && !inDouble && ch === "`") {
+          inTemplate = !inTemplate;
+          continue;
+        }
+        if (inSingle || inDouble || inTemplate) continue;
+        if (ch === "{") depth += 1;
+        if (ch === "}") depth = Math.max(0, depth - 1);
+      }
+    }
+  }
+  return Array.from(collected.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([name, kind]) => ({ name, kind }));
+}
+function buildBehaviorBlocks(document2) {
+  let index = 0;
+  return document2.codeBlocks.filter((block) => block.lang === "js" || block.lang === "javascript").map((block) => {
+    index += 1;
+    return {
+      id: `block-${index}`,
+      hook: getHook(block),
+      code: block.code,
+      startLine: block.startLine,
+      endLine: block.endLine,
+      sectionRef: findSectionForLine(document2.sections, block.startLine),
+      targetSectionRef: resolveTargetSectionRef(document2, block),
+      metadata: { ...block.metadata ?? {} }
+    };
+  });
+}
+function createManifest(app, sourcePath) {
+  const analysisWarnings = app.capability.warnings.map((message, index) => ({
+    code: `W${index + 1}`,
+    message
+  }));
+  return {
+    version: 1,
+    sourcePath,
+    target: app.target,
+    generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    documentName: String(app.content.metadata.name ?? sourcePath),
+    capabilityPacks: app.capability.capabilities,
+    modules: app.capability.modules,
+    lifecycleUsage: {
+      global: app.behavior.blocks.filter((block) => block.hook === "global").length,
+      init: app.behavior.blocks.filter((block) => block.hook === "init").length,
+      update: app.behavior.blocks.filter((block) => block.hook === "update").length,
+      render: app.behavior.blocks.filter((block) => block.hook === "render").length,
+      input: app.behavior.blocks.filter((block) => block.hook === "input").length,
+      drop: app.behavior.blocks.filter((block) => block.hook === "drop").length,
+      export: app.behavior.blocks.filter((block) => block.hook === "export").length,
+      enter: app.behavior.blocks.filter((block) => block.hook === "enter").length
+    },
+    assets: {
+      timedBlocks: app.assets.timedBlockNames.length,
+      blobBlocks: app.assets.blobNames.length,
+      shaderBlocks: app.assets.shaderNames.length
+    },
+    warnings: analysisWarnings
+  };
+}
+async function compileMarkdownApp(markdown, options = {}) {
+  const sourcePath = normalizeSourcePath(options.sourcePath);
+  const target = options.target ?? "web";
+  const document2 = await parseMarkdown(markdown);
+  const analysis = analyzeMarkdownDocument(document2);
+  const app = {
+    target,
+    sourcePath,
+    content: {
+      metadata: document2.metadata,
+      sections: sectionTreeToCompileNodes(document2.sections),
+      rawDocument: document2
+    },
+    behavior: {
+      blocks: buildBehaviorBlocks(document2),
+      globalBindings: []
+    },
+    capability: {
+      capabilities: analysis.capabilities,
+      modules: analysis.modules,
+      warnings: analysis.warnings
+    },
+    assets: {
+      timedBlockNames: (document2.timedBlocks ?? []).map((block) => block.name),
+      blobNames: (document2.blobBlocks ?? []).map((block) => block.name),
+      shaderNames: (document2.wgslShaders ?? []).map((shader) => shader.name)
+    }
+  };
+  app.behavior.globalBindings = collectGlobalBindings(app.behavior.blocks);
+  const manifest = createManifest(app, sourcePath);
+  const files = generateCompileScaffold(app, manifest);
+  return {
+    document: document2,
+    app,
+    manifest,
+    files
+  };
+}
 var BuiltInModules = /* @__PURE__ */ ((BuiltInModules2) => {
   BuiltInModules2["Babylon"] = "babylon";
   BuiltInModules2["Physics"] = "physics";
@@ -38359,13 +38986,15 @@ export {
   VERSION,
   WebGPURenderer,
   WorldsRenderer,
+  analyzeMarkdownDocument,
   applyTheme,
+  compileMarkdownApp,
   compileWorldsTimeline,
   createCamera3D,
   createSection3DLayouts,
   distance,
   findSection,
-  flattenSections,
+  flattenSections$1 as flattenSections,
   focusOnSection,
   getAvailableThemes,
   getDefaultWorldsConfig,

@@ -23,6 +23,20 @@ Core examples:
 
 The engine is built around GitHub features. No installation needed. Just create a new repo from the S|torie template, update index.md with your own content and it'll auto-compile for the web. Enable GitHub Pages and you'll see that content served live within moments. GitHub Actions take care of the full compilation process.
 
+## Compilation
+
+Storie's long-term direction is scripting-first development with a native compilation path that can eventually target a Storie-oriented operating system.
+
+The current roadmap is documented in [COMPILATION_ROADMAP.md](COMPILATION_ROADMAP.md).
+
+An initial compiler scaffold is now available:
+
+```sh
+npm run compile:app -- docs/demos/klondike.md generated/klondike --target web
+```
+
+This currently emits a compile scaffold with a manifest, content summary, and extracted lifecycle behavior blocks. It is the front end for the larger compiler pipeline, not the final runnable backend yet.
+
 ## Features
 
 - Able to empower a robust audio/node graph (WebAudio)

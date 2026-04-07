@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "sourcePath": "docs/demos/klondike.md",
+  "target": "web",
+  "generatedAt": "2026-04-06T23:07:32.384Z",
+  "documentName": "Klondike Solitaire",
+  "capabilityPacks": [
+    "input",
+    "random",
+    "shader",
+    "terminal",
+    "themes",
+    "ui",
+    "worlds"
+  ],
+  "modules": [],
+  "lifecycleUsage": {
+    "global": 1,
+    "init": 1,
+    "update": 4,
+    "render": 2,
+    "input": 1,
+    "drop": 0,
+    "export": 0,
+    "enter": 3
+  },
+  "assets": {
+    "timedBlocks": 0,
+    "blobBlocks": 0,
+    "shaderBlocks": 0
+  },
+  "warnings": []
+}
