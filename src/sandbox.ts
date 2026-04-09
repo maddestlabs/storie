@@ -333,6 +333,94 @@ export interface SandboxAPI {
       impulsesBetween: (compiled: CompiledAutomation, prevTimeSec: number, nowTimeSec: number) => AutomationImpulseEvent[];
       parseEase: (raw: any) => EaseSpec;
       ease: (u: number, spec?: EaseSpec) => number;
+      /** Return the last entry whose ms ≤ timeSec*1000. Useful for lyric display. */
+      entryAt: <T extends { ms: number }>(entries: T[], timeSec: number) => T | undefined;
+      /** Return all entries in (prevTimeSec*1000, nowTimeSec*1000]. */
+      entriesBetween: <T extends { ms: number }>(entries: T[], prevTimeSec: number, nowTimeSec: number) => T[];
+    };
+
+    /**
+     * General-purpose undo/redo history stack (command pattern).
+     *
+     * Example:
+     *   const h = sys.history.create({ maxDepth: 64 });
+     *   h.push({ label: 'move', do() { const old=pos; pos=newPos; return old; }, undo(s) { pos=s; } });
+     *   h.undo(); h.redo();
+     */
+    history: {
+      create: (opts?: { maxDepth?: number }) => {
+        push<S>(action: { label?: string; do(): S; undo(snap: S): void }): S;
+        undo(): boolean;
+        redo(): boolean;
+        canUndo(): boolean;
+        canRedo(): boolean;
+        clear(): void;
+        readonly depth: number;
+        readonly undoLabel: string | undefined;
+        readonly redoLabel: string | undefined;
+      };
+    };
+
+    /**
+     * Input recorder — captures InputEvents as a timestamped tape that
+     * serialises to the native timed-block format for automation playback.
+     *
+     * Example:
+     *   const rec = sys.recorder.create();
+     *   // in on:input: rec.record(event)
+     *   // on key 'r': const tape = rec.stop(); sys.download(...)
+     */
+    recorder: {
+      create: () => {
+        start(): void;
+        stop(): {
+          toTimedEntries(): Array<{ ms: number; text: string }>;
+          serialize(): string;
+          readonly durationMs: number;
+          readonly length: number;
+        };
+        isRecording(): boolean;
+        getElapsedMs(): number;
+        record(event: InputEvent, nowMs?: number): void;
+      };
+    };
+
+    /**
+     * BPM beat clock — maps between beat numbers and wall-clock milliseconds.
+     * Feeds into sys.automation via toTimedEntries() or parseBlock().
+     *
+     * Example:
+     *   const clock = sys.beat.clock({ bpm: 128 });
+     *   const track = sys.automation.compile(
+     *     sys.beat.toTimedEntries(clock, doc.timedBlock('groove'))
+     *   );
+     *   const beat = sys.beat.beatAt(clock, getTime());
+     */
+    beat: {
+      clock: (opts: { bpm: number; offsetMs?: number; beatsPerBar?: number }) => {
+        readonly bpm: number;
+        readonly offsetMs: number;
+        readonly beatsPerBar: number;
+        beatToMs(beat: number): number;
+        msToBeat(ms: number): number;
+        beatAt(timeSec: number): number;
+        barAt(timeSec: number): number;
+        beatPhase(timeSec: number): number;
+        barPhase(timeSec: number): number;
+      };
+      beatAt(clock: any, timeSec: number): number;
+      barAt(clock: any, timeSec: number): number;
+      beatPhase(clock: any, timeSec: number): number;
+      barPhase(clock: any, timeSec: number): number;
+      beatToMs(clock: any, beat: number): number;
+      msToBeat(clock: any, ms: number): number;
+      /** Convert beat-indexed entries to ms-indexed entries for sys.automation.compile(). */
+      toTimedEntries(clock: any, entries: Array<{ beat: number; text: string }>): Array<{ ms: number; text: string }>;
+      /**
+       * Parse a raw timed block that may contain `beat:N|json` lines and/or a
+       * `# bpm:N` header, resolving beat lines to milliseconds.
+       */
+      parseBlock(raw: Array<{ ms: number; text: string }>, clock?: any): Array<{ ms: number; text: string }>;
     };
   };
 

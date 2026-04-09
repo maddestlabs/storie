@@ -335,4 +335,70 @@ export interface WorldsConfig {
    * Optional hanging indent in pixels for wrapped list lines.
    */
   sectionListHangIndentPx?: number;
+
+  /**
+   * Constraints applied to user-driven pan and zoom gestures (middle-mouse drag,
+   * touch drag/pinch, and scroll-wheel).  Programmatic camera movement via
+   * `worlds.camera.*` is unaffected.
+   *
+   * @example
+   * ```javascript
+   * // Klondike: vertical pan only, bounded between Settings (y=-45) and Help (y=45)
+   * worlds.config.setDefaults({
+   *   navigationConstraints: {
+   *     minY: -50, maxY: 50,   // camera Y bounds (world units)
+   *     minX: 0,   maxX: 0,    // lock horizontal pan
+   *     dragAxis: 'y',          // touch/mouse drag is vertical-only
+   *   }
+   * });
+   * ```
+   */
+  navigationConstraints?: {
+    /** Minimum camera position X (left bound for horizontal pan). */
+    minX?: number;
+    /** Maximum camera position X (right bound for horizontal pan). */
+    maxX?: number;
+    /** Minimum camera position Y (lower bound for vertical pan). */
+    minY?: number;
+    /** Maximum camera position Y (upper bound for vertical pan). */
+    maxY?: number;
+    /** Minimum camera position Z (maximum zoom-in limit). */
+    minZ?: number;
+    /** Maximum camera position Z (maximum zoom-out limit). */
+    maxZ?: number;
+    /**
+     * Restrict user pan/drag gestures to a single axis.
+     * - `null` (default): free pan in both axes
+     * - `'x'`: horizontal pan only
+     * - `'y'`: vertical pan only
+     */
+    dragAxis?: 'x' | 'y' | null;
+  };
+
+  /**
+   * Enable multi-touch rotation gestures:
+   * - 3-finger drag: adjusts camera pitch (rotation.x) based on vertical drag
+   * - 4-finger drag: adjusts camera yaw (rotation.y) based on horizontal drag
+   *
+   * Disabled by default.  Enable via `worlds.config.setDefaults({ multiTouchRotateEnabled: true })`.
+   */
+  multiTouchRotateEnabled?: boolean;
+
+  /**
+   * Enable double-tap on the 3D background to reset the camera to the current
+   * section's default view.  A "background" tap is one that doesn't land on
+   * any visible GUI widget or any 3D section card.
+   *
+   * Two taps within 400 ms and 60 px of each other trigger `focusOnSectionFit`
+   * for the current section.  If `doubleTapResetRotation` is also set the
+   * camera rotation is restored before re-focusing.
+   */
+  doubleTapResetEnabled?: boolean;
+
+  /**
+   * Camera rotation (radians, Euler x/y/z) to restore when the double-tap
+   * background reset fires.  If omitted the current rotation is preserved
+   * and only position / zoom are reset.
+   */
+  doubleTapResetRotation?: { x: number; y: number; z: number };
 }

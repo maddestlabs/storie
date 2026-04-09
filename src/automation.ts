@@ -332,3 +332,54 @@ export function impulsesBetween(
   }
   return out;
 }
+
+// ── Generic timed-entry helpers ─────────────────────────────────────────────
+
+/**
+ * Return the last entry whose `ms` is ≤ `timeSec * 1000`.
+ * Useful for lyric/caption display: "what line is active right now?"
+ *
+ * @param entries  Sorted (ascending by ms) array of timed entries.
+ * @param timeSec  Current engine time in seconds.
+ * @returns        The active entry, or `undefined` before the first entry.
+ */
+export function entryAt<T extends { ms: number }>(
+  entries: T[],
+  timeSec: number
+): T | undefined {
+  const tMs = Math.max(0, Math.round(Number(timeSec) * 1000));
+  let result: T | undefined;
+  for (const e of entries) {
+    if (e.ms > tMs) break;
+    result = e;
+  }
+  return result;
+}
+
+/**
+ * Return all entries whose `ms` falls in the half-open interval
+ * `(prevTimeSec * 1000, nowTimeSec * 1000]`.
+ * Mirrors `impulsesBetween` for plain timed arrays (lyrics, events, etc.).
+ *
+ * @param entries      Sorted (ascending by ms) array of timed entries.
+ * @param prevTimeSec  Start of window (exclusive), in seconds.
+ * @param nowTimeSec   End of window (inclusive), in seconds.
+ * @returns            All entries that fall within the window.
+ */
+export function entriesBetween<T extends { ms: number }>(
+  entries: T[],
+  prevTimeSec: number,
+  nowTimeSec: number
+): T[] {
+  const a = Math.max(0, Math.round(Number(prevTimeSec) * 1000));
+  const b = Math.max(0, Math.round(Number(nowTimeSec) * 1000));
+  if (!(Number.isFinite(a) && Number.isFinite(b))) return [];
+  if (b <= a) return [];
+  const out: T[] = [];
+  for (const e of entries) {
+    if (e.ms <= a) continue;
+    if (e.ms > b) break;
+    out.push(e);
+  }
+  return out;
+}

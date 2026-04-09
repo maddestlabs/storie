@@ -7,13 +7,6 @@ shaders: "vintage"
 
 # Play {"x":"0","y":"0","z":"0"}
 
-```js on:enter
-scope.sections = scope.sections || {};
-if (typeof worlds.currentSection === 'number') {
-  scope.sections.play = worlds.currentSection;
-}
-```
-
 # Settings {"x":"0","y":"-45","z":"0","width":"44","height":"28","sectionOverflow":"fit-y"}
 
 Draw mode: :gui{type:label,id:settings-draw-label,text:"Draw: 1 card",width:90%,align:left,scale:worlds}
@@ -29,9 +22,8 @@ Card jitter: :gui{type:label,id:settings-jitter-label,text:"Normal",width:40%,al
 - [Back](#play){"list-icon":"⇐"}
 
 ```js on:enter
-scope.sections = scope.sections || {};
 if (typeof worlds.currentSection === 'number') {
-  scope.sections.settings = worlds.currentSection;
+  state.sections.settings = worlds.currentSection;
 }
 syncSettingsWidgets();
 ```
@@ -51,9 +43,8 @@ syncSettingsWidgets();
 - [Back](#play){"list-icon":"⇐"}
 
 ```js on:enter
-scope.sections = scope.sections || {};
 if (typeof worlds.currentSection === 'number') {
-  scope.sections.help = worlds.currentSection;
+  state.sections.help = worlds.currentSection;
 }
 ```
 
@@ -63,13 +54,27 @@ var SUITS       = ['♠','♥','♦','♣'];   // spade, heart, diamond, club
 var RANKS       = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
 var SUIT_RED    = [false, true, true, false]; // index matches SUITS
 var NUM_TABLEAU = 7;
-var STOCK_DEAL  = 1;   // cards dealt per click (set to 3 for draw-3 variant)
 var DECK_AGE    = 1.0; // 0 = pristine (no aging), 1 = very worn; scales all card age effects
 var JITTER       = 1.0; // positional and angular scatter scale; 0 = none, 1 = default, 3 = chaotic
 var JITTER_STEPS = [0, 0.5, 1.0, 2.0, 3.0];   // scale factors per step
 var JITTER_NAMES = ['None', 'Subtle', 'Normal', 'Wild', 'Chaotic'];
 var DRAG_SELECTED_SCALE = 1.2;
 
+// ─── Persistent state (single object — mutations visible across all closures) ─
+var state = {
+  gs:               null,    // game state object
+  sections:         {},      // { play, settings, help } section indices
+  settings:         { themeIndex: 0, jitterIndex: 2 },
+  stockDeal:        1,
+
+  layout:           null,
+  playLayout:       null,
+  dragNeedsOverlay: false,
+  lastErrAt:        0,
+
+  gameHistory:      null,   // HistoryStack — undo/redo (mutated by on:init)
+  preDragGS:        null,   // GS snapshot captured before each drag starts
+};
 
 // ─── Card helpers ─────────────────────────────────────────────────────────────
 function cardId(suit, rank) { return suit * 13 + rank; }         // 0-51
@@ -95,10 +100,11 @@ function shuffledDeck(rng) {
 // Each "slot" is an array of { id, faceUp } objects.
 // Foundations: 4 piles (one per suit), ace-to-king.
 // Tableau: 7 columns. Stock: face-down draw pile. Waste: face-up discard.
-scope.gs = scope.gs || null;
 
 // newGame(seed?) — pass a seed to replay a known game, or omit for a fresh random one.
 function newGame(seed) {
+  if (state.gameHistory) state.gameHistory.clear();
+  state.preDragGS = null;
   var useSeed = (seed !== undefined && seed !== null) ? (seed >>> 0) : random.seed();
   var rng = random.rng(useSeed);
   var deck = shuffledDeck(rng);
@@ -116,7 +122,7 @@ function newGame(seed) {
   var stock = [];
   while (di < 52) stock.push({ id: deck[di++], faceUp: false });
 
-  scope.gs = {
+  state.gs = {
     tableau:     tableau,
     foundations: [[], [], [], []],
     stock:       stock,
@@ -146,26 +152,72 @@ function canPlaceOnTableau(card, column) {
 
 // Try to auto-move a card to the best foundation. Returns true if moved.
 function autoToFoundation(card, fromPile, fromIndex) {
+  var g = state.gs;
   var suit = cardSuit(card.id);
-  var found = scope.gs.foundations[suit];
+  var found = g.foundations[suit];
   if (!canPlaceOnFoundation(card, found)) return false;
+  var _pre = cloneGS();
   fromPile.splice(fromIndex, 1);
   found.push({ id: card.id, faceUp: true });
   // Flip new top of source column
   if (fromPile.length > 0 && !fromPile[fromPile.length - 1].faceUp) {
     fromPile[fromPile.length - 1].faceUp = true;
   }
-  scope.gs.moveCount++;
+  g.moveCount++;
   checkWin();
+  recordMove('auto-move', _pre, cloneGS());
   return true;
 }
 
 function checkWin() {
-  var g = scope.gs;
+  var g = state.gs;
   for (var s = 0; s < 4; s++) {
     if (g.foundations[s].length < 13) return;
   }
   g.won = true;
+}
+
+// ─── Undo/redo helpers ────────────────────────────────────────────────────────
+// Produce a plain-data clone of the mutable parts of state.gs.
+// Excludes drag (contains live pile references) and dblTap (gesture state).
+function cloneGS() {
+  var g = state.gs;
+  return JSON.parse(JSON.stringify({
+    tableau:     g.tableau,
+    foundations: g.foundations,
+    stock:       g.stock,
+    waste:       g.waste,
+    won:         g.won,
+    moveCount:   g.moveCount,
+    seed:        g.seed,
+  }));
+}
+
+// Restore mutable game fields from a cloneGS() snapshot.
+function restoreGS(snap) {
+  var g = state.gs;
+  g.tableau     = snap.tableau;
+  g.foundations = snap.foundations;
+  g.stock       = snap.stock;
+  g.waste       = snap.waste;
+  g.won         = snap.won;
+  g.moveCount   = snap.moveCount;
+  g.drag        = null;
+  g.dblTap      = null;
+}
+
+// Push an undoable move onto gameHistory.
+// preSnap  = cloneGS() captured BEFORE the move was applied.
+// postSnap = cloneGS() captured AFTER  the move was applied.
+function recordMove(label, preSnap, postSnap) {
+  if (!state.gameHistory) return;
+  var preStr  = JSON.stringify(preSnap);
+  var postStr = JSON.stringify(postSnap);
+  state.gameHistory.push({
+    label: label,
+    do()    { restoreGS(JSON.parse(postStr)); return JSON.parse(preStr); },
+    undo(s) { restoreGS(s); },
+  });
 }
 
 // ─── Layout ────────────────────────────────────────────────────────────────────
@@ -220,7 +272,6 @@ function computeLayout() {
     radius: Math.max(3, Math.round(cw * 0.07)),
   };
 }
-scope._layout = null;
 
 // ─── Hit testing ──────────────────────────────────────────────────────────────
 // Returns { zone, pileKey, index } or null.
@@ -230,6 +281,7 @@ scope._layout = null;
 function hitTest(px, py, layout) {
   var L = layout;
   var cw = L.cw; var ch = L.ch;
+  var g = state.gs;
 
   // Stock
   if (px >= L.topRowXs[0] && px < L.topRowXs[0] + cw &&
@@ -239,19 +291,19 @@ function hitTest(px, py, layout) {
   // Waste
   if (px >= L.topRowXs[1] && px < L.topRowXs[1] + cw &&
       py >= L.topRowY    && py < L.topRowY + ch) {
-    return { zone: 'waste', pileKey: 0, index: scope.gs.waste.length - 1 };
+    return { zone: 'waste', pileKey: 0, index: g.waste.length - 1 };
   }
   // Foundations (slots 3-6)
   for (var f = 0; f < 4; f++) {
     var fx = L.topRowXs[3 + f];
     if (px >= fx && px < fx + cw && py >= L.topRowY && py < L.topRowY + ch) {
-      return { zone: 'foundation', pileKey: f, index: scope.gs.foundations[f].length - 1 };
+      return { zone: 'foundation', pileKey: f, index: g.foundations[f].length - 1 };
     }
   }
   // Tableau columns
   for (var col = 0; col < NUM_TABLEAU; col++) {
     var cx2 = L.topRowXs[col];
-    var pile = scope.gs.tableau[col];
+    var pile = g.tableau[col];
     // Compute each card's rect (same as draw logic)
     var cardRects = tableauCardRects(pile, cx2, L);
     // Hit test from top (visually last) down
@@ -309,7 +361,7 @@ function tableauCardRects(pile, colX, L) {
 }
 
 function getPlaySectionRef() {
-  return (scope.sections && scope.sections.play !== undefined) ? scope.sections.play : 'Play';
+  return 'Play';
 }
 
 function getPlayPointerLocalPoint(preferSectionPointer) {
@@ -344,7 +396,7 @@ function draggedCardStep(L, index) {
 
 // ─── Input handling ────────────────────────────────────────────────────────────
 function handleInput(L) {
-  var g = scope.gs;
+  var g = state.gs;
   // Two pointer spaces:
   // - section-local (ui.pointer): best for hit tests / in-bounds interactions
   // - unprojected from screen pixels (worlds.unprojectPoint): continues working
@@ -415,6 +467,12 @@ function handleInput(L) {
       }
     }
 
+    // Record move or discard the pre-drag snapshot
+    if (dropped && state.preDragGS) {
+      recordMove('move', state.preDragGS, cloneGS());
+    }
+    state.preDragGS = null;
+
     // Return cards to source if drop failed
     if (!dropped) {
       for (var dc2 = 0; dc2 < dragCards.length; dc2++) {
@@ -445,8 +503,10 @@ function handleInput(L) {
 
   // Stock click
   if (hit.zone === 'stock') {
+    var _stockPre = cloneGS();
+    var _stockLabel = g.stock.length > 0 ? 'deal' : 'reset stock';
     if (g.stock.length > 0) {
-      for (var s2 = 0; s2 < STOCK_DEAL && g.stock.length > 0; s2++) {
+      for (var s2 = 0; s2 < state.stockDeal && g.stock.length > 0; s2++) {
         var card = g.stock.pop();
         card.faceUp = true;
         g.waste.push(card);
@@ -459,6 +519,7 @@ function handleInput(L) {
         g.stock.push(wc);
       }
     }
+    recordMove(_stockLabel, _stockPre, cloneGS());
     return;
   }
 
@@ -469,7 +530,8 @@ function handleInput(L) {
       autoToFoundation(wTop, g.waste, g.waste.length - 1);
       return;
     }
-    // Start drag
+    // Start drag — snapshot state BEFORE cards leave the pile
+    state.preDragGS = cloneGS();
     var wx = L.topRowXs[1]; var wy = L.topRowY;
     var dmx = (dragPt && Number.isFinite(dragPt.x)) ? dragPt.x : pressPt.x;
     var dmy = (dragPt && Number.isFinite(dragPt.y)) ? dragPt.y : pressPt.y;
@@ -487,6 +549,8 @@ function handleInput(L) {
     var fnd = g.foundations[hit.pileKey];
     if (fnd.length === 0) return;
     var fCard = fnd[fnd.length - 1];
+    // Snapshot BEFORE the card leaves the foundation
+    state.preDragGS = cloneGS();
     var fCardX = L.topRowXs[3 + hit.pileKey]; var fCardY = L.topRowY;
     var dmx2 = (dragPt && Number.isFinite(dragPt.x)) ? dragPt.x : pressPt.x;
     var dmy2 = (dragPt && Number.isFinite(dragPt.y)) ? dragPt.y : pressPt.y;
@@ -507,8 +571,12 @@ function handleInput(L) {
     if (tIdx < 0 || tIdx >= tPile.length) return;
     var tCard = tPile[tIdx];
     if (!tCard.faceUp) {
-      // Flip face-down top card
-      if (tIdx === tPile.length - 1) tCard.faceUp = true;
+      // Flip face-down top card — undo-able
+      if (tIdx === tPile.length - 1) {
+        var _flipPre = cloneGS();
+        tCard.faceUp = true;
+        recordMove('flip', _flipPre, cloneGS());
+      }
       return;
     }
     // Double-click: auto-move single top card to foundation
@@ -516,7 +584,8 @@ function handleInput(L) {
       autoToFoundation(tCard, tPile, tIdx);
       return;
     }
-    // Drag the card and any cards below it (a run)
+    // Drag the card and any cards below it — snapshot BEFORE cards leave the pile
+    state.preDragGS = cloneGS();
     var runCards = tPile.slice(tIdx);
     var rects2 = tableauCardRects(tPile, L.topRowXs[tCol], L);
     var startX = rects2[tIdx].x; var startY = rects2[tIdx].y;
@@ -698,6 +767,8 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age, d
   var faceUp = cardObj ? cardObj.faceUp : false;
   var _age = (age > 0) ? Math.min(age, 1.0) : 0;
   var _drawScale = (drawScale && drawScale > 0) ? drawScale : 1;
+  var _s = _drawScale;
+  var _tScale = (_s !== 1) ? _s : undefined;
 
   if (_drawScale !== 1) {
     cw = Math.round(cw * _drawScale);
@@ -727,9 +798,11 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age, d
   // single tight rect when at rest. Offsets and alphas chosen so the total perceived
   // shadow density is comparable to the resting shadow despite the larger spread.
   if (isDragging) {
-    ui.rect(jx + 14, jy + 18, cw, ch, ui.colors.rgba(0, 0, 0, 3));  // wide penumbra
-    ui.rect(jx + 10, jy + 13, cw, ch, ui.colors.rgba(0, 0, 0, 5));  // mid shadow
-    ui.rect(jx + 6,  jy + 8,  cw, ch, ui.colors.rgba(0, 0, 0, 8));  // umbra core
+    // Scale shadow offsets with drawScale so the dragged card reads as the
+    // same drawing, just larger (especially noticeable on small mobile cards).
+    ui.rect(jx + Math.round(14 * _s), jy + Math.round(18 * _s), cw, ch, ui.colors.rgba(0, 0, 0, 3));  // wide penumbra
+    ui.rect(jx + Math.round(10 * _s), jy + Math.round(13 * _s), cw, ch, ui.colors.rgba(0, 0, 0, 5));  // mid shadow
+    ui.rect(jx + Math.round(6  * _s), jy + Math.round(8  * _s), cw, ch, ui.colors.rgba(0, 0, 0, 8));  // umbra core
   } else {
     ui.rect(bbX + 3, bbY + 3, bbW, bbH, pal.cardShadow);
   }
@@ -773,14 +846,17 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age, d
 
     // Corner rank label (top-left) — positions rotated to sit on the tilted card.
     var _chH = ui.metrics.charHeight || 14;
-    var _tlA = _rotPt(jx + 4, jy + 3,        jcx, jcy, cosA, sinA);
-    var _tlB = _rotPt(jx + 4, jy + 3 + _chH, jcx, jcy, cosA, sinA);
-    ui.text(rankStr, _tlA.x, _tlA.y, ink);
-    ui.text(suitStr, _tlB.x, _tlB.y, ink);
+    var _padX = Math.max(1, Math.round(4 * _s));
+    var _padY = Math.max(1, Math.round(3 * _s));
+    var _effChH = _chH * (_tScale ? _tScale : 1);
+    var _tlA = _rotPt(jx + _padX, jy + _padY,           jcx, jcy, cosA, sinA);
+    var _tlB = _rotPt(jx + _padX, jy + _padY + _effChH, jcx, jcy, cosA, sinA);
+    ui.text(rankStr, _tlA.x, _tlA.y, ink, _tScale);
+    ui.text(suitStr, _tlB.x, _tlB.y, ink, _tScale);
 
     // Center suit symbol — scaled up; position rotated to the card's visual centre.
     var _mw = ui.metrics.measureTextWidth ? ui.metrics.measureTextWidth : function(s) { return (ui.metrics.charWidth || 10) * s.length; };
-    var centerScale = 1.6;
+    var centerScale = 1.6 * (_tScale ? _tScale : 1);
     var _cRaw = _rotPt(
       jx + Math.floor((cw - _mw(suitStr) * centerScale) * 0.5),
       jy + Math.floor((ch - _chH * centerScale) * 0.5) - 2,
@@ -788,17 +864,20 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age, d
     ui.text(suitStr, _cRaw.x, _cRaw.y, ink, centerScale);
 
     // Bottom-right corner — positions rotated to the card-local bottom-right area.
-    var bry = jy + ch - 4 - _chH * 2;
-    var _brA = _rotPt(jx + cw - 4 - _mw(rankStr), bry,        jcx, jcy, cosA, sinA);
-    var _brB = _rotPt(jx + cw - 4 - _mw(suitStr), bry + _chH, jcx, jcy, cosA, sinA);
-    ui.text(rankStr, _brA.x, _brA.y, ink);
-    ui.text(suitStr, _brB.x, _brB.y, ink);
+    var _brPad = Math.max(1, Math.round(4 * _s));
+    var _wRank = _mw(rankStr) * (_tScale ? _tScale : 1);
+    var _wSuit = _mw(suitStr) * (_tScale ? _tScale : 1);
+    var bry = jy + ch - _brPad - _effChH * 2;
+    var _brA = _rotPt(jx + cw - _brPad - _wRank, bry,           jcx, jcy, cosA, sinA);
+    var _brB = _rotPt(jx + cw - _brPad - _wSuit, bry + _effChH, jcx, jcy, cosA, sinA);
+    ui.text(rankStr, _brA.x, _brA.y, ink, _tScale);
+    ui.text(suitStr, _brB.x, _brB.y, ink, _tScale);
 
     // Foxing / age spots — two-hue warm/cool scatter, drawn before the vignette so
     // edge marks are naturally darkened by it.
     if (_age > 0) {
       drawCardAgeSpots(((id * 2654435761) >>> 0), Math.round(_age * _age * _age * 50),
-        jx, jy, cw, ch, _age, jcx, jcy, cosA, sinA, 2.5, 0.08, 0.22, true, 0, 0, 0, 0);
+        jx, jy, cw, ch, _age, jcx, jcy, cosA, sinA, 2.5 * _s, 0.08, 0.22, true, 0, 0, 0, 0);
     }
 
     // Edge vignette — warm tint, 50% depth on face (more immersive inner glow).
@@ -838,7 +917,7 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age, d
     if (_age > 0) {
       drawCardAgeSpots(((id * 2654435761 + 9999) >>> 0), Math.round(_age * _age * _age * 35),
         jx, jy, cw, ch, _age, jcx, jcy, cosA, sinA,
-        2.0, 0.06, 0.18, false, bPanX, bPanY, bPanW, bPanH);
+        2.0 * _s, 0.06, 0.18, false, bPanX, bPanY, bPanW, bPanH);
     }
 
     // Edge vignette — neutral tint, 40% depth on back (laminated surface).
@@ -867,7 +946,7 @@ function drawEmptySlot(pal, x, y, cw, ch, radius, label) {
 
 // ─── Render ───────────────────────────────────────────────────────────────────
 function drawDraggedCardsLocal(pal, L) {
-  var g = scope.gs;
+  var g = state.gs;
   if (!g || !g.drag) return;
 
   var dy2 = g.drag.y;
@@ -880,7 +959,7 @@ function drawDraggedCardsLocal(pal, L) {
 }
 
 function drawDraggedCardsOverlay(pal, L, sectionRef) {
-  var g = scope.gs;
+  var g = state.gs;
   if (!g || !g.drag || !worlds || typeof worlds.projectQuad !== 'function') return;
 
   function _normalizePoly(poly) {
@@ -1026,14 +1105,15 @@ function drawDraggedCardsOverlay(pal, L, sectionRef) {
   }
 
   function drawCardAgeSpotsOverlay(initHash, n, lx, ly, lw, lh, age, twoColor,
+                                  spotScale, alphaMin, alphaRange,
                                   exclX, exclY, exclW, exclH) {
     var _hs = initHash;
     for (var _i = 0; _i < n; _i++) {
       _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sx = _hs / 4294967296;
       _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sy = _hs / 4294967296;
-      _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sw = 1 + Math.round((_hs / 4294967296) * 2.5);
-      _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sth = 1 + Math.round((_hs / 4294967296) * 2.5);
-      _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sa = Math.round((0.08 + (_hs / 4294967296) * 0.22) * age * 255);
+      _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sw = 1 + Math.round((_hs / 4294967296) * spotScale);
+      _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sth = 1 + Math.round((_hs / 4294967296) * spotScale);
+      _hs = ((_hs * 1664525 + 1013904223) >>> 0); var _sa = Math.round((alphaMin + (_hs / 4294967296) * alphaRange) * age * 255);
       _hs = ((_hs * 1664525 + 1013904223) >>> 0);
       var _ux = lx + Math.round(_sx * (lw - 4));
       var _uy = ly + Math.round(_sy * (lh - 4));
@@ -1050,6 +1130,8 @@ function drawDraggedCardsOverlay(pal, L, sectionRef) {
     var faceUp = cardObj ? cardObj.faceUp : false;
     var _age = (age > 0) ? Math.min(age, 1.0) : 0;
     var _drawScale = (drawScale && drawScale > 0) ? drawScale : 1;
+    var _s = _drawScale;
+    var _tScale = (_s !== 1) ? _s : undefined;
     if (_drawScale !== 1) {
       cw = Math.round(cw * _drawScale);
       ch = Math.round(ch * _drawScale);
@@ -1058,9 +1140,9 @@ function drawDraggedCardsOverlay(pal, L, sectionRef) {
 
     // Shadows in section-local space (projected), matching in-section drawCard.
     if (isDragging) {
-      ovRect(x + 14, y + 18, cw, ch, ui.colors.rgba(0, 0, 0, 3));
-      ovRect(x + 10, y + 13, cw, ch, ui.colors.rgba(0, 0, 0, 5));
-      ovRect(x + 6,  y + 8,  cw, ch, ui.colors.rgba(0, 0, 0, 8));
+      ovRect(x + Math.round(14 * _s), y + Math.round(18 * _s), cw, ch, ui.colors.rgba(0, 0, 0, 3));
+      ovRect(x + Math.round(10 * _s), y + Math.round(13 * _s), cw, ch, ui.colors.rgba(0, 0, 0, 5));
+      ovRect(x + Math.round(6  * _s), y + Math.round(8  * _s), cw, ch, ui.colors.rgba(0, 0, 0, 8));
     } else {
       ovRect(x + 3, y + 3, cw, ch, pal2.cardShadow);
     }
@@ -1080,11 +1162,14 @@ function drawDraggedCardsOverlay(pal, L, sectionRef) {
       var rankStr = rankLabel(rank);
       var suitStr = suitLabel(suit);
       var _chH = ui.metrics.charHeight || 14;
-      ovText(rankStr, x + 4, y + 3, ink);
-      ovText(suitStr, x + 4, y + 3 + _chH, ink);
+      var _padX = Math.max(1, Math.round(4 * _s));
+      var _padY = Math.max(1, Math.round(3 * _s));
+      var _effChH = _chH * (_tScale ? _tScale : 1);
+      ovText(rankStr, x + _padX, y + _padY, ink, _tScale);
+      ovText(suitStr, x + _padX, y + _padY + _effChH, ink, _tScale);
 
       var _mw = ui.metrics.measureTextWidth ? ui.metrics.measureTextWidth : function(s) { return (ui.metrics.charWidth || 10) * s.length; };
-      var centerScale = 1.6;
+      var centerScale = 1.6 * (_tScale ? _tScale : 1);
       ovText(
         suitStr,
         x + Math.floor((cw - _mw(suitStr) * centerScale) * 0.5),
@@ -1093,20 +1178,26 @@ function drawDraggedCardsOverlay(pal, L, sectionRef) {
         centerScale
       );
 
-      var bry = y + ch - 4 - _chH * 2;
-      ovText(rankStr, x + cw - 4 - _mw(rankStr), bry, ink);
-      ovText(suitStr, x + cw - 4 - _mw(suitStr), bry + _chH, ink);
+      var _brPad = Math.max(1, Math.round(4 * _s));
+      var _wRank = _mw(rankStr) * (_tScale ? _tScale : 1);
+      var _wSuit = _mw(suitStr) * (_tScale ? _tScale : 1);
+      var bry = y + ch - _brPad - _effChH * 2;
+      ovText(rankStr, x + cw - _brPad - _wRank, bry, ink, _tScale);
+      ovText(suitStr, x + cw - _brPad - _wSuit, bry + _effChH, ink, _tScale);
 
       if (_age > 0) {
-        drawCardAgeSpotsOverlay(((id * 2654435761) >>> 0), Math.round(_age * _age * _age * 50), x, y, cw, ch, _age, true, 0, 0, 0, 0);
+        drawCardAgeSpotsOverlay(((id * 2654435761) >>> 0), Math.round(_age * _age * _age * 50),
+          x, y, cw, ch, _age, true,
+          2.5 * _s, 0.08, 0.22,
+          0, 0, 0, 0);
       }
       drawCardVignetteOverlay(x, y, cw, ch, Math.max(5, Math.round(Math.min(cw, ch) * 0.50)), 75, 70, 0);
     } else {
       ovRect(x, y, cw, ch, pal2.cardBack);
       if (_age > 0) ovRect(x, y, cw, ch, ui.colors.rgba(200, 160, 80, Math.round(_age * _age * 36)));
 
-      var bMarX = Math.max(5, Math.round(cw * 0.12));
-      var bMarY = Math.max(5, Math.round(ch * 0.12));
+      var bMarX = Math.max(Math.round(5 * _s), Math.round(cw * 0.12));
+      var bMarY = Math.max(Math.round(5 * _s), Math.round(ch * 0.12));
       var bPanX = x + bMarX;  var bPanY = y + bMarY;
       var bPanW = cw - bMarX * 2;  var bPanH = ch - bMarY * 2;
       var _bPanR = Math.max(1, Math.round(Math.min(bPanW, bPanH) * 0.03));
@@ -1129,7 +1220,9 @@ function drawDraggedCardsOverlay(pal, L, sectionRef) {
 
       if (_age > 0) {
         drawCardAgeSpotsOverlay(((id * 2654435761 + 9999) >>> 0), Math.round(_age * _age * _age * 35),
-          x, y, cw, ch, _age, false, bPanX, bPanY, bPanW, bPanH);
+          x, y, cw, ch, _age, false,
+          2.0 * _s, 0.06, 0.18,
+          bPanX, bPanY, bPanW, bPanH);
       }
       drawCardVignetteOverlay(x, y, cw, ch, Math.max(5, Math.round(Math.min(cw, ch) * 0.40)), 0, 0, 0);
     }
@@ -1149,7 +1242,7 @@ function drawDraggedCardsOverlay(pal, L, sectionRef) {
 }
 
 function drawGame(L, pal, includeDraggedCards) {
-  var g = scope.gs;
+  var g = state.gs;
   var cw = L.cw; var ch = L.ch; var r = L.radius;
 
   // ── Top row ──────────────────────────────────────────────────────────────────
@@ -1217,24 +1310,36 @@ function drawGame(L, pal, includeDraggedCards) {
   }
 
   // ── Status bar ──────────────────────────────────────────────────────────────
+  var _canUndo = state.gameHistory && state.gameHistory.canUndo();
+  var _canRedo = state.gameHistory && state.gameHistory.canRedo();
   var statStr = 'Moves: ' + g.moveCount;
   if (g.won) statStr = '✓ You won! (' + g.moveCount + ' moves)';
   var sColor = g.won ? pal.wonBanner : pal.dimText;
-  ui.text(statStr, L.hPad, L.H - (ui.metrics.charHeight || 14) - 4, sColor);
+  var _chH = ui.metrics.charHeight || 14;
+  var _bH  = _chH * 2 + 4;
+  var _bW  = Math.max(90, (ui.metrics.charWidth || 10) * 10);
+  var _nbW = Math.max(60, (ui.metrics.charWidth || 10) * 5);
+  var _gap = 6;
+  var _bY  = L.H - _bH - 4;
+
+  // Status text starts after the 4 possible nav buttons
+  ui.text(statStr, L.hPad + (_nbW + _gap) * 4, L.H - _chH - 4, sColor);
 
   // Seed display (bottom-center)
   var seedStr = 'Seed: ' + g.seed;
   var _mwFn = ui.metrics.measureTextWidth ? ui.metrics.measureTextWidth : function(s) { return (ui.metrics.charWidth || 10) * s.length; };
   ui.text(seedStr,
     Math.floor((L.W - _mwFn(seedStr)) * 0.5),
-    L.H - (ui.metrics.charHeight || 14) - 4,
+    L.H - _chH - 4,
     pal.dimText);
 
-  // Hint: Replay and New Game buttons
-  var _bH   = (ui.metrics.charHeight || 14) * 2 + 4;
-  var _bW   = Math.max(90, (ui.metrics.charWidth || 10) * 10);
-  var _gap  = 6;
-  var _bY   = L.H - _bH - 4;
+  // Navigation buttons (bottom-left)
+  ui.button('btn-settings', L.hPad,                       _bY, _nbW, _bH, '⚙');
+  ui.button('btn-help',     L.hPad + (_nbW + _gap),       _bY, _nbW, _bH, '?');
+  if (_canUndo) ui.button('btn-undo', L.hPad + (_nbW + _gap) * 2, _bY, _nbW, _bH, '↶');
+  if (_canRedo) ui.button('btn-redo', L.hPad + (_nbW + _gap) * 3, _bY, _nbW, _bH, '↷');
+
+  // Game control buttons (bottom-right)
   ui.button('btn-replay-game',
     L.W - L.hPad - (_bW * 2 + _gap),
     _bY, _bW, _bH, 'Replay');
@@ -1245,7 +1350,6 @@ function drawGame(L, pal, includeDraggedCards) {
 
 var PLAY_SECTION_FIT       = 0.96;
 var CARD_SECTION_FIT       = 0.92;
-var PAN_SNAP_PX            = 60;  // section-pixels of drag needed to snap to next section
 var SETTINGS_THEME_SLIDER_ID  = 'settings-theme-slider';
 var SETTINGS_DRAW_LABEL_ID    = 'settings-draw-label';
 var SETTINGS_JITTER_SLIDER_ID = 'settings-jitter-slider';
@@ -1269,11 +1373,10 @@ function getCurrentThemeName() {
 }
 
 function syncThemeSelectorState() {
-  if (!scope._settings) scope._settings = { themeIndex: 0 };
   var names = getThemeNames();
   var currentName = getCurrentThemeName();
   var index = names.indexOf(currentName);
-  scope._settings.themeIndex = index >= 0 ? index : 0;
+  state.settings.themeIndex = index >= 0 ? index : 0;
 }
 
 function focusWorldSection(target) {
@@ -1311,14 +1414,9 @@ function goBackInHistory(fallbackTarget) {
 function syncSettingsWidgets() {
   if (!worlds || !worlds.widgets) return;
   syncThemeSelectorState();
-  var _jSteps = (scope && Array.isArray(scope.JITTER_STEPS) && scope.JITTER_STEPS.length)
-    ? scope.JITTER_STEPS
-    : (typeof JITTER_STEPS !== 'undefined' && Array.isArray(JITTER_STEPS) && JITTER_STEPS.length ? JITTER_STEPS : [0, 0.5, 1.0, 2.0, 3.0]);
-  var _jNames = (scope && Array.isArray(scope.JITTER_NAMES) && scope.JITTER_NAMES.length)
-    ? scope.JITTER_NAMES
-    : (typeof JITTER_NAMES !== 'undefined' && Array.isArray(JITTER_NAMES) && JITTER_NAMES.length ? JITTER_NAMES : ['None', 'Subtle', 'Normal', 'Wild', 'Chaotic']);
-  var sectionRef = (scope.sections && typeof scope.sections.settings === 'number')
-    ? scope.sections.settings : undefined;
+  var _jSteps = JITTER_STEPS;
+  var _jNames = JITTER_NAMES;
+  var sectionRef = (typeof state.sections.settings === 'number') ? state.sections.settings : undefined;
   if (typeof worlds.widgets.configure === 'function') {
     var themeCount = getThemeNames().length;
     worlds.widgets.configure(SETTINGS_THEME_SLIDER_ID, {
@@ -1336,52 +1434,43 @@ function syncSettingsWidgets() {
   if (typeof worlds.widgets.setValue === 'function') {
     worlds.widgets.setValue(
       SETTINGS_DRAW_LABEL_ID,
-      'Draw: ' + scope.STOCK_DEAL + (scope.STOCK_DEAL === 1 ? ' card' : ' cards'),
+      'Draw: ' + state.stockDeal + (state.stockDeal === 1 ? ' card' : ' cards'),
       sectionRef
     );
-    if (scope._settings) {
-      worlds.widgets.setValue(SETTINGS_THEME_SLIDER_ID, scope._settings.themeIndex, sectionRef);
-      var _jIdx = scope._settings.jitterIndex !== undefined ? scope._settings.jitterIndex : 2;
-      worlds.widgets.setValue(SETTINGS_JITTER_SLIDER_ID, _jIdx, sectionRef);
-      worlds.widgets.setValue(SETTINGS_JITTER_LABEL_ID, _jNames[_jIdx] || 'Normal', sectionRef);
-    }
+    worlds.widgets.setValue(SETTINGS_THEME_SLIDER_ID, state.settings.themeIndex, sectionRef);
+    var _jIdx = state.settings.jitterIndex !== undefined ? state.settings.jitterIndex : 2;
+    worlds.widgets.setValue(SETTINGS_JITTER_SLIDER_ID, _jIdx, sectionRef);
+    worlds.widgets.setValue(SETTINGS_JITTER_LABEL_ID, _jNames[_jIdx] || 'Normal', sectionRef);
   }
 }
 
 function handleSettingsWorldWidgetEvents() {
   if (!worlds || !worlds.widgets || typeof worlds.widgets.popEvent !== 'function') return;
-  var _jSteps = (scope && Array.isArray(scope.JITTER_STEPS) && scope.JITTER_STEPS.length)
-    ? scope.JITTER_STEPS
-    : (typeof JITTER_STEPS !== 'undefined' && Array.isArray(JITTER_STEPS) && JITTER_STEPS.length ? JITTER_STEPS : [0, 0.5, 1.0, 2.0, 3.0]);
+  var _jSteps = JITTER_STEPS;
   var widgetEvent = worlds.widgets.popEvent();
   while (widgetEvent) {
     if (widgetEvent.id === SETTINGS_THEME_SLIDER_ID && widgetEvent.action === 'change' && typeof widgetEvent.value === 'number') {
-      if (!scope._settings) scope._settings = { themeIndex: 0, jitterIndex: 2 };
       var names = getThemeNames();
       var nextIndex = Math.max(0, Math.min(names.length - 1, Math.round(widgetEvent.value)));
       var name = names[nextIndex];
       if (name && typeof themes !== 'undefined' && themes && typeof themes.set === 'function') {
         if (themes.set(name)) {
-          scope._settings.themeIndex = nextIndex;
+          state.settings.themeIndex = nextIndex;
           syncSettingsWidgets();
         }
       } else {
-        scope._settings.themeIndex = nextIndex;
+        state.settings.themeIndex = nextIndex;
         syncSettingsWidgets();
       }
     } else if (widgetEvent.id === SETTINGS_JITTER_SLIDER_ID && widgetEvent.action === 'change' && typeof widgetEvent.value === 'number') {
-      if (!scope._settings) scope._settings = { themeIndex: 0, jitterIndex: 2 };
       var jIdx = Math.max(0, Math.min(_jSteps.length - 1, Math.round(widgetEvent.value)));
-      scope._settings.jitterIndex = jIdx;
-      scope.JITTER_STEPS = _jSteps;
-      scope.JITTER = (_jSteps[jIdx] !== undefined) ? _jSteps[jIdx] : 1.0;
-      if (typeof JITTER !== 'undefined') JITTER = scope.JITTER;
+      state.settings.jitterIndex = jIdx;
+      JITTER = (_jSteps[jIdx] !== undefined) ? _jSteps[jIdx] : 1.0;
       syncSettingsWidgets();
     }
     widgetEvent = worlds.widgets.popEvent();
   }
 }
-scope.handleSettingsWorldWidgetEvents = handleSettingsWorldWidgetEvents;
 
 function handleWorldLinkActions() {
   if (!worlds || !worlds.links || typeof worlds.links.popActivated !== 'function') return;
@@ -1389,16 +1478,16 @@ function handleWorldLinkActions() {
   while (activated) {
     var fromSection = getNavigationSourceSection(activated);
     if (activated.url === 'action:new-game') {
-      scope.newGame();
+      newGame();
       focusWorldSection('Play');
     } else if (activated.url === 'action:replay-game') {
-      scope.newGame(scope.gs ? scope.gs.seed : undefined);
+      newGame(state.gs ? state.gs.seed : undefined);
       focusWorldSection('Play');
     } else if (activated.url === 'action:draw-1') {
-      scope.STOCK_DEAL = 1;
+      state.stockDeal = 1;
       syncSettingsWidgets();
     } else if (activated.url === 'action:draw-3') {
-      scope.STOCK_DEAL = 3;
+      state.stockDeal = 3;
       syncSettingsWidgets();
     } else if (activated.url === 'action:history-back') {
       goBackInHistory('Play');
@@ -1406,25 +1495,16 @@ function handleWorldLinkActions() {
     activated = worlds.links.popActivated();
   }
 }
-scope.handleWorldLinkActions = handleWorldLinkActions;
 ```
 
 ```js on:init
 term.layerID = 'default';
-scope.sections = {};
-scope._settings = scope._settings || { themeIndex: 0, jitterIndex: 2 };
-if (scope._settings.jitterIndex === undefined) scope._settings.jitterIndex = 2;
-scope.JITTER_STEPS = (scope && Array.isArray(scope.JITTER_STEPS) && scope.JITTER_STEPS.length)
-  ? scope.JITTER_STEPS
-  : [0, 0.5, 1.0, 2.0, 3.0];
-scope.JITTER_NAMES = (scope && Array.isArray(scope.JITTER_NAMES) && scope.JITTER_NAMES.length)
-  ? scope.JITTER_NAMES
-  : ['None', 'Subtle', 'Normal', 'Wild', 'Chaotic'];
-scope.JITTER = (scope.JITTER_STEPS[scope._settings.jitterIndex] !== undefined)
-  ? scope.JITTER_STEPS[scope._settings.jitterIndex]
+state.sections = {};
+if (state.settings.jitterIndex === undefined) state.settings.jitterIndex = 2;
+JITTER = JITTER_STEPS[state.settings.jitterIndex] !== undefined
+  ? JITTER_STEPS[state.settings.jitterIndex]
   : 1.0;
-if (typeof JITTER !== 'undefined') JITTER = scope.JITTER;
-scope._worldSwipe = null;  // { startY, lastY, totalDy } — background swipe-to-pan gesture
+state.gameHistory = sys.history.create({ maxDepth: 64 });
 
 worlds.enable();
 worlds.controls.setEnabled(false);
@@ -1446,8 +1526,19 @@ worlds.config.setDefaults({
   defaultSectionHeight: 700,
   autoLayoutSpacing:        100,
   sectionBorderEnabled:     false,
-  sectionBackground: 'texture:assets/img/PaintedWood008C_1K.jpg;tilePx=640;paperPlaneZ=focus',
+  sectionBackground: 'texture:assets/img/Moss002_1K.jpg;tilePx=640;paperPlaneZ=focus',
   liveTextureScale: 1,
+  navigationConstraints: {
+    dragAxis: 'y',   // vertical pan only — Settings/Help are above/below Play
+    minY: -45,       // can't pan below Settings section (y=-45)
+    maxY: 45,        // can't pan above Help section (y=+45)
+    minX: -10,       // keep camera centred horizontally
+    maxX: 10,
+    minZ: 20,        // max zoom-in
+    maxZ: 65,       // max zoom-out
+  },
+  doubleTapResetEnabled: true,
+  doubleTapResetRotation: { x: -9 * Math.PI / 180, y: 2 * Math.PI / 180, z: 0 },
 });
 worlds.camera.setPosition(0, -80, 260);
 worlds.camera.setRotation(-9 * Math.PI / 180, 2 * Math.PI / 180, 0);
@@ -1464,55 +1555,29 @@ worlds.camera.shake.setEnabled(true);
 // Mark Play as a live section: on:render section:play draws into the 3D card texture.
 worlds.setSectionLive('Play');
 
-scope.newGame(); // fresh random seed on first load
-scope._layout  = null;
+newGame(); // fresh random seed on first load
+state.layout = null;
 
 worlds.camera.focusOnSectionFit('Play', PLAY_SECTION_FIT, { keepRotation: true });
 ```
 
 ```js on:input
 if (!event) return;
-
-// ── World-background swipe-to-pan (desktop mouse outside live section) ────────
-// 'mouse' events fire on button press/release; 'mouse_move' fires during drag.
-// We only claim the gesture when it isn't already owned by the section handler.
-if (event.type === 'mouse') {
-  var _lmb = !!(event.buttons & 1);
-  if (_lmb && !scope._worldSwipe) {
-    scope._worldSwipe = { startY: event.y, lastY: event.y, totalDy: 0 };
-  } else if (!_lmb && scope._worldSwipe) {
-    var _gDy = scope._worldSwipe.totalDy;
-    scope._worldSwipe = null;
-    var _gCs = currentSectionIndex();
-    var _onPlay     = scope.sections && _gCs === scope.sections.play;
-    var _onSettings = scope.sections && _gCs === scope.sections.settings;
-    var _onHelp     = scope.sections && _gCs === scope.sections.help;
-    if (_onPlay) {
-      // Settings is above Play (y<0): swipe up → Settings; Help is below: swipe down → Help
-      if      (_gDy < -PAN_SNAP_PX) navigateToSectionWithHistory('Settings', _gCs);
-      else if (_gDy >  PAN_SNAP_PX) navigateToSectionWithHistory('Help', _gCs);
-    } else if (_onSettings && _gDy > PAN_SNAP_PX) {
-      // Settings is above Play: swipe down returns to Play
-      goBackInHistory('Play');
-    } else if (_onHelp && _gDy < -PAN_SNAP_PX) {
-      // Help is below Play: swipe up returns to Play
-      goBackInHistory('Play');
-    }
-  }
-  return;
-}
-if (event.type === 'mouse_move') {
-  if (scope._worldSwipe) {
-    scope._worldSwipe.totalDy += (event.y || 0) - scope._worldSwipe.lastY;
-    scope._worldSwipe.lastY    = (event.y || 0);
-  }
-  return;
-}
-
 if (event.type !== 'keydown') return;
 var k  = event.key;
+var ctrl = event.mods && event.mods.includes('ctrl');
 var cs = currentSectionIndex();
-var onPlay = scope.sections && cs === scope.sections.play;
+var onPlay = cs === currentSectionIndex();
+
+// Undo / Redo
+if (ctrl && (k === 'z' || k === 'Z') && !(event.mods && event.mods.includes('shift'))) {
+  if (state.gameHistory) state.gameHistory.undo();
+  return;
+}
+if (ctrl && ((k === 'y' || k === 'Y') || ((k === 'z' || k === 'Z') && event.mods && event.mods.includes('shift')))) {
+  if (state.gameHistory) state.gameHistory.redo();
+  return;
+}
 
 if (k === 'Escape') {
   if (onPlay) navigateToSectionWithHistory('Settings', cs);
@@ -1522,32 +1587,28 @@ if (k === 'Escape') {
 } else if ((k === 'h' || k === 'H' || k === '?') && onPlay) {
   navigateToSectionWithHistory('Help', cs);
 } else if (k === 'n' || k === 'N') {
-  scope.newGame();
+  newGame();
   focusWorldSection('Play');
 } else if (k === 'r' || k === 'R') {
-  scope.newGame(scope.gs ? scope.gs.seed : undefined);
+  newGame(state.gs ? state.gs.seed : undefined);
   focusWorldSection('Play');
 }
 ```
 
 ```js on:update
-if (typeof scope.handleWorldLinkActions === 'function') scope.handleWorldLinkActions();
-if (typeof scope.handleSettingsWorldWidgetEvents === 'function') scope.handleSettingsWorldWidgetEvents();
+if (typeof handleWorldLinkActions === 'function') handleWorldLinkActions();
+if (typeof handleSettingsWorldWidgetEvents === 'function') handleSettingsWorldWidgetEvents();
 ```
 ```js on:update section:play
-if (!scope.gs) { newGame(); return; }
+if (!state.gs) { newGame(); return; }
 
 var L = computeLayout();
-scope._layout = L;
-scope._dragNeedsOverlay = false;
+state.layout = L;
+state.dragNeedsOverlay = false;
 
 // ── Mouse light-follow ───────────────────────────────────────────────────────
 var _mW = ui.metrics.canvasWidth  || 1280;
 var _mH = ui.metrics.canvasHeight || 720;
-//shader.setUniform('lightsobel', 'lightX', ui.pointer.x() / _mW);
-//shader.setUniform('lightsobel', 'lightY', ui.pointer.y() / _mH);
-//shader.setUniform('lightsoft', 'lightX', ui.pointer.x() / _mW);
-//shader.setUniform('lightsoft', 'lightY', ui.pointer.y() / _mH);
 // ── End mouse light-follow ────────────────────────────────────────────────────
 
 // Handle Replay / New Game button clicks.
@@ -1564,84 +1625,44 @@ var _click2 = ui.pointer.clicked(0);
 var _replayX2 = L.W - L.hPad - (_bW2 * 2 + _gap2);
 var _newX2    = L.W - L.hPad - _bW2;
 if (_click2 && _mx2 >= _replayX2 && _mx2 < _replayX2 + _bW2 && _my2 >= _bY2 && _my2 < _bY2 + _bH2) {
-  newGame(scope.gs ? scope.gs.seed : undefined);
-  scope._layout = null;
+  newGame(state.gs ? state.gs.seed : undefined);
+  state.layout = null;
   return;
 }
 if (_click2 && _mx2 >= _newX2 && _mx2 < _newX2 + _bW2 && _my2 >= _bY2 && _my2 < _bY2 + _bH2) {
   newGame();
-  scope._layout = null;
+  state.layout = null;
   return;
 }
 
-if (!scope.gs.won) {
-  // ── Background swipe-to-pan: detect drags on game felt (no card hit) ──────
-  // Swiping up   (dy < -PAN_SNAP_PX) navigates to Settings (section above).
-  // Swiping down (dy >  PAN_SNAP_PX) navigates to Help    (section below).
-  // A live card drag cancels any in-progress swipe gesture.
-  var _pmx = ui.pointer.x();
-  var _pmy = ui.pointer.y();
-  var _pdn = ui.pointer.down(0);
-  if (scope.gs.drag) {
-    // Card drag in progress — cancel any background swipe so they don't conflict.
-    scope._worldSwipe = null;
-  } else if (_pdn && !scope._worldSwipe) {
-    // New press: only start a world-swipe if the pointer is on empty felt.
-    if (!hitTest(_pmx, _pmy, L)) {
-      scope._worldSwipe = { startY: _pmy, lastY: _pmy, totalDy: 0 };
-    }
-  } else if (_pdn && scope._worldSwipe) {
-    // Ongoing drag — accumulate vertical delta.
-    scope._worldSwipe.totalDy += _pmy - scope._worldSwipe.lastY;
-    scope._worldSwipe.lastY    = _pmy;
-  } else if (!_pdn && scope._worldSwipe) {
-    // Released — snap to the appropriate section.
-    var _swipeDy = scope._worldSwipe.totalDy;
-    scope._worldSwipe = null;
-    if (_swipeDy < -PAN_SNAP_PX) {
-      navigateToSectionWithHistory('Settings', scope.sections.play);
-    } else if (_swipeDy > PAN_SNAP_PX) {
-      navigateToSectionWithHistory('Help', scope.sections.play);
-    }
-  }
-
+if (!state.gs.won) {
   handleInput(L);
 }
-```
 
-```js on:update section:settings
-// Swipe down (dy > PAN_SNAP_PX) from Settings returns to Play.
-// Settings is above Play in world space, so dragging down moves camera toward Play.
-var _sdn = ui.pointer.down(0);
-var _spy = ui.pointer.y();
-if (_sdn && !scope._worldSwipe) {
-  scope._worldSwipe = { startY: _spy, lastY: _spy, totalDy: 0 };
-} else if (_sdn && scope._worldSwipe) {
-  scope._worldSwipe.totalDy += _spy - scope._worldSwipe.lastY;
-  scope._worldSwipe.lastY    = _spy;
-} else if (!_sdn && scope._worldSwipe) {
-  var _sDy = scope._worldSwipe.totalDy;
-  scope._worldSwipe = null;
-  if (_sDy > PAN_SNAP_PX) goBackInHistory('Play');
+// ── Navigation buttons (bottom-left) ─────────────────────────────────────────
+var _nbH   = (ui.metrics.charHeight || 14) * 2 + 4;
+var _nbW   = Math.max(60, (ui.metrics.charWidth || 10) * 5);
+var _nbY   = L.H - _nbH - 4;
+var _nbGap = 6;
+if (_click2 && _mx2 >= L.hPad && _mx2 < L.hPad + _nbW && _my2 >= _nbY && _my2 < _nbY + _nbH) {
+  navigateToSectionWithHistory('Settings', currentSectionIndex());
+}
+if (_click2 && _mx2 >= L.hPad + (_nbW + _nbGap) && _mx2 < L.hPad + (_nbW + _nbGap) + _nbW && _my2 >= _nbY && _my2 < _nbY + _nbH) {
+  navigateToSectionWithHistory('Help', currentSectionIndex());
+}
+if (state.gameHistory && state.gameHistory.canUndo() && _click2 &&
+    _mx2 >= L.hPad + (_nbW + _nbGap) * 2 && _mx2 < L.hPad + (_nbW + _nbGap) * 2 + _nbW &&
+    _my2 >= _nbY && _my2 < _nbY + _nbH) {
+  state.gameHistory.undo();
+}
+if (state.gameHistory && state.gameHistory.canRedo() && _click2 &&
+    _mx2 >= L.hPad + (_nbW + _nbGap) * 3 && _mx2 < L.hPad + (_nbW + _nbGap) * 3 + _nbW &&
+    _my2 >= _nbY && _my2 < _nbY + _nbH) {
+  state.gameHistory.redo();
 }
 ```
 
-```js on:update section:help
-// Swipe up (dy < -PAN_SNAP_PX) from Help returns to Play.
-// Help is below Play in world space, so dragging up moves camera toward Play.
-var _hdn = ui.pointer.down(0);
-var _hpy = ui.pointer.y();
-if (_hdn && !scope._worldSwipe) {
-  scope._worldSwipe = { startY: _hpy, lastY: _hpy, totalDy: 0 };
-} else if (_hdn && scope._worldSwipe) {
-  scope._worldSwipe.totalDy += _hpy - scope._worldSwipe.lastY;
-  scope._worldSwipe.lastY    = _hpy;
-} else if (!_hdn && scope._worldSwipe) {
-  var _hDy = scope._worldSwipe.totalDy;
-  scope._worldSwipe = null;
-  if (_hDy < -PAN_SNAP_PX) goBackInHistory('Play');
-}
-```
+
 
 ```js on:render
 // IMPORTANT: During Worlds live-section baking, the engine may invoke the
@@ -1655,31 +1676,31 @@ if (!_isLiveBake) {
   term.clear();
   ui.clear();
 
-  if (scope.gs && scope.gs.drag && scope._playLayout) {
-    var _L = scope._playLayout;
+  if (state.gs && state.gs.drag && state.playLayout) {
+    var _L = state.playLayout;
     // While dragging, always render the dragged cards via the global overlay.
     // This guarantees they never clip to the live-section texture bounds and
     // avoids any chance of double-render (section + overlay).
-    scope._dragNeedsOverlay = true;
+    state.dragNeedsOverlay = true;
     drawDraggedCardsOverlay(getPalette(), _L, getPlaySectionRef());
   }
 }
 ```
 
 ```js on:render section:play
-if (!scope.gs) return;
+if (!state.gs) return;
 
 // Always recompute layout fresh in render so ui.metrics.canvasWidth/Height
 // return the current live-section texture dimensions (not a stale cached value
 // from the update pass which may have used different canvas dimensions).
 var L = computeLayout();
 var pal = getPalette();
-scope._playLayout = L;
+state.playLayout = L;
 
 // When dragging, the dragged cards are rendered in the global overlay pass.
 // Suppress in-section dragged-card drawing to avoid clipping and duplicates.
-var _dragActiveR = !!(scope.gs && scope.gs.drag);
-scope._dragNeedsOverlay = _dragActiveR;
+var _dragActiveR = !!(state.gs && state.gs.drag);
+state.dragNeedsOverlay = _dragActiveR;
 
 try {
   drawGame(L, pal, !_dragActiveR);
@@ -1687,9 +1708,8 @@ try {
   // Keep UI alive if rendering fails
   ui.clear(pal.felt);
   var now = Date.now();
-  scope._lastErrAt = scope._lastErrAt || 0;
-  if (now - scope._lastErrAt > 1000) {
-    scope._lastErrAt = now;
+  if (now - state.lastErrAt > 1000) {
+    state.lastErrAt = now;
     try { console.warn('[klondike] render error:', _e); } catch { /* ignore */ }
   }
 }

@@ -11672,6 +11672,224 @@ function impulsesBetween(compiled, prevTimeSec, nowTimeSec) {
   }
   return out;
 }
+function entryAt(entries2, timeSec) {
+  const tMs = Math.max(0, Math.round(Number(timeSec) * 1e3));
+  let result;
+  for (const e of entries2) {
+    if (e.ms > tMs) break;
+    result = e;
+  }
+  return result;
+}
+function entriesBetween(entries2, prevTimeSec, nowTimeSec) {
+  const a = Math.max(0, Math.round(Number(prevTimeSec) * 1e3));
+  const b = Math.max(0, Math.round(Number(nowTimeSec) * 1e3));
+  if (!(Number.isFinite(a) && Number.isFinite(b))) return [];
+  if (b <= a) return [];
+  const out = [];
+  for (const e of entries2) {
+    if (e.ms <= a) continue;
+    if (e.ms > b) break;
+    out.push(e);
+  }
+  return out;
+}
+function createHistory(opts) {
+  const maxDepth = Math.max(1, ((opts == null ? void 0 : opts.maxDepth) ?? 128) | 0);
+  const undoStack = [];
+  const redoStack = [];
+  return {
+    push(action) {
+      const snap = action.do();
+      undoStack.push({
+        label: action.label,
+        apply: action.do.bind(action),
+        revert: action.undo.bind(action),
+        snap
+      });
+      if (undoStack.length > maxDepth) undoStack.splice(0, undoStack.length - maxDepth);
+      redoStack.length = 0;
+      return snap;
+    },
+    undo() {
+      const entry = undoStack.pop();
+      if (!entry) return false;
+      entry.revert(entry.snap);
+      redoStack.push(entry);
+      return true;
+    },
+    redo() {
+      const entry = redoStack.pop();
+      if (!entry) return false;
+      const newSnap = entry.apply();
+      undoStack.push({ ...entry, snap: newSnap });
+      return true;
+    },
+    canUndo() {
+      return undoStack.length > 0;
+    },
+    canRedo() {
+      return redoStack.length > 0;
+    },
+    clear() {
+      undoStack.length = 0;
+      redoStack.length = 0;
+    },
+    get depth() {
+      return undoStack.length;
+    },
+    get undoLabel() {
+      var _a;
+      return (_a = undoStack[undoStack.length - 1]) == null ? void 0 : _a.label;
+    },
+    get redoLabel() {
+      var _a;
+      return (_a = redoStack[redoStack.length - 1]) == null ? void 0 : _a.label;
+    }
+  };
+}
+function makeTimedEntry(c2) {
+  const { type, key, button, x, y, cellX, cellY, mods, keyCode, action } = c2.event;
+  const clean = { type };
+  if (key !== void 0) clean.key = key;
+  if (button !== void 0) clean.button = button;
+  if (x !== void 0) clean.x = x;
+  if (y !== void 0) clean.y = y;
+  if (cellX !== void 0) clean.cellX = cellX;
+  if (cellY !== void 0) clean.cellY = cellY;
+  if (mods && mods.length > 0) clean.mods = mods;
+  if (keyCode !== void 0) clean.keyCode = keyCode;
+  if (action !== void 0) clean.action = action;
+  return { ms: c2.ms, text: JSON.stringify({ input: clean }) };
+}
+function buildTape(captured) {
+  const sorted = captured.slice().sort((a, b) => a.ms - b.ms);
+  const last = sorted[sorted.length - 1];
+  const durationMs = last ? last.ms : 0;
+  return {
+    toTimedEntries() {
+      return sorted.map(makeTimedEntry);
+    },
+    serialize() {
+      return sorted.map((c2) => {
+        const e = makeTimedEntry(c2);
+        return `${e.ms}|${e.text}`;
+      }).join("\n");
+    },
+    get durationMs() {
+      return durationMs;
+    },
+    get length() {
+      return sorted.length;
+    }
+  };
+}
+function createInputRecorder() {
+  let recording = false;
+  let startMs = 0;
+  let captured = [];
+  function nowMs() {
+    return typeof performance !== "undefined" ? performance.now() : Date.now();
+  }
+  return {
+    start() {
+      recording = true;
+      startMs = nowMs();
+      captured = [];
+    },
+    stop() {
+      recording = false;
+      const tape = buildTape(captured);
+      captured = [];
+      return tape;
+    },
+    isRecording() {
+      return recording;
+    },
+    getElapsedMs() {
+      if (!recording) return 0;
+      return Math.max(0, nowMs() - startMs);
+    },
+    record(event, overrideMs) {
+      if (!recording) return;
+      if (!event || typeof event.type !== "string") return;
+      if (event.type === "text") return;
+      const ms = Math.max(0, Math.round(
+        overrideMs !== void 0 ? overrideMs : nowMs() - startMs
+      ));
+      captured.push({ ms, event });
+    }
+  };
+}
+function createBeatClock(opts) {
+  const bpm = Math.max(0.01, Number(opts.bpm) || 120);
+  const offsetMs = Number(opts.offsetMs ?? 0) || 0;
+  const beatsPerBar = Math.max(1, (opts.beatsPerBar ?? 4) | 0);
+  const msPerBeat = 6e4 / bpm;
+  return {
+    get bpm() {
+      return bpm;
+    },
+    get offsetMs() {
+      return offsetMs;
+    },
+    get beatsPerBar() {
+      return beatsPerBar;
+    },
+    beatToMs(beat) {
+      return offsetMs + beat * msPerBeat;
+    },
+    msToBeat(ms) {
+      return (ms - offsetMs) / msPerBeat;
+    },
+    beatAt(timeSec) {
+      const ms = timeSec * 1e3;
+      return Math.max(0, (ms - offsetMs) / msPerBeat);
+    },
+    barAt(timeSec) {
+      return Math.floor(Math.max(0, (timeSec * 1e3 - offsetMs) / msPerBeat) / beatsPerBar);
+    },
+    beatPhase(timeSec) {
+      const beat = Math.max(0, (timeSec * 1e3 - offsetMs) / msPerBeat);
+      return beat - Math.floor(beat);
+    },
+    barPhase(timeSec) {
+      const beat = Math.max(0, (timeSec * 1e3 - offsetMs) / msPerBeat);
+      const beatInBar = beat % beatsPerBar;
+      return beatInBar / beatsPerBar;
+    }
+  };
+}
+function beatToTimedEntries(clock, entries2) {
+  return entries2.map((e) => ({
+    ms: Math.round(clock.beatToMs(Number(e.beat) || 0)),
+    text: String(e.text ?? "")
+  }));
+}
+function parseBeatTimedBlock(raw, clock) {
+  const out = [];
+  let resolvedClock = clock ?? null;
+  for (const entry of raw) {
+    const t = String(entry.text ?? "").trim();
+    if (!resolvedClock && t.startsWith("#")) {
+      const m = t.match(/bpm\s*:\s*(\d+(?:\.\d+)?)/i);
+      if (m) {
+        resolvedClock = createBeatClock({ bpm: parseFloat(m[1]) });
+      }
+      continue;
+    }
+    const beatMatch = t.match(/^beat\s*:\s*(\d+(?:\.\d+)?)\|(.*)$/s);
+    if (beatMatch) {
+      if (!resolvedClock) continue;
+      const beat = parseFloat(beatMatch[1]);
+      const payload = beatMatch[2];
+      out.push({ ms: Math.round(resolvedClock.beatToMs(beat)), text: payload });
+      continue;
+    }
+    out.push(entry);
+  }
+  return out;
+}
 function isRecord(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -27349,6 +27567,12 @@ class StorieEngine {
     __publicField(this, "pinchZoomLastDistance", 0);
     __publicField(this, "pinchZoomLastCenterX", 0);
     __publicField(this, "pinchZoomLastCenterY", 0);
+    __publicField(this, "multiTouchRotateActive", false);
+    __publicField(this, "multiTouchRotateLastCentroidX", 0);
+    __publicField(this, "multiTouchRotateLastCentroidY", 0);
+    __publicField(this, "doubleTapLastTime", 0);
+    __publicField(this, "doubleTapLastX", 0);
+    __publicField(this, "doubleTapLastY", 0);
     __publicField(this, "freeFlyLeftPanActive", false);
     __publicField(this, "freeFlyLeftDragSectionIndex", null);
     __publicField(this, "freeFlyLeftLastX", 0);
@@ -28705,6 +28929,46 @@ class StorieEngine {
       if (config.sectionTextureCacheRadius !== void 0) {
         const v2 = Number(config.sectionTextureCacheRadius);
         engine.worldsConfig.sectionTextureCacheRadius = Number.isFinite(v2) ? Math.max(0, Math.floor(v2)) : void 0;
+      }
+      if (config.multiTouchRotateEnabled !== void 0) {
+        engine.worldsConfig.multiTouchRotateEnabled = !!config.multiTouchRotateEnabled;
+      }
+      if (config.doubleTapResetEnabled !== void 0) {
+        engine.worldsConfig.doubleTapResetEnabled = !!config.doubleTapResetEnabled;
+      }
+      if (config.doubleTapResetRotation !== void 0) {
+        const rot = config.doubleTapResetRotation;
+        if (rot === null) {
+          engine.worldsConfig.doubleTapResetRotation = void 0;
+        } else if (typeof rot === "object" && rot !== null) {
+          const rx = Number(rot.x);
+          const ry = Number(rot.y);
+          const rz = Number(rot.z);
+          if (Number.isFinite(rx) && Number.isFinite(ry) && Number.isFinite(rz)) {
+            engine.worldsConfig.doubleTapResetRotation = { x: rx, y: ry, z: rz };
+          }
+        }
+      }
+      if (config.navigationConstraints !== void 0) {
+        const nc = config.navigationConstraints;
+        if (nc === null) {
+          engine.worldsConfig.navigationConstraints = void 0;
+        } else if (typeof nc === "object") {
+          const out = {};
+          const clampNum = (v2) => {
+            const n = Number(v2);
+            return Number.isFinite(n) ? n : void 0;
+          };
+          if (nc.minX !== void 0) out.minX = clampNum(nc.minX);
+          if (nc.maxX !== void 0) out.maxX = clampNum(nc.maxX);
+          if (nc.minY !== void 0) out.minY = clampNum(nc.minY);
+          if (nc.maxY !== void 0) out.maxY = clampNum(nc.maxY);
+          if (nc.minZ !== void 0) out.minZ = clampNum(nc.minZ);
+          if (nc.maxZ !== void 0) out.maxZ = clampNum(nc.maxZ);
+          if (nc.dragAxis === "x" || nc.dragAxis === "y") out.dragAxis = nc.dragAxis;
+          else if (nc.dragAxis === null || nc.dragAxis === "none") out.dragAxis = null;
+          engine.worldsConfig.navigationConstraints = out;
+        }
       }
       if (requiresSectionLayoutRecompile && engine.runtimeSectionStore.sections.length > 0) {
         engine.compileWorldsLayoutsFromRuntimeSectionStore("config defaults changed");
@@ -30426,6 +30690,192 @@ class StorieEngine {
               return ease(Number(u) || 0, spec ?? "linear");
             } catch {
               return 0;
+            }
+          },
+          entryAt: (entries2, timeSec) => {
+            try {
+              return entryAt(entries2, Number(timeSec) || 0);
+            } catch {
+              return void 0;
+            }
+          },
+          entriesBetween: (entries2, prevTimeSec, nowTimeSec) => {
+            try {
+              return entriesBetween(entries2, Number(prevTimeSec) || 0, Number(nowTimeSec) || 0);
+            } catch {
+              return [];
+            }
+          }
+        },
+        /**
+         * General-purpose undo/redo history stack (command pattern).
+         *
+         * Example:
+         *   const h = sys.history.create({ maxDepth: 64 });
+         *   h.push({ label: 'move', do() { const old=pos; pos=newPos; return old; }, undo(s) { pos=s; } });
+         *   h.undo(); h.redo();
+         */
+        history: {
+          create: (opts) => {
+            try {
+              return createHistory(opts);
+            } catch (e) {
+              console.warn("[sys.history.create] failed:", e);
+              return {
+                push(action) {
+                  return action.do();
+                },
+                undo() {
+                  return false;
+                },
+                redo() {
+                  return false;
+                },
+                canUndo() {
+                  return false;
+                },
+                canRedo() {
+                  return false;
+                },
+                clear() {
+                },
+                get depth() {
+                  return 0;
+                },
+                get undoLabel() {
+                  return void 0;
+                },
+                get redoLabel() {
+                  return void 0;
+                }
+              };
+            }
+          }
+        },
+        /**
+         * Input recorder — captures InputEvents as a timestamped tape.
+         * The tape serialises to the native timed-block format for playback
+         * via sys.automation.
+         *
+         * Example:
+         *   const rec = sys.recorder.create();
+         *   // on:input → rec.record(event)
+         *   // on key R → rec.stop() then sys.download(tape.serialize())
+         */
+        recorder: {
+          create: () => {
+            try {
+              return createInputRecorder();
+            } catch (e) {
+              console.warn("[sys.recorder.create] failed:", e);
+              const noTape = {
+                toTimedEntries() {
+                  return [];
+                },
+                serialize() {
+                  return "";
+                },
+                get durationMs() {
+                  return 0;
+                },
+                get length() {
+                  return 0;
+                }
+              };
+              return {
+                start() {
+                },
+                stop() {
+                  return noTape;
+                },
+                isRecording() {
+                  return false;
+                },
+                getElapsedMs() {
+                  return 0;
+                },
+                record() {
+                }
+              };
+            }
+          }
+        },
+        /**
+         * BPM beat clock — converts between beat-space and wall-clock.
+         * Integrates with sys.automation via toTimedEntries().
+         *
+         * Example:
+         *   const clock = sys.beat.clock({ bpm: 128 });
+         *   const track = sys.automation.compile(
+         *     sys.beat.toTimedEntries(clock, doc.timedBlock('groove'))
+         *   );
+         *   const beat = sys.beat.beatAt(clock, getTime());
+         */
+        beat: {
+          clock: (opts) => {
+            try {
+              return createBeatClock(opts);
+            } catch (e) {
+              console.warn("[sys.beat.clock] failed:", e);
+              return createBeatClock({ bpm: 120 });
+            }
+          },
+          beatAt: (clock, timeSec) => {
+            try {
+              return clock.beatAt(Number(timeSec) || 0);
+            } catch {
+              return 0;
+            }
+          },
+          barAt: (clock, timeSec) => {
+            try {
+              return clock.barAt(Number(timeSec) || 0);
+            } catch {
+              return 0;
+            }
+          },
+          beatPhase: (clock, timeSec) => {
+            try {
+              return clock.beatPhase(Number(timeSec) || 0);
+            } catch {
+              return 0;
+            }
+          },
+          barPhase: (clock, timeSec) => {
+            try {
+              return clock.barPhase(Number(timeSec) || 0);
+            } catch {
+              return 0;
+            }
+          },
+          beatToMs: (clock, beat) => {
+            try {
+              return clock.beatToMs(Number(beat) || 0);
+            } catch {
+              return 0;
+            }
+          },
+          msToBeat: (clock, ms) => {
+            try {
+              return clock.msToBeat(Number(ms) || 0);
+            } catch {
+              return 0;
+            }
+          },
+          toTimedEntries: (clock, entries2) => {
+            try {
+              return beatToTimedEntries(clock, entries2);
+            } catch (e) {
+              console.warn("[sys.beat.toTimedEntries] failed:", e);
+              return [];
+            }
+          },
+          parseBlock: (raw, clock) => {
+            try {
+              return parseBeatTimedBlock(raw, clock);
+            } catch (e) {
+              console.warn("[sys.beat.parseBlock] failed:", e);
+              return raw;
             }
           }
         }
@@ -36634,21 +37084,72 @@ ${exportVars}
     const fallback = Math.abs(cameraPos.z);
     return Number.isFinite(fallback) && fallback > 1 ? fallback : 120;
   }
+  applyWorldsPositionConstraints(clampX, clampY, clampZ) {
+    if (!this.camera3D) return;
+    const nc = this.worldsConfig.navigationConstraints;
+    if (!nc) return;
+    const pos = this.camera3D.position;
+    let overshootX = 0;
+    let overshootY = 0;
+    let overshootZ = 0;
+    if (clampX) {
+      if (nc.minX !== void 0 && pos.x < nc.minX) overshootX = pos.x - nc.minX;
+      if (nc.maxX !== void 0 && pos.x > nc.maxX) overshootX = pos.x - nc.maxX;
+    }
+    if (clampY) {
+      if (nc.minY !== void 0 && pos.y < nc.minY) overshootY = pos.y - nc.minY;
+      if (nc.maxY !== void 0 && pos.y > nc.maxY) overshootY = pos.y - nc.maxY;
+    }
+    if (clampZ) {
+      if (nc.minZ !== void 0 && pos.z < nc.minZ) overshootZ = pos.z - nc.minZ;
+      if (nc.maxZ !== void 0 && pos.z > nc.maxZ) overshootZ = pos.z - nc.maxZ;
+    }
+    if (overshootX !== 0 || overshootY !== 0 || overshootZ !== 0) {
+      pos.x -= overshootX;
+      pos.y -= overshootY;
+      pos.z -= overshootZ;
+      if (this.camera3D.target) {
+        this.camera3D.target.x -= overshootX;
+        this.camera3D.target.y -= overshootY;
+        this.camera3D.target.z -= overshootZ;
+      }
+    }
+  }
+  clampDollyForZBounds(dolly, forwardZ) {
+    const nc = this.worldsConfig.navigationConstraints;
+    if (!nc || !this.camera3D) return dolly;
+    if (Math.abs(forwardZ) < 1e-6) return dolly;
+    const currentZ = this.camera3D.position.z;
+    const newZ = currentZ + forwardZ * dolly;
+    if (nc.minZ !== void 0 && newZ < nc.minZ) {
+      return (nc.minZ - currentZ) / forwardZ;
+    }
+    if (nc.maxZ !== void 0 && newZ > nc.maxZ) {
+      return (nc.maxZ - currentZ) / forwardZ;
+    }
+    return dolly;
+  }
   applyWorldsCameraPanDelta(dx, dy) {
+    var _a;
     if (!this.worldsEnabled || !this.camera3D) return false;
     if (!Number.isFinite(dx) || !Number.isFinite(dy) || dx === 0 && dy === 0) {
       return true;
     }
+    const dragAxis = (_a = this.worldsConfig.navigationConstraints) == null ? void 0 : _a.dragAxis;
+    const effectiveDx = dragAxis === "y" ? 0 : dx;
+    const effectiveDy = dragAxis === "x" ? 0 : dy;
+    if (effectiveDx === 0 && effectiveDy === 0) return true;
     const rotation = this.camera3D.effectiveRotation ?? this.camera3D.rotation;
     const basis = this.getWorldsCameraBasis(rotation);
     const distance2 = this.estimateWorldsNavigationDistance();
     const canvasH = Math.max(1, this.canvas.height);
     const worldPerPixel = 2 * Math.tan((this.camera3D.fov || Math.PI / 4) * 0.5) * distance2 / canvasH;
     const move = vec3Add(
-      vec3Scale(basis.right, -dx * worldPerPixel),
-      vec3Scale(basis.up, dy * worldPerPixel)
+      vec3Scale(basis.right, -effectiveDx * worldPerPixel),
+      vec3Scale(basis.up, effectiveDy * worldPerPixel)
     );
     this.applyWorldsCameraTranslation(move.x, move.y, move.z);
+    this.applyWorldsPositionConstraints(true, true, false);
     return true;
   }
   handleWorldsMiddlePanMove(pixelX, pixelY) {
@@ -36673,9 +37174,10 @@ ${exportVars}
     else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) deltaY *= Math.max(1, this.canvas.height);
     const speedScale = e.shiftKey ? 2.25 : e.altKey ? 0.35 : 1;
     const distance2 = this.estimateWorldsNavigationDistance();
-    const dolly = -deltaY * 15e-4 * Math.max(24, distance2) * speedScale;
+    const rawDolly = -deltaY * 15e-4 * Math.max(24, distance2) * speedScale;
     const rotation = this.camera3D.effectiveRotation ?? this.camera3D.rotation;
     const basis = this.getWorldsCameraBasis(rotation);
+    const dolly = this.clampDollyForZBounds(rawDolly, basis.forward.z);
     this.applyWorldsCameraTranslation(
       basis.forward.x * dolly,
       basis.forward.y * dolly,
@@ -36923,6 +37425,60 @@ ${exportVars}
     this.pinchZoomLastCenterX = 0;
     this.pinchZoomLastCenterY = 0;
   }
+  resetWorldsMultiTouchRotate() {
+    this.multiTouchRotateActive = false;
+    this.multiTouchRotateLastCentroidX = 0;
+    this.multiTouchRotateLastCentroidY = 0;
+  }
+  handleWorldsMultiTouchRotate(e) {
+    if (!this.worldsEnabled || !this.camera3D) {
+      this.resetWorldsMultiTouchRotate();
+      return false;
+    }
+    if (!e.touches || e.touches.length < 3) {
+      this.resetWorldsMultiTouchRotate();
+      return false;
+    }
+    let sumX = 0;
+    let sumY = 0;
+    const count = e.touches.length;
+    for (let i = 0; i < count; i++) {
+      const tp = e.touches[i];
+      if (!tp) continue;
+      const { pixelX, pixelY } = this.touchToPixelXY(tp);
+      sumX += pixelX;
+      sumY += pixelY;
+    }
+    const centroidX = sumX / count;
+    const centroidY = sumY / count;
+    this.lastTouchEventAt = Date.now();
+    if (!this.multiTouchRotateActive) {
+      this.multiTouchRotateActive = true;
+      this.multiTouchRotateLastCentroidX = centroidX;
+      this.multiTouchRotateLastCentroidY = centroidY;
+      this.resetWorldsPinchZoom();
+      this.stopFreeFlyLeftDrag();
+      return true;
+    }
+    const dx = centroidX - this.multiTouchRotateLastCentroidX;
+    const dy = centroidY - this.multiTouchRotateLastCentroidY;
+    this.multiTouchRotateLastCentroidX = centroidX;
+    this.multiTouchRotateLastCentroidY = centroidY;
+    const sensitivity = 2e-3;
+    if (count === 3) {
+      if (Number.isFinite(dy) && dy !== 0) {
+        this.camera3D.rotation.x += dy * sensitivity;
+        const pitchLimit = Math.PI / 2 - 0.01;
+        if (this.camera3D.rotation.x > pitchLimit) this.camera3D.rotation.x = pitchLimit;
+        if (this.camera3D.rotation.x < -pitchLimit) this.camera3D.rotation.x = -pitchLimit;
+      }
+    } else {
+      if (Number.isFinite(dx) && dx !== 0) {
+        this.camera3D.rotation.y += dx * sensitivity;
+      }
+    }
+    return true;
+  }
   handleWorldsPinchTouchMove(e) {
     if (!this.worldsEnabled || !this.camera3D) {
       this.resetWorldsPinchZoom();
@@ -36975,9 +37531,10 @@ ${exportVars}
     }
     if (!Number.isFinite(deltaDistance) || deltaDistance === 0) return true;
     const distance2 = this.estimateWorldsNavigationDistance();
-    const dolly = deltaDistance * 2e-3 * Math.max(24, distance2);
+    const rawDolly = deltaDistance * 2e-3 * Math.max(24, distance2);
     const rotation = this.camera3D.effectiveRotation ?? this.camera3D.rotation;
     const basis = this.getWorldsCameraBasis(rotation);
+    const dolly = this.clampDollyForZBounds(rawDolly, basis.forward.z);
     this.applyWorldsCameraTranslation(
       basis.forward.x * dolly,
       basis.forward.y * dolly,
@@ -36990,6 +37547,14 @@ ${exportVars}
     if (this.hostAudienceView) {
       e.preventDefault();
       return;
+    }
+    if (e.touches && e.touches.length >= 3 && this.worldsConfig.multiTouchRotateEnabled) {
+      if (this.handleWorldsMultiTouchRotate(e)) {
+        e.preventDefault();
+        return;
+      }
+    } else if (this.multiTouchRotateActive) {
+      this.resetWorldsMultiTouchRotate();
     }
     if (e.touches && e.touches.length >= 2) {
       if (this.handleWorldsPinchTouchMove(e)) {
@@ -37050,6 +37615,9 @@ ${exportVars}
       e.preventDefault();
       return;
     }
+    if (action === "release" && (!e.touches || e.touches.length < 3)) {
+      this.resetWorldsMultiTouchRotate();
+    }
     if (action === "release" && (!e.touches || e.touches.length < 2)) {
       this.resetWorldsPinchZoom();
     }
@@ -37065,6 +37633,36 @@ ${exportVars}
       this.lastTouchEventAt = Date.now();
       const { pixelX, pixelY } = this.touchToPixelXY(t);
       this.input.updateMousePosition(pixelX, pixelY);
+      if (action === "press" && this.worldsEnabled && this.worldsConfig.doubleTapResetEnabled && this.camera3D && !this.isPointOverVisibleGUIWidget(pixelX, pixelY)) {
+        const now = Date.now();
+        const dist = Math.hypot(pixelX - this.doubleTapLastX, pixelY - this.doubleTapLastY);
+        const isDoubleTap = now - this.doubleTapLastTime < 400 && dist < 60;
+        this.doubleTapLastTime = now;
+        this.doubleTapLastX = pixelX;
+        this.doubleTapLastY = pixelY;
+        if (isDoubleTap) {
+          const picked = this.pick3DAt(pixelX, pixelY);
+          if (!picked) {
+            const currentIdx = this.current3DSectionIndex;
+            const resetRot = this.worldsConfig.doubleTapResetRotation;
+            if (resetRot) {
+              this.camera3D.rotation.x = resetRot.x;
+              this.camera3D.rotation.y = resetRot.y;
+              this.camera3D.rotation.z = resetRot.z;
+              this.camera3D.targetRotation = null;
+            }
+            this.camera3D.target = null;
+            if (typeof currentIdx === "number" && currentIdx >= 0) {
+              const lastFocus = this.lastApplied3DCameraFocus;
+              const fill = (lastFocus == null ? void 0 : lastFocus.kind) === "fit" ? lastFocus.fill : 0.9;
+              this.request3DCameraFocus({ kind: "fit", sectionIndex: currentIdx, fill, keepRotation: true });
+            }
+            this.doubleTapLastTime = 0;
+            e.preventDefault();
+            return;
+          }
+        }
+      }
       if (this.worldsControlsEnabled) {
         this.input.applySyntheticEvent({ type: "mouse", action, button: "left", x: pixelX, y: pixelY });
         if (action === "press") {
