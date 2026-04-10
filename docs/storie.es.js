@@ -27634,6 +27634,7 @@ class StorieEngine {
     __publicField(this, "worldsSectionOverridesByDocument", /* @__PURE__ */ new Map());
     __publicField(this, "outlineCache", null);
     __publicField(this, "worldsSectionContentOverridesByDocument", /* @__PURE__ */ new Map());
+    __publicField(this, "worldsSectionStyleOverridesByDocument", /* @__PURE__ */ new Map());
     // Worlds Overview (host-only)
     __publicField(this, "worldsOverviewEnabled", false);
     __publicField(this, "worldsOverviewSavedTransforms", null);
@@ -28872,6 +28873,13 @@ class StorieEngine {
         const prev = engine.worldsConfig.sectionBackground;
         engine.worldsConfig.sectionBackground = config.sectionBackground;
         if (prev !== config.sectionBackground) {
+          engine.clear3DSectionTextures();
+        }
+      }
+      if (config.sectionForeground !== void 0) {
+        const prev = engine.worldsConfig.sectionForeground;
+        engine.worldsConfig.sectionForeground = config.sectionForeground;
+        if (prev !== config.sectionForeground) {
           engine.clear3DSectionTextures();
         }
       }
@@ -32726,6 +32734,35 @@ class StorieEngine {
           },
           move: (selector, options) => {
             return engine.moveRuntimeSection(selector, options);
+          },
+          style: {
+            /**
+             * Set per-section style overrides. Currently supports `fg` (text color).
+             *
+             * @param selector - Section index, title, or 'current'
+             * @param patch - Style properties to override. Pass `null` to clear a property.
+             *
+             * @example
+             * ```js on:enter
+             * // Highlight current section in accent1, reset previous
+             * if (state._prevStyleSection !== null && state._prevStyleSection !== undefined) {
+             *   worlds.sections.style.set(state._prevStyleSection, { fg: null });
+             * }
+             * state._prevStyleSection = worlds.currentSection;
+             * worlds.sections.style.set('current', { fg: 'accent1' });
+             * ```
+             */
+            set: (selector, patch) => {
+              return engine.setWorldsSectionStyleOverride(selector, patch);
+            },
+            /** Clear per-section style overrides for a section (or current if omitted). */
+            clear: (selector) => {
+              return engine.clearWorldsSectionStyleOverride(selector);
+            },
+            /** Clear all per-section style overrides for all sections. */
+            clearAll: () => {
+              engine.clearWorldsSectionStyleOverrides();
+            }
           }
         },
         // Configuration
@@ -34550,6 +34587,100 @@ ${exportVars}
     overrides.clear();
     this.clear3DSectionTextures();
   }
+  getActiveWorldsSectionStyleOverrideMap(create2 = false) {
+    const documentId = this.activeDocumentId;
+    if (!documentId) return null;
+    const existing = this.worldsSectionStyleOverridesByDocument.get(documentId);
+    if (existing || !create2) return existing ?? null;
+    const next = /* @__PURE__ */ new Map();
+    this.worldsSectionStyleOverridesByDocument.set(documentId, next);
+    return next;
+  }
+  getWorldsSectionStyleOverride(sectionId) {
+    const overrides = this.getActiveWorldsSectionStyleOverrideMap();
+    if (!overrides) return null;
+    return overrides.get(sectionId) ?? null;
+  }
+  setWorldsSectionStyleOverride(selector, patch) {
+    const ref = this.resolveWorldsContentSectionRef(selector);
+    if (!ref) return false;
+    const overrides = this.getActiveWorldsSectionStyleOverrideMap(true);
+    if (!overrides) return false;
+    const previous = overrides.get(ref.sectionId) ?? {};
+    const next = { ...previous };
+    let touched = false;
+    if (patch.fg !== void 0) {
+      touched = true;
+      if (patch.fg === null) {
+        delete next.fg;
+      } else {
+        const resolved = typeof patch.fg === "string" ? this.resolveThemeColorString(patch.fg) : patch.fg;
+        if (resolved !== null && resolved !== void 0) next.fg = resolved;
+        else delete next.fg;
+      }
+    }
+    if (!touched) return false;
+    const unchanged = previous.fg === next.fg;
+    if (unchanged) return true;
+    if (next.fg === void 0) {
+      overrides.delete(ref.sectionId);
+    } else {
+      overrides.set(ref.sectionId, next);
+    }
+    this.invalidate3DSectionTexture(ref.sectionIndex);
+    return true;
+  }
+  clearWorldsSectionStyleOverride(selector) {
+    const ref = this.resolveWorldsContentSectionRef(selector);
+    if (!ref) return false;
+    const overrides = this.getActiveWorldsSectionStyleOverrideMap();
+    if (!overrides) return false;
+    if (!overrides.has(ref.sectionId)) return false;
+    overrides.delete(ref.sectionId);
+    this.invalidate3DSectionTexture(ref.sectionIndex);
+    return true;
+  }
+  clearWorldsSectionStyleOverrides() {
+    const overrides = this.getActiveWorldsSectionStyleOverrideMap();
+    if (!overrides || overrides.size === 0) return;
+    overrides.clear();
+    this.clear3DSectionTextures();
+  }
+  /** Resolve a theme key string (e.g. 'accent1') or hex color to a packed Color. */
+  resolveThemeColorString(value) {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const hex = this.parseHexColorToPackedColor(trimmed);
+    if (hex !== null) return hex;
+    const key = trimmed.toLowerCase();
+    switch (key) {
+      case "surface":
+        return this.getStyle("surface").bg;
+      case "bg":
+      case "background":
+        return this.currentTheme.bg;
+      case "bgalt":
+      case "bg_alt":
+        return this.currentTheme.bgAlt;
+      case "fg":
+      case "foreground":
+        return this.currentTheme.fg;
+      case "fgalt":
+      case "fg_alt":
+        return this.currentTheme.fgAlt;
+      case "accent1":
+      case "primary":
+        return this.currentTheme.accent1;
+      case "accent2":
+      case "secondary":
+        return this.currentTheme.accent2;
+      case "accent3":
+      case "tertiary":
+        return this.currentTheme.accent3;
+      default:
+        return null;
+    }
+  }
   applyWorldsTimedContent(selector, entries2, timeSec, options) {
     const ref = this.resolveWorldsContentSectionRef(selector);
     if (!ref) return null;
@@ -35749,6 +35880,7 @@ ${exportVars}
         const mdStyle2 = this.createWorldsMarkdownStyle({
           activeLinkIndex,
           background: mdBg2,
+          foreground: this.resolveEffectiveSectionForeground(layout.sectionId) ?? void 0,
           textAlign: layout.textAlign
         });
         const measureTextWidth = this.worldsCardFontStack && measureCtx ? (text) => measureCtx.measureText(text).width : void 0;
@@ -35828,6 +35960,7 @@ ${exportVars}
       const mdStyle = this.createWorldsMarkdownStyle({
         activeLinkIndex,
         background: mdBg,
+        foreground: this.resolveEffectiveSectionForeground(layout.sectionId) ?? void 0,
         textAlign: layout.textAlign
       });
       const result = layoutMarkdownDocument(
@@ -36401,6 +36534,19 @@ ${exportVars}
     }
     return ColorUtils.from(v2);
   }
+  resolveWorldsSectionForeground() {
+    const v2 = this.worldsConfig.sectionForeground;
+    if (v2 === void 0 || v2 === null) return null;
+    if (typeof v2 === "number") return v2;
+    if (typeof v2 === "string") return this.resolveThemeColorString(v2);
+    return ColorUtils.from(v2);
+  }
+  /** Per-section override takes priority; falls back to global sectionForeground. */
+  resolveEffectiveSectionForeground(sectionId) {
+    const perSection = this.getWorldsSectionStyleOverride(sectionId);
+    if ((perSection == null ? void 0 : perSection.fg) !== void 0) return perSection.fg;
+    return this.resolveWorldsSectionForeground();
+  }
   createWorldsMarkdownStyle(options) {
     const base = this.getStyle("default");
     const dim = this.getStyle("dim");
@@ -36414,8 +36560,9 @@ ${exportVars}
     const warning = this.getStyle("warning");
     const error = this.getStyle("error");
     const code = this.getStyle("code");
+    const fgOverride = (options == null ? void 0 : options.foreground) ?? null;
     return {
-      fg: base.fg,
+      fg: fgOverride ?? base.fg,
       mutedFg: dim.fg,
       borderFg: border.fg,
       surfaceBg: surface.bg,
@@ -36530,6 +36677,7 @@ ${exportVars}
       const style = this.createWorldsMarkdownStyle({
         activeLinkIndex,
         background: mdBg,
+        foreground: this.resolveEffectiveSectionForeground(layout.sectionId) ?? void 0,
         textAlign: layout.textAlign
       });
       if (overflowMode === "expand" || overflowMode === "expand-y" || overflowMode === "fit" || overflowMode === "fit-y") {
@@ -36577,6 +36725,7 @@ ${exportVars}
           const style2 = this.createWorldsMarkdownStyle({
             activeLinkIndex,
             background: mdBg,
+            foreground: this.resolveEffectiveSectionForeground(layout.sectionId) ?? void 0,
             textAlign: layout.textAlign
           });
           const result2 = layoutMarkdownDocument(
@@ -38531,7 +38680,7 @@ ${exportVars}
     const textureBg = !!this.parseWorldsSectionBackgroundTexture();
     const surfaceBg = this.resolveWorldsSectionBackground();
     const mdBg = proceduralRuledPaper || bakedRuledPaper || shaderBg || textureBg ? this.withAlpha(surfaceBg, 0) : surfaceBg;
-    const mdStyle = this.createWorldsMarkdownStyle({ background: mdBg });
+    const mdStyle = this.createWorldsMarkdownStyle({ background: mdBg, foreground: this.resolveWorldsSectionForeground() ?? void 0 });
     const fontSizePx = Math.max(1, this.fontSize || 16);
     const fontStack = this.worldsCardFontStack || this.fontFamily || "'3270-regular', 'Consolas', 'Monaco', monospace";
     const measured = this.measureFontMetrics(fontStack, fontSizePx);

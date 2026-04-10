@@ -3,7 +3,7 @@ name: "Ballad of Saint Billy"
 title: "Ballad of Saint Billy"
 author: "Maddest Labs"
 theme: "saintbilly"
-shaders: "blurgradual+lightvignette"
+shaders: "audioshake+vintage"
 font: "Rye"
 ---
 
@@ -34,6 +34,15 @@ var state = {
   widgets: null,
   mouseDownLeft: false,
   statusText: 'Loading local WAV asset...',
+
+  // Audio-reactive shader state
+  analyser: null,
+  beatAnalysis: null,
+  beatImpulse: 0,
+  prevPosSec: 0,
+  // Trauma shake state — drives audioshake shader UV displacement
+  trauma: 0,        // 0–1, peak-hold from sub-bass then decays
+  shakePhase: 0,    // advances at 12Hz, provides the sinusoidal waveform
 };
 
 const WORLDS_LYRIC_WINDOW = 3;
@@ -149,6 +158,8 @@ function loadLocalAudio() {
       if (!buffer) throw new Error('Local asset decode failed');
 
       state.audioBuffer = buffer;
+      // Offline beat analysis — used each frame to detect beat edges
+      state.beatAnalysis = audio.beatsFromBuffer(buffer);
       state.pauseOffset = 0;
       state.widgets.seek.min = 0;
       state.widgets.seek.max = Math.max(0.01, buffer.duration);
@@ -334,7 +345,7 @@ worlds.config.setDefaults({
   defaultSectionHeight: 520,
   autoLayoutSpacing: 2,
   sectionBorderEnabled: false,
-  sectionBackground: 'texture:assets/img/Paper006_1K-JPG_Color.jpg;tilePx=640;contentDistort=0.01;blendMode=overlay;blendStrength=0.7;paperPlaneZ=focus',
+  sectionBackground: 'texture:assets/img/Paper006_1K.jpg;tilePx=400;contentDistort=0.01;paperPlaneZ=focus',
 });
 
 worlds.camera.setPosition(0, 55, 320);
@@ -343,7 +354,7 @@ worlds.camera.setFOV(deg(42));
 worlds.camera.setEaseSpeed(0.18, 0.12);
 
 worlds.camera.shake.setParams({
-  strength: 1.0,
+  strength: 0.8,
   rate: 0.20,
   translate: { x: 1.2, y: 0.9, z: 0.4 },
   rotate: { x: deg(0.55), y: deg(0.65), z: 0 },
@@ -379,6 +390,13 @@ state.widgets = { time, seek, btnPlayPause };
 state.gain = audio.createGain();
 state.gain.gain.value = 1;
 state.gain.connect(audio.destination);
+
+// Realtime FFT analyser for audio-reactive shader uniforms.
+// fftSize: 4096 gives ~11Hz/bin resolution at 44.1kHz — needed for sub-bass targeting.
+// smoothing: 0.55 allows transient kick hits to peak sharply rather than being smoothed away.
+state.analyser = audio.fft.createAnalyser({ fftSize: 4096, smoothing: 0.55 });
+state.analyser.connectFrom(state.gain);
+
 audio.context.resume().catch(() => {});
 worlds.content?.clearAll?.();
 void loadLocalAudio();
@@ -405,6 +423,51 @@ if (event.type === 'mouse_move') gui.handleMouse(event.x, event.y, state.mouseDo
 
 ```javascript on:update
 if (typeof state === 'undefined' || !state || !state.widgets) return;
+
+// --- Audio-reactive shader uniforms ---
+if (state.analyser && state.audioBuffer) {
+  const dt = getDelta();
+  const nowSec = getDemoTimeSec();
+  // Decay beat impulse toward 0 (~0.2s full decay)
+  state.beatImpulse = Math.max(0, state.beatImpulse - dt * 5.0);
+  // Fire impulse on each beat edge while playing
+  if (state.beatAnalysis && state.isPlaying) {
+    const bs = audio.beatState(state.beatAnalysis, nowSec, state.prevPosSec);
+    if (bs.isBeatEdge) state.beatImpulse = 1.0;
+  }
+  state.prevPosSec = nowSec;
+  // Three targeted frequency bands:
+  //   subBass  20–60Hz  — pure kick/sub thump, drives the trauma shake
+  //   midBass  60–120Hz — upper kick body + bass guitar fundamental, drives the vignette
+  //   lowMid   120–250Hz — available for future effects
+  // NOTE: do not narrow the sub-bass window below ~40Hz — at fftSize:4096 each bin is ~11Hz
+  // wide, so a 1-2Hz window resolves to a single edge bin and returns near-zero always.
+  const bands = state.analyser.getBands([
+    { fromHz: 20,  toHz: 60  },   // [0] sub-bass
+    { fromHz: 60,  toHz: 120 },   // [1] mid-bass
+    { fromHz: 120, toHz: 250 },   // [2] low-mid
+  ]);
+  const subBass = bands[0] ?? 0;
+  const midBass = bands[1] ?? 0;
+  // Vignette: blend sub + mid for a fuller feel; beatImpulse adds the flash on any beat
+  const bassForShader = subBass * 0.7 + midBass * 0.3;
+  shader.setUniform('lightvignette', 'bass', bassForShader);
+  shader.setUniform('lightvignette', 'beatImpulse', state.beatImpulse);
+
+  // --- Audio-reactive screen shake (audioshake shader) ---
+  // getBands returns dBFS-derived linear magnitude: pow(10, db/20).
+  // Typical sub-bass in music reads -30 to -50 dBFS = linear 0.003 to 0.032.
+  // BASS_SCALE brings those into a useful 0-1 trauma range.
+  const BASS_SCALE = 6.0;  // 0.067 (loud kick at -24dBFS) → trauma 1.0
+  const kickStrength = Math.min(1, subBass * BASS_SCALE);
+  // Peak-hold upward, linear decay at 4.0/s (~0.25s ring-down)
+  state.trauma = Math.min(1, Math.max(0, Math.max(state.trauma, kickStrength) - dt * 4.0));
+  // 12Hz oscillation phase
+  state.shakePhase += dt * 12.0 * Math.PI * 2;
+  // Use trauma directly (not squared) — squaring near-zero values makes them invisible
+  shader.setUniform('audioshake', 'strength', state.trauma);
+  shader.setUniform('audioshake', 'phase', state.shakePhase);
+}
 
 const W = ui.metrics.canvasWidth;
 const inset = 16;

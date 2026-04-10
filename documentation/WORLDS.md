@@ -321,6 +321,7 @@ Use built-in effects via `sectionBackground`:
 ```js
 worlds.config.setDefaults({
   sectionBackground: 'paper+ruledlines', // Notebook-style background
+  sectionForeground: 'accent1',          // Optional: override text color for all cards
   sectionLinkUnderline: true,            // Optional: underline card links
   sectionListMarker: '> ',               // Optional: custom list marker in card markdown
 });
@@ -433,6 +434,23 @@ Experimental runtime section store helpers:
 - `worlds.sections.update(sectionIndexOrIdOrTitle, patch)`
 - `worlds.sections.remove(sectionIndexOrIdOrTitle)`
 - `worlds.sections.move(sectionIndexOrIdOrTitle, { parent?, index? })`
+
+Per-section style overrides (rebakes only the affected card's texture):
+- `worlds.sections.style.set(sectionIndexOrIdOrTitle, { fg? })` — override text color for one card
+- `worlds.sections.style.clear(sectionIndexOrIdOrTitle?)` — remove override for one card
+- `worlds.sections.style.clearAll()` — remove all per-section style overrides
+
+`fg` accepts the same values as `sectionForeground`: a theme key (`'accent1'`, `'fg'`, etc.), a hex string, or a packed RGBA number. Pass `null` to reset a single property to the global default.
+
+Use `on:enter` to highlight only the focused card:
+
+```js on:enter
+if (state._prevSection !== undefined && state._prevSection !== null) {
+  worlds.sections.style.clear(state._prevSection);
+}
+state._prevSection = worlds.currentSection;
+worlds.sections.style.set('current', { fg: 'accent1' });
+```
 
 Same-card render-content helpers:
 - `worlds.content.get(sectionIndexOrIdOrTitle?)`

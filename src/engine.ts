@@ -326,6 +326,10 @@ type WorldsSectionContentOverride = {
   content?: string;
 };
 
+type WorldsSectionStyleOverride = {
+  fg?: Color;
+};
+
 export interface OutlineNode {
   /** Depth-first section index (matches Worlds section indices). */
   index: number;
@@ -652,6 +656,7 @@ export class StorieEngine {
 
   private outlineCache: { documentId: string; nodes: OutlineNode[] } | null = null;
   private worldsSectionContentOverridesByDocument: Map<string, Map<string, WorldsSectionContentOverride>> = new Map();
+  private worldsSectionStyleOverridesByDocument: Map<string, Map<string, WorldsSectionStyleOverride>> = new Map();
 
   // Worlds Overview (host-only)
   private worldsOverviewEnabled: boolean = false;
@@ -2182,6 +2187,14 @@ export class StorieEngine {
         const prev = (engine.worldsConfig as any).sectionBackground;
         (engine.worldsConfig as any).sectionBackground = (config as any).sectionBackground;
         if (prev !== (config as any).sectionBackground) {
+          engine.clear3DSectionTextures();
+        }
+      }
+
+      if ((config as any).sectionForeground !== undefined) {
+        const prev = (engine.worldsConfig as any).sectionForeground;
+        (engine.worldsConfig as any).sectionForeground = (config as any).sectionForeground;
+        if (prev !== (config as any).sectionForeground) {
           engine.clear3DSectionTextures();
         }
       }
@@ -6511,8 +6524,38 @@ export class StorieEngine {
           move: (selector: number | string, options?: { parent?: number | string | null; index?: number }) => {
             return engine.moveRuntimeSection(selector, options);
           },
+
+          style: {
+            /**
+             * Set per-section style overrides. Currently supports `fg` (text color).
+             *
+             * @param selector - Section index, title, or 'current'
+             * @param patch - Style properties to override. Pass `null` to clear a property.
+             *
+             * @example
+             * ```js on:enter
+             * // Highlight current section in accent1, reset previous
+             * if (state._prevStyleSection !== null && state._prevStyleSection !== undefined) {
+             *   worlds.sections.style.set(state._prevStyleSection, { fg: null });
+             * }
+             * state._prevStyleSection = worlds.currentSection;
+             * worlds.sections.style.set('current', { fg: 'accent1' });
+             * ```
+             */
+            set: (selector: number | string, patch: { fg?: string | null }) => {
+              return engine.setWorldsSectionStyleOverride(selector, patch);
+            },
+            /** Clear per-section style overrides for a section (or current if omitted). */
+            clear: (selector?: number | string) => {
+              return engine.clearWorldsSectionStyleOverride(selector);
+            },
+            /** Clear all per-section style overrides for all sections. */
+            clearAll: () => {
+              engine.clearWorldsSectionStyleOverrides();
+            },
+          },
         },
-        
+
         // Configuration
         config: {
           setDefaults: (config: Partial<WorldsConfig>) => {
@@ -8906,6 +8949,100 @@ ${exportVars}
     this.clear3DSectionTextures();
   }
 
+  private getActiveWorldsSectionStyleOverrideMap(create: boolean = false): Map<string, WorldsSectionStyleOverride> | null {
+    const documentId = this.activeDocumentId;
+    if (!documentId) return null;
+    const existing = this.worldsSectionStyleOverridesByDocument.get(documentId);
+    if (existing || !create) return existing ?? null;
+    const next = new Map<string, WorldsSectionStyleOverride>();
+    this.worldsSectionStyleOverridesByDocument.set(documentId, next);
+    return next;
+  }
+
+  private getWorldsSectionStyleOverride(sectionId: string): WorldsSectionStyleOverride | null {
+    const overrides = this.getActiveWorldsSectionStyleOverrideMap();
+    if (!overrides) return null;
+    return overrides.get(sectionId) ?? null;
+  }
+
+  private setWorldsSectionStyleOverride(
+    selector: number | string,
+    patch: { fg?: Color | string | null }
+  ): boolean {
+    const ref = this.resolveWorldsContentSectionRef(selector);
+    if (!ref) return false;
+    const overrides = this.getActiveWorldsSectionStyleOverrideMap(true);
+    if (!overrides) return false;
+
+    const previous = overrides.get(ref.sectionId) ?? {};
+    const next: WorldsSectionStyleOverride = { ...previous };
+    let touched = false;
+
+    if (patch.fg !== undefined) {
+      touched = true;
+      if (patch.fg === null) {
+        delete next.fg;
+      } else {
+        const resolved = typeof patch.fg === 'string'
+          ? this.resolveThemeColorString(patch.fg)
+          : (patch.fg as Color);
+        if (resolved !== null && resolved !== undefined) next.fg = resolved;
+        else delete next.fg;
+      }
+    }
+    if (!touched) return false;
+
+    const unchanged = previous.fg === next.fg;
+    if (unchanged) return true;
+
+    if (next.fg === undefined) {
+      overrides.delete(ref.sectionId);
+    } else {
+      overrides.set(ref.sectionId, next);
+    }
+
+    this.invalidate3DSectionTexture(ref.sectionIndex);
+    return true;
+  }
+
+  private clearWorldsSectionStyleOverride(selector?: number | string): boolean {
+    const ref = this.resolveWorldsContentSectionRef(selector);
+    if (!ref) return false;
+    const overrides = this.getActiveWorldsSectionStyleOverrideMap();
+    if (!overrides) return false;
+    if (!overrides.has(ref.sectionId)) return false;
+    overrides.delete(ref.sectionId);
+    this.invalidate3DSectionTexture(ref.sectionIndex);
+    return true;
+  }
+
+  private clearWorldsSectionStyleOverrides(): void {
+    const overrides = this.getActiveWorldsSectionStyleOverrideMap();
+    if (!overrides || overrides.size === 0) return;
+    overrides.clear();
+    this.clear3DSectionTextures();
+  }
+
+  /** Resolve a theme key string (e.g. 'accent1') or hex color to a packed Color. */
+  private resolveThemeColorString(value: string): Color | null {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const hex = this.parseHexColorToPackedColor(trimmed);
+    if (hex !== null) return hex;
+    const key = trimmed.toLowerCase();
+    switch (key) {
+      case 'surface': return this.getStyle('surface').bg;
+      case 'bg': case 'background': return this.currentTheme.bg;
+      case 'bgalt': case 'bg_alt': return this.currentTheme.bgAlt;
+      case 'fg': case 'foreground': return this.currentTheme.fg;
+      case 'fgalt': case 'fg_alt': return this.currentTheme.fgAlt;
+      case 'accent1': case 'primary': return this.currentTheme.accent1;
+      case 'accent2': case 'secondary': return this.currentTheme.accent2;
+      case 'accent3': case 'tertiary': return this.currentTheme.accent3;
+      default: return null;
+    }
+  }
+
   private applyWorldsTimedContent(
     selector: number | string,
     entries: WorldsContentTimedEntry[],
@@ -10547,6 +10684,7 @@ ${exportVars}
         const mdStyle = this.createWorldsMarkdownStyle({
           activeLinkIndex,
           background: mdBg,
+          foreground: this.resolveEffectiveSectionForeground(layout.sectionId) ?? undefined,
           textAlign: layout.textAlign,
         });
 
@@ -10660,6 +10798,7 @@ ${exportVars}
       const mdStyle = this.createWorldsMarkdownStyle({
         activeLinkIndex,
         background: mdBg,
+        foreground: this.resolveEffectiveSectionForeground(layout.sectionId) ?? undefined,
         textAlign: layout.textAlign,
       });
       const result = layoutMarkdownDocument(
@@ -11394,9 +11533,25 @@ ${exportVars}
     return ColorUtils.from(v);
   }
 
+  private resolveWorldsSectionForeground(): Color | null {
+    const v: any = (this.worldsConfig as any).sectionForeground;
+    if (v === undefined || v === null) return null;
+    if (typeof v === 'number') return v as Color;
+    if (typeof v === 'string') return this.resolveThemeColorString(v);
+    return ColorUtils.from(v);
+  }
+
+  /** Per-section override takes priority; falls back to global sectionForeground. */
+  private resolveEffectiveSectionForeground(sectionId: string): Color | null {
+    const perSection = this.getWorldsSectionStyleOverride(sectionId);
+    if (perSection?.fg !== undefined) return perSection.fg;
+    return this.resolveWorldsSectionForeground();
+  }
+
   private createWorldsMarkdownStyle(options?: {
     activeLinkIndex?: number | null;
     background?: Color;
+    foreground?: Color;
     textAlign?: 'left' | 'center' | 'right';
   }): MarkdownStyle {
     const base = this.getStyle('default');
@@ -11412,8 +11567,10 @@ ${exportVars}
     const error = this.getStyle('error');
     const code = this.getStyle('code');
 
+    const fgOverride = options?.foreground ?? null;
+
     return {
-      fg: base.fg,
+      fg: fgOverride ?? base.fg,
       mutedFg: dim.fg,
       borderFg: border.fg,
       surfaceBg: surface.bg,
@@ -11569,6 +11726,7 @@ ${exportVars}
       const style = this.createWorldsMarkdownStyle({
         activeLinkIndex,
         background: mdBg,
+        foreground: this.resolveEffectiveSectionForeground(layout.sectionId) ?? undefined,
         textAlign: layout.textAlign,
       });
 
@@ -11629,6 +11787,7 @@ ${exportVars}
           const style = this.createWorldsMarkdownStyle({
             activeLinkIndex,
             background: mdBg,
+            foreground: this.resolveEffectiveSectionForeground(layout.sectionId) ?? undefined,
             textAlign: layout.textAlign,
           });
           const result = layoutMarkdownDocument(
@@ -14145,7 +14304,7 @@ ${exportVars}
     const textureBg = !!this.parseWorldsSectionBackgroundTexture();
     const surfaceBg = this.resolveWorldsSectionBackground();
     const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg || textureBg) ? this.withAlpha(surfaceBg, 0) : surfaceBg;
-    const mdStyle = this.createWorldsMarkdownStyle({ background: mdBg });
+    const mdStyle = this.createWorldsMarkdownStyle({ background: mdBg, foreground: this.resolveWorldsSectionForeground() ?? undefined });
 
     // Measure in logical CSS pixels; the runtime render path applies DPR only
     // when rasterizing the final card texture.

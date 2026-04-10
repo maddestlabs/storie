@@ -1117,6 +1117,11 @@ export interface SandboxAPI {
         selector: number | string,
         options?: { parent?: number | string | null; index?: number }
       ) => { sectionId: string; sectionIndex: number } | null;
+      style: {
+        set: (selector: number | string, patch: { fg?: string | null }) => void;
+        clear: (selector?: number | string) => void;
+        clearAll: () => void;
+      };
     };
     config: {
       setDefaults: (config: any) => void;

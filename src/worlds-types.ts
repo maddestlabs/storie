@@ -300,6 +300,34 @@ export interface WorldsConfig {
   sectionBackgroundPaperNoiseStrength?: number;
 
   /**
+   * Foreground (text) color used when rendering section card content.
+   *
+   * Overrides the theme's default `fg` for all text drawn into card textures.
+   *
+   * Supported values:
+   * - Theme key strings: 'bg', 'bgAlt', 'fg', 'fgAlt', 'accent1', 'accent2', 'accent3'
+   * - Special string: 'surface' (uses the theme stylesheet's `surface.bg`)
+   * - Hex strings: '#RRGGBB' or '#RRGGBBAA'
+   * - Packed color: 0xRRGGBBAA
+   * - Legacy object: { r, g, b, a? } where a is 0..1
+   *
+   * @example
+   * worlds.config.setDefaults({ sectionForeground: 'accent1' });
+   */
+  sectionForeground?:
+    | 'surface'
+    | 'bg'
+    | 'bgAlt'
+    | 'fg'
+    | 'fgAlt'
+    | 'accent1'
+    | 'accent2'
+    | 'accent3'
+    | string
+    | Color
+    | { r: number; g: number; b: number; a?: number };
+
+  /**
    * Blend mode used when compositing section card content over the background.
    *
    * - `'normal'` (default): standard alpha compositing — card content paints on top.
