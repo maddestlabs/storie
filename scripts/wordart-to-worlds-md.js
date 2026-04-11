@@ -116,6 +116,9 @@ function parseArgs(argv) {
     scaleMin: 1,
     scaleMax: 1,
     scaleSeed: null,         // null = share --seed + 17
+    wordGapMs: null,         // null = even-spread within sentence; number = fixed ms per word
+    sentenceGapMs: 0,        // ms buffer before next sentence start (clamps word timestamps)
+    wordSpacingScale: 1.0,   // 0–1: scale x-step for words within the same sentence (1 = full grid step)
   };
 
   const positional = [];
@@ -161,6 +164,9 @@ function parseArgs(argv) {
     else if (a === '--scale-min') args.scaleMin = Number(nextArg());
     else if (a === '--scale-max') args.scaleMax = Number(nextArg());
     else if (a === '--scale-seed') args.scaleSeed = Number(nextArg());
+    else if (a === '--word-gap-ms') args.wordGapMs = Number(nextArg());
+    else if (a === '--sentence-gap-ms') args.sentenceGapMs = Number(nextArg());
+    else if (a === '--word-spacing-scale') args.wordSpacingScale = Number(nextArg());
     else if (a === '--help' || a === '-h') {
       process.stdout.write(HELP);
       process.exit(0);
@@ -187,6 +193,21 @@ Word sources (pick one):
   --lyric-words <file>    Extract words from a \`\`\`timed name:lyricWords block in an .md file
   --json-words <file>     Parse [{"timestamp":[startSec,endSec],"text":"phrase"}] JSON;
                           timestamps are distributed evenly across each phrase's words
+
+JSON timing options (--json-words only):
+  --word-gap-ms <n>       Fixed ms between consecutive words within a sentence.
+                          Default: even-spread across the sentence's duration.
+                          e.g. --word-gap-ms 200 puts each word 200ms after the last.
+  --sentence-gap-ms <n>   Ms buffer to reserve before the next sentence starts.
+                          Word timestamps are clamped to (nextSentenceStartMs - n).
+                          Default: 0 (words can run up to the next sentence boundary).
+
+Layout options (--json-words only):
+  --word-spacing-scale <f> Scale the x-step for words within the same sentence, relative
+                           to the normal inter-cell step. Range 0–1.
+                           1.0 (default): all words equally spaced at the full grid step.
+                           0.4: words within a sentence are 40%% as far apart; sentence
+                                starts still snap to the cross grid.
 
 Shape options:
   --shape <name>          cross | circle | diamond | heart | star5 | rect | pillv | pillh
@@ -327,7 +348,7 @@ function extractLyricWords(mdText) {
  *
  * Returns: {ms: number|null, word: string, directives: Record<string,string>}[]
  */
-function extractJsonEntries(jsonText) {
+function extractJsonEntries(jsonText, { wordGapMs = null, sentenceGapMs = 0 } = {}) {
   let data;
   try {
     data = JSON.parse(jsonText);
@@ -336,7 +357,8 @@ function extractJsonEntries(jsonText) {
   }
   if (!Array.isArray(data)) die('JSON input must be an array of {timestamp, text} entries.');
 
-  const entries = [];
+  // Pass 1: collect sentences with their start/end times and word lists.
+  const sentences = [];
   for (const item of data) {
     const ts = item.timestamp;
     const startSec = Array.isArray(ts) && ts[0] != null ? Number(ts[0]) : null;
@@ -345,22 +367,45 @@ function extractJsonEntries(jsonText) {
     if (!text) continue;
 
     // Tokenize, drop [Bracket] annotations, strip edge punctuation
-    const wordTokens = text.split(/\s+/)
+    const words = text.split(/\s+/)
       .filter(t => t && !/^\[.*\]$/.test(t))
       .map(t => t.replace(/^[^\w'♪]+|[^\w'♪]+$/g, ''))
       .filter(Boolean);
-    if (!wordTokens.length) continue;
+    if (!words.length) continue;
 
-    const startMs    = Number.isFinite(startSec) ? Math.round(startSec * 1000) : null;
-    const durationMs = (Number.isFinite(startSec) && Number.isFinite(endSec))
-      ? Math.round((endSec - startSec) * 1000)
-      : 0;
+    const startMs = Number.isFinite(startSec) ? Math.round(startSec * 1000) : null;
+    const endMs   = Number.isFinite(endSec)   ? Math.round(endSec   * 1000) : null;
+    sentences.push({ startMs, endMs, words });
+  }
 
-    wordTokens.forEach((word, i) => {
-      const ms = startMs !== null
-        ? startMs + Math.round((i / wordTokens.length) * durationMs)
-        : null;
-      entries.push({ word, ms, directives: {} });
+  // Pass 2: assign word timestamps with configurable spacing.
+  const entries = [];
+  for (let si = 0; si < sentences.length; si++) {
+    const { startMs, endMs, words } = sentences[si];
+    const nextStartMs = si + 1 < sentences.length ? sentences[si + 1].startMs : null;
+
+    // The hard cap prevents words bleeding into the next sentence.
+    // sentenceGapMs reserves a buffer before the next sentence begins.
+    const capMs = (nextStartMs !== null)
+      ? nextStartMs - sentenceGapMs
+      : null;
+
+    const durationMs = (startMs !== null && endMs !== null) ? endMs - startMs : 0;
+
+    words.forEach((word, i) => {
+      let ms;
+      if (startMs === null) {
+        ms = null;
+      } else if (wordGapMs !== null) {
+        // Fixed step: each word is wordGapMs after the previous.
+        ms = startMs + i * wordGapMs;
+      } else {
+        // Even-spread (default): distribute across the sentence's duration.
+        ms = startMs + Math.round((i / words.length) * durationMs);
+      }
+      // Clamp to the cap so words never reach into the next sentence.
+      if (ms !== null && capMs !== null && ms > capMs) ms = capMs;
+      entries.push({ word, ms, directives: {}, sentenceIdx: si });
     });
   }
   return entries;
@@ -376,7 +421,10 @@ function extractJsonEntries(jsonText) {
 function loadEnrichedWords(args) {
   if (args.lyricJsonFile) {
     const jsonText = fs.readFileSync(args.lyricJsonFile, 'utf8');
-    const entries = extractJsonEntries(jsonText);
+    const entries = extractJsonEntries(jsonText, {
+      wordGapMs: args.wordGapMs,
+      sentenceGapMs: args.sentenceGapMs,
+    });
     if (!entries.length) die(`No word entries found in ${args.lyricJsonFile}`);
     return entries;
   }
@@ -636,6 +684,7 @@ function pack(entries, cells, noRepeat) {
       word: e.word,
       ms: e.ms ?? null,
       directives: e.directives ?? {},
+      sentenceIdx: e.sentenceIdx ?? null,
       ...cells[i],
     });
   }
@@ -684,14 +733,44 @@ function buildSectionsMarkdown(packed, args) {
     : (Math.abs(Math.round(args.seed)) + 17);
   const scaleRng = useScale ? mulberry32(scaleSeed) : null;
 
-  // Timed mode: any entry with a finite ms gets hidden: true so the timeline
-  // can reveal it at the right moment.
+  // Timed mode: include timed: directive when entries carry ms values.
   const timedMode = packed.some(p => p.ms !== null && Number.isFinite(p.ms));
 
+  // Intra-sentence spacing: when --word-spacing-scale < 1, words within the
+  // same sentence and same row are placed at a tighter step than the grid.
+  // Sentence-first words always snap back to the grid cell (shape compliance).
+  const wordSpacingScale = (Number.isFinite(args.wordSpacingScale) && args.wordSpacingScale > 0)
+    ? args.wordSpacingScale : 1.0;
+  const intraStepX = stepX * wordSpacingScale;
+  let prevSentenceIdx = null;
+  let prevRow = null;
+  let prevX = null;
+
   const lines = [];
-  packed.forEach(({ word, col, row, ms, directives = {} }, idx) => {
-    const x = originX + col * stepX;
-    const y = originY - row * stepY;        // Y-up: subtract row offset
+  packed.forEach(({ word, col, row, ms, directives = {}, sentenceIdx }, idx) => {
+    const gridX = originX + col * stepX;
+    const gridY = originY - row * stepY;        // Y-up: subtract row offset
+
+    // Compute actual x position:
+    // • Same sentence + same row + scale < 1: advance from prevX by intraStepX.
+    // • Otherwise: snap to grid (sentence starts and row breaks are exact).
+    let x;
+    if (
+      sentenceIdx !== null &&
+      sentenceIdx === prevSentenceIdx &&
+      row === prevRow &&
+      prevX !== null &&
+      wordSpacingScale < 1.0
+    ) {
+      x = prevX + intraStepX;
+    } else {
+      x = gridX;
+    }
+    const y = gridY;
+    prevSentenceIdx = sentenceIdx;
+    prevRow = row;
+    prevX = x;
+
     const id = `${args.prefix}-${idx}`;
 
     // Always advance RNG slots to keep sequence stable regardless of overrides.
@@ -711,12 +790,8 @@ function buildSectionsMarkdown(packed, args) {
     const parts = [`x: ${formatNumber(x)}`, `y: ${formatNumber(y)}`];
     if (Math.abs(rotZ) > 1e-6) parts.push(`rotate-z: ${formatNumber(rotZ)}`);
     if (sectionScale !== null) parts.push(`scale: ${formatNumber(sectionScale)}`);
-    // Embed the per-word timestamp directly in the section directive (same format
-    // as timed section headings in the main ballad), and start hidden so the
-    // on:update boilerplate can reveal each word at the right playback moment.
     if (timedMode && ms !== null && Number.isFinite(ms)) {
       parts.push(`timed: "${ms}ms"`);
-      parts.push(`hidden: true`);
     }
 
     const directive = `{${parts.join(', ')}}`;

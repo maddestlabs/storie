@@ -22934,11 +22934,12 @@ function parseTransform3D(section, sectionIndex, config) {
   const hiddenUntilVisited = (() => {
     const explicit = metaBoolean("hiddenUntilVisited");
     if (explicit !== void 0) return explicit;
+    if (metaTruthy("hidden")) return true;
     const cfgDefault = config.autoHideSectionsUntilVisited;
     return cfgDefault === true;
   })();
   const removeAfterVisit = metaTruthy("removeAfterVisit");
-  const visible = hiddenUntilVisited ? false : !metaTruthy("hidden");
+  const visible = hiddenUntilVisited ? false : true;
   const navigable = metaStr("navigable", "true").trim().toLowerCase() !== "false";
   const interactive = metaStr("interactive", "true").trim().toLowerCase() !== "false";
   const contentAlign = metaHas("contentAlign") ? parseContentAlign(rawMetadata.contentAlign) : parseContentAlign(config.sectionContentAlign ?? "start");
@@ -28923,9 +28924,10 @@ class StorieEngine {
           }
         }
       }
-      if (config.autoHideSectionsUntilVisited !== void 0) {
+      const _autoHideVal = config.autoHideSectionsUntilVisited ?? config.hiddenUntilVisited;
+      if (_autoHideVal !== void 0) {
         const prev = engine.worldsConfig.autoHideSectionsUntilVisited;
-        const next = !!config.autoHideSectionsUntilVisited;
+        const next = !!_autoHideVal;
         engine.worldsConfig.autoHideSectionsUntilVisited = next;
         if (prev !== next) {
           requiresSectionLayoutRecompile = true;

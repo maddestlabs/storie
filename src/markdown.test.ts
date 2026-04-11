@@ -100,6 +100,20 @@ describe('heading directives', () => {
     expect(layout.visible).toBe(false);
   });
 
+  it('treats hidden: true as hiddenUntilVisited — section starts hidden but reveals on navigation', async () => {
+    const doc = await parseMarkdown([
+      '# Card One {hidden: true}',
+      '',
+      'Body'
+    ].join('\n'));
+
+    const layout = parseTransform3D(doc.sections[0], 0, getDefaultWorldsConfig());
+    // hidden: true implies hiddenUntilVisited behavior.
+    expect(layout.hiddenUntilVisited).toBe(true);
+    // Starts invisible (will become visible when navigated to).
+    expect(layout.visible).toBe(false);
+  });
+
   it('uses config autoHideSectionsUntilVisited as the default when not overridden', async () => {
     const doc = await parseMarkdown([
       '# Card One',

@@ -934,14 +934,16 @@ export function parseTransform3D(
   const hiddenUntilVisited = (() => {
     const explicit = metaBoolean('hiddenUntilVisited');
     if (explicit !== undefined) return explicit;
+    // `hidden: true` also implies hiddenUntilVisited: sections are hidden from
+    // the navigation listing but become visible when first navigated to via a link.
+    if (metaTruthy('hidden')) return true;
     const cfgDefault = (config as any).autoHideSectionsUntilVisited;
     return cfgDefault === true;
   })();
   const removeAfterVisit = metaTruthy('removeAfterVisit');
 
-  // `hiddenUntilVisited` starts hidden (but becomes visible on visit).
-  // `hidden` remains a hard hide.
-  const visible = hiddenUntilVisited ? false : !metaTruthy('hidden');
+  // `hiddenUntilVisited` (and `hidden`) start hidden but become visible on visit.
+  const visible = hiddenUntilVisited ? false : true;
   const navigable = metaStr('navigable', 'true').trim().toLowerCase() !== 'false';
   const interactive = metaStr('interactive', 'true').trim().toLowerCase() !== 'false';
   const contentAlign = metaHas('contentAlign')

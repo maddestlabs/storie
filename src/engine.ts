@@ -2244,9 +2244,11 @@ export class StorieEngine {
         }
       }
 
-      if ((config as any).autoHideSectionsUntilVisited !== undefined) {
+      // Support both the full key and the shorthand alias used in heading directives.
+      const _autoHideVal = (config as any).autoHideSectionsUntilVisited ?? (config as any).hiddenUntilVisited;
+      if (_autoHideVal !== undefined) {
         const prev = (engine.worldsConfig as any).autoHideSectionsUntilVisited;
-        const next = !!(config as any).autoHideSectionsUntilVisited;
+        const next = !!_autoHideVal;
         (engine.worldsConfig as any).autoHideSectionsUntilVisited = next;
         if (prev !== next) {
           requiresSectionLayoutRecompile = true;

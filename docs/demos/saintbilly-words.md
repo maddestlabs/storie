@@ -9,1386 +9,1397 @@ font: "Rye"
 
 This Saint Billy variant turns the demo into a song board instead of a dungeon crawl.
 
-# start {x: 0, y: 150, timed: "100ms", hidden: false}
+# start {x: 0, y: 300, scale: 0.0, timed: "0ms"}
+...
+
+# start-0 {x: 0, y: 200, scale: 5.0, timed: "100ms"}
+↡
+
+# start-1 {x: 0, y: 150, scale: 2.0, timed: "2100ms"}
 Somewheres
 
-# start-1 {x: 0, y: 148, timed: "5000ms", hidden: false}
+# start-2 {x: 0, y: 148, scale: 1.0, timed: "2200ms"}
 in the
 
-# start-2 {x: 0, y: 146, timed: "9000ms", hidden: false}
+# start-3 {x: 0, y: 146, scale: 1.5, timed: "2300ms"}
 New West
 
-# cross-0 {x: -17, y: 99, scale: 1.037, timed: "25000ms", hidden: false}
+# start-4 {x: 0, y: 144, scale: 1.5, timed: "2400ms"}
+»»──────«»──────««
 
-Way
+# cross-0 {x: -17, y: 99, scale: 1.037, timed: "24500ms"}
 
-# cross-1 {x: -8.5, y: 99, scale: 1.168, timed: "25200ms", hidden: false}
+➵ Way
+
+# cross-1 {x: -13.6, y: 99, scale: 1.168, timed: "25000ms"}
 
 out
 
-# cross-2 {x: 0, y: 99, rotate-z: 90, scale: 0.96, timed: "26000ms", hidden: false}
+# cross-2 {x: -10.2, y: 99, scale: 0.96, timed: "26000ms"}
 
 West
 
-# cross-3 {x: 8.5, y: 99, scale: 0.895, timed: "26600ms", hidden: false}
+# cross-3 {x: -6.8, y: 99, scale: 0.895, timed: "26600ms"}
 
 in
 
-# cross-4 {x: 17, y: 99, scale: 0.881, timed: "27000ms", hidden: false}
+# cross-4 {x: -3.4, y: 99, scale: 0.881, timed: "27000ms"}
 
 the
 
-# cross-5 {x: -17, y: 94.5, scale: 1.182, timed: "27400ms", hidden: false}
+# cross-5 {x: -17, y: 94.5, scale: 1.182, timed: "27600ms"}
 
 Texas
 
-# cross-6 {x: -8.5, y: 94.5, scale: 0.962, timed: "28000ms", hidden: false}
+# cross-6 {x: -13.6, y: 94.5, scale: 0.962, timed: "28000ms"}
 
-Sun
+◖Sun◗
 
-# cross-7 {x: 0, y: 94.5, rotate-z: 90, scale: 0.997, timed: "28600ms", hidden: false}
+# cross-7 {x: 0, y: 94.5, rotate-z: 90, scale: 0.997, timed: "28600ms"}
 
 Outlaws
 
-# cross-8 {x: 8.5, y: 94.5, scale: 1.38, timed: "29400ms", hidden: false}
+# cross-8 {x: 3.4, y: 94.5, scale: 1.38, timed: "29400ms"}
 
 outrun
 
-# cross-9 {x: 17, y: 94.5, scale: 0.815, timed: "30200ms", hidden: false}
+# cross-9 {x: 6.8, y: 94.5, scale: 0.815, timed: "30200ms"}
 
 and
 
-# cross-10 {x: -17, y: 90, scale: 0.915, timed: "31000ms", hidden: false}
+# cross-10 {x: -17, y: 90, scale: 0.915, timed: "31000ms"}
 
-outgun
+outgun       •
+╟┘
 
-# cross-11 {x: -8.5, y: 90, scale: 1.235, timed: "31800ms", hidden: false}
+# cross-11 {x: -8.5, y: 90, scale: 1.235, timed: "31800ms"}
 
 Shoot
 
-# cross-12 {x: 0, y: 90, scale: 0.984, timed: "32180ms", hidden: false}
+# cross-12 {x: -5.1, y: 90, scale: 0.984, timed: "32180ms"}
 
 to
 
-# cross-13 {x: 8.5, y: 90, scale: 1.15, timed: "32560ms", hidden: false}
+# cross-13 {x: -1.7, y: 90, scale: 1.15, timed: "32560ms"}
 
 kill
 
-# cross-14 {x: 17, y: 90, scale: 1.112, timed: "32940ms", hidden: false}
+# cross-14 {x: 1.7, y: 90, scale: 1.112, timed: "32940ms"}
 
 They
 
-# cross-15 {x: -17, y: 85.5, scale: 0.905, timed: "33320ms", hidden: false}
+# cross-15 {x: -17, y: 85.5, scale: 0.905, timed: "33320ms"}
 
-shoot    .
+shoot
 
-# cross-16 {x: -8.5, y: 85.5, scale: 1.098, timed: "33700ms", hidden: false}
+# cross-16 {x: -13.6, y: 85.5, scale: 1.098, timed: "33700ms"}
 
 for
 
-# cross-17 {x: 0, y: 85.5, scale: 1.142, timed: "34080ms", hidden: false}
+# cross-17 {x: -10.2, y: 85.5, scale: 1.142, timed: "34080ms"}
 
 the
 
-# cross-18 {x: 8.5, y: 85.5, rotate-x: 30, rotate-y: -10, scale: 1.214, timed: "34460ms", hidden: false}
+# cross-18 {x: -6.8, y: 85.5, scale: 1.214, timed: "34460ms"}
 
-giggle :D
+giggle
 
-# cross-19 {x: 17, y: 85.5, scale: 1.06, timed: "34840ms", hidden: false}
+# cross-19 {x: -3.4, y: 85.5, scale: 1.06, timed: "34840ms"}
 
 and
 
-# cross-20 {x: -17, y: 81, rotate-x: 89, scale: 1.123, timed: "35220ms", hidden: false}
+# cross-20 {x: -17, y: 81, scale: 1.123, timed: "35220ms"}
 
--~ thrill ~-
+thrill
 
-# cross-21 {x: -8.5, y: 81, scale: 0.996, timed: "35600ms", hidden: false}
+# cross-21 {x: -8.5, y: 81, scale: 0.996, timed: "35600ms"}
 
 They
 
-# cross-22 {x: 0, y: 81, scale: 0.837, timed: "36000ms", hidden: false}
+# cross-22 {x: -5.1, y: 81, scale: 0.837, timed: "36000ms"}
 
 love
 
-# cross-23 {x: 8.5, y: 81, scale: 0.978, timed: "36400ms", hidden: false}
+# cross-23 {x: -1.7, y: 81, scale: 0.978, timed: "36400ms"}
 
 that
 
-# cross-24 {x: 17, y: 81, scale: 1.057, timed: "36800ms", hidden: false}
+# cross-24 {x: 1.7, y: 81, scale: 1.057, timed: "36800ms"}
 
 blood
+⠈
 
-# cross-25 {x: -17, y: 76.5, scale: 1.219, timed: "37200ms", hidden: false}
+# cross-25 {x: -17, y: 76.5, scale: 1.219, timed: "37200ms"}
 
 to
 
-# cross-26 {x: -8.5, y: 76.5, scale: 1.077, timed: "37600ms", hidden: false}
+# cross-26 {x: -13.6, y: 76.5, scale: 1.077, timed: "37600ms"}
 
 spill
-
-# cross-27 {x: 0, y: 76.5, scale: 1.102, timed: "38000ms", hidden: false}
+ .
+# cross-27 {x: 0, y: 76.5, scale: 1.102, timed: "38000ms"}
 
 And
 
-# cross-28 {x: 8.5, y: 76.5, scale: 1.359, timed: "38680ms", hidden: false}
+# cross-28 {x: 3.4, y: 76.5, scale: 1.359, timed: "38680ms"}
 
 amidst
 
-# cross-29 {x: 17, y: 76.5, scale: 1.122, timed: "39360ms", hidden: false}
+# cross-29 {x: 6.8, y: 76.5, scale: 1.122, timed: "39360ms"}
 
 them
 
-# cross-30 {x: -17, y: 72, scale: 1.269, timed: "40040ms", hidden: false}
+# cross-30 {x: -17, y: 72, scale: 1.269, timed: "40040ms"}
 
 standing
 
-# cross-31 {x: -8.5, y: 72, scale: 1.197, timed: "40720ms", hidden: false}
+# cross-31 {x: -13.6, y: 72, scale: 1.197, timed: "40720ms"}
 
 t
 a
 l
 l
 
-# cross-32 {x: 0, y: 72, rotate-z:-90, scale: 1.255, timed: "41400ms", hidden: false}
+# cross-32 {x: 0, y: 72, scale: 1.255, timed: "41400ms"}
 
 Mighty
 
-# cross-33 {x: 8.5, y: 72, scale: 1.093, timed: "41800ms", hidden: false}
+# cross-33 {x: 3.4, y: 72, scale: 1.093, timed: "41800ms"}
 
 and
 
-# cross-34 {x: 17, y: 72, scale: 0.902, timed: "42200ms", hidden: false}
+# cross-34 {x: 6.8, y: 72, scale: 0.902, timed: "42200ms"}
 
-proud
+PROUD
 
-# cross-35 {x: -17, y: 67.5, scale: 0.85, timed: "42600ms", hidden: false}
+# cross-35 {x: -17, y: 67.5, scale: 0.85, timed: "42600ms"}
 
 on
 
-# cross-36 {x: -8.5, y: 67.5, scale: 0.998, timed: "43000ms", hidden: false}
+# cross-36 {x: -13.6, y: 67.5, scale: 0.998, timed: "43000ms"}
 
 top
 
-# cross-37 {x: 0, y: 67.5, scale: 0.877, timed: "43400ms", hidden: false}
+# cross-37 {x: -10.2, y: 67.5, scale: 0.877, timed: "43400ms"}
 
 of
 
-# cross-38 {x: 8.5, y: 67.5, scale: 1.373, timed: "43800ms", hidden: false}
+# cross-38 {x: -6.8, y: 67.5, scale: 1.373, timed: "43800ms"}
 
 it
 
-# cross-39 {x: 17, y: 67.5, scale: 1.214, timed: "44200ms", hidden: false}
+# cross-39 {x: -3.4, y: 67.5, scale: 1.214, timed: "44200ms"}
 
 all
 
-# cross-40 {x: -17, y: 63, scale: 1.12, timed: "44600ms", hidden: false}
+# cross-40 {x: -17, y: 63, scale: 1.12, timed: "44600ms"}
 
 One
 
-# cross-41 {x: -8.5, y: 63, rotate-z:-90, scale: 0.952, timed: "44680ms", hidden: false}
+# cross-41 {x: -13.6, y: 63, scale: 0.952, timed: "45400ms"}
 
 man
 
-# cross-42 {x: 0, y: 63, scale: 1.02, timed: "44760ms", hidden: false}
+# cross-42 {x: -10.2, y: 63,  rotate-z: -90, scale: 1.02, timed: "45800ms"}
 
-towers
+TOWERS
 
-# cross-43 {x: 8.5, y: 63, scale: 1.322, timed: "44840ms", hidden: false}
+# cross-43 {x: -6.8, y: 63, scale: 1.322, timed: "46600ms"}
 
 without
 
-# cross-44 {x: 17, y: 63, scale: 1.257, timed: "44920ms", hidden: false}
+# cross-44 {x: -3.4, y: 63, scale: 0.5, timed: "47000ms"}
 
 shame
 
-# cross-45 {x: -17, y: 58.5, scale: 1.291, timed: "48140ms", hidden: false}
+# cross-45 {x: -17, y: 58.5, scale: 1.291, timed: "48140ms"}
 
 One
 
-# cross-46 {x: -8.5, y: 58.5, rotate-z: 90, scale: 0.808, timed: "48852ms", hidden: false}
+# cross-46 {x: -13.6, y: 58.5, scale: 0.808, timed: "48852ms"}
 
 man
 
-# cross-47 {x: 0, y: 58.5, scale: 1.147, timed: "49564ms", hidden: false}
+# cross-47 {x: -10.2, y: 58.5, scale: 1.147, timed: "49500ms"}
 
-overseas
+oversees
 
-# cross-48 {x: 8.5, y: 58.5, scale: 0.94, timed: "50276ms", hidden: false}
+# cross-48 {x: -6.8, y: 58.5, scale: 0.94, timed: "50100ms"}
 
 this
 
-# cross-49 {x: 17, y: 58.5, scale: 1.234, timed: "50988ms", hidden: false}
+# cross-49 {x: -3.4, y: 58.5, scale: 1.234, timed: "50800ms"}
 
 game
 
-# cross-50 {x: -17, y: 54, scale: 0.907, timed: "51700ms", hidden: false}
+# cross-50 {x: -17, y: 54, scale: 0.907, timed: "51100ms"}
 
 They
 
-# cross-51 {x: -8.5, y: 54, scale: 1.071, timed: "52213ms", hidden: false}
+# cross-51 {x: -13.6, y: 54, scale: 1.071, timed: "52213ms"}
 
 call
 
-# cross-52 {x: 0, y: 54, scale: 1.137, timed: "52727ms", hidden: false}
+# cross-52 {x: -10.2, y: 54, scale: 1.137, timed: "52727ms"}
 
 him
 
-# cross-53 {x: 8.5, y: 54, scale: 1.254, timed: "53240ms", hidden: false}
+# cross-53 {x: -6.8, y: 54, scale: 1.254, timed: "53240ms"}
 
 Billy
 
-# cross-54 {x: 17, y: 54, scale: 1.302, timed: "53753ms", hidden: false}
+# cross-54 {x: -3.4, y: 54, scale: 1.302, timed: "53753ms"}
 
 the
 
-# cross-55 {x: -76.5, y: 49.5, scale: 0.857, timed: "54267ms", hidden: false}
+# cross-55 {x: -76.5, y: 49.5, scale: 1.5, timed: "54267ms"}
 
 Saint
 
-# cross-56 {x: -68, y: 49.5, rotate-z: 90, scale: 0.872, timed: "54780ms", hidden: false}
+# cross-56 {x: -68, y: 49.5, scale: 0.872, timed: "54780ms"}
 
 Saint
 
-# cross-57 {x: -59.5, y: 49.5, scale: 1.165, timed: "55100ms", hidden: false}
+# cross-57 {x: -64.6, y: 49.5, scale: 1.165, timed: "55100ms"}
 
 Billy
 
-# cross-58 {x: -51, y: 49.5, scale: 1, timed: "55420ms", hidden: false}
+# cross-58 {x: -61.2, y: 49.5, scale: 1, timed: "55420ms"}
 
 that's
 
-# cross-59 {x: -42.5, y: 49.5, scale: 1.231, timed: "55740ms", hidden: false}
+# cross-59 {x: -57.8, y: 49.5, scale: 1.231, timed: "55740ms"}
 
 his
 
-# cross-60 {x: -34, y: 49.5, scale: 1.279, timed: "56060ms", hidden: false}
+# cross-60 {x: -54.4, y: 49.5, scale: 1.279, timed: "56060ms"}
 
 name
 
-# cross-61 {x: -25.5, y: 49.5, scale: 1.008, timed: "56380ms", hidden: false}
+# cross-61 {x: -25.5, y: 49.5, scale: 1.008, timed: "56380ms"}
 
 One
 
-# cross-62 {x: -17, y: 49.5, scale: 1.33, timed: "56751ms", hidden: false}
+# cross-62 {x: -22.1, y: 49.5, scale: 1.33, timed: "56751ms"}
 
-e.vi:l
+evil
 
-# cross-63 {x: -8.5, y: 49.5, scale: 1.159, timed: "57123ms", hidden: false}
+# cross-63 {x: -18.7, y: 49.5, scale: 1.159, timed: "57100ms"}
 
-r.o.tte.n
+r:otte.n
 
-# cross-64 {x: 0, y: 49.5, scale: 0.9, timed: "57494ms", hidden: false}
+# cross-64 {x: -15.3, y: 49.5, scale: 0.9, timed: "57600ms"}
 
 son
 
-# cross-65 {x: 8.5, y: 49.5, scale: 0.987, timed: "57866ms", hidden: false}
+# cross-65 {x: -11.9, y: 49.5, scale: 0.987, timed: "58000ms"}
 
 of
 
-# cross-66 {x: 17, y: 49.5, scale: 0.812, timed: "58237ms", hidden: false}
+# cross-66 {x: -8.5, y: 49.5, scale: 0.812, timed: "58300ms"}
 
 a
 
-# cross-67 {x: 25.5, y: 49.5, scale: 1.031, timed: "58609ms", hidden: false}
+# cross-67 {x: -5.1, y: 49.5, scale: 1.031, timed: "58600ms"}
 
-gun
-|
-
-# cross-68 {x: 34, y: 49.5, rotate-z: 90, scale: 0.921, timed: "58980ms", hidden: false}
+gun  -
+╟┘
+# cross-68 {x: 34, y: 49.5, scale: 0.921, timed: "59600ms"}
 
 Does
 
-# cross-69 {x: 42.5, y: 49.5, scale: 0.992, timed: "59770ms", hidden: false}
+# cross-69 {x: 37.4, y: 49.5, scale: 0.992, timed: "61000ms"}
 
 hurt
 
-# cross-70 {x: 51, y: 49.5, scale: 1.148, timed: "60560ms", hidden: false}
+# cross-70 {x: 40.8, y: 49.5, scale: 1.148, timed: "61400ms"}
 
 for
 
-# cross-71 {x: 59.5, y: 49.5, scale: 1.171, timed: "61350ms", hidden: false}
+# cross-71 {x: 44.2, y: 49.5, scale: 1.171, timed: "61800ms"}
 
 work
 
-# cross-72 {x: 68, y: 49.5, scale: 1.008, timed: "62140ms", hidden: false}
+# cross-72 {x: 68, y: 49.5, scale: 1.008, timed: "62200ms"}
 
 And
 
-# cross-73 {x: 76.5, y: 49.5, scale: 1.268, timed: "62550ms", hidden: false}
+# cross-73 {x: 71.4, y: 49.5, scale: 1.268, timed: "62600ms"}
 
 hurt
 
-# cross-74 {x: -76.5, y: 45, scale: 1.219, timed: "62960ms", hidden: false}
+# cross-74 {x: -76.5, y: 45, scale: 1.219, timed: "63000ms"}
 
 for
 
-# cross-75 {x: -68, y: 45, scale: 0.926, timed: "63370ms", hidden: false}
+# cross-75 {x: -73.1, y: 45, scale: 0.926, timed: "63400ms"}
 
 fun
 
-# cross-76 {x: -59.5, y: 45, scale: 0.879, timed: "63780ms", hidden: false}
+# cross-76 {x: -59.5, y: 45, scale: 0.879, timed: "63800ms"}
 
 And
 
-# cross-77 {x: -51, y: 45, scale: 1.385, timed: "63933ms", hidden: false}
+# cross-77 {x: -56.1, y: 45, scale: 1.385, timed: "64200ms"}
 
 when
 
-# cross-78 {x: -42.5, y: 45, scale: 1.028, timed: "64085ms", hidden: false}
+# cross-78 {x: -52.7, y: 45, scale: 1.028, timed: "64600ms"}
 
 he
 
-# cross-79 {x: -34, y: 45, scale: 0.975, timed: "64238ms", hidden: false}
+# cross-79 {x: -49.3, y: 45, scale: 0.975, timed: "65000ms"}
 
 come
 
-# cross-80 {x: -25.5, y: 45, scale: 0.954, timed: "64390ms", hidden: false}
+# cross-80 {x: -45.9, y: 45, scale: 0.954, timed: "65400ms"}
 
 round
 
-# cross-81 {x: -17, y: 45, scale: 1.097, timed: "64543ms", hidden: false}
+# cross-81 {x: -42.5, y: 45, scale: 1.097, timed: "65800ms"}
 
 with
 
-# cross-82 {x: -8.5, y: 45, scale: 0.851, timed: "64695ms", hidden: false}
+# cross-82 {x: -39.1, y: 45, scale: 0.851, timed: "66200ms"}
 
 his
 
-# cross-83 {x: 0, y: 45, scale: 0.925, timed: "64848ms", hidden: false}
+# cross-83 {x: -35.7, y: 45, scale: 0.925, timed: "66600ms"}
 
 gang
 
-# cross-84 {x: 8.5, y: 45, scale: 1.086, timed: "65000ms", hidden: false}
+# cross-84 {x: 8.5, y: 45, scale: 1.086, timed: "67000ms"}
 
 All
 
-# cross-85 {x: 17, y: 45, scale: 1.171, timed: "65750ms", hidden: false}
+# cross-85 {x: 11.9, y: 45, rotate-z: 90, scale: 1.171, timed: "67400ms"}
 
 them
 
-# cross-86 {x: 25.5, y: 45, scale: 1.036, timed: "66500ms", hidden: false}
+# cross-86 {x: 15.3, y: 45, scale: 1.036, timed: "67800ms"}
 
 hoodlums
 
-# cross-87 {x: 34, y: 45, scale: 1.098, timed: "67250ms", hidden: false}
+# cross-87 {x: 18.7, y: 45, scale: 1.098, timed: "68200ms"}
 
-     /
-sing -
-     \
-# cross-88 {x: 42.5, y: 45, scale: 0.914, timed: "68000ms", hidden: false}
+sing
+
+# cross-88 {x: 42.5, y: 45, scale: 0.914, timed: "68600ms"}
 
 Go
 
-# cross-89 {x: 51, y: 45, scale: 0.848, timed: "68714ms", hidden: false}
+# cross-89 {x: 45.9, y: 45, scale: 0.848, timed: "69000ms"}
 
 on
 
-# cross-90 {x: 59.5, y: 45, scale: 0.802, timed: "69429ms", hidden: false}
+# cross-90 {x: 49.3, y: 45, scale: 0.802, timed: "69429ms"}
 
 Saint
 
-# cross-91 {x: 68, y: 45, scale: 0.948, timed: "70143ms", hidden: false}
+# cross-91 {x: 52.7, y: 45, scale: 0.948, timed: "70143ms"}
 
 Billy
 
-# cross-92 {x: 76.5, y: 45, scale: 1.199, timed: "70857ms", hidden: false}
+# cross-92 {x: 56.1, y: 45, scale: 1.199, timed: "70857ms"}
 
 do
 
-# cross-93 {x: -76.5, y: 40.5, scale: 1.269, timed: "71571ms", hidden: false}
+# cross-93 {x: -76.5, y: 40.5, scale: 1.269, timed: "71571ms"}
 
 your
 
-# cross-94 {x: -68, y: 40.5, scale: 1.186, timed: "72286ms", hidden: false}
+# cross-94 {x: -73.1, y: 40.5, scale: 1.186, timed: "72286ms"}
 
 thing
 
-# cross-95 {x: -59.5, y: 40.5, scale: 0.858, timed: "73000ms", hidden: false}
+# cross-95 {x: -59.5, y: 40.5, scale: 0.858, timed: "73000ms"}
 
 Go
 
-# cross-96 {x: -51, y: 40.5, scale: 1.061, timed: "73833ms", hidden: false}
+# cross-96 {x: -56.1, y: 40.5, scale: 1.061, timed: "73833ms"}
 
 on
 
-# cross-97 {x: -42.5, y: 40.5, scale: 1.205, timed: "74667ms", hidden: false}
+# cross-97 {x: -52.7, y: 40.5, scale: 1.205, timed: "74667ms"}
 
 Saint
 
-# cross-98 {x: -34, y: 40.5, scale: 1.304, timed: "75500ms", hidden: false}
+# cross-98 {x: -49.3, y: 40.5, scale: 1.304, timed: "75500ms"}
 
 Billy
 
-# cross-99 {x: -25.5, y: 40.5, scale: 1.156, timed: "76333ms", hidden: false}
+# cross-99 {x: -45.9, y: 40.5, scale: 1.156, timed: "76333ms"}
 
 go
 
-# cross-100 {x: -17, y: 40.5, scale: 1.31, timed: "77167ms", hidden: false}
+# cross-100 {x: -42.5, y: 40.5, scale: 1.31, timed: "77167ms"}
 
 and
 
-# cross-101 {x: -8.5, y: 40.5, scale: 0.969, timed: "85000ms", hidden: false}
+# cross-101 {x: -8.5, y: 40.5, scale: 0.969, timed: "85000ms"}
 
 Bring
 
-# cross-102 {x: 0, y: 40.5, scale: 1.075, timed: "86567ms", hidden: false}
+# cross-102 {x: -5.1, y: 40.5, scale: 1.075, timed: "86567ms"}
 
 the
 
-# cross-103 {x: 8.5, y: 40.5, scale: 0.83, timed: "88133ms", hidden: false}
+# cross-103 {x: -1.7, y: 40.5, scale: 0.83, timed: "88133ms"}
 
 pain
 
-# cross-104 {x: 17, y: 40.5, scale: 1.382, timed: "92840ms", hidden: false}
+# cross-104 {x: 17, y: 40.5, scale: 1.382, timed: "92840ms"}
 
 Word
 
-# cross-105 {x: 25.5, y: 40.5, scale: 1.275, timed: "93043ms", hidden: false}
+# cross-105 {x: 20.4, y: 40.5, scale: 1.275, timed: "93043ms"}
 
 got
 
-# cross-106 {x: 34, y: 40.5, scale: 1.281, timed: "93245ms", hidden: false}
+# cross-106 {x: 23.8, y: 40.5, scale: 1.281, timed: "93245ms"}
 
 round
 
-# cross-107 {x: 42.5, y: 40.5, scale: 0.855, timed: "93448ms", hidden: false}
+# cross-107 {x: 27.2, y: 40.5, scale: 0.855, timed: "93448ms"}
 
 bout
 
-# cross-108 {x: 51, y: 40.5, scale: 1.154, timed: "93650ms", hidden: false}
+# cross-108 {x: 30.6, y: 40.5, scale: 1.154, timed: "93650ms"}
 
 a
 
-# cross-109 {x: 59.5, y: 40.5, scale: 0.819, timed: "93853ms", hidden: false}
+# cross-109 {x: 34, y: 40.5, scale: 0.819, timed: "93853ms"}
 
 strange
 
-# cross-110 {x: 68, y: 40.5, scale: 1.246, timed: "94055ms", hidden: false}
+# cross-110 {x: 37.4, y: 40.5, scale: 1.246, timed: "94055ms"}
 
 young
 
-# cross-111 {x: 76.5, y: 40.5, scale: 1.108, timed: "94258ms", hidden: false}
+# cross-111 {x: 40.8, y: 40.5, scale: 1.108, timed: "94258ms"}
 
 man
 
-# cross-112 {x: -76.5, y: 36, scale: 0.978, timed: "94460ms", hidden: false}
+# cross-112 {x: -76.5, y: 36, scale: 0.978, timed: "94460ms"}
 
 Colt
-|
 
-# cross-113 {x: -68, y: 36, scale: 1.085, timed: "94663ms", hidden: false}
+# cross-113 {x: -73.1, y: 36, scale: 1.085, timed: "94663ms"}
 
 at
 
-# cross-114 {x: -59.5, y: 36, scale: 1.077, timed: "94865ms", hidden: false}
+# cross-114 {x: -69.7, y: 36, scale: 1.077, timed: "94865ms"}
 
 his
 
-# cross-115 {x: -51, y: 36, scale: 1.187, timed: "95068ms", hidden: false}
+# cross-115 {x: -66.3, y: 36, scale: 1.187, timed: "95068ms"}
 
 side
 
-# cross-116 {x: -42.5, y: 36, scale: 1.169, timed: "95270ms", hidden: false}
+# cross-116 {x: -62.9, y: 36, scale: 1.169, timed: "95270ms"}
 
 and
 
-# cross-117 {x: -34, y: 36, scale: 1.107, timed: "95473ms", hidden: false}
+# cross-117 {x: -59.5, y: 36, rotate-z: 90, scale: 1.107, timed: "95473ms"}
 
-sword|========>
+sword|=====>
 
-# cross-118 {x: -25.5, y: 36, scale: 0.944, timed: "95675ms", hidden: false}
+# cross-118 {x: -56.1, y: 36, scale: 0.944, timed: "95675ms"}
 
 in
 
-# cross-119 {x: -17, y: 36, scale: 1.35, timed: "95878ms", hidden: false}
+# cross-119 {x: -52.7, y: 36, scale: 1.35, timed: "95878ms"}
 
 hand
 
-# cross-120 {x: -8.5, y: 36, scale: 0.892, timed: "96080ms", hidden: false}
+# cross-120 {x: -8.5, y: 36, scale: 0.892, timed: "96080ms"}
 
 Hunting
 
-# cross-121 {x: 0, y: 36, scale: 0.868, timed: "96489ms", hidden: false}
+# cross-121 {x: -5.1, y: 36, scale: 0.868, timed: "96489ms"}
 
 souls
 
-# cross-122 {x: 8.5, y: 36, scale: 1.326, timed: "96897ms", hidden: false}
+# cross-122 {x: -1.7, y: 36, scale: 1.326, timed: "96897ms"}
 
 down
 
-# cross-123 {x: 17, y: 36, scale: 1.387, timed: "97306ms", hidden: false}
+# cross-123 {x: 1.7, y: 36, scale: 1.387, timed: "97306ms"}
 
 like
 
-# cross-124 {x: 25.5, y: 36, scale: 1.13, timed: "97714ms", hidden: false}
+# cross-124 {x: 5.1, y: 36, scale: 1.13, timed: "97714ms"}
 
 a
 
-# cross-125 {x: 34, y: 36, scale: 1.117, timed: "98123ms", hidden: false}
+# cross-125 {x: 8.5, y: 36, scale: 1.117, timed: "98123ms"}
 
 sour
 
-# cross-126 {x: 42.5, y: 36, scale: 1.148, timed: "98531ms", hidden: false}
+# cross-126 {x: 11.9, y: 36, scale: 1.148, timed: "98531ms"}
 
 bloodhound
 
-# cross-127 {x: 51, y: 36, scale: 1.156, timed: "98940ms", hidden: false}
+# cross-127 {x: 51, y: 36, scale: 1.156, timed: "98940ms"}
 
 Even
 
-# cross-128 {x: 59.5, y: 36, scale: 1.129, timed: "99338ms", hidden: false}
+# cross-128 {x: 54.4, y: 36, scale: 1.129, timed: "99338ms"}
 
 demons
 
-# cross-129 {x: 68, y: 36, scale: 1.132, timed: "99735ms", hidden: false}
+# cross-129 {x: 57.8, y: 36, scale: 1.132, timed: "99735ms"}
 
->>> flee
+flee
 
-# cross-130 {x: 76.5, y: 36, scale: 0.847, timed: "100133ms", hidden: false}
+# cross-130 {x: 61.2, y: 36, scale: 0.847, timed: "100133ms"}
 
 when
 
-# cross-131 {x: -76.5, y: 31.5, scale: 0.822, timed: "100530ms", hidden: false}
+# cross-131 {x: -76.5, y: 31.5, scale: 0.822, timed: "100530ms"}
 
 he
 
-# cross-132 {x: -68, y: 31.5, scale: 1.122, timed: "100928ms", hidden: false}
+# cross-132 {x: -73.1, y: 31.5, scale: 1.122, timed: "100928ms"}
 
 come
 
-# cross-133 {x: -59.5, y: 31.5, scale: 0.813, timed: "101325ms", hidden: false}
+# cross-133 {x: -69.7, y: 31.5, scale: 0.813, timed: "101325ms"}
 
 to
 
-# cross-134 {x: -51, y: 31.5, scale: 1.242, timed: "101723ms", hidden: false}
+# cross-134 {x: -66.3, y: 31.5, scale: 1.242, timed: "101723ms"}
 
 town
 
-# cross-135 {x: -42.5, y: 31.5, scale: 1.117, timed: "102120ms", hidden: false}
+# cross-135 {x: -42.5, y: 31.5, scale: 1.117, timed: "102120ms"}
 
 It's
 
-# cross-136 {x: -34, y: 31.5, rotate-z: 90, scale: 0.932, timed: "102508ms", hidden: false}
+# cross-136 {x: -39.1, y: 31.5, scale: 0.932, timed: "102508ms"}
 
 said
 
-# cross-137 {x: -25.5, y: 31.5, scale: 0.849, timed: "102896ms", hidden: false}
+# cross-137 {x: -35.7, y: 31.5, scale: 0.849, timed: "102896ms"}
 
 he
 
-# cross-138 {x: -17, y: 31.5, scale: 0.846, timed: "103284ms", hidden: false}
+# cross-138 {x: -32.3, y: 31.5, scale: 0.846, timed: "103284ms"}
 
 woke
 
-# cross-139 {x: -8.5, y: 31.5, scale: 0.922, timed: "103672ms", hidden: false}
+# cross-139 {x: -28.9, y: 31.5, scale: 0.922, timed: "103672ms"}
 
 the
 
-# cross-140 {x: 0, y: 31.5, scale: 1.331, timed: "104060ms", hidden: false}
+# cross-140 {x: -25.5, y: 31.5, scale: 1.331, timed: "104060ms"}
 
 dead
 
-# cross-141 {x: 8.5, y: 31.5, scale: 1.028, timed: "104448ms", hidden: false}
+# cross-141 {x: -22.1, y: 31.5, scale: 1.028, timed: "104448ms"}
 
 then
 
-# cross-142 {x: 17, y: 31.5, scale: 1.212, timed: "104836ms", hidden: false}
+# cross-142 {x: -18.7, y: 31.5, scale: 1.212, timed: "104836ms"}
 
 drowned
 
-# cross-143 {x: 25.5, y: 31.5, scale: 0.947, timed: "105224ms", hidden: false}
+# cross-143 {x: -15.3, y: 31.5, scale: 0.947, timed: "105224ms"}
 
 them
 
-# cross-144 {x: 34, y: 31.5, scale: 1.327, timed: "105612ms", hidden: false}
+# cross-144 {x: -11.9, y: 31.5, scale: 1.327, timed: "105612ms"}
 
 again
 
-# cross-145 {x: 42.5, y: 31.5, scale: 0.886, timed: "106000ms", hidden: false}
+# cross-145 {x: 42.5, y: 31.5, scale: 0.886, timed: "106000ms"}
 
 By
 
-# cross-146 {x: 51, y: 31.5, scale: 0.803, timed: "106500ms", hidden: false}
+# cross-146 {x: 45.9, y: 31.5, scale: 0.803, timed: "106500ms"}
 
 the
 
-# cross-147 {x: 59.5, y: 31.5, scale: 1.334, timed: "107000ms", hidden: false}
+# cross-147 {x: 49.3, y: 31.5, scale: 1.334, timed: "107000ms"}
 
-~ ~ ~ river's ~ ~ ~
+rivers
 
-# cross-148 {x: 68, y: 31.5, scale: 0.981, timed: "107500ms", hidden: false}
+# cross-148 {x: 52.7, y: 31.5, scale: 0.981, timed: "107500ms"}
 
 edge
 
-# cross-149 {x: 76.5, y: 31.5, scale: 1.126, timed: "108000ms", hidden: false}
+# cross-149 {x: 56.1, y: 31.5, scale: 1.126, timed: "108000ms"}
 
 Saint
 
-# cross-150 {x: -76.5, y: 27, scale: 1.265, timed: "108500ms", hidden: false}
+# cross-150 {x: -76.5, y: 27, scale: 1.265, timed: "108500ms"}
 
 Billy
 
-# cross-151 {x: -68, y: 27, scale: 1.336, timed: "109000ms", hidden: false}
+# cross-151 {x: -68, y: 27, scale: 1.336, timed: "109000ms"}
 
 It's
 
-# cross-152 {x: -59.5, y: 27, scale: 1.235, timed: "109375ms", hidden: false}
+# cross-152 {x: -64.6, y: 27, scale: 1.235, timed: "109375ms"}
 
 all
 
-# cross-153 {x: -51, y: 27, scale: 1.187, timed: "109750ms", hidden: false}
+# cross-153 {x: -61.2, y: 27, scale: 1.187, timed: "109750ms"}
 
 on
 
-# cross-154 {x: -42.5, y: 27, scale: 1.156, timed: "110125ms", hidden: false}
+# cross-154 {x: -57.8, y: 27, scale: 1.156, timed: "110125ms"}
 
 you
 
-# cross-155 {x: -34, y: 27, scale: 1.286, timed: "110500ms", hidden: false}
+# cross-155 {x: -54.4, y: 27, scale: 1.286, timed: "110500ms"}
 
 what
 
-# cross-156 {x: -25.5, y: 27, scale: 1.378, timed: "110875ms", hidden: false}
+# cross-156 {x: -51, y: 27, scale: 1.378, timed: "110875ms"}
 
 ya
 
-# cross-157 {x: -17, y: 27, scale: 1.09, timed: "111250ms", hidden: false}
+# cross-157 {x: -47.6, y: 27, scale: 1.09, timed: "111250ms"}
 
 gonna
 
-# cross-158 {x: -8.5, y: 27, scale: 0.83, timed: "111625ms", hidden: false}
+# cross-158 {x: -44.2, y: 27, scale: 0.83, timed: "111625ms"}
 
 do
 
-# cross-159 {x: 0, y: 27, scale: 1.235, timed: "112000ms", hidden: false}
+# cross-159 {x: 0, y: 27, scale: 1.235, timed: "112000ms"}
 
 What
 
-# cross-160 {x: 8.5, y: 27, scale: 1.353, timed: "112300ms", hidden: false}
+# cross-160 {x: 3.4, y: 27, scale: 1.353, timed: "112300ms"}
 
 ya
 
-# cross-161 {x: 17, y: 27, scale: 1.26, timed: "112600ms", hidden: false}
+# cross-161 {x: 6.8, y: 27, scale: 1.26, timed: "112600ms"}
 
 gonna
 
-# cross-162 {x: 25.5, y: 27, scale: 1.188, timed: "112900ms", hidden: false}
+# cross-162 {x: 10.2, y: 27, scale: 1.188, timed: "112900ms"}
 
 do
 
-# cross-163 {x: 34, y: 27, scale: 1.178, timed: "113200ms", hidden: false}
+# cross-163 {x: 13.6, y: 27, scale: 1.178, timed: "113200ms"}
 
 with
 
-# cross-164 {x: 42.5, y: 27, scale: 0.875, timed: "113500ms", hidden: false}
+# cross-164 {x: 17, y: 27, scale: 0.875, timed: "113500ms"}
 
 this
 
-# cross-165 {x: 51, y: 27, scale: 0.856, timed: "113800ms", hidden: false}
+# cross-165 {x: 20.4, y: 27, scale: 0.856, timed: "113800ms"}
 
 fool
 
-# cross-166 {x: 59.5, y: 27, scale: 1.331, timed: "114100ms", hidden: false}
+# cross-166 {x: 23.8, y: 27, scale: 1.331, timed: "114100ms"}
 
 this
 
-# cross-167 {x: 68, y: 27, scale: 0.868, timed: "114400ms", hidden: false}
+# cross-167 {x: 27.2, y: 27, scale: 0.868, timed: "114400ms"}
 
 West
 
-# cross-168 {x: 76.5, y: 27, scale: 1.171, timed: "114700ms", hidden: false}
+# cross-168 {x: 30.6, y: 27, scale: 1.171, timed: "114700ms"}
 
 ain't
 
-# cross-169 {x: -76.5, y: 22.5, scale: 0.885, timed: "115000ms", hidden: false}
+# cross-169 {x: -76.5, y: 22.5, scale: 0.885, timed: "115000ms"}
 
-BIG
+Big
 
-# cross-170 {x: -68, y: 22.5, scale: 0.986, timed: "115400ms", hidden: false}
+# cross-170 {x: -73.1, y: 22.5, scale: 0.986, timed: "115400ms"}
 
 enough
 
-# cross-171 {x: -59.5, y: 22.5, scale: 0.871, timed: "115800ms", hidden: false}
+# cross-171 {x: -69.7, y: 22.5, scale: 0.871, timed: "115800ms"}
 
 for
 
-# cross-172 {x: -51, y: 22.5, scale: 1.302, timed: "116200ms", hidden: false}
+# cross-172 {x: -66.3, y: 22.5, scale: 1.302, timed: "116200ms"}
 
 two
 
-# cross-173 {x: -42.5, y: 22.5, scale: 0.835, timed: "116600ms", hidden: false}
+# cross-173 {x: -62.9, y: 22.5, scale: 0.835, timed: "116600ms"}
 
 outlaws
 
-# cross-174 {x: -34, y: 22.5, scale: 0.884, timed: "117000ms", hidden: false}
+# cross-174 {x: -34, y: 22.5, scale: 0.884, timed: "117000ms"}
 
 Kicking
 
-# cross-175 {x: -25.5, y: 22.5, scale: 1.338, timed: "117556ms", hidden: false}
+# cross-175 {x: -30.6, y: 22.5, scale: 1.338, timed: "117556ms"}
 
 in
 
-# cross-176 {x: -17, y: 22.5, scale: 1.093, timed: "118111ms", hidden: false}
+# cross-176 {x: -27.2, y: 22.5, scale: 1.093, timed: "118111ms"}
 
 doors
 
-# cross-177 {x: -8.5, y: 22.5, scale: 1.217, timed: "118667ms", hidden: false}
+# cross-177 {x: -23.8, y: 22.5, scale: 1.217, timed: "118667ms"}
 
 and
 
-# cross-178 {x: 0, y: 22.5, scale: 1.333, timed: "119222ms", hidden: false}
+# cross-178 {x: -20.4, y: 22.5, scale: 1.333, timed: "119222ms"}
 
 teeth
 
-# cross-179 {x: 8.5, y: 22.5, scale: 1, timed: "119778ms", hidden: false}
+# cross-179 {x: -17, y: 22.5, scale: 1, timed: "119778ms"}
 
 and
 
-# cross-180 {x: 17, y: 22.5, scale: 1.007, timed: "120333ms", hidden: false}
+# cross-180 {x: -13.6, y: 22.5, scale: 1.007, timed: "120333ms"}
 
 more
 
-# cross-181 {x: 25.5, y: 22.5, scale: 1.246, timed: "120889ms", hidden: false}
+# cross-181 {x: -10.2, y: 22.5, scale: 1.246, timed: "120889ms"}
 
 but
 
-# cross-182 {x: 34, y: 22.5, scale: 1.331, timed: "121444ms", hidden: false}
+# cross-182 {x: -6.8, y: 22.5, scale: 1.331, timed: "121444ms"}
 
 you
 
-# cross-183 {x: 42.5, y: 22.5, scale: 1.111, timed: "122000ms", hidden: false}
+# cross-183 {x: 42.5, y: 22.5, scale: 1.111, timed: "122000ms"}
 
 You're
 
-# cross-184 {x: 51, y: 22.5, scale: 1.327, timed: "122375ms", hidden: false}
+# cross-184 {x: 45.9, y: 22.5, scale: 1.327, timed: "122375ms"}
 
 the
 
-# cross-185 {x: 59.5, y: 22.5, scale: 1.068, timed: "122750ms", hidden: false}
+# cross-185 {x: 49.3, y: 22.5, scale: 1.068, timed: "122750ms"}
 
 vilest
 
-# cross-186 {x: 68, y: 22.5, scale: 1.073, timed: "123125ms", hidden: false}
+# cross-186 {x: 52.7, y: 22.5, scale: 1.073, timed: "123125ms"}
 
 sort
 
-# cross-187 {x: 76.5, y: 22.5, rotate-z: 90,  scale: 1.36, timed: "123500ms", hidden: false}
+# cross-187 {x: 56.1, y: 22.5, scale: 1.36, timed: "123500ms"}
 
 Bed
 
-# cross-188 {x: -76.5, y: 18, scale: 1.072, timed: "123875ms", hidden: false}
+# cross-188 {x: -76.5, y: 18, scale: 1.072, timed: "123875ms"}
 
 em
 
-# cross-189 {x: -68, y: 18, scale: 0.942, timed: "124250ms", hidden: false}
+# cross-189 {x: -73.1, y: 18, scale: 0.942, timed: "124250ms"}
 
 down
 
-# cross-190 {x: -59.5, y: 18, scale: 1.011, timed: "124625ms", hidden: false}
+# cross-190 {x: -69.7, y: 18, scale: 1.011, timed: "124625ms"}
 
 Billy
 
-# cross-191 {x: -51, y: 18, scale: 1.366, timed: "125000ms", hidden: false}
+# cross-191 {x: -51, y: 18, scale: 1.366, timed: "125000ms"}
 
 Like
 
-# cross-192 {x: -42.5, y: 18, scale: 1.183, timed: "125500ms", hidden: false}
+# cross-192 {x: -47.6, y: 18, scale: 1.183, timed: "125500ms"}
 
 you
 
-# cross-193 {x: -34, y: 18, scale: 0.992, timed: "126000ms", hidden: false}
+# cross-193 {x: -44.2, y: 18, scale: 0.992, timed: "126000ms"}
 
 do
 
-# cross-194 {x: -25.5, y: 18, scale: 0.812, timed: "126500ms", hidden: false}
+# cross-194 {x: -40.8, y: 18, scale: 0.812, timed: "126500ms"}
 
 for
 
-# cross-195 {x: -17, y: 18, scale: 1.279, timed: "127000ms", hidden: false}
+# cross-195 {x: -37.4, y: 18, scale: 1.279, timed: "127000ms"}
 
 sport
 
-# cross-196 {x: -8.5, y: 18, scale: 0.847, timed: "127500ms", hidden: false}
+# cross-196 {x: -34, y: 18, scale: 0.847, timed: "127500ms"}
 
 mounted
 
-# cross-197 {x: 0, y: 18, rotate-z: 90, scale: 1.122, timed: "128000ms", hidden: false}
+# cross-197 {x: -30.6, y: 18, scale: 1.122, timed: "128000ms"}
 
 his
 
-# cross-198 {x: 8.5, y: 18, scale: 1.159, timed: "128500ms", hidden: false}
+# cross-198 {x: -27.2, y: 18, scale: 1.159, timed: "128500ms"}
 
 horse
-/   \
+/  \
 
-# cross-199 {x: 17, y: 18, scale: 1.319, timed: "129000ms", hidden: false}
+# cross-199 {x: 17, y: 18, scale: 1.319, timed: "129000ms"}
 
 With
 
-# cross-200 {x: 25.5, y: 18, scale: 1.315, timed: "129556ms", hidden: false}
+# cross-200 {x: 20.4, y: 18, scale: 1.315, timed: "129556ms"}
 
 a
 
-# cross-201 {x: 34, y: 18, scale: 0.871, timed: "130111ms", hidden: false}
+# cross-201 {x: 23.8, y: 18, scale: 0.871, timed: "130111ms"}
 
 'Yippie
 
-# cross-202 {x: 42.5, y: 18, scale: 1.32, timed: "130667ms", hidden: false}
+# cross-202 {x: 27.2, y: 18, scale: 1.32, timed: "130667ms"}
 
 Kai
 
-# cross-203 {x: 51, y: 18, scale: 1.014, timed: "131222ms", hidden: false}
+# cross-203 {x: 30.6, y: 18, scale: 1.014, timed: "131222ms"}
 
 Yay!'
 
-# cross-204 {x: 59.5, y: 18, scale: 0.869, timed: "131778ms", hidden: false}
+# cross-204 {x: 34, y: 18, scale: 0.869, timed: "131778ms"}
 
 all
 
-# cross-205 {x: 68, y: 18, scale: 1.103, timed: "132333ms", hidden: false}
+# cross-205 {x: 37.4, y: 18, scale: 1.103, timed: "132333ms"}
 
 them
 
-# cross-206 {x: 76.5, y: 18, scale: 1.285, timed: "132889ms", hidden: false}
+# cross-206 {x: 40.8, y: 18, scale: 1.285, timed: "132889ms"}
 
 hoodlums
 
-# cross-207 {x: -76.5, y: 13.5, scale: 1.062, timed: "133444ms", hidden: false}
+# cross-207 {x: -76.5, y: 13.5, scale: 1.062, timed: "133444ms"}
 
 sing
 
-# cross-208 {x: -68, y: 13.5, scale: 0.826, timed: "134000ms", hidden: false}
+# cross-208 {x: -68, y: 13.5, scale: 0.826, timed: "134000ms"}
 
 Go
 
-# cross-209 {x: -59.5, y: 13.5, scale: 0.987, timed: "134857ms", hidden: false}
+# cross-209 {x: -64.6, y: 13.5, scale: 0.987, timed: "134857ms"}
 
 on
 
-# cross-210 {x: -51, y: 13.5, scale: 1.389, timed: "135714ms", hidden: false}
+# cross-210 {x: -61.2, y: 13.5, scale: 1.389, timed: "135714ms"}
 
 Saint
 
-# cross-211 {x: -42.5, y: 13.5, scale: 1.224, timed: "136571ms", hidden: false}
+# cross-211 {x: -57.8, y: 13.5, scale: 1.224, timed: "136571ms"}
 
 Billy
 
-# cross-212 {x: -34, y: 13.5, scale: 1.121, timed: "137429ms", hidden: false}
+# cross-212 {x: -54.4, y: 13.5, scale: 1.121, timed: "137429ms"}
 
 do
 
-# cross-213 {x: -25.5, y: 13.5, scale: 1.387, timed: "138286ms", hidden: false}
+# cross-213 {x: -51, y: 13.5, scale: 1.387, timed: "138286ms"}
 
 your
 
-# cross-214 {x: -17, y: 13.5, scale: 1.192, timed: "139143ms", hidden: false}
+# cross-214 {x: -47.6, y: 13.5, scale: 1.192, timed: "139143ms"}
 
 thing
 
-# cross-215 {x: -8.5, y: 13.5, scale: 0.996, timed: "140000ms", hidden: false}
+# cross-215 {x: -8.5, y: 13.5, scale: 0.996, timed: "140000ms"}
 
 Go
 
-# cross-216 {x: 0, y: 13.5, scale: 1.195, timed: "140778ms", hidden: false}
+# cross-216 {x: -5.1, y: 13.5, scale: 1.195, timed: "140778ms"}
 
 on
 
-# cross-217 {x: 8.5, y: 13.5, scale: 1.003, timed: "141556ms", hidden: false}
+# cross-217 {x: -1.7, y: 13.5, scale: 1.003, timed: "141556ms"}
 
 Saint
 
-# cross-218 {x: 17, y: 13.5, scale: 1.226, timed: "142333ms", hidden: false}
+# cross-218 {x: 1.7, y: 13.5, scale: 1.226, timed: "142333ms"}
 
 Bill
 
-# cross-219 {x: 25.5, y: 13.5, scale: 0.895, timed: "143111ms", hidden: false}
+# cross-219 {x: 5.1, y: 13.5, scale: 0.895, timed: "143111ms"}
 
 go
 
-# cross-220 {x: 34, y: 13.5, scale: 1.105, timed: "143889ms", hidden: false}
+# cross-220 {x: 8.5, y: 13.5, scale: 1.105, timed: "143889ms"}
 
 and
 
-# cross-221 {x: 42.5, y: 13.5, scale: 0.838, timed: "144667ms", hidden: false}
+# cross-221 {x: 11.9, y: 13.5, scale: 0.838, timed: "144667ms"}
 
 bring
 
-# cross-222 {x: 51, y: 13.5, scale: 1.139, timed: "145444ms", hidden: false}
+# cross-222 {x: 15.3, y: 13.5, scale: 1.139, timed: "145444ms"}
 
 the
 
-# cross-223 {x: 59.5, y: 13.5, scale: 1.303, timed: "146222ms", hidden: false}
+# cross-223 {x: 18.7, y: 13.5, scale: 1.303, timed: "146222ms"}
 
 pain
 
-# cross-224 {x: 68, y: 13.5, scale: 1.258, timed: "147000ms", hidden: false}
+# cross-224 {x: 68, y: 13.5, scale: 1.258, timed: "147000ms"}
 
 High
 
-# cross-225 {x: 76.5, y: 13.5, scale: 0.913, timed: "147867ms", hidden: false}
+# cross-225 {x: 71.4, y: 13.5, scale: 0.913, timed: "153100ms"}
 
 noon
 
-# cross-226 {x: -76.5, y: 9, scale: 0.998, timed: "148733ms", hidden: false}
+# cross-226 {x: -76.5, y: 9, scale: 0.998, timed: "153300ms"}
 
 and
 
-# cross-227 {x: -68, y: 9, scale: 1.069, timed: "149600ms", hidden: false}
+# cross-227 {x: -73.1, y: 9, scale: 1.069, timed: "153900ms"}
 
 high
 
-# cross-228 {x: -59.5, y: 9, scale: 1.02, timed: "150467ms", hidden: false}
+# cross-228 {x: -69.7, y: 9, scale: 1.02, timed: "154300ms"}
 
 eyed
 
-# cross-229 {x: -51, y: 9, scale: 0.836, timed: "151333ms", hidden: false}
+# cross-229 {x: -66.3, y: 9, scale: 0.836, timed: "154800ms"}
 
 on
 
-# cross-230 {x: -42.5, y: 9, scale: 1.341, timed: "152200ms", hidden: false}
+# cross-230 {x: -62.9, y: 9, scale: 1.341, timed: "153100ms"}
 
 the
 
-# cross-231 {x: -34, y: 9, scale: 1.028, timed: "153067ms", hidden: false}
+# cross-231 {x: -59.5, y: 9, scale: 1.028, timed: "153300ms"}
 
 trail
 
-# cross-232 {x: -25.5, y: 9, scale: 0.935, timed: "153933ms", hidden: false}
+# cross-232 {x: -56.1, y: 9, scale: 0.935, timed: "153933ms"}
 
 outside
 
-# cross-233 {x: -17, y: 9, scale: 0.895, timed: "154800ms", hidden: false}
+# cross-233 {x: -52.7, y: 9, scale: 0.895, timed: "154800ms"}
 
 a
 
-# cross-234 {x: -8.5, y: 9, scale: 1.195, timed: "155667ms", hidden: false}
+# cross-234 {x: -49.3, y: 9, scale: 1.195, timed: "155667ms"}
 
 saloon
 
-# cross-235 {x: 0, y: 9, scale: 1.121, timed: "156533ms", hidden: false}
+# cross-235 {x: -45.9, y: 9, scale: 1.121, timed: "156533ms"}
 
 so
 
-# cross-236 {x: 8.5, y: 9, scale: 1.322, timed: "157400ms", hidden: false}
+# cross-236 {x: -42.5, y: 9, scale: 1.322, timed: "157400ms"}
 
 pale
 
-# cross-237 {x: 17, y: 9, scale: 0.808, timed: "158267ms", hidden: false}
+# cross-237 {x: -39.1, y: 9, scale: 0.808, timed: "158267ms"}
 
 and
 
-# cross-238 {x: 25.5, y: 9, scale: 1.077, timed: "159133ms", hidden: false}
+# cross-238 {x: -35.7, y: 9, scale: 1.077, timed: "159133ms"}
 
 frail
 
-# cross-239 {x: 34, y: 9, scale: 1.071, timed: "160000ms", hidden: false}
+# cross-239 {x: 34, y: 9, scale: 1.071, timed: "160000ms"}
 
 A
 
-# cross-240 {x: 42.5, y: 9, scale: 0.917, timed: "160381ms", hidden: false}
+# cross-240 {x: 37.4, y: 9, scale: 0.917, timed: "160381ms"}
 
 preacher
 
-# cross-241 {x: 51, y: 9, scale: 0.895, timed: "160763ms", hidden: false}
+# cross-241 {x: 40.8, y: 9, scale: 0.895, timed: "160763ms"}
 
 man
 
-# cross-242 {x: 59.5, y: 9, scale: 0.978, timed: "161144ms", hidden: false}
+# cross-242 {x: 44.2, y: 9, scale: 0.978, timed: "161144ms"}
 
 he
 
-# cross-243 {x: 68, y: 9, scale: 0.925, timed: "161526ms", hidden: false}
+# cross-243 {x: 47.6, y: 9, scale: 0.925, timed: "161526ms"}
 
 spoke
 
-# cross-244 {x: 76.5, y: 9, scale: 1.38, timed: "161907ms", hidden: false}
+# cross-244 {x: 51, y: 9, scale: 1.38, timed: "161907ms"}
 
 so
 
-# cross-245 {x: -76.5, y: 4.5, scale: 0.906, timed: "162289ms", hidden: false}
+# cross-245 {x: -76.5, y: 4.5, scale: 2.0, timed: "162289ms"}
 
-*BOLD*
+**bold**
 
-# cross-246 {x: -68, y: 4.5, scale: 0.858, timed: "162670ms", hidden: false}
+# cross-246 {x: -73.1, y: 4.5, scale: 0.858, timed: "162670ms"}
 
 Town
 
-# cross-247 {x: -59.5, y: 4.5, scale: 0.842, timed: "163051ms", hidden: false}
+# cross-247 {x: -69.7, y: 4.5, scale: 0.842, timed: "163051ms"}
 
 folks
 
-# cross-248 {x: -51, y: 4.5, scale: 1.228, timed: "163433ms", hidden: false}
+# cross-248 {x: -66.3, y: 4.5, scale: 1.228, timed: "163433ms"}
 
 gather
 
-# cross-249 {x: -42.5, y: 4.5, scale: 1.026, timed: "163814ms", hidden: false}
- oun
-r   d
-
-# cross-250 {x: -34, y: 4.5, scale: 0.862, timed: "164196ms", hidden: false}
-
-for
-
-# cross-251 {x: -25.5, y: 4.5, scale: 1.09, timed: "164577ms", hidden: false}
-
-the
-
-# cross-252 {x: -17, y: 4.5, scale: 1.078, timed: "164959ms", hidden: false}
-
-stories
-
-# cross-253 {x: -8.5, y: 4.5, scale: 0.933, timed: "165340ms", hidden: false}
-
-He
-
-# cross-254 {x: 0, y: 4.5, scale: 1.338, timed: "165915ms", hidden: false}
-
-told
-
-# cross-255 {x: 8.5, y: 4.5, scale: 1.139, timed: "166490ms", hidden: false}
-
-him
-
-# cross-256 {x: 17, y: 4.5, scale: 0.93, timed: "167065ms", hidden: false}
-
-then
-
-# cross-257 {x: 25.5, y: 4.5, rotate-z: -90, scale: 1.165, timed: "167640ms", hidden: false}
-
-Coulda
-
-# cross-258 {x: 34, y: 4.5, scale: 0.905, timed: "167960ms", hidden: false}
-
-heard
-
-# cross-259 {x: 42.5, y: 4.5, scale: 0.849, timed: "168280ms", hidden: false}
-
-a
-
-# cross-260 {x: 51, y: 4.5, scale: 1.138, timed: "168600ms", hidden: false}
-
----pin---
-
-# cross-261 {x: 59.5, y: 4.5, scale: 1.356, timed: "168920ms", hidden: false}
-
-drop
-
-# cross-262 {x: 68, y: 4.5, scale: 1.331, timed: "169240ms", hidden: false}
-
-When
-
-# cross-263 {x: 76.5, y: 4.5, scale: 1.027, timed: "169600ms", hidden: false}
-
-he
-
-# cross-264 {x: -76.5, y: 0, scale: 1.13, timed: "169960ms", hidden: false}
-
-called
-
-# cross-265 {x: -68, y: 0, scale: 0.816, timed: "170320ms", hidden: false}
-
-them
-
-# cross-266 {x: -59.5, y: 0, scale: 0.979, timed: "170680ms", hidden: false}
-
-sinners
-
-# cross-267 {x: -51, y: 0, scale: 1.169, timed: "171040ms", hidden: false}
-
-Repent
-
-# cross-268 {x: -42.5, y: 0, scale: 1.048, timed: "171520ms", hidden: false}
-
-and
-
-# cross-269 {x: -34, y: 0, scale: 1.129, timed: "172000ms", hidden: false}
-
-stop
-
-# cross-270 {x: -25.5, y: 0, scale: 1.338, timed: "172480ms", hidden: false}
-
-and
-
-# cross-271 {x: -17, y: 0, scale: 1.064, timed: "172960ms", hidden: false}
-
-turn
-
-# cross-272 {x: -8.5, y: 0, scale: 1.287, timed: "173440ms", hidden: false}
-
-to
-
-# cross-273 {x: 0, y: 0, scale: 0.883, timed: "173920ms", hidden: false}
-
-Jesus
-
-# cross-274 {x: 8.5, y: 0, scale: 0.849, timed: "174400ms", hidden: false}
-
-King
-
-# cross-275 {x: 17, y: 0, scale: 1.139, timed: "174947ms", hidden: false}
-
-of
-
-# cross-276 {x: 25.5, y: 0, scale: 1.096, timed: "175493ms", hidden: false}
-
-kings
-
-# cross-277 {x: 34, y: 0, scale: 1.357, timed: "176040ms", hidden: false}
-
-Bring
-
-# cross-278 {x: 42.5, y: 0, scale: 1.258, timed: "176469ms", hidden: false}
-
-your
-
-# cross-279 {x: 51, y: 0, scale: 1.308, timed: "176897ms", hidden: false}
-
-filth
-
-# cross-280 {x: 59.5, y: 0, scale: 1.21, timed: "177326ms", hidden: false}
-
-he'll
-
-# cross-281 {x: 68, y: 0, scale: 0.993, timed: "177754ms", hidden: false}
-
-make
-
-# cross-282 {x: 76.5, y: 0, scale: 1.097, timed: "178183ms", hidden: false}
-
-y'all
-
-# cross-283 {x: -17, y: -4.5, scale: 0.885, timed: "178611ms", hidden: false}
-
-clean
-
-# cross-284 {x: -8.5, y: -4.5, scale: 1.013, timed: "179040ms", hidden: false}
-
-Slowly
-
-# cross-285 {x: 0, y: -4.5, scale: 1.067, timed: "179640ms", hidden: false}
-
-the
-
-# cross-286 {x: 8.5, y: -4.5, scale: 0.904, timed: "180240ms", hidden: false}
-
-crowd
-
-# cross-287 {x: 17, y: -4.5, scale: 0.943, timed: "180840ms", hidden: false}
-
-broke
-
-# cross-288 {x: -17, y: -9, scale: 1.23, timed: "181440ms", hidden: false}
-
-up
-
-# cross-289 {x: -8.5, y: -9, scale: 0.878, timed: "182040ms", hidden: false}
-
-But
-
-# cross-290 {x: 0, y: -9, scale: 0.852, timed: "182424ms", hidden: false}
-
-one
-
-# cross-291 {x: 8.5, y: -9, scale: 0.909, timed: "182808ms", hidden: false}
-
-stood
-
-# cross-292 {x: 17, y: -9, scale: 0.831, timed: "183192ms", hidden: false}
-
-shook
-
-# cross-293 {x: -17, y: -13.5, scale: 0.9, timed: "183576ms", hidden: false}
-
-all
-
-# cross-294 {x: -8.5, y: -13.5, scale: 0.943, timed: "183960ms", hidden: false}
-
-trembling
-
-# cross-295 {x: 0, y: -13.5, scale: 0.917, timed: "184453ms", hidden: false}
-
-and
-
-# cross-296 {x: 8.5, y: -13.5, scale: 0.838, timed: "184947ms", hidden: false}
-
-stuff
-
-# cross-297 {x: 17, y: -13.5, scale: 1.205, timed: "185440ms", hidden: false}
-
-They
-
-# cross-298 {x: -17, y: -18, scale: 0.808, timed: "186023ms", hidden: false}
-
-call
-
-# cross-299 {x: -8.5, y: -18, scale: 1.387, timed: "186607ms", hidden: false}
-
-him
-
-# cross-300 {x: 0, y: -18, scale: 1.037, timed: "187190ms", hidden: false}
-
-Billy
-
-# cross-301 {x: 8.5, y: -18, scale: 0.803, timed: "187773ms", hidden: false}
-
-the
-
-# cross-302 {x: 17, y: -18, scale: 0.982, timed: "188357ms", hidden: false}
-
-Saint
-
-# cross-303 {x: -17, y: -22.5, scale: 1.16, timed: "188940ms", hidden: false}
-
-Saint
-
-# cross-304 {x: -8.5, y: -22.5, scale: 1.359, timed: "189487ms", hidden: false}
-
-Billy
-
-# cross-305 {x: 0, y: -22.5, scale: 1.389, timed: "190035ms", hidden: false}
-
-that's
-
-# cross-306 {x: 8.5, y: -22.5, scale: 1.034, timed: "190582ms", hidden: false}
-
-his
-
-# cross-307 {x: 17, y: -22.5, scale: 1.227, timed: "191129ms", hidden: false}
-
-name
-
-# cross-308 {x: -17, y: -27, scale: 1.123, timed: "191676ms", hidden: false}
-
-and
-
-# cross-309 {x: -8.5, y: -27, scale: 1.051, timed: "192224ms", hidden: false}
-
-when
-
-# cross-310 {x: 0, y: -27, scale: 1.004, timed: "192771ms", hidden: false}
-
-he
-
-# cross-311 {x: 8.5, y: -27, scale: 1.119, timed: "193318ms", hidden: false}
-
-come
-
-# cross-312 {x: 17, y: -27, scale: 1.122, timed: "193865ms", hidden: false}
+# cross-249 {x: -62.9, y: 4.5, scale: 1.026, timed: "163814ms"}
 
 round
 
-# cross-313 {x: -17, y: -31.5, scale: 0.989, timed: "194413ms", hidden: false}
+# cross-250 {x: -59.5, y: 4.5, scale: 0.862, timed: "164196ms"}
 
-nowadays
+for
 
-# cross-314 {x: -8.5, y: -31.5, scale: 1.015, timed: "194960ms", hidden: false}
+# cross-251 {x: -56.1, y: 4.5, scale: 1.09, timed: "164577ms"}
 
-All
+the
 
-# cross-315 {x: 0, y: -31.5, scale: 1.039, timed: "195750ms", hidden: false}
+# cross-252 {x: -52.7, y: 4.5, scale: 1.078, timed: "164959ms"}
+
+stories
+
+# cross-253 {x: -8.5, y: 4.5, scale: 0.933, timed: "165340ms"}
+
+He
+
+# cross-254 {x: -5.1, y: 4.5, scale: 1.338, timed: "165915ms"}
+
+told
+
+# cross-255 {x: -1.7, y: 4.5, scale: 1.139, timed: "166490ms"}
+
+him
+
+# cross-256 {x: 1.7, y: 4.5, scale: 0.93, timed: "167065ms"}
+
+then
+
+# cross-257 {x: 25.5, y: 4.5, scale: 1.165, timed: "167640ms"}
+
+Coulda
+
+# cross-258 {x: 28.9, y: 4.5, scale: 0.905, timed: "167960ms"}
+
+heard
+
+# cross-259 {x: 32.3, y: 4.5, scale: 0.849, timed: "168280ms"}
+
+a
+
+# cross-260 {x: 35.7, y: 4.5, scale: 1.138, timed: "168600ms"}
+
+pin
+
+# cross-261 {x: 39.1, y: 4.5, scale: 1.356, timed: "168920ms"}
+
+drop
+
+# cross-262 {x: 68, y: 4.5, scale: 1.331, timed: "169240ms"}
+
+When
+
+# cross-263 {x: 71.4, y: 4.5, scale: 1.027, timed: "169600ms"}
+
+he
+
+# cross-264 {x: -76.5, y: 0, scale: 1.13, timed: "169960ms"}
+
+called
+
+# cross-265 {x: -73.1, y: 0, scale: 0.816, timed: "170320ms"}
 
 them
 
-# cross-316 {x: 8.5, y: -31.5, scale: 0.927, timed: "196540ms", hidden: false}
+# cross-266 {x: -69.7, y: 0, scale: 0.979, timed: "170680ms"}
 
-choirs
+sinners
 
-# cross-317 {x: 17, y: -31.5, scale: 1.233, timed: "197330ms", hidden: false}
+# cross-267 {x: -51, y: 0, scale: 1.169, timed: "171040ms"}
 
-sing
+Repent
 
-# cross-318 {x: -17, y: -36, scale: 1.153, timed: "198120ms", hidden: false}
-
-Go
-
-# cross-319 {x: -8.5, y: -36, scale: 1.173, timed: "198983ms", hidden: false}
-
-on
-
-# cross-320 {x: 0, y: -36, scale: 0.808, timed: "199846ms", hidden: false}
-
-Saint
-
-# cross-321 {x: 8.5, y: -36, scale: 0.851, timed: "200709ms", hidden: false}
-
-Billy
-
-# cross-322 {x: 17, y: -36, scale: 1.24, timed: "201571ms", hidden: false}
-
-do
-
-# cross-323 {x: -17, y: -40.5, scale: 1.256, timed: "202434ms", hidden: false}
-
-your
-
-# cross-324 {x: -8.5, y: -40.5, scale: 1.188, timed: "203297ms", hidden: false}
-
-thing
-
-# cross-325 {x: 0, y: -40.5, scale: 1.329, timed: "204160ms", hidden: false}
-
-Go
-
-# cross-326 {x: 8.5, y: -40.5, scale: 1.055, timed: "204253ms", hidden: false}
-
-on
-
-# cross-327 {x: 17, y: -40.5, scale: 1.24, timed: "204347ms", hidden: false}
-
-Saint
-
-# cross-328 {x: -17, y: -45, scale: 1.064, timed: "204440ms", hidden: false}
-
-Billy
-
-# cross-329 {x: -8.5, y: -45, scale: 1.019, timed: "204533ms", hidden: false}
-
-go
-
-# cross-330 {x: 0, y: -45, scale: 0.868, timed: "204627ms", hidden: false}
+# cross-268 {x: -47.6, y: 0, scale: 1.048, timed: "171520ms"}
 
 and
 
-# cross-331 {x: 8.5, y: -45, scale: 1.2, timed: "204720ms", hidden: false}
+# cross-269 {x: -44.2, y: 0, scale: 1.129, timed: "172000ms"}
+
+stop
+
+# cross-270 {x: -40.8, y: 0, scale: 1.338, timed: "172480ms"}
+
+and
+
+# cross-271 {x: -37.4, y: 0, scale: 1.064, timed: "172960ms"}
+
+turn
+
+# cross-272 {x: -34, y: 0, scale: 1.287, timed: "173440ms"}
+
+to
+
+# cross-273 {x: -30.6, y: 0, scale: 2.0, timed: "173920ms"}
+
+Jesus
+
+# cross-274 {x: 8.5, y: 0, scale: 2.0, timed: "174400ms"}
+
+*KING*
+
+# cross-275 {x: 11.9, y: 0, scale: 1.5, timed: "174947ms"}
+
+of
+
+# cross-276 {x: 15.3, y: 0, scale: 1.0, timed: "175493ms"}
+
+kings
+
+# cross-277 {x: 34, y: 0, scale: 1.357, timed: "176040ms"}
+
+Bring
+
+# cross-278 {x: 37.4, y: 0, scale: 1.258, timed: "176469ms"}
+
+your
+
+# cross-279 {x: 40.8, y: 0, scale: 1.308, timed: "176897ms"}
+
+f:ilth.
+
+# cross-280 {x: 44.2, y: 0, scale: 1.21, timed: "177326ms"}
+
+he'll
+
+# cross-281 {x: 47.6, y: 0, scale: 0.993, timed: "177754ms"}
+
+make
+
+# cross-282 {x: 51, y: 0, scale: 1.097, timed: "178183ms"}
+
+y'all
+
+# cross-283 {x: -17, y: -4.5, scale: 0.885, timed: "178611ms"}
+
+clean
+
+# cross-284 {x: -8.5, y: -4.5, scale: 1.013, timed: "179040ms"}
+
+Slowly
+
+# cross-285 {x: -5.1, y: -4.5, scale: 1.067, timed: "179640ms"}
+
+the
+
+# cross-286 {x: -1.7, y: -4.5, scale: 0.904, timed: "180240ms"}
+
+crowd
+
+# cross-287 {x: 1.7, y: -4.5, scale: 0.943, timed: "180840ms"}
+
+broke
+
+# cross-288 {x: -17, y: -9, scale: 1.23, timed: "181440ms"}
+
+up
+
+# cross-289 {x: -8.5, y: -9, scale: 0.878, timed: "182040ms"}
+
+But
+
+# cross-290 {x: -5.1, y: -9, scale: 0.852, timed: "182424ms"}
+
+one
+
+# cross-291 {x: -1.7, y: -9, scale: 0.909, timed: "182808ms"}
+
+stood
+
+# cross-292 {x: 1.7, y: -9, scale: 0.831, timed: "183192ms"}
+
+shook
+
+# cross-293 {x: -17, y: -13.5, scale: 0.9, timed: "183576ms"}
+
+all
+
+# cross-294 {x: -8.5, y: -13.5, scale: 0.943, timed: "183960ms"}
+
+trembling
+
+# cross-295 {x: -5.1, y: -13.5, scale: 0.917, timed: "184453ms"}
+
+and
+
+# cross-296 {x: -1.7, y: -13.5, scale: 0.838, timed: "184947ms"}
+
+stuff
+
+# cross-297 {x: 17, y: -13.5, scale: 1.205, timed: "185440ms"}
+
+They
+
+# cross-298 {x: -17, y: -18, scale: 0.808, timed: "186023ms"}
+
+call
+
+# cross-299 {x: -13.6, y: -18, scale: 1.387, timed: "186607ms"}
+
+him
+
+# cross-300 {x: -10.2, y: -18, scale: 1.037, timed: "187190ms"}
+
+Billy
+
+# cross-301 {x: -6.8, y: -18, scale: 0.803, timed: "187773ms"}
+
+the
+
+# cross-302 {x: -3.4, y: -18, scale: 0.982, timed: "188357ms"}
+
+Saint
+
+# cross-303 {x: -17, y: -22.5, scale: 1.16, timed: "188940ms"}
+
+Saint
+
+# cross-304 {x: -13.6, y: -22.5, scale: 1.359, timed: "189487ms"}
+
+Billy
+
+# cross-305 {x: -10.2, y: -22.5, scale: 1.389, timed: "190035ms"}
+
+that's
+
+# cross-306 {x: -6.8, y: -22.5, scale: 1.034, timed: "190582ms"}
+
+his
+
+# cross-307 {x: -3.4, y: -22.5, scale: 1.227, timed: "191129ms"}
+
+name
+
+# cross-308 {x: -17, y: -27, scale: 1.123, timed: "191676ms"}
+
+and
+
+# cross-309 {x: -13.6, y: -27, scale: 1.051, timed: "192224ms"}
+
+when
+
+# cross-310 {x: -10.2, y: -27, scale: 1.004, timed: "192771ms"}
+
+he
+
+# cross-311 {x: -6.8, y: -27, scale: 1.119, timed: "193318ms"}
+
+come
+
+# cross-312 {x: -3.4, y: -27, scale: 1.122, timed: "193865ms"}
+
+round
+
+# cross-313 {x: -17, y: -31.5, scale: 0.989, timed: "194413ms"}
+
+nowadays
+
+# cross-314 {x: -8.5, y: -31.5, scale: 1.015, timed: "194960ms"}
+
+All
+
+# cross-315 {x: -5.1, y: -31.5, scale: 1.039, timed: "195750ms"}
+
+them
+
+# cross-316 {x: -1.7, y: -31.5, scale: 0.927, timed: "196540ms"}
+
+choirs
+
+# cross-317 {x: 1.7, y: -31.5, scale: 1.233, timed: "197330ms"}
+
+sing
+
+# cross-318 {x: -17, y: -36, scale: 1.153, timed: "198120ms"}
+
+Go
+
+# cross-319 {x: -13.6, y: -36, scale: 1.173, timed: "198983ms"}
+
+on
+
+# cross-320 {x: -10.2, y: -36, scale: 0.808, timed: "199846ms"}
+
+Saint
+
+# cross-321 {x: -6.8, y: -36, scale: 0.851, timed: "200709ms"}
+
+Billy
+
+# cross-322 {x: -3.4, y: -36, scale: 1.24, timed: "201571ms"}
+
+do
+
+# cross-323 {x: -17, y: -40.5, scale: 1.256, timed: "202434ms"}
+
+your
+
+# cross-324 {x: -13.6, y: -40.5, scale: 1.188, timed: "203297ms"}
+
+thing
+
+# cross-325 {x: 0, y: -40.5, scale: 1.329, timed: "204160ms"}
+
+Go
+
+# cross-326 {x: 3.4, y: -40.5, scale: 1.055, timed: "204253ms"}
+
+on
+
+# cross-327 {x: 6.8, y: -40.5, scale: 1.24, timed: "204347ms"}
+
+Saint
+
+# cross-328 {x: -17, y: -45, scale: 1.064, timed: "204440ms"}
+
+Billy
+
+# cross-329 {x: -13.6, y: -45, scale: 1.019, timed: "204533ms"}
+
+go
+
+# cross-330 {x: -10.2, y: -45, scale: 0.868, timed: "204627ms"}
+
+and
+
+# cross-331 {x: -6.8, y: -45, scale: 1.2, timed: "204720ms"}
 
 ease
 
-# cross-332 {x: 17, y: -45, scale: 1.394, timed: "204813ms", hidden: false}
+# cross-332 {x: -3.4, y: -45, scale: 1.394, timed: "204813ms"}
 
 the
 
-# cross-333 {x: -17, y: -49.5, scale: 1.303, timed: "204907ms", hidden: false}
+# cross-333 {x: -17, y: -49.5, scale: 1.303, timed: "204907ms"}
 
 pain
 
-# cross-334 {x: -8.5, y: -49.5, scale: 1.23, timed: "205000ms", hidden: false}
+# cross-334 {x: -8.5, y: -49.5, scale: 1.23, timed: "205000ms"}
 
 And
 
-# cross-335 {x: 0, y: -49.5, scale: 1.359, timed: "205000ms", hidden: false}
+# cross-335 {x: -5.1, y: -49.5, scale: 1.359, timed: "205000ms"}
 
 thus
 
-# cross-336 {x: 8.5, y: -49.5, scale: 1.054, timed: "205000ms", hidden: false}
+# cross-336 {x: -1.7, y: -49.5, scale: 1.054, timed: "205000ms"}
 
 the
 
-# cross-337 {x: 17, y: -49.5, scale: 1.1, timed: "205000ms", hidden: false}
+# cross-337 {x: 1.7, y: -49.5, scale: 1.1, timed: "205000ms"}
 
 New
 
-# cross-338 {x: -17, y: -54, scale: 1.062, timed: "205000ms", hidden: false}
+# cross-338 {x: -17, y: -54, scale: 1.062, timed: "205000ms"}
 
 West
 
-# cross-339 {x: -8.5, y: -54, scale: 1.345, timed: "205000ms", hidden: false}
+# cross-339 {x: -13.6, y: -54, scale: 1.345, timed: "205000ms"}
 
 was
 
-# cross-340 {x: 0, y: -54, scale: 1.193, timed: "205000ms", hidden: false}
+# cross-340 {x: -10.2, y: -54, scale: 1.193, timed: "205000ms"}
 
 won
 
+# cross-341 {x: 8.5, y: -54, scale: 1.365, timed: "205200ms"}
+
+»——————◦•♛•◦——————«
 
 ```javascript
 var state = {
@@ -1715,9 +1726,10 @@ function syncWorldsSectionContent(section, posSec) {
 
 ```javascript on:init
 const deg = d => d * Math.PI / 180;
-const CAMERA_BASE_ROT = { x: deg(-29), y: deg(-3), z: 0 };
+const CAMERA_BASE_ROT = { x: deg(-19), y: deg(-3), z: 0 };
 worlds.enable();
 worlds.config.setDefaults({
+  autoHideSectionsUntilVisited: true,
   sectionRender: 'content',
   keepRotation: true,
   straightenOnFocus: true,
