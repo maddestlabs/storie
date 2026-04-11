@@ -12,26 +12,32 @@ This Saint Billy variant turns the demo into a song board instead of a dungeon c
 # start {x: 0, y: 300, scale: 0.0, timed: "0ms"}
 ...
 
-# start-0 {x: 0, y: 200, scale: 5.0, timed: "100ms"}
-↡
+# start-0 {x: 0, y: 200, scale: 1.0, timed: "100ms"}
+Ballad
 
-# start-1 {x: 0, y: 150, scale: 2.0, timed: "2100ms"}
+# start-0a {x: 0, y: 198, scale: 1.0, timed: "1000ms"}
+of
+
+# start-0b {x: 0, y: 196, scale: 1.0, timed: "2000ms"}
+Saint Billy
+
+# start-1 {x: 0, y: 150, scale: 2.0, timed: "5100ms"}
 Somewheres
 
-# start-2 {x: 0, y: 148, scale: 1.0, timed: "2200ms"}
+# start-2 {x: 0, y: 148, scale: 1.0, timed: "5200ms"}
 in the
 
-# start-3 {x: 0, y: 146, scale: 1.5, timed: "2300ms"}
+# start-3 {x: 0, y: 146, scale: 1.5, timed: "5300ms"}
 New West
 
-# start-4 {x: 0, y: 144, scale: 1.5, timed: "2400ms"}
+# start-4 {x: 0, y: 144, scale: 1.5, timed: "5400ms"}
 »»──────«»──────««
 
 # cross-0 {x: -17, y: 99, scale: 1.037, timed: "24500ms"}
 
-➵ Way
+»»ᅳWayᅳ►
 
-# cross-1 {x: -13.6, y: 99, scale: 1.168, timed: "25000ms"}
+# cross-1 {x: -13.6, y: 99, rotate-z: -90, scale: 1.168, timed: "25000ms"}
 
 out
 
@@ -53,7 +59,8 @@ Texas
 
 # cross-6 {x: -13.6, y: 94.5, scale: 0.962, timed: "28000ms"}
 
-◖Sun◗
+⠀◠
+Sun
 
 # cross-7 {x: 0, y: 94.5, rotate-z: 90, scale: 0.997, timed: "28600ms"}
 
@@ -69,8 +76,8 @@ and
 
 # cross-10 {x: -17, y: 90, scale: 0.915, timed: "31000ms"}
 
-outgun       •
-╟┘
+outgun⠀⠀⠀•
+▐┘
 
 # cross-11 {x: -8.5, y: 90, scale: 1.235, timed: "31800ms"}
 
@@ -102,7 +109,7 @@ the
 
 # cross-18 {x: -6.8, y: 85.5, scale: 1.214, timed: "34460ms"}
 
-giggle
+𝘨𝘪𝘨𝘨𝘭𝘦
 
 # cross-19 {x: -3.4, y: 85.5, scale: 1.06, timed: "34840ms"}
 
@@ -216,13 +223,13 @@ shame
 
 One
 
-# cross-46 {x: -13.6, y: 58.5, scale: 0.808, timed: "48852ms"}
+# cross-46 {x: -13.6, y: 58.5, scale: 0.808, timed: "48800ms"}
 
 man
 
-# cross-47 {x: -10.2, y: 58.5, scale: 1.147, timed: "49500ms"}
+# cross-47 {x: -10.2, y: 58.5, scale: 1.147, timed: "49000ms"}
 
-oversees
+overs👁es
 
 # cross-48 {x: -6.8, y: 58.5, scale: 0.94, timed: "50100ms"}
 
@@ -252,7 +259,7 @@ Billy
 
 the
 
-# cross-55 {x: -76.5, y: 49.5, scale: 1.5, timed: "54267ms"}
+# cross-55 {x: 0, y: 54, scale: 1.5, timed: "54267ms"}
 
 Saint
 
@@ -282,37 +289,37 @@ One
 
 # cross-62 {x: -22.1, y: 49.5, scale: 1.33, timed: "56751ms"}
 
-evil
+𝖊𝖛𝖎𝖑
 
-# cross-63 {x: -18.7, y: 49.5, scale: 1.159, timed: "57100ms"}
+# cross-63 {x: -18.7, y: 49.5, scale: 1.159, timed: "57300ms"}
 
-r:otte.n
+ዪዐፕፕቿክ
 
-# cross-64 {x: -15.3, y: 49.5, scale: 0.9, timed: "57600ms"}
+# cross-64 {x: -15.3, y: 49.5, scale: 0.9, timed: "57900ms"}
 
 son
 
-# cross-65 {x: -11.9, y: 49.5, scale: 0.987, timed: "58000ms"}
+# cross-65 {x: -11.9, y: 49.5, scale: 0.987, timed: "58300ms"}
 
 of
 
-# cross-66 {x: -8.5, y: 49.5, scale: 0.812, timed: "58300ms"}
+# cross-66 {x: -8.5, y: 49.5, scale: 0.812, timed: "58700ms"}
 
 a
 
-# cross-67 {x: -5.1, y: 49.5, scale: 1.031, timed: "58600ms"}
+# cross-67 {x: -5.1, y: 49.5, scale: 1.031, timed: "58900ms"}
 
-gun  -
-╟┘
+gun
+▛⠀⠀⠀⠀⠀-
 # cross-68 {x: 34, y: 49.5, scale: 0.921, timed: "59600ms"}
 
 Does
 
-# cross-69 {x: 37.4, y: 49.5, scale: 0.992, timed: "61000ms"}
+# cross-69 {x: 37.4, y: 49.5, scale: 0.992, timed: "61300ms"}
 
 hurt
 
-# cross-70 {x: 40.8, y: 49.5, scale: 1.148, timed: "61400ms"}
+# cross-70 {x: 40.8, y: 49.5, scale: 1.148, timed: "61500ms"}
 
 for
 
@@ -334,7 +341,7 @@ for
 
 # cross-75 {x: -73.1, y: 45, scale: 0.926, timed: "63400ms"}
 
-fun
+𝕗𝕦𝕟
 
 # cross-76 {x: -59.5, y: 45, scale: 0.879, timed: "63800ms"}
 
@@ -382,45 +389,46 @@ hoodlums
 
 # cross-87 {x: 18.7, y: 45, scale: 1.098, timed: "68200ms"}
 
+⠀⠀⠀⠀/
 sing
-
-# cross-88 {x: 42.5, y: 45, scale: 0.914, timed: "68600ms"}
+⠀⠀⠀⠀\
+# cross-88 {x: 42.5, y: 45, scale: 0.914, timed: "69600ms"}
 
 Go
 
-# cross-89 {x: 45.9, y: 45, scale: 0.848, timed: "69000ms"}
+# cross-89 {x: 45.9, y: 45, scale: 0.848, timed: "70100ms"}
 
 on
 
-# cross-90 {x: 49.3, y: 45, scale: 0.802, timed: "69429ms"}
+# cross-90 {x: 49.3, y: 45, scale: 0.802, timed: "70500ms"}
 
 Saint
 
-# cross-91 {x: 52.7, y: 45, scale: 0.948, timed: "70143ms"}
+# cross-91 {x: 52.7, y: 45, scale: 0.948, timed: "71100ms"}
 
 Billy
 
-# cross-92 {x: 56.1, y: 45, scale: 1.199, timed: "70857ms"}
+# cross-92 {x: 56.1, y: 45, scale: 1.199, timed: "71800ms"}
 
 do
 
-# cross-93 {x: -76.5, y: 40.5, scale: 1.269, timed: "71571ms"}
+# cross-93 {x: -76.5, y: 40.5, scale: 1.269, timed: "72600ms"}
 
 your
 
-# cross-94 {x: -73.1, y: 40.5, scale: 1.186, timed: "72286ms"}
+# cross-94 {x: -73.1, y: 40.5, scale: 1.186, timed: "73400ms"}
 
 thing
 
-# cross-95 {x: -59.5, y: 40.5, scale: 0.858, timed: "73000ms"}
+# cross-95 {x: -59.5, y: 40.5, scale: 0.858, timed: "74600ms"}
 
 Go
 
-# cross-96 {x: -56.1, y: 40.5, scale: 1.061, timed: "73833ms"}
+# cross-96 {x: -56.1, y: 40.5, scale: 1.061, timed: "74900ms"}
 
 on
 
-# cross-97 {x: -52.7, y: 40.5, scale: 1.205, timed: "74667ms"}
+# cross-97 {x: -52.7, y: 40.5, scale: 1.205, timed: "75300ms"}
 
 Saint
 
@@ -428,31 +436,43 @@ Saint
 
 Billy
 
-# cross-99 {x: -45.9, y: 40.5, scale: 1.156, timed: "76333ms"}
+# cross-99 {x: -45.9, y: 40.5, scale: 1.156, timed: "76400ms"}
 
 go
 
-# cross-100 {x: -42.5, y: 40.5, scale: 1.31, timed: "77167ms"}
+# cross-100 {x: -42.5, y: 40.5, scale: 1.31, timed: "79200ms"}
 
 and
 
-# cross-101 {x: -8.5, y: 40.5, scale: 0.969, timed: "85000ms"}
+# cross-101 {x: -8.5, y: 40.5, scale: 0.969, timed: "83000ms"}
 
 Bring
 
-# cross-102 {x: -5.1, y: 40.5, scale: 1.075, timed: "86567ms"}
+# cross-102 {x: -5.1, y: 40.5, scale: 1.075, timed: "83800ms"}
 
 the
 
-# cross-103 {x: -1.7, y: 40.5, scale: 0.83, timed: "88133ms"}
+# cross-103 {x: -1.7, y: 40.5, scale: 0.83, timed: "84400ms"}
 
-pain
+𝔓𝔞𝔦𝔫
 
-# cross-104 {x: 17, y: 40.5, scale: 1.382, timed: "92840ms"}
+# cross-103a {x: 0, y: 40.5, scale: 0.83, timed: "85000ms"}
+
+.
+
+# cross-103b {x: 0, y: 40.5, scale: 0.83, timed: "86000ms"}
+
+..
+
+# cross-103c {x: 0, y: 40.5, scale: 0.83, timed: "87000ms"}
+
+...
+
+# cross-104 {x: 17, y: 40.5, scale: 1.382, timed: "89000ms"}
 
 Word
 
-# cross-105 {x: 20.4, y: 40.5, scale: 1.275, timed: "93043ms"}
+# cross-105 {x: 20.4, y: 40.5, scale: 1.275, timed: "89800ms"}
 
 got
 
@@ -532,13 +552,13 @@ like
 
 a
 
-# cross-125 {x: 8.5, y: 36, scale: 1.117, timed: "98123ms"}
+# cross-125 {x: 8.5, y: 36, rotate-z: -90, scale: 1.117, timed: "98123ms"}
 
 sour
 
-# cross-126 {x: 11.9, y: 36, scale: 1.148, timed: "98531ms"}
+# cross-126 {x: 12.9, y: 36, scale: 1.148, timed: "98531ms"}
 
-bloodhound
+𝖇𝖑𝖔𝖔𝖉hound
 
 # cross-127 {x: 51, y: 36, scale: 1.156, timed: "98940ms"}
 
@@ -550,7 +570,7 @@ demons
 
 # cross-129 {x: 57.8, y: 36, scale: 1.132, timed: "99735ms"}
 
-flee
+==>flee
 
 # cross-130 {x: 61.2, y: 36, scale: 0.847, timed: "100133ms"}
 
@@ -594,7 +614,7 @@ the
 
 # cross-140 {x: -25.5, y: 31.5, scale: 1.331, timed: "104060ms"}
 
-dead
+pɐǝp
 
 # cross-141 {x: -22.1, y: 31.5, scale: 1.028, timed: "104448ms"}
 
@@ -614,7 +634,7 @@ again
 
 # cross-145 {x: 42.5, y: 31.5, scale: 0.886, timed: "106000ms"}
 
-By
+by
 
 # cross-146 {x: 45.9, y: 31.5, scale: 0.803, timed: "106500ms"}
 
@@ -622,7 +642,7 @@ the
 
 # cross-147 {x: 49.3, y: 31.5, scale: 1.334, timed: "107000ms"}
 
-rivers
+river's
 
 # cross-148 {x: 52.7, y: 31.5, scale: 0.981, timed: "107500ms"}
 
@@ -708,11 +728,11 @@ West
 
 ain't
 
-# cross-169 {x: -76.5, y: 22.5, scale: 0.885, timed: "115000ms"}
+# cross-169 {x: -76.5, y: 22.5, scale: 2.0, timed: "115000ms"}
 
-Big
+BIG
 
-# cross-170 {x: -73.1, y: 22.5, scale: 0.986, timed: "115400ms"}
+# cross-170 {x: -73.1, y: 22.5, rotate-z: 90, scale: 0.986, timed: "115400ms"}
 
 enough
 
@@ -726,11 +746,11 @@ two
 
 # cross-173 {x: -62.9, y: 22.5, scale: 0.835, timed: "116600ms"}
 
-outlaws
+𝖔𝖚𝖙𝖑𝖆𝖜𝖘
 
 # cross-174 {x: -34, y: 22.5, scale: 0.884, timed: "117000ms"}
 
-Kicking
+kicking
 
 # cross-175 {x: -30.6, y: 22.5, scale: 1.338, timed: "117556ms"}
 
@@ -746,6 +766,7 @@ and
 
 # cross-178 {x: -20.4, y: 22.5, scale: 1.333, timed: "119222ms"}
 
+▟▙▙
 teeth
 
 # cross-179 {x: -17, y: 22.5, scale: 1, timed: "119778ms"}
@@ -827,7 +848,8 @@ his
 # cross-198 {x: -27.2, y: 18, scale: 1.159, timed: "128500ms"}
 
 horse
-/  \
+/⠀⠀\
+
 
 # cross-199 {x: 17, y: 18, scale: 1.319, timed: "129000ms"}
 
@@ -839,15 +861,15 @@ a
 
 # cross-201 {x: 23.8, y: 18, scale: 0.871, timed: "130111ms"}
 
-'Yippie
+“𝒴𝒾𝓅𝓅𝒾ℯ
 
-# cross-202 {x: 27.2, y: 18, scale: 1.32, timed: "130667ms"}
+# cross-202 {x: 27.2, y: 18, rotate-z: -90, scale: 1.32, timed: "130667ms"}
 
-Kai
+𝒦𝒶𝒾
 
 # cross-203 {x: 30.6, y: 18, scale: 1.014, timed: "131222ms"}
 
-Yay!'
+𝒴𝒶𝓎”
 
 # cross-204 {x: 34, y: 18, scale: 0.869, timed: "131778ms"}
 
@@ -907,7 +929,7 @@ Saint
 
 # cross-218 {x: 1.7, y: 13.5, scale: 1.226, timed: "142333ms"}
 
-Bill
+Billy
 
 # cross-219 {x: 5.1, y: 13.5, scale: 0.895, timed: "143111ms"}
 
@@ -927,13 +949,25 @@ the
 
 # cross-223 {x: 18.7, y: 13.5, scale: 1.303, timed: "146222ms"}
 
-pain
+𝕻𝖆𝖎𝖓
 
-# cross-224 {x: 68, y: 13.5, scale: 1.258, timed: "147000ms"}
+# cross-223a {x: 16, y: 13.5, scale: 1.303, timed: "147000ms"}
+
+.
+
+# cross-223b {x: 16, y: 13.5, scale: 1.303, timed: "148000ms"}
+
+..
+
+# cross-223c {x: 16, y: 13.5, scale: 1.303, timed: "149000ms"}
+
+...
+
+# cross-224 {x: 68, y: 13.5, scale: 1.258, timed: "151000ms"}
 
 High
 
-# cross-225 {x: 71.4, y: 13.5, scale: 0.913, timed: "153100ms"}
+# cross-225 {x: 71.4, y: 13.5, scale: 0.913, timed: "152600ms"}
 
 noon
 
@@ -947,7 +981,7 @@ high
 
 # cross-228 {x: -69.7, y: 9, scale: 1.02, timed: "154300ms"}
 
-eyed
+👁yed
 
 # cross-229 {x: -66.3, y: 9, scale: 0.836, timed: "154800ms"}
 
@@ -1131,7 +1165,7 @@ Jesus
 
 # cross-274 {x: 8.5, y: 0, scale: 2.0, timed: "174400ms"}
 
-*KING*
+**KING**
 
 # cross-275 {x: 11.9, y: 0, scale: 1.5, timed: "174947ms"}
 
@@ -1151,7 +1185,7 @@ your
 
 # cross-279 {x: 40.8, y: 0, scale: 1.308, timed: "176897ms"}
 
-f:ilth.
+f̾i̾lt̾h
 
 # cross-280 {x: 44.2, y: 0, scale: 1.21, timed: "177326ms"}
 
@@ -1167,7 +1201,7 @@ y'all
 
 # cross-283 {x: -17, y: -4.5, scale: 0.885, timed: "178611ms"}
 
-clean
+░░▒▓ clean
 
 # cross-284 {x: -8.5, y: -4.5, scale: 1.013, timed: "179040ms"}
 
@@ -1333,73 +1367,81 @@ your
 
 thing
 
-# cross-325 {x: 0, y: -40.5, scale: 1.329, timed: "204160ms"}
+# cross-325 {x: 0, y: -40.5, scale: 1.329, timed: "204100ms"}
 
 Go
 
-# cross-326 {x: 3.4, y: -40.5, scale: 1.055, timed: "204253ms"}
+# cross-326 {x: 3.4, y: -40.5, scale: 1.055, timed: "204600ms"}
 
 on
 
-# cross-327 {x: 6.8, y: -40.5, scale: 1.24, timed: "204347ms"}
+# cross-327 {x: 6.8, y: -40.5, scale: 1.24, timed: "205100ms"}
 
 Saint
 
-# cross-328 {x: -17, y: -45, scale: 1.064, timed: "204440ms"}
+# cross-328 {x: -17, y: -45, scale: 1.064, timed: "206000ms"}
 
 Billy
 
-# cross-329 {x: -13.6, y: -45, scale: 1.019, timed: "204533ms"}
+# cross-329 {x: -13.6, y: -45, scale: 1.019, timed: "207000ms"}
 
 go
 
-# cross-330 {x: -10.2, y: -45, scale: 0.868, timed: "204627ms"}
+# cross-330 {x: -10.2, y: -45, scale: 0.868, timed: "207600ms"}
 
 and
 
-# cross-331 {x: -6.8, y: -45, scale: 1.2, timed: "204720ms"}
+# cross-331 {x: -6.8, y: -45, scale: 1.2, timed: "208000ms"}
 
 ease
 
-# cross-332 {x: -3.4, y: -45, scale: 1.394, timed: "204813ms"}
+# cross-332 {x: -3.4, y: -45, scale: 1.394, timed: "208800ms"}
 
 the
 
-# cross-333 {x: -17, y: -49.5, scale: 1.303, timed: "204907ms"}
+# cross-333 {x: -17, y: -49.5, scale: 1.303, timed: "209800ms"}
 
 pain
 
-# cross-334 {x: -8.5, y: -49.5, scale: 1.23, timed: "205000ms"}
+# cross-333a {x: -17, y: -51, scale: 1.303, timed: "210000ms"}
+.
+
+# cross-333b {x: -17, y: -51, scale: 1.303, timed: "211000ms"}
+..
+
+# cross-333c {x: -17, y: -51, scale: 1.303, timed: "212000ms"}
+...
+
+# cross-334 {x: -8.5, y: -49.5, scale: 1.23, timed: "220000ms"}
 
 And
 
-# cross-335 {x: -5.1, y: -49.5, scale: 1.359, timed: "205000ms"}
+# cross-335 {x: -5.1, y: -49.5, scale: 1.359, timed: "221000ms"}
 
 thus
 
-# cross-336 {x: -1.7, y: -49.5, scale: 1.054, timed: "205000ms"}
+# cross-336 {x: -1.7, y: -49.5, scale: 1.054, timed: "222000ms"}
 
 the
 
-# cross-337 {x: 1.7, y: -49.5, scale: 1.1, timed: "205000ms"}
+# cross-337 {x: 1.7, y: -49.5, scale: 1.1, timed: "223000ms"}
 
 New
 
-# cross-338 {x: -17, y: -54, scale: 1.062, timed: "205000ms"}
+# cross-338 {x: -17, y: -54, scale: 1.062, timed: "224000ms"}
 
 West
 
-# cross-339 {x: -13.6, y: -54, scale: 1.345, timed: "205000ms"}
+# cross-339 {x: -13.6, y: -54, scale: 1.345, timed: "225000ms"}
 
 was
 
-# cross-340 {x: -10.2, y: -54, scale: 1.193, timed: "205000ms"}
+# cross-340 {x: -10.2, y: -54, scale: 1.193, timed: "226000ms"}
 
 won
 
-# cross-341 {x: 8.5, y: -54, scale: 1.365, timed: "205200ms"}
-
-»——————◦•♛•◦——————«
+# cross-341 {x: 8.5, y: -54, scale: 1.365, timed: "227000ms"}
+»──────◦•♛•◦──────«
 
 ```javascript
 var state = {
