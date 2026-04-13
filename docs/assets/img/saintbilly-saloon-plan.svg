@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700">
+  <rect width="1000" height="700" fill="#efe2c6"/>
+  <g fill="none" stroke="#5b3e21" stroke-width="18" stroke-linejoin="round">
+    <rect x="96" y="84" width="808" height="530" rx="18"/>
+    <rect x="158" y="146" width="242" height="118"/>
+    <rect x="466" y="146" width="290" height="118"/>
+    <rect x="171" y="336" width="550" height="92" rx="10"/>
+    <path d="M410 84v92"/>
+    <path d="M747 84v92"/>
+    <path d="M612 614v-98"/>
+  </g>
+  <g fill="#6b4b29" opacity="0.3">
+    <rect x="204" y="364" width="110" height="36" rx="10"/>
+    <rect x="352" y="364" width="110" height="36" rx="10"/>
+    <rect x="500" y="364" width="110" height="36" rx="10"/>
+  </g>
+  <g fill="#7f5e39" font-size="44" font-family="Georgia, serif" letter-spacing="6" opacity="0.45">
+    <text x="192" y="222">BOTTLES</text>
+    <text x="500" y="222">TABLES</text>
+    <text x="262" y="320">SALOON</text>
+    <text x="309" y="562">SWING DOORS</text>
+  </g>
+</svg>

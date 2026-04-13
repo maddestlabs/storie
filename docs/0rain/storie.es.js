@@ -10837,6 +10837,31 @@ function parseTimedFormat(text, format = "auto") {
       return parseTimedNative(text);
   }
 }
+function parseTimedFrames(text) {
+  const entries2 = [];
+  const frames = text.split(/^---[ \t]*$/m);
+  for (const frame of frames) {
+    const lines = frame.split("\n");
+    let tsLine = "";
+    let tsIdx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const l = (lines[i] ?? "").trim();
+      if (l) {
+        tsLine = l;
+        tsIdx = i;
+        break;
+      }
+    }
+    if (tsIdx < 0) continue;
+    const ms = parseTTMLTime(tsLine);
+    if (!Number.isFinite(ms)) continue;
+    const contentLines = lines.slice(tsIdx + 1);
+    while (contentLines.length > 0 && !(contentLines[0] ?? "").trim()) contentLines.shift();
+    while (contentLines.length > 0 && !(contentLines[contentLines.length - 1] ?? "").trim()) contentLines.pop();
+    entries2.push({ ms, text: contentLines.join("\n") });
+  }
+  return entries2.sort((a, b) => a.ms - b.ms);
+}
 function slugifySectionIdPart(value) {
   const slug = String(value ?? "").toLowerCase().trim().replace(/[`*_~]/g, "").replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
   return slug || "section";
@@ -11146,6 +11171,34 @@ function _parseHeadingDirective(rawTitle) {
   }
   return { displayTitle: rawTitle, directive: null, timedMs: void 0 };
 }
+function extractSectionAnimateBlocks(content) {
+  let strippedContent = content;
+  let contentFrames;
+  let titleFrames;
+  let contentFramesRelative = false;
+  let titleFramesRelative = false;
+  const fenceRe = /^```timed\s+animate:(content|title)((?:[ \t][^\n]*)?)\n([\s\S]*?)^```/gm;
+  const matches = [...content.matchAll(fenceRe)];
+  for (const match of matches) {
+    const target = match[1];
+    const modifiers = (match[2] ?? "").toLowerCase();
+    const isRelative = /\brelative\b/.test(modifiers);
+    const body = match[3] ?? "";
+    const entries2 = parseTimedFrames(body);
+    if (entries2.length > 0) {
+      if (target === "content") {
+        contentFrames = entries2;
+        contentFramesRelative = isRelative;
+      } else {
+        titleFrames = entries2;
+        titleFramesRelative = isRelative;
+      }
+    }
+    strippedContent = strippedContent.replace(match[0], "");
+  }
+  strippedContent = strippedContent.trim();
+  return { contentFrames, titleFrames, contentFramesRelative, titleFramesRelative, strippedContent };
+}
 function extractTimedBlocks(codeBlocks) {
   var _a, _b;
   const out = [];
@@ -11277,18 +11330,23 @@ function extractSections(source) {
     const nextHeading = headings[i + 1];
     const endLine = nextHeading ? nextHeading.line - 1 : lines.length - 1;
     const contentLines = lines.slice(heading.line + 1, endLine + 1);
-    const content = contentLines.join("\n").trim();
+    const rawContent = contentLines.join("\n").trim();
+    const { contentFrames, titleFrames, contentFramesRelative, titleFramesRelative, strippedContent } = extractSectionAnimateBlocks(rawContent);
     const { displayTitle, directive, timedMs } = _parseHeadingDirective(heading.title);
     const section = {
       id: void 0,
       title: displayTitle,
       level: heading.level,
-      content,
+      content: strippedContent,
       startLine: heading.line,
       endLine,
       children: [],
       ...timedMs !== void 0 ? { timedMs } : {},
-      ...directive ? { directive } : {}
+      ...directive ? { directive } : {},
+      ...contentFrames ? { contentFrames } : {},
+      ...titleFrames ? { titleFrames } : {},
+      ...contentFramesRelative ? { contentFramesRelative } : {},
+      ...titleFramesRelative ? { titleFramesRelative } : {}
     };
     while (stack.length > 0 && stack[stack.length - 1].level >= heading.level) {
       stack.pop();
@@ -22890,6 +22948,36 @@ function parseTransform3D(section, sectionIndex, config) {
     if (raw === "right" || raw === "end") return "right";
     return "left";
   };
+  const parseBlendMode = (value, fallback = "normal") => {
+    const raw = String(value ?? "").trim().toLowerCase().replace(/[-_\s]/g, "");
+    switch (raw) {
+      case "multiply":
+      case "screen":
+      case "overlay":
+      case "softlight":
+      case "hardlight":
+      case "darken":
+      case "lighten":
+      case "difference":
+      case "exclusion":
+      case "colorburn":
+      case "colordodge":
+        return raw;
+      default:
+        return fallback;
+    }
+  };
+  const parseArtFit = (value) => {
+    const raw = String(value ?? "").trim().toLowerCase();
+    if (raw === "contain") return "contain";
+    if (raw === "stretch" || raw === "fill") return "stretch";
+    return "cover";
+  };
+  const parseArtLayer = (value) => {
+    const raw = String(value ?? "").trim().toLowerCase();
+    if (raw === "over" || raw === "overlay" || raw === "front" || raw === "above") return "over";
+    return "under";
+  };
   const metaTruthy = (key) => {
     const v2 = rawMetadata[key];
     if (v2 === true) return true;
@@ -22965,6 +23053,24 @@ function parseTransform3D(section, sectionIndex, config) {
         return "all";
     }
   })();
+  const sectionArt = (() => {
+    const artUrl = metaStr("art", metaStr("artUrl", metaStr("artSrc", ""))).trim();
+    if (!artUrl) return void 0;
+    const rawOpacity2 = parseFloat(metaStr("artOpacity", "1"));
+    const rawScale = parseFloat(metaStr("artScale", "1"));
+    const rawOffsetX = parseFloat(metaStr("artOffsetX", metaStr("artX", "0")));
+    const rawOffsetY = parseFloat(metaStr("artOffsetY", metaStr("artY", "0")));
+    return {
+      url: artUrl,
+      opacity: Number.isFinite(rawOpacity2) ? Math.max(0, Math.min(1, rawOpacity2)) : 1,
+      blendMode: parseBlendMode(rawMetadata.artBlend ?? rawMetadata.artBlendMode, "normal"),
+      layer: parseArtLayer(rawMetadata.artLayer),
+      fit: parseArtFit(rawMetadata.artFit),
+      scale: Number.isFinite(rawScale) ? Math.max(0.05, rawScale) : 1,
+      offsetX: Number.isFinite(rawOffsetX) ? rawOffsetX : 0,
+      offsetY: Number.isFinite(rawOffsetY) ? rawOffsetY : 0
+    };
+  })();
   const displayTitle = section.directive ? section.title : section.title.replace(/\s*\{[^}]+\}\s*$/, "").trim();
   const sectionId = typeof section.id === "string" && section.id.trim().length > 0 ? section.id.trim() : `section-${sectionIndex}`;
   return {
@@ -22976,6 +23082,7 @@ function parseTransform3D(section, sectionIndex, config) {
     renderMode,
     contentAlign,
     textAlign,
+    ...sectionArt ? { sectionArt } : {},
     transform: {
       position: vec3(x, y, z),
       rotation: vec3(rotX, rotY, rotZ),
@@ -23221,6 +23328,7 @@ const _WorldsRenderer = class _WorldsRenderer {
     __publicField(this, "backgroundShaderMipLevelCount", 1);
     __publicField(this, "backgroundImageTexture", null);
     __publicField(this, "backgroundImageSource", null);
+    __publicField(this, "sectionArtTextureCache", /* @__PURE__ */ new Map());
     // Neutral 1x1 fallback used to ensure binding(3) is always valid.
     __publicField(this, "neutralBackgroundTexture", null);
     // Mipmap generation for backgroundShaderTexture (reduces shimmer under camera motion)
@@ -23335,6 +23443,40 @@ const _WorldsRenderer = class _WorldsRenderer {
       console.warn("[WorldsRenderer] Failed to upload background image texture:", error);
       texture.destroy();
       this.backgroundImageSource = null;
+    }
+  }
+  getRenderableImageSize(image) {
+    return {
+      width: Math.max(1, (image.width ?? image.naturalWidth ?? 1) | 0),
+      height: Math.max(1, (image.height ?? image.naturalHeight ?? 1) | 0)
+    };
+  }
+  ensureSectionArtTexture(image) {
+    const cached = this.sectionArtTextureCache.get(image);
+    if (cached) return cached;
+    const { width, height } = this.getRenderableImageSize(image);
+    const mipLevelCount = this.calcMipLevelCount(width, height, 10);
+    const texture = this.device.createTexture({
+      size: { width, height },
+      mipLevelCount,
+      format: this.format,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+    });
+    try {
+      this.device.queue.copyExternalImageToTexture(
+        { source: image },
+        { texture },
+        { width, height }
+      );
+      const encoder = this.device.createCommandEncoder({ label: "WorldsRenderer Section Art Upload" });
+      this.generateMipmaps(encoder, texture, mipLevelCount, width, height);
+      this.device.queue.submit([encoder.finish()]);
+      this.sectionArtTextureCache.set(image, texture);
+      return texture;
+    } catch (error) {
+      console.warn("[WorldsRenderer] Failed to upload section art texture:", error);
+      texture.destroy();
+      return null;
     }
   }
   /**
@@ -24113,10 +24255,28 @@ const _WorldsRenderer = class _WorldsRenderer {
       usage: GPUTextureUsage.RENDER_ATTACHMENT
     });
   }
+  getSectionArtQuadSize(baseW, baseH, art, image) {
+    if (art.fit === "stretch") {
+      return {
+        width: Math.max(1e-3, baseW * art.scale),
+        height: Math.max(1e-3, baseH * art.scale)
+      };
+    }
+    const dims = this.getRenderableImageSize(image);
+    const imageAspect = dims.width / Math.max(1, dims.height);
+    const baseAspect = baseW / Math.max(1e-3, baseH);
+    const useContain = art.fit === "contain";
+    if (imageAspect >= baseAspect && useContain || imageAspect < baseAspect && !useContain) {
+      const width = Math.max(1e-3, baseW * art.scale);
+      return { width, height: Math.max(1e-3, width / imageAspect) };
+    }
+    const height = Math.max(1e-3, baseH * art.scale);
+    return { width: Math.max(1e-3, height * imageAspect), height };
+  }
   /**
    * Render all 3D sections
    */
-  render(camera, layouts, hoveredSectionIndex = null, background, connectors = []) {
+  render(camera, layouts, hoveredSectionIndex = null, background, connectors = [], sectionArt = /* @__PURE__ */ new Map()) {
     var _a;
     this.setBackgroundImage((background == null ? void 0 : background.image) ?? null);
     if (!this.renderPipeline || !this.vertexBuffer || !this.indexBuffer || !this.renderTexture) {
@@ -24130,6 +24290,7 @@ const _WorldsRenderer = class _WorldsRenderer {
       console.warn("WorldsRenderer not fully initialized");
       return;
     }
+    const uniformBuffer = this.uniformBuffer;
     layouts.filter((l) => l.visible && l.texture).length;
     const view = this.renderTexture.createView();
     const encoder = this.device.createCommandEncoder({ label: "3D Canvas Encoder" });
@@ -24288,31 +24449,13 @@ const _WorldsRenderer = class _WorldsRenderer {
     const blendModeIndex = BLEND_MODES[blendModeStr] ?? 0;
     const useBlend = blendModeIndex > 0;
     const contentBlendStrength = useBlend ? Math.max(0, Math.min(1, (background == null ? void 0 : background.contentBlendStrength) ?? 1)) : 0;
-    for (let i = 0; i < layouts.length; i++) {
-      const layout = layouts[i];
-      if (!layout.visible || !layout.texture) continue;
-      const baseW = layout.worldWidth ?? layout.width;
-      const baseH = layout.worldHeight ?? layout.height;
-      const sectionTransform = {
-        position: layout.transform.position,
-        rotation: layout.transform.rotation,
-        scale: {
-          x: layout.transform.scale.x * baseW,
-          y: layout.transform.scale.y * baseH,
-          z: layout.transform.scale.z
-        }
-      };
-      const modelMatrix = mat4FromTransform(sectionTransform);
-      const mvpMatrix = mat4Multiply(viewProjectionMatrix, modelMatrix);
-      const clip = (x, y, z, w) => {
-        const m = mvpMatrix;
-        return {
-          x: m[0] * x + m[4] * y + m[8] * z + m[12] * w,
-          y: m[1] * x + m[5] * y + m[9] * z + m[13] * w,
-          z: m[2] * x + m[6] * y + m[10] * z + m[14] * w,
-          w: m[3] * x + m[7] * y + m[11] * z + m[15] * w
-        };
-      };
+    const isCulled = (mvpMatrix) => {
+      const clip = (x, y, z, w) => ({
+        x: mvpMatrix[0] * x + mvpMatrix[4] * y + mvpMatrix[8] * z + mvpMatrix[12] * w,
+        y: mvpMatrix[1] * x + mvpMatrix[5] * y + mvpMatrix[9] * z + mvpMatrix[13] * w,
+        z: mvpMatrix[2] * x + mvpMatrix[6] * y + mvpMatrix[10] * z + mvpMatrix[14] * w,
+        w: mvpMatrix[3] * x + mvpMatrix[7] * y + mvpMatrix[11] * z + mvpMatrix[15] * w
+      });
       const corners = [
         clip(-0.5, -0.5, 0, 1),
         clip(0.5, -0.5, 0, 1),
@@ -24320,44 +24463,153 @@ const _WorldsRenderer = class _WorldsRenderer {
         clip(-0.5, 0.5, 0, 1)
       ];
       const all = (pred) => corners.every(pred);
-      if (all((p) => p.x < -p.w) || all((p) => p.x > p.w) || all((p) => p.y < -p.w) || all((p) => p.y > p.w) || all((p) => p.z < 0) || all((p) => p.z > p.w)) {
-        continue;
-      }
-      const uniformIndex = paperEnabled ? i + 1 : i;
-      const uniformOffset = uniformIndex * this.uniformStride;
+      return all((p) => p.x < -p.w) || all((p) => p.x > p.w) || all((p) => p.y < -p.w) || all((p) => p.y > p.w) || all((p) => p.z < 0) || all((p) => p.z > p.w);
+    };
+    const resolveArtPosition = (layout, offsetX, offsetY) => {
+      const localMatrix = mat4FromTransform({
+        position: layout.transform.position,
+        rotation: layout.transform.rotation,
+        scale: layout.transform.scale
+      });
+      return {
+        x: localMatrix[0] * offsetX + localMatrix[4] * offsetY + localMatrix[12],
+        y: localMatrix[1] * offsetX + localMatrix[5] * offsetY + localMatrix[13],
+        z: localMatrix[2] * offsetX + localMatrix[6] * offsetY + localMatrix[14]
+      };
+    };
+    const drawSectionQuad = (options) => {
+      const modelMatrix = mat4FromTransform(options.transform);
+      const mvpMatrix = mat4Multiply(viewProjectionMatrix, modelMatrix);
+      if (isCulled(mvpMatrix)) return false;
       this.device.queue.writeBuffer(
-        this.uniformBuffer,
-        uniformOffset + 0,
+        uniformBuffer,
+        options.uniformOffset + 0,
         mvpMatrix.buffer,
         mvpMatrix.byteOffset,
         mvpMatrix.byteLength
       );
-      const hover = hoveredSectionIndex !== null && layout.sectionIndex === hoveredSectionIndex ? 1 : 0;
-      const rect = layout.highlightUvRect;
+      const rect = options.highlightRect;
       const highlightEnabled = rect ? 1 : 0;
-      const params0 = new Float32Array([baseW, baseH, hover, highlightEnabled]);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 96, new Float32Array(paperColor));
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 112, new Float32Array(lineColor));
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array([
+      this.device.queue.writeBuffer(
+        uniformBuffer,
+        options.uniformOffset + 64,
+        new Float32Array([options.logicalWidth, options.logicalHeight, options.hover, highlightEnabled])
+      );
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 96, new Float32Array(paperColor));
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 112, new Float32Array(lineColor));
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 128, new Float32Array([
         paperEnabled ? paperParams[0] ?? 0 : 0,
         0,
         0,
-        layout.opacity
+        Math.max(0, Math.min(1, options.opacity))
       ]));
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, cameraForward);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 208, new Float32Array(
-        [blendModeIndex, contentDistortStrength, contentBlendStrength, useSampledBackground ? 1 : 0]
-      ));
-      const params1 = rect ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax]) : new Float32Array([0, 0, 0, 0]);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
-      const bindGroup = this.createBindGroupForTexture(layout.texture, uniformOffset, backgroundDetailTexture);
-      if (!bindGroup) continue;
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 144, cameraPos);
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 160, cameraRight);
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 176, cameraUp);
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 192, cameraForward);
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 208, new Float32Array([
+        options.blendModeIndex,
+        Math.max(0, Math.min(0.05, options.contentDistort)),
+        Math.max(0, Math.min(1, options.quadBlendStrength)),
+        useSampledBackground ? 1 : 0
+      ]));
+      this.device.queue.writeBuffer(
+        uniformBuffer,
+        options.uniformOffset + 80,
+        rect ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax]) : new Float32Array([0, 0, 0, 0])
+      );
+      const bindGroup = this.createBindGroupForTexture(options.texture, options.uniformOffset, backgroundDetailTexture);
+      if (!bindGroup) return false;
       pass.setBindGroup(0, bindGroup);
       pass.drawIndexed(6);
+      return true;
+    };
+    for (let i = 0; i < layouts.length; i++) {
+      const layout = layouts[i];
+      if (!layout.visible || !layout.texture) continue;
+      const baseW = layout.worldWidth ?? layout.width;
+      const baseH = layout.worldHeight ?? layout.height;
+      const uniformIndex = paperEnabled ? i + 1 : i;
+      const uniformOffset = uniformIndex * this.uniformStride;
+      const art = sectionArt.get(layout.sectionId);
+      if (art && art.layer === "under") {
+        const artTexture = this.ensureSectionArtTexture(art.image);
+        if (artTexture) {
+          const artSize = this.getSectionArtQuadSize(baseW, baseH, art, art.image);
+          const artPos = resolveArtPosition(layout, art.offsetX, art.offsetY);
+          drawSectionQuad({
+            texture: artTexture,
+            uniformOffset,
+            transform: {
+              position: artPos,
+              rotation: layout.transform.rotation,
+              scale: {
+                x: layout.transform.scale.x * artSize.width,
+                y: layout.transform.scale.y * artSize.height,
+                z: layout.transform.scale.z
+              }
+            },
+            logicalWidth: artSize.width,
+            logicalHeight: artSize.height,
+            opacity: art.opacity,
+            blendModeIndex: BLEND_MODES[art.blendMode] ?? 0,
+            quadBlendStrength: 1,
+            contentDistort: 0,
+            hover: 0
+          });
+        }
+      }
+      const hover = hoveredSectionIndex !== null && layout.sectionIndex === hoveredSectionIndex ? 1 : 0;
+      const rect = layout.highlightUvRect;
+      const drewCard = drawSectionQuad({
+        texture: layout.texture,
+        uniformOffset,
+        transform: {
+          position: layout.transform.position,
+          rotation: layout.transform.rotation,
+          scale: {
+            x: layout.transform.scale.x * baseW,
+            y: layout.transform.scale.y * baseH,
+            z: layout.transform.scale.z
+          }
+        },
+        logicalWidth: baseW,
+        logicalHeight: baseH,
+        opacity: layout.opacity,
+        blendModeIndex,
+        quadBlendStrength: contentBlendStrength,
+        contentDistort: contentDistortStrength,
+        hover,
+        highlightRect: rect
+      });
+      if (!drewCard) continue;
+      if (art && art.layer === "over") {
+        const artTexture = this.ensureSectionArtTexture(art.image);
+        if (artTexture) {
+          const artSize = this.getSectionArtQuadSize(baseW, baseH, art, art.image);
+          const artPos = resolveArtPosition(layout, art.offsetX, art.offsetY);
+          drawSectionQuad({
+            texture: artTexture,
+            uniformOffset,
+            transform: {
+              position: artPos,
+              rotation: layout.transform.rotation,
+              scale: {
+                x: layout.transform.scale.x * artSize.width,
+                y: layout.transform.scale.y * artSize.height,
+                z: layout.transform.scale.z
+              }
+            },
+            logicalWidth: artSize.width,
+            logicalHeight: artSize.height,
+            opacity: art.opacity,
+            blendModeIndex: BLEND_MODES[art.blendMode] ?? 0,
+            quadBlendStrength: 1,
+            contentDistort: 0,
+            hover: 0
+          });
+        }
+      }
     }
     if (connectors.length > 0 && this.linePipeline && this.lineUniformBuffer && this.lineVertexBuffer && this.lineIndexBuffer) {
       pass.setPipeline(this.linePipeline);
@@ -24476,6 +24728,10 @@ const _WorldsRenderer = class _WorldsRenderer {
     (_f = this.backgroundTexture) == null ? void 0 : _f.destroy();
     (_g = this.backgroundShaderTexture) == null ? void 0 : _g.destroy();
     (_h = this.backgroundImageTexture) == null ? void 0 : _h.destroy();
+    for (const texture of this.sectionArtTextureCache.values()) {
+      texture.destroy();
+    }
+    this.sectionArtTextureCache.clear();
     (_i = this.neutralBackgroundTexture) == null ? void 0 : _i.destroy();
   }
 };
@@ -27508,6 +27764,7 @@ class StorieEngine {
     __publicField(this, "backgroundImageUrlCache", /* @__PURE__ */ new Map());
     __publicField(this, "backgroundImageUrlInFlightCache", /* @__PURE__ */ new Map());
     __publicField(this, "backgroundImageUrlFailures", /* @__PURE__ */ new Set());
+    __publicField(this, "worldsBackgroundCompositeCache", /* @__PURE__ */ new Map());
     __publicField(this, "audioGestureUnlocked", false);
     __publicField(this, "trustedAudioGestureDepth", 0);
     __publicField(this, "pendingGestureAudioStarts", []);
@@ -27600,6 +27857,9 @@ class StorieEngine {
     __publicField(this, "sectionTextureCache", /* @__PURE__ */ new Map());
     __publicField(this, "sectionLinkRegionsCache", /* @__PURE__ */ new Map());
     __publicField(this, "sectionWidgetPlacementsCache", /* @__PURE__ */ new Map());
+    /** Records the `elapsedTime` (seconds) when each section last became current,
+     *  keyed by sectionId. Used for `timed animate:content relative` blocks. */
+    __publicField(this, "sectionAnimEnterTimes", /* @__PURE__ */ new Map());
     __publicField(this, "worldsInlineWidgetInstances", []);
     __publicField(this, "worldsInlineWidgetEventsQueue", []);
     __publicField(this, "worldsInlineWidgetValueState", /* @__PURE__ */ new Map());
@@ -28398,7 +28658,7 @@ class StorieEngine {
     this.audioUrlInFlightCache.set(resolvedUrl, promise);
     return await promise;
   }
-  resolveWorldsBackgroundImageUrl(rawUrl) {
+  resolveWorldsImageUrl(rawUrl) {
     var _a, _b;
     const trimmed = String(rawUrl ?? "").trim();
     if (!trimmed) {
@@ -28432,7 +28692,7 @@ class StorieEngine {
     }
     return resolved.toString();
   }
-  async loadWorldsBackgroundImageFromResolvedUrl(resolvedUrl) {
+  async loadWorldsImageFromResolvedUrl(resolvedUrl) {
     const MAX_IMAGE_URL_BYTES = 128 * 1024 * 1024;
     try {
       const response = await fetch(resolvedUrl, {
@@ -28460,12 +28720,12 @@ class StorieEngine {
       return null;
     }
   }
-  ensureWorldsBackgroundImageLoaded(rawUrl) {
+  ensureWorldsImageLoaded(rawUrl) {
     const rawKey = String(rawUrl ?? "").trim();
     if (!rawKey || this.backgroundImageUrlFailures.has(rawKey)) return null;
     let resolvedUrl;
     try {
-      resolvedUrl = this.resolveWorldsBackgroundImageUrl(rawUrl);
+      resolvedUrl = this.resolveWorldsImageUrl(rawUrl);
     } catch (error) {
       console.warn(error);
       this.backgroundImageUrlFailures.add(rawKey);
@@ -28475,7 +28735,7 @@ class StorieEngine {
     const cached = this.backgroundImageUrlCache.get(resolvedUrl);
     if (cached) return cached;
     if (!this.backgroundImageUrlInFlightCache.has(resolvedUrl)) {
-      const promise = this.loadWorldsBackgroundImageFromResolvedUrl(resolvedUrl).then((image) => {
+      const promise = this.loadWorldsImageFromResolvedUrl(resolvedUrl).then((image) => {
         if (!image) {
           this.backgroundImageUrlFailures.add(resolvedUrl);
           return null;
@@ -28491,6 +28751,65 @@ class StorieEngine {
       this.backgroundImageUrlInFlightCache.set(resolvedUrl, promise);
     }
     return null;
+  }
+  ensureWorldsBackgroundImageLoaded(rawUrl) {
+    return this.ensureWorldsImageLoaded(rawUrl);
+  }
+  composeWorldsBackgroundOverlay(cacheKey, baseImage, overlayImage, options) {
+    const cached = this.worldsBackgroundCompositeCache.get(cacheKey);
+    if (cached) return cached;
+    const width = Math.max(1, Math.round(baseImage.width ?? baseImage.naturalWidth ?? 0));
+    const height = Math.max(1, Math.round(baseImage.height ?? baseImage.naturalHeight ?? 0));
+    const overlayWidth = Math.max(1, Math.round(overlayImage.width ?? overlayImage.naturalWidth ?? 0));
+    const overlayHeight = Math.max(1, Math.round(overlayImage.height ?? overlayImage.naturalHeight ?? 0));
+    if (!(width > 0 && height > 0 && overlayWidth > 0 && overlayHeight > 0)) return null;
+    const canvas = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(width, height) : (() => {
+      if (typeof document === "undefined") return null;
+      const element = document.createElement("canvas");
+      element.width = width;
+      element.height = height;
+      return element;
+    })();
+    if (!canvas) return null;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.clearRect(0, 0, width, height);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = 1;
+    ctx.drawImage(baseImage, 0, 0, width, height);
+    const fit = options.fit ?? "cover";
+    let drawW = width;
+    let drawH = height;
+    let drawX = 0;
+    let drawY = 0;
+    if (fit !== "stretch") {
+      const scale = fit === "contain" ? Math.min(width / overlayWidth, height / overlayHeight) : Math.max(width / overlayWidth, height / overlayHeight);
+      drawW = Math.max(1, Math.round(overlayWidth * scale));
+      drawH = Math.max(1, Math.round(overlayHeight * scale));
+      drawX = Math.round((width - drawW) * 0.5);
+      drawY = Math.round((height - drawH) * 0.5);
+    }
+    const blendModeMap = {
+      normal: "source-over",
+      multiply: "multiply",
+      screen: "screen",
+      overlay: "overlay",
+      softlight: "soft-light",
+      hardlight: "hard-light",
+      darken: "darken",
+      lighten: "lighten",
+      difference: "difference",
+      exclusion: "exclusion",
+      colorburn: "color-burn",
+      colordodge: "color-dodge"
+    };
+    const compositeMode = blendModeMap[options.blendMode] ?? "source-over";
+    ctx.globalCompositeOperation = compositeMode;
+    ctx.globalAlpha = Math.max(0, Math.min(1, options.opacity));
+    ctx.drawImage(overlayImage, drawX, drawY, drawW, drawH);
+    const result = typeof OffscreenCanvas !== "undefined" && canvas instanceof OffscreenCanvas && typeof canvas.transferToImageBitmap === "function" ? canvas.transferToImageBitmap() : canvas;
+    this.worldsBackgroundCompositeCache.set(cacheKey, result);
+    return result;
   }
   ensureMarkdownBlobImageLoaded(source, documentId) {
     const docId = documentId ?? this.activeDocumentId;
@@ -29451,6 +29770,7 @@ class StorieEngine {
           const flat = flattenSections$1(roots);
           return flat.map((s, index) => ({
             index,
+            sectionId: typeof s.id === "string" && s.id.length > 0 ? s.id : `section-${index}`,
             title: s.title,
             level: s.level,
             ...s.timedMs !== void 0 ? { timedMs: s.timedMs } : {},
@@ -32683,6 +33003,9 @@ class StorieEngine {
           },
           applyTimed: (selector, entries2, timeSec, options) => {
             return engine.applyWorldsTimedContent(selector, entries2, Number(timeSec) || 0, options);
+          },
+          applyAllFrames: (timeSec) => {
+            engine.applyAllSectionFrames(Number(timeSec) || 0);
           }
         },
         timeline: {
@@ -35146,6 +35469,24 @@ ${exportVars}
     return nextState;
   }
   /**
+   * Iterate all runtime sections and auto-apply any inline `contentFrames` /
+   * `titleFrames` entries parsed from `timed animate:*` blocks in the document.
+   * Called automatically at the end of `applyWorldsTimeline`.
+   */
+  applyAllSectionFrames(timeSec) {
+    for (const ref of this.getRuntimeSectionRefs()) {
+      const { section, sectionId } = ref;
+      if (section.contentFrames && section.contentFrames.length > 0) {
+        const t = section.contentFramesRelative ? timeSec - (section.timedMs !== void 0 ? section.timedMs / 1e3 : this.sectionAnimEnterTimes.get(sectionId) ?? 0) : timeSec;
+        this.applyWorldsTimedContent(sectionId, section.contentFrames, t);
+      }
+      if (section.titleFrames && section.titleFrames.length > 0) {
+        const t = section.titleFramesRelative ? timeSec - (section.timedMs !== void 0 ? section.timedMs / 1e3 : this.sectionAnimEnterTimes.get(sectionId) ?? 0) : timeSec;
+        this.applyWorldsTimedContent(sectionId, section.titleFrames, t, { target: "title" });
+      }
+    }
+  }
+  /**
    * Start the main loop (async to support WebGPU init)
    */
   async start() {
@@ -35310,7 +35651,18 @@ ${exportVars}
           const paperNoiseStrength = Number.isFinite(configuredPaperNoiseStrength) ? Math.max(0, Math.min(1, configuredPaperNoiseStrength)) : defaultPaperNoiseStrength;
           const shaderInfo = this.parseWorldsSectionBackgroundShader();
           const textureInfo = this.parseWorldsSectionBackgroundTexture();
-          const textureImage = textureInfo ? this.ensureWorldsBackgroundImageLoaded(textureInfo.url) : null;
+          const baseTextureImage = textureInfo ? this.ensureWorldsBackgroundImageLoaded(textureInfo.url) : null;
+          const overlayTextureImage = (textureInfo == null ? void 0 : textureInfo.overlayUrl) ? this.ensureWorldsImageLoaded(textureInfo.overlayUrl) : null;
+          const textureImage = textureInfo && baseTextureImage ? overlayTextureImage && textureInfo.overlayUrl ? this.composeWorldsBackgroundOverlay(
+            `bg-overlay:${String(this.worldsConfig.sectionBackground ?? "")}`,
+            baseTextureImage,
+            overlayTextureImage,
+            {
+              blendMode: textureInfo.overlayBlendMode ?? "hardlight",
+              opacity: textureInfo.overlayOpacity ?? 0.24,
+              fit: textureInfo.overlayFit ?? "cover"
+            }
+          ) ?? baseTextureImage : baseTextureImage : null;
           let mergedShaderUniforms = (shaderInfo == null ? void 0 : shaderInfo.uniforms) ? { ...shaderInfo.uniforms } : shaderInfo ? {} : void 0;
           if (shaderInfo && mergedShaderUniforms) {
             mergedShaderUniforms.worldsBackground = 1;
@@ -35384,8 +35736,25 @@ ${exportVars}
             contentDistortStrength: Number.isFinite(textureInfo == null ? void 0 : textureInfo.contentDistort) ? textureInfo.contentDistort : Number.isFinite((_c = this.worldsConfig) == null ? void 0 : _c.contentDistortStrength) ? this.worldsConfig.contentDistortStrength : 0,
             contentBlendStrength: Number.isFinite(textureInfo == null ? void 0 : textureInfo.blendStrength) ? textureInfo.blendStrength : void 0
           } : void 0;
+          const sectionArtStates = /* @__PURE__ */ new Map();
+          for (const layout of this.section3DLayouts) {
+            const art = layout.sectionArt;
+            if (!(art == null ? void 0 : art.url)) continue;
+            const image = this.ensureWorldsImageLoaded(art.url);
+            if (!image) continue;
+            sectionArtStates.set(layout.sectionId, {
+              image,
+              opacity: art.opacity,
+              blendMode: art.blendMode,
+              layer: art.layer,
+              fit: art.fit,
+              scale: art.scale,
+              offsetX: art.offsetX,
+              offsetY: art.offsetY
+            });
+          }
           const linkConnectors = this.getRendered3DLinkConnectors();
-          this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig, linkConnectors);
+          this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig, linkConnectors, sectionArtStates);
         }
         if (this.webgpuUIRenderer) {
           this.syncWorldsInlineWidgets();
@@ -35567,6 +35936,31 @@ ${exportVars}
     return { buffer: this._exportAudioBuffer, offsetSec: this._exportAudioOffset };
   }
   /**
+   * Suggest an export duration based on the current export context.
+   * Prefers a captured AudioBuffer, and falls back to the selected timed block.
+   */
+  getSuggestedExportDuration() {
+    var _a;
+    const captured = this.getExportAudioBuffer();
+    if (captured == null ? void 0 : captured.buffer) {
+      const duration2 = Number(captured.buffer.duration);
+      const offset = Math.max(0, Math.min(duration2, Number(captured.offsetSec) || 0));
+      const remaining = duration2 - offset;
+      if (Number.isFinite(remaining) && remaining > 0) return remaining;
+    }
+    const selected = this._exportTimedBlockSelection;
+    if (!selected) return null;
+    const docId = this.activeDocumentId;
+    if (!docId) return null;
+    const doc = this.documents.get(docId);
+    const store = doc == null ? void 0 : doc._timedStore;
+    const entries2 = (_a = store == null ? void 0 : store.get(selected)) == null ? void 0 : _a.entries;
+    if (!entries2 || entries2.length === 0) return null;
+    const last = entries2[entries2.length - 1];
+    const duration = Number(last == null ? void 0 : last.ms) / 1e3;
+    return Number.isFinite(duration) && duration > 0 ? duration : null;
+  }
+  /**
    * Resize the canvas and engine to an exact pixel resolution for native-quality
    * video export. The canvas is resized to the nearest cell-aligned dimensions
    * that fit within exportWidth × exportHeight.
@@ -35642,6 +36036,15 @@ ${exportVars}
     this.deltaTime = delta;
     this.runFrame();
     this.frameCount++;
+  }
+  /**
+   * Render one export-preflight frame without advancing the export frame counter.
+   * Useful when the host UI needs document code to latch export metadata first.
+   */
+  primeExportFrame(elapsed = 0) {
+    this.elapsedTime = elapsed;
+    this.deltaTime = 0;
+    this.runFrame();
   }
   /**
    * Push the terminal cell size (in render-texture pixels) into any active
@@ -36376,6 +36779,10 @@ ${exportVars}
     let paperPlaneZ;
     let paperPlaneZMode;
     let screenLock;
+    let overlayUrl;
+    let overlayBlendMode;
+    let overlayOpacity;
+    let overlayFit;
     let blendMode;
     for (const spec of paramSpecs) {
       const [key, value] = spec.split("=");
@@ -36445,6 +36852,45 @@ ${exportVars}
         }
         continue;
       }
+      if (trimmedKey === "overlay" || trimmedKey === "overlayUrl" || trimmedKey === "overlaySrc") {
+        if (trimmedValue) overlayUrl = trimmedValue;
+        continue;
+      }
+      if (trimmedKey === "overlayOpacity") {
+        const num = parseFloat(trimmedValue);
+        if (!isNaN(num) && Number.isFinite(num)) {
+          overlayOpacity = Math.max(0, Math.min(1, num));
+        }
+        continue;
+      }
+      if (trimmedKey === "overlayBlend" || trimmedKey === "overlayBlendMode") {
+        const lower = trimmedValue.toLowerCase().replace(/[-_\s]/g, "");
+        const validModes = [
+          "normal",
+          "multiply",
+          "screen",
+          "overlay",
+          "softlight",
+          "hardlight",
+          "darken",
+          "lighten",
+          "difference",
+          "exclusion",
+          "colorburn",
+          "colordodge"
+        ];
+        if (validModes.includes(lower)) {
+          overlayBlendMode = lower;
+        }
+        continue;
+      }
+      if (trimmedKey === "overlayFit") {
+        const lower = trimmedValue.toLowerCase();
+        if (lower === "contain") overlayFit = "contain";
+        else if (lower === "stretch" || lower === "fill") overlayFit = "stretch";
+        else overlayFit = "cover";
+        continue;
+      }
       if (trimmedKey === "blendStrength" || trimmedKey === "blendAmount" || trimmedKey === "paperBlend") {
         const num = parseFloat(trimmedValue);
         if (!isNaN(num) && Number.isFinite(num)) {
@@ -36453,7 +36899,21 @@ ${exportVars}
         continue;
       }
     }
-    return { url: textureUrl, coordScale, tilePx, contentDistort, blendStrength, paperPlaneZ, paperPlaneZMode, screenLock, blendMode };
+    return {
+      url: textureUrl,
+      coordScale,
+      tilePx,
+      contentDistort,
+      blendStrength,
+      paperPlaneZ,
+      paperPlaneZMode,
+      screenLock,
+      overlayUrl,
+      overlayBlendMode,
+      overlayOpacity,
+      overlayFit,
+      blendMode
+    };
   }
   isWorldsSectionBackgroundProceduralChainEnabled() {
     const chain = this.parseWorldsSectionBackgroundChain();
@@ -38867,6 +39327,10 @@ ${exportVars}
     var _a;
     const doc = this.getActiveDocument();
     if (!(doc == null ? void 0 : doc.id)) return;
+    const layout = this.section3DLayouts.find((l) => l.sectionIndex === sectionIndex);
+    if (layout == null ? void 0 : layout.sectionId) {
+      this.sectionAnimEnterTimes.set(layout.sectionId, this.elapsedTime);
+    }
     const scope = this.sandbox.getScope(doc.id);
     const handler = (_a = scope == null ? void 0 : scope.__enterHandlers) == null ? void 0 : _a[sectionIndex];
     if (typeof handler !== "function") return;

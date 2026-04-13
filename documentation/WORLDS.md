@@ -332,6 +332,37 @@ Available procedural effects:
 - `ruledlines`: Notebook ruled lines
 - Combine with `+`: `paper+ruledlines`
 
+Image texture backgrounds also support an optional baked overlay layer:
+
+```js
+worlds.config.setDefaults({
+  sectionBackground: 'texture:assets/img/Paper006_1K.jpg;tilePx=400;overlay=assets/img/texas-map.svg;overlayBlend=hardlight;overlayOpacity=0.24'
+});
+```
+
+Useful overlay params:
+- `overlay=` or `overlayUrl=`: second image to composite over the base texture
+- `overlayBlend=`: `normal`, `multiply`, `screen`, `overlay`, `softlight`, `hardlight`, `darken`, `lighten`, `difference`, `exclusion`, `colorburn`, `colordodge`
+- `overlayOpacity=`: `0..1`
+- `overlayFit=`: `cover`, `contain`, or `stretch`
+
+### Section Art
+
+Sections can also declare a separate art plate in heading metadata. This is rendered as its own quad, so it is not clipped by markdown flow layout and can sit under or over the text card.
+
+```markdown
+# saloon {art: "assets/img/saloon-plan.svg", artBlend: "hardlight", artOpacity: 0.28, artFit: "cover", artLayer: "under"}
+```
+
+Useful section art params:
+- `art`: image URL
+- `artBlend`: same blend modes as `overlayBlend`
+- `artOpacity`: `0..1`
+- `artFit`: `cover`, `contain`, or `stretch`
+- `artLayer`: `under` or `over`
+- `artScale`: scalar multiplier, default `1`
+- `artOffsetX`, `artOffsetY`: local card-space offsets
+
 ### Shader Backgrounds
 
 Use custom WGSL fragment shaders as backgrounds:

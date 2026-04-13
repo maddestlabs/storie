@@ -138,7 +138,7 @@ export interface SandboxAPI {
   // Document metadata API (read-only)
   // Indices match Worlds's depth-first section layout order.
   doc: {
-    sectionsFlat: () => Array<{ index: number; title: string; level: number; timedMs?: number; directive?: Record<string, any> }>;
+    sectionsFlat: () => Array<{ index: number; sectionId: string; title: string; level: number; timedMs?: number; directive?: Record<string, any> }>;
     sectionCount: () => number;
     outline: () => Array<{
       index: number;
@@ -1081,6 +1081,8 @@ export interface SandboxAPI {
           clearWhenEmpty?: boolean;
         }
       ) => WorldsContentState | null;
+      /** Apply inline `timed animate:*` frames for all sections that have them. Call once per frame from `on:update`. */
+      applyAllFrames: (timeSec: number) => void;
     };
     sections: {
       list: () => Array<{

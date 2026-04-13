@@ -5,6 +5,16 @@ author: "Maddest Labs"
 theme: "saintbilly"
 shaders: "audioshake+vintage"
 font: "Rye"
+introOscType: sawtooth
+introOscFreq: 110
+introVizHoldSec: 8
+introVizFadeSec: 4
+introVizMode: terrain
+introVizEase: 0.82
+introVizScale: 0.25
+introVizLineWeight: 0.9
+introVizFillAlpha: 0.0
+introVizGlowAlpha: 0.18
 ---
 
 This Saint Billy variant turns the demo into a song board instead of a dungeon crawl.
@@ -13,77 +23,25 @@ This Saint Billy variant turns the demo into a song board instead of a dungeon c
 ...
 
 # start-0 {x: 0, y: 200, scale: 1.0, timed: "100ms"}
-
-```timed animate:content relative
-0ms
-⠀⠀⠀⠀⠀⠀»«⠀⠀⠀⠀⠀⠀
----
-150ms
-⠀⠀⠀⠀» wh «⠀⠀⠀⠀
----
-300ms
-⠀⠀⠀» ewhe «⠀⠀⠀
----
-450ms
-⠀⠀» mewher «⠀⠀
----
-500ms
-» Somewheres «
----
-```
+Ballad
 
 # start-0a {x: 0, y: 198, scale: 1.0, timed: "1000ms"}
-in the
-
-# start-0b {x: 0, y: 196, scale: 1.0, timed: "2000ms"}
-New West
-
-# start-0c {x: 0, y: 194, scale: 1.0, timed: "6000ms"}
-●
-
-# start-0d {x: 0, y: 192, scale: 1.0, timed: "6500ms"}
-⠀.
-
-# start-0e {x: 0, y: 190, scale: 1.0, timed: "7000ms"}
-⠀⬤
-
-# start-0f {x: 0, y: 188, scale: 1.0, timed: "7500ms"}
-●
-
-# start-0g {x: 0, y: 186, scale: 1.0, timed: "8000ms"}
-⠀.
-
-# start-0h {x: 0, y: 184, scale: 1.0, timed: "8500ms"}
-⠀●
-
-# start-1 {x: 0, y: 150, scale: 1.0, timed: "9100ms"}
-
-```timed animate:content relative
-0ms
-⠀⠀Ballad⠀⠀
----
-100ms
-𝅘𝅥𝅮⠀Ballad 𝅝
----
-200ms
-𝅗𝅥⠀Ballad⠀𝅘𝅥𝅮
----
-300ms
-𝅘𝅥𝅯⠀Ballad⠀𝅘𝅥
----
-```
-
-# start-2 {x: 0, y: 148, scale: 1.0, timed: "9200ms"}
 of
 
-# start-3 {x: 0, y: 146, scale: 1.0, timed: "9300ms"}
+# start-0b {x: 0, y: 196, scale: 1.0, timed: "2000ms"}
 Saint Billy
 
-# start-4 {x: 0, y: 144, scale: 1.0, timed: "9400ms"}
-»»──────«»──────««
+# start-1 {x: 0, y: 150, scale: 2.0, timed: "5100ms"}
+Somewheres
 
-# start-5 {x: 0, y: 147, scale: 1.0, timed: "9450ms"}
-⠀
+# start-2 {x: 0, y: 148, scale: 1.0, timed: "5200ms"}
+in the
+
+# start-3 {x: 0, y: 146, scale: 1.5, timed: "5300ms"}
+New West
+
+# start-4 {x: 0, y: 144, scale: 1.5, timed: "5400ms"}
+»»──────«»──────««
 
 # cross-0 {x: -17, y: 99, scale: 1.037, timed: "25000ms"}
 
@@ -120,20 +78,7 @@ Outlaws
 
 # cross-8 {x: 3.4, y: 94.5, scale: 1.38, timed: "29400ms"}
 
-```timed animate:content relative
-0ms
-n⠀⠀⠀⠀⠀⠀
----
-100ms
-run⠀⠀⠀⠀
----
-200ms
-utrun⠀⠀
----
-300ms
-=outrun
----
-```
+=outrun=>
 
 # cross-9 {x: 6.8, y: 94.5, scale: 0.815, timed: "30200ms"}
 
@@ -141,36 +86,8 @@ and
 
 # cross-10 {x: -17, y: 90, scale: 0.915, timed: "31000ms"}
 
-```timed animate:content relative
-0ms
-outgun⠀⠀⠀⠀⠀⠀⠀⠀
-▐┘⠀⠀⠀⠀⠀
----
-100ms
-outgun•⠀⠀⠀⠀⠀⠀⠀
-▐┘⠀⠀⠀
----
-200ms
-outgun⠀⠀•⠀⠀⠀⠀⠀
-▐┘⠀⠀⠀⠀⠀
----
-300ms
-outgun⠀⠀⠀⠀•⠀⠀⠀
-▐┘⠀⠀⠀
----
-400ms
-outgun⠀⠀⠀⠀⠀⠀•⠀
-▐┘⠀⠀⠀
----
-500ms
-outgun⠀⠀⠀⠀⠀⠀⠀⠀•
-▐┘⠀⠀⠀
----
-600ms
-outgun
-▐┘⠀⠀⠀
----
-```
+outgun⠀⠀⠀•
+▐┘
 
 # cross-11 {x: -8.5, y: 90, scale: 1.235, timed: "31800ms"}
 
@@ -226,24 +143,8 @@ that
 
 # cross-24 {x: 1.7, y: 81, scale: 1.057, timed: "36800ms"}
 
-```timed animate:content relative
-0ms
 blood
-⠀⠀⠈⠀⠀⠀
----
-100ms
-blood
-⠀⠀⠘
----
-200ms
-blood
-⠀⠀.
----
-300ms
-blood
-
----
-```
+⠈
 
 # cross-25 {x: -17, y: 76.5, scale: 1.219, timed: "37200ms"}
 
@@ -251,25 +152,8 @@ to
 
 # cross-26 {x: -13.6, y: 76.5, scale: 1.077, timed: "37600ms"}
 
-```timed animate:content relative
-0ms
 spill
-⠁⣿⠇⡇⠀⠀⠀
----
-100ms
-spill
-⠠⡇⠇⠘
----
-200ms
-spill
-⠁⠇.⠁
----
-300ms
-spill
-⢀⠀⠀⠀
----
-```
-
+ .
 # cross-27 {x: 0, y: 76.5, scale: 1.102, timed: "38000ms"}
 
 And
@@ -282,7 +166,7 @@ amidst
 
 them
 
-# cross-30 {x: -17, y: 72, scale: 1.0, timed: "40040ms"}
+# cross-30 {x: -17, y: 72, scale: 1.269, timed: "40040ms"}
 
 standing
 
@@ -329,7 +213,7 @@ all
 
 One
 
-# cross-41 {x: -13.6, y: 63, scale: 0.952, timed: "45200ms"}
+# cross-41 {x: -13.6, y: 63, scale: 0.952, timed: "45400ms"}
 
 man
 
@@ -345,23 +229,23 @@ without
 
 shame
 
-# cross-45 {x: -17, y: 58.5, scale: 1.291, timed: "47800ms"}
+# cross-45 {x: -17, y: 58.5, scale: 1.291, timed: "48140ms"}
 
 One
 
-# cross-46 {x: -13.6, y: 58.5, scale: 0.808, timed: "48200ms"}
+# cross-46 {x: -13.6, y: 58.5, scale: 0.808, timed: "48800ms"}
 
 man
 
-# cross-47 {x: -10.2, y: 58.5, scale: 1.147, timed: "48700ms"}
+# cross-47 {x: -10.2, y: 58.5, scale: 1.147, timed: "49000ms"}
 
 oversees
 
-# cross-48 {x: -6.8, y: 58.5, scale: 0.94, timed: "49600ms"}
+# cross-48 {x: -6.8, y: 58.5, scale: 0.94, timed: "50100ms"}
 
 this
 
-# cross-49 {x: -3.4, y: 58.5, scale: 1.234, timed: "50600ms"}
+# cross-49 {x: -3.4, y: 58.5, scale: 1.234, timed: "50800ms"}
 
 game
 
@@ -381,11 +265,11 @@ him
 
 Billy
 
-# cross-54 {x: -3.4, y: 54, scale: 1.302, timed: "53700ms"}
+# cross-54 {x: -3.4, y: 54, scale: 1.302, timed: "53753ms"}
 
 the
 
-# cross-55 {x: 0, y: 54, scale: 1.5, timed: "54200ms"}
+# cross-55 {x: 0, y: 54, scale: 1.5, timed: "54267ms"}
 
 Saint
 
@@ -409,15 +293,15 @@ his
 
 name
 
-# cross-61 {x: -25.5, y: 49.5, scale: 1.008, timed: "56400ms"}
+# cross-61 {x: -25.5, y: 49.5, scale: 1.008, timed: "56380ms"}
 
 One
 
-# cross-62 {x: -22.1, y: 49.5, scale: 1.33, timed: "56600ms"}
+# cross-62 {x: -22.1, y: 49.5, scale: 1.33, timed: "56751ms"}
 
 𝖊𝖛𝖎𝖑
 
-# cross-63 {x: -18.7, y: 49.5, scale: 1.159, timed: "57400ms"}
+# cross-63 {x: -18.7, y: 49.5, scale: 1.159, timed: "57300ms"}
 
 ዪዐፕፕቿክ
 
@@ -441,15 +325,15 @@ gun
 
 Does
 
-# cross-69 {x: 37.4, y: 49.5, scale: 0.992, timed: "60600ms"}
+# cross-69 {x: 37.4, y: 49.5, scale: 0.992, timed: "61300ms"}
 
 hurt
 
-# cross-70 {x: 40.8, y: 49.5, scale: 1.148, timed: "61200ms"}
+# cross-70 {x: 40.8, y: 49.5, scale: 1.148, timed: "61500ms"}
 
 for
 
-# cross-71 {x: 44.2, y: 49.5, scale: 1.171, timed: "61900ms"}
+# cross-71 {x: 44.2, y: 49.5, scale: 1.171, timed: "61800ms"}
 
 work
 
@@ -485,7 +369,7 @@ he
 
 come
 
-# cross-80 {x: -45.9, y: 45, rotate-z: -90, scale: 0.954, timed: "65400ms"}
+# cross-80 {x: -45.9, y: 45, scale: 0.954, timed: "65400ms"}
 
 ⠀oun⠀
 r⠀⠀⠀d
@@ -519,87 +403,73 @@ hoodlums
 ⠀⠀⠀⠀/
 sing
 ⠀⠀⠀⠀\
-# cross-88 {x: 42.5, y: 45, scale: 0.914, timed: "69900ms"}
+# cross-88 {x: 42.5, y: 45, scale: 0.914, timed: "69600ms"}
 
 Go
 
-# cross-89 {x: 45.9, y: 45, scale: 0.848, timed: "69600ms"}
+# cross-89 {x: 45.9, y: 45, scale: 0.848, timed: "70100ms"}
 
 on
 
-# cross-90 {x: 49.3, y: 45, scale: 0.802, timed: "70600ms"}
+# cross-90 {x: 49.3, y: 45, scale: 0.802, timed: "70500ms"}
 
 Saint
 
-# cross-91 {x: 52.7, y: 45, scale: 0.948, timed: "71200ms"}
+# cross-91 {x: 52.7, y: 45, scale: 0.948, timed: "71100ms"}
 
 Billy
 
-# cross-92 {x: 56.1, y: 45, scale: 1.199, timed: "72800ms"}
+# cross-92 {x: 56.1, y: 45, scale: 1.199, timed: "71800ms"}
 
 do
 
-# cross-93 {x: -76.5, y: 40.5, scale: 1.269, timed: "73000ms"}
+# cross-93 {x: -76.5, y: 40.5, scale: 1.269, timed: "72600ms"}
 
 your
 
-# cross-94 {x: -73.1, y: 40.5, scale: 1.186, timed: "73200ms"}
+# cross-94 {x: -73.1, y: 40.5, scale: 1.186, timed: "73400ms"}
 
 thing
 
-# cross-95 {x: -59.5, y: 40.5, scale: 0.858, timed: "74800ms"}
+# cross-95 {x: -59.5, y: 40.5, scale: 0.858, timed: "74600ms"}
 
 Go
 
-# cross-96 {x: -56.1, y: 40.5, scale: 1.061, timed: "75200ms"}
+# cross-96 {x: -56.1, y: 40.5, scale: 1.061, timed: "74900ms"}
 
 on
 
-# cross-97 {x: -52.7, y: 40.5, scale: 1.205, timed: "75600ms"}
+# cross-97 {x: -52.7, y: 40.5, scale: 1.205, timed: "75300ms"}
 
 Saint
 
-# cross-98 {x: -49.3, y: 40.5, scale: 1.304, timed: "76600ms"}
+# cross-98 {x: -49.3, y: 40.5, scale: 1.304, timed: "75500ms"}
 
 Billy
 
-# cross-99 {x: -45.9, y: 40.5, scale: 1.156, timed: "77200ms"}
+# cross-99 {x: -45.9, y: 40.5, scale: 1.156, timed: "76400ms"}
 
 go
 
-# cross-100 {x: -42.5, y: 40.5, scale: 1.31, timed: "77800ms"}
+# cross-100 {x: -42.5, y: 40.5, scale: 1.31, timed: "76800ms"}
 
 and
 
-# cross-101 {x: -8.5, y: 40.5, scale: 0.969, timed: "78100ms"}
+# cross-101 {x: -8.5, y: 40.5, scale: 0.969, timed: "76900ms"}
 
 Bring
 
-# cross-102 {x: -5.1, y: 40.5, scale: 1.075, timed: "78400ms"}
+# cross-102 {x: -5.1, y: 40.5, scale: 1.075, timed: "77200ms"}
 
 the
 
-# cross-103 {x: 1, y: 40.5, scale: 0.8, timed: "79000ms"}
+# cross-103 {x: -1.7, y: 40.5, scale: 2.0, timed: "77800ms"}
 
-▒█▀▄▒▄▀▄░█░█▄░█
-░█▀▒░█▀█░█░█▒█
+𝔓𝔞𝔦𝔫
 
-# cross-103a {x: 6, y: 40.5, scale: 1.5, timed: "79100ms"}
+# cross-103a {x: 0, y: 40.5, scale: 0.83, timed: "79100ms"}
 
-```timed animate:content relative
-0ms
-⠀
----
-1000ms
-.
----
-2000ms
-..
----
-3000ms
 ...
----
-```
 
 # cross-104 {x: 17, y: 40.5, scale: 1.382, timed: "88000ms"}
 
@@ -609,7 +479,7 @@ Word
 
 got
 
-# cross-106 {x: 23.8, y: 40.5, rotate-z: 90, scale: 1.281, timed: "89245ms"}
+# cross-106 {x: 23.8, y: 40.5, scale: 1.281, timed: "89245ms"}
 
 ⠀oun⠀
 r⠀⠀⠀d
@@ -630,14 +500,13 @@ strange
 
 young
 
-# cross-111 {x: 40.8, y: 40.5, scale: 1.108, timed: "91200ms"}
+# cross-111 {x: 40.8, y: 40.5, scale: 1.108, timed: "91258ms"}
 
 man
 
-# cross-112 {x: -76.5, y: 36, scale: 0.978, timed: "91600ms"}
+# cross-112 {x: -76.5, y: 36, scale: 0.978, timed: "91460ms"}
 
- Colt
-̸/̸̅̅ ̆̅ ̅̅ ̅̅
+Colt
 
 # cross-113 {x: -73.1, y: 36, scale: 1.085, timed: "92663ms"}
 
@@ -736,7 +605,7 @@ It's
 
 # cross-136 {x: -39.1, y: 31.5, scale: 0.932, timed: "102508ms"}
 
-“said”
+said
 
 # cross-137 {x: -35.7, y: 31.5, scale: 0.849, timed: "102900ms"}
 
@@ -760,7 +629,7 @@ then
 
 # cross-142 {x: -18.7, y: 31.5, scale: 1.212, timed: "104836ms"}
 
-﹏﹏﹏﹏
+~~~~~~~
 drowned
 
 # cross-143 {x: -15.3, y: 31.5, scale: 0.947, timed: "105224ms"}
@@ -779,7 +648,7 @@ by
 
 the
 
-# cross-147 {x: 49.3, y: 31.5, scale: 0.8, timed: "107000ms"}
+# cross-147 {x: 49.3, y: 31.5, scale: 1.334, timed: "107000ms"}
 
 ~r
 ~~i
@@ -909,7 +778,7 @@ doors
 
 and
 
-# cross-178 {x: -20.4, y: 22.5, scale: 0.5, timed: "119222ms"}
+# cross-178 {x: -20.4, y: 22.5, scale: 1.333, timed: "119222ms"}
 
 ▝▝▛▘
  teeth
@@ -1006,31 +875,31 @@ With
 
 a
 
-# cross-201 {x: 23.8, y: 18, scale: 0.871, timed: "130000ms"}
+# cross-201 {x: 23.8, y: 18, scale: 0.871, timed: "130111ms"}
 
 “𝒴𝒾𝓅𝓅𝒾ℯ
 
-# cross-202 {x: 27.2, y: 18, rotate-z: -90, scale: 1.32, timed: "130400ms"}
+# cross-202 {x: 27.2, y: 18, rotate-z: -90, scale: 1.32, timed: "130667ms"}
 
 𝒦𝒶𝒾
 
-# cross-203 {x: 30.6, y: 18, scale: 1.014, timed: "130800ms"}
+# cross-203 {x: 30.6, y: 18, scale: 1.014, timed: "131222ms"}
 
 𝒴𝒶𝓎”
 
-# cross-204 {x: 34, y: 18, scale: 0.869, timed: "131200ms"}
+# cross-204 {x: 34, y: 18, scale: 0.869, timed: "131778ms"}
 
 all
 
-# cross-205 {x: 37.4, y: 18, rotate-z: -90, scale: 1.103, timed: "131900ms"}
+# cross-205 {x: 37.4, y: 18, scale: 1.103, timed: "132333ms"}
 
 them
 
-# cross-206 {x: 40.8, y: 18, scale: 1.0, timed: "132600ms"}
+# cross-206 {x: 40.8, y: 18, scale: 1.285, timed: "132889ms"}
 
 hoodlums
 
-# cross-207 {x: -76.5, y: 13.5, scale: 1.062, timed: "133400ms"}
+# cross-207 {x: -76.5, y: 13.5, scale: 1.062, timed: "133444ms"}
 
 ⠀⠀⠀⠀/
 sing
@@ -1102,20 +971,15 @@ the
 
 # cross-223a {x: 16, y: 13.5, scale: 1.303, timed: "147000ms"}
 
-```timed animate:content relative
-0ms
-_
----
-150ms
 .
----
-300ms
+
+# cross-223b {x: 16, y: 13.5, scale: 1.303, timed: "148000ms"}
+
 ..
----
-450ms
+
+# cross-223c {x: 16, y: 13.5, scale: 1.303, timed: "149000ms"}
+
 ...
----
-```
 
 # cross-224 {x: 68, y: 13.5, scale: 1.258, timed: "151000ms"}
 
@@ -1299,7 +1163,7 @@ them
 
 # cross-267 {x: -51, y: 0, rotate-z: 180, scale: 1.169, timed: "171040ms"}
 
-TИƎᑫƎЯ
+Repent
 
 # cross-268 {x: -47.6, y: 0, scale: 1.048, timed: "171520ms"}
 
@@ -1321,7 +1185,7 @@ uɹnʇ
 
 ➺
 
-# cross-273 {x: -30.6, y: 0, scale: 2.0, timed: "173920ms"}
+# cross-273 {x: -30.6, y: 0, scale: 3.0, timed: "173920ms"}
 
 𝕵𝖊𝖘𝖚𝖘
 
@@ -1363,7 +1227,7 @@ y'all
 
 # cross-283 {x: -17, y: -4.5, scale: 0.885, timed: "178611ms"}
 
-clean
+░░▒▓ clean
 
 # cross-284 {x: -8.5, y: -4.5, scale: 1.013, timed: "179040ms"}
 
@@ -1379,12 +1243,11 @@ crowd
 
 # cross-287 {x: 1.7, y: -4.5, scale: 0.943, timed: "180840ms"}
 
-b.ro:k.e
+broke
 
 # cross-288 {x: -17, y: -9, scale: 1.23, timed: "181440ms"}
 
 up
- 
 
 # cross-289 {x: -8.5, y: -9, scale: 0.878, timed: "182040ms"}
 
@@ -1478,7 +1341,7 @@ he
 
 come
 
-# cross-312 {x: -3.4, y: -27, rotate-z: 90, scale: 1.122, timed: "193865ms"}
+# cross-312 {x: -3.4, y: -27, scale: 1.122, timed: "193865ms"}
 
 ⠀oun⠀
 r⠀⠀⠀d
@@ -1565,45 +1428,53 @@ ease
 
 the
 
-# cross-333 {x: -1, y: -45, scale: 1.303, timed: "209800ms"}
+# cross-333 {x: -17, y: -49.5, scale: 1.303, timed: "209800ms"}
 
 pain
 
 # cross-333a {x: -17, y: -51, scale: 1.303, timed: "210000ms"}
 .
 
-# cross-334 {x: -8.5, y: -49.5, scale: 1.23, timed: "215000ms"}
+# cross-333b {x: -17, y: -51, scale: 1.303, timed: "211000ms"}
+..
+
+# cross-333c {x: -17, y: -51, scale: 1.303, timed: "212000ms"}
+...
+
+# cross-334 {x: -8.5, y: -49.5, scale: 1.23, timed: "220000ms"}
 
 And
 
-# cross-335 {x: -5.1, y: -49.5, scale: 1.359, timed: "216000ms"}
+# cross-335 {x: -5.1, y: -49.5, scale: 1.359, timed: "221000ms"}
 
-so
+thus
 
-# cross-336 {x: -1.7, y: -49.5, scale: 1.054, timed: "217000ms"}
+# cross-336 {x: -1.7, y: -49.5, scale: 1.054, timed: "222000ms"}
 
 the
 
-# cross-337 {x: 1.7, y: -49.5, scale: 1.1, timed: "218000ms"}
+# cross-337 {x: 1.7, y: -49.5, scale: 1.1, timed: "223000ms"}
 
 New
 
-# cross-338 {x: -17, y: -54, scale: 1.062, timed: "219000ms"}
+# cross-338 {x: -17, y: -54, scale: 1.062, timed: "224000ms"}
 
 West
 
-# cross-339 {x: -13.6, y: -54, scale: 1.345, timed: "220000ms"}
+# cross-339 {x: -13.6, y: -54, scale: 1.345, timed: "225000ms"}
 
 was
 
-# cross-340 {x: -10.2, y: -54, scale: 1.193, timed: "221000ms"}
+# cross-340 {x: -10.2, y: -54, scale: 1.193, timed: "226000ms"}
 
-won.
+won
 
-# cross-341 {x: 0, y: -58, scale: 1.365, timed: "222000ms"}
-»──────────────◦─•♛•─◦──────────────«
+# cross-341 {x: 8.5, y: -54, scale: 1.365, timed: "227000ms"}
+»──────◦•♛•◦──────«
 
 ```javascript
+var billyViz = null; // { osc, gain, analyser } — intro oscilloscope
+
 var state = {
   audioBuffer: null,
   audioLoadPromise: null,
@@ -1618,6 +1489,7 @@ var state = {
   currentLine: '',
   currentSection: '',
   currentSectionId: null,
+  introVizPositions: [],
   prevStyledSection: null,
   timedSections: [],
   cameraSections: [],
@@ -1625,14 +1497,11 @@ var state = {
 
   widgets: null,
   mouseDownLeft: false,
-  wasExporting: false,
   statusText: 'Loading local WAV asset...',
 
   // Audio-reactive shader state
   analyser: null,
   beatAnalysis: null,
-  exportSubBassEnvelope: null,
-  exportSubBassHz: 0,
   beatImpulse: 0,
   prevPosSec: 0,
   // Trauma shake state — drives audioshake shader UV displacement
@@ -1643,8 +1512,8 @@ var state = {
 const WORLDS_LYRIC_WINDOW = 3;
 const WORLDS_SECTION_FILL = 0.9;
 const WORD_REVEAL_SECTION = 'Saint Billy Rides In';
+const INTRO_OSC_SECTION = 'start-4';
 const LOCAL_AUDIO_URL = 'assets/audio/saintbilly.wav';
-const TRANSPORT_GUI_GROUP = 'saintbilly-transport';
 
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
@@ -1655,106 +1524,6 @@ function fmtTime(sec) {
   const m = Math.floor(Math.max(0, sec) / 60);
   const s = Math.floor(Math.max(0, sec) % 60);
   return `${m}:${String(s).padStart(2, '0')}`;
-}
-
-function normalizeEnvelope(values, smoothFrames) {
-  if (!values || values.length === 0) return values;
-
-  const window = Math.max(1, Math.floor(smoothFrames));
-  const smoothed = new Float32Array(values.length);
-  let sum = 0;
-  let maxValue = 0;
-
-  for (let i = 0; i < values.length; i++) {
-    sum += values[i] || 0;
-    if (i >= window) sum -= values[i - window] || 0;
-    const averaged = sum / Math.max(1, Math.min(window, i + 1));
-    smoothed[i] = averaged;
-    if (averaged > maxValue) maxValue = averaged;
-  }
-
-  if (!(maxValue > 0)) return smoothed;
-  for (let i = 0; i < smoothed.length; i++) smoothed[i] = clamp(smoothed[i] / maxValue, 0, 1);
-  return smoothed;
-}
-
-function analyzeBandEnvelope(buffer, fromHz, toHz, envelopeHz = 120, smoothMs = 70) {
-  if (!buffer || !Number.isFinite(buffer.length) || buffer.length <= 0) {
-    return { envelope: new Float32Array(0), envelopeHz };
-  }
-
-  const sampleRate = Math.max(1, Number(buffer.sampleRate) || 44100);
-  const channels = Math.max(1, Number(buffer.numberOfChannels) || 1);
-  const upperHz = Math.max(fromHz, toHz);
-  const lowerHz = Math.max(0, Math.min(fromHz, toHz));
-  const alphaUpper = 1 - Math.exp((-2 * Math.PI * upperHz) / sampleRate);
-  const alphaLower = lowerHz > 0 ? (1 - Math.exp((-2 * Math.PI * lowerHz) / sampleRate)) : 0;
-  const hop = Math.max(1, Math.floor(sampleRate / Math.max(1, envelopeHz)));
-  const frames = Math.max(1, Math.ceil(buffer.length / hop));
-  const envelope = new Float32Array(frames);
-  const channelData = [];
-  for (let channel = 0; channel < channels; channel++) channelData.push(buffer.getChannelData(channel));
-
-  let lowUpper = 0;
-  let lowLower = 0;
-  let sumSq = 0;
-  let count = 0;
-  let frameIndex = 0;
-
-  for (let sampleIndex = 0; sampleIndex < buffer.length; sampleIndex++) {
-    let mono = 0;
-    for (let channel = 0; channel < channels; channel++) mono += channelData[channel][sampleIndex] || 0;
-    mono /= channels;
-
-    lowUpper += alphaUpper * (mono - lowUpper);
-    if (lowerHz > 0) lowLower += alphaLower * (mono - lowLower);
-    const bandSample = lowUpper - lowLower;
-
-    sumSq += bandSample * bandSample;
-    count++;
-    if (count >= hop || sampleIndex === buffer.length - 1) {
-      envelope[frameIndex++] = Math.sqrt(sumSq / Math.max(1, count));
-      sumSq = 0;
-      count = 0;
-    }
-  }
-
-  const smoothFrames = Math.max(1, Math.round((smoothMs / 1000) * envelopeHz));
-  return {
-    envelope: normalizeEnvelope(frameIndex === envelope.length ? envelope : envelope.slice(0, frameIndex), smoothFrames),
-    envelopeHz,
-  };
-}
-
-function sampleEnvelope(envelope, envelopeHz, timeSec) {
-  if (!envelope || envelope.length === 0 || !Number.isFinite(envelopeHz) || envelopeHz <= 0) return 0;
-
-  const pos = clamp(Number(timeSec) * envelopeHz, 0, Math.max(0, envelope.length - 1));
-  const i0 = Math.floor(pos);
-  const i1 = Math.min(envelope.length - 1, i0 + 1);
-  const t = pos - i0;
-  const v0 = Number(envelope[i0]) || 0;
-  const v1 = Number(envelope[i1]) || 0;
-  return clamp(v0 + (v1 - v0) * t, 0, 1);
-}
-
-function sampleBeatEnvelope(timeSec) {
-  const analysis = state.beatAnalysis;
-  return sampleEnvelope(analysis?.envelope, Number(analysis?.envelopeHz), timeSec);
-}
-
-function sampleExportSubBass(timeSec) {
-  return sampleEnvelope(state.exportSubBassEnvelope, state.exportSubBassHz, timeSec);
-}
-
-function isExportingNow() {
-  return (typeof getIsExporting === 'function')
-    ? !!getIsExporting()
-    : (typeof isExporting === 'boolean' && isExporting);
-}
-
-function isPlaybackActive() {
-  return state.isPlaying || isExportingNow();
 }
 
 function buildTimedSections() {
@@ -1795,11 +1564,61 @@ function cameraSectionAtMs(posMs) {
   return result;
 }
 
+function isIntroOscSection(section) {
+  if (!section) return false;
+  const layout = worlds.getSectionLayout?.(section.index);
+  return layout?.sectionId === INTRO_OSC_SECTION || section.sectionId === INTRO_OSC_SECTION;
+}
+
+function sampleIntroOscilloscope(cols, height) {
+  const _an = state?.analyser ?? billyViz?.analyser ?? null;
+  if (!_an || typeof _an.getTimeDomainBytes !== 'function') return null;
+  const _s = _an.getTimeDomainBytes();
+  const _mode = typeof introVizMode === 'string' ? String(introVizMode).trim().toLowerCase() : 'centered';
+  const _terrainOnly = _mode === 'terrain' || _mode === 'hills' || _mode === 'mountains';
+  const _ease = clamp(typeof introVizEase === 'number' ? introVizEase : 0.72, 0, 0.98);
+  const _mid = height * 0.5;
+  const _baseline = height;
+  const _range = _terrainOnly ? Math.max(12, height * 0.9) : Math.max(12, height * 0.46);
+  const _pos = new Array(cols);
+  if (!Array.isArray(state.introVizPositions) || state.introVizPositions.length !== cols) {
+    state.introVizPositions = Array.from({ length: cols }, () => _terrainOnly ? _baseline : _mid);
+  }
+  for (let _c = 0; _c < cols; _c++) {
+    const _v = (_s[Math.floor(_c * _s.length / cols)] / 128.0) - 1.0;
+    const _target = _terrainOnly
+      ? (_baseline - Math.abs(_v) * _range)
+      : (_mid - _v * _mid);
+    const _prev = Number.isFinite(state.introVizPositions[_c]) ? state.introVizPositions[_c] : (_terrainOnly ? _baseline : _mid);
+    const _next = _prev + (_target - _prev) * (1 - _ease);
+    state.introVizPositions[_c] = _next;
+    _pos[_c] = Math.max(0, Math.min(height, _next));
+  }
+  return {
+    positions: _pos,
+    terrainOnly: _terrainOnly,
+    baseline: _baseline,
+  };
+}
+
+function getIntroOscilloscopeMarkdown(section, posSec) {
+  if (!section || section.sectionId !== INTRO_OSC_SECTION) return '';
+  const _hold = typeof introVizHoldSec === 'number' ? introVizHoldSec : 8;
+  const _fade = typeof introVizFadeSec === 'number' ? introVizFadeSec : 4;
+  const _sectionStart = Number(section.timedMs) / 1000;
+  const _time = Number.isFinite(posSec) ? Math.max(0, Number(posSec) - _sectionStart) : 0;
+  if (!billyViz || _time < 0 || _time >= (_hold + _fade)) return '';
+  const frame = sampleIntroOscilloscope(36, 6);
+  if (!frame) return '';
+  return [
+    '~~~text',
+    '(graphical oscilloscope active in live section)',
+    '~~~',
+  ].join('\n');
+}
+
 function getDemoTimeSec() {
   if (!state.audioBuffer) return 0;
-  if (isExportingNow() && typeof getTime === 'function') {
-    return clamp(getTime(), 0, state.audioBuffer.duration);
-  }
   if (!state.isPlaying) return clamp(state.pauseOffset, 0, state.audioBuffer.duration);
   return clamp(audio.currentTime - state.startTime, 0, state.audioBuffer.duration);
 }
@@ -1883,9 +1702,6 @@ function loadLocalAudio() {
       state.audioBuffer = buffer;
       // Offline beat analysis — used each frame to detect beat edges
       state.beatAnalysis = audio.beatsFromBuffer(buffer);
-      const exportSubBass = analyzeBandEnvelope(buffer, 20, 60, 120, 70);
-      state.exportSubBassEnvelope = exportSubBass.envelope;
-      state.exportSubBassHz = exportSubBass.envelopeHz;
       state.pauseOffset = 0;
       state.widgets.seek.min = 0;
       state.widgets.seek.max = Math.max(0.01, buffer.duration);
@@ -1897,7 +1713,9 @@ function loadLocalAudio() {
       const firstFocusSection = cameraSectionAtMs(0);
       if (firstFocusSection) {
         state.currentSection = firstFocusSection.title;
-        worlds.camera.focusOnSectionFit(firstFocusSection.index, WORLDS_SECTION_FILL, { keepRotation: true });
+        if (!isIntroOscSection(firstFocusSection)) {
+          worlds.camera.focusOnSectionFit(firstFocusSection.index, WORLDS_SECTION_FILL, { keepRotation: true });
+        }
         worlds.sections.style.set(firstFocusSection.index, { fg: 'accent1' });
         state.prevStyledSection = firstFocusSection.index;
       }
@@ -1995,10 +1813,12 @@ function sampleWordsForSection(section, posSec) {
   return renderedLines.join('\n');
 }
 
-function composeWorldsSectionContent(baseContent, sampledText) {
+function composeWorldsSectionContent(baseContent, sampledText, oscilloscopeText) {
   const base = String(baseContent || '').trim();
   const lyrics = String(sampledText || '').trim();
+  const osc = String(oscilloscopeText || '').trim();
   const parts = [];
+  if (osc) parts.push(osc);
   if (lyrics) parts.push(lyrics);
   if (base) parts.push(base);
   return parts.join('\n\n');
@@ -2034,8 +1854,9 @@ function syncWorldsSectionContent(section, posSec) {
         separator: '\n',
         maxEntries: WORLDS_LYRIC_WINDOW,
       }).text;
+  const oscilloscopeText = '';
 
-  if (!sampledText) {
+  if (!sampledText && !oscilloscopeText) {
     worlds.content.clear(nextSectionId, 'all');
     state.currentSectionId = nextSectionId;
     return '';
@@ -2046,7 +1867,7 @@ function syncWorldsSectionContent(section, posSec) {
   const authored = worlds.sections?.get ? worlds.sections.get(nextSectionId) : null;
   const baseContent = existing?.baseContent ?? authored?.content ?? '';
   const composedTitle = composeWorldsSectionTitle(baseTitle, sampledText);
-  const composedContent = composeWorldsSectionContent(baseContent, sampledText);
+  const composedContent = composeWorldsSectionContent(baseContent, sampledText, oscilloscopeText);
   const sameTitle = !!existing && (existing.overrideTitle === composedTitle || existing.effectiveTitle === composedTitle);
   const sameContent = !!existing && (existing.overrideContent === composedContent || existing.effectiveContent === composedContent);
   if (!sameTitle || !sameContent) {
@@ -2094,6 +1915,7 @@ worlds.camera.shake.setParams({
   rotate: { x: deg(0.55), y: deg(0.65), z: 0 },
 });
 worlds.camera.shake.setEnabled(true);
+worlds.setSectionLive(INTRO_OSC_SECTION);
 
 worlds.camera.focusOnSectionFit(0, WORLDS_SECTION_FILL, { keepRotation: true });
 
@@ -2102,20 +1924,17 @@ buildTimedSections();
 buildWordRevealTrack();
 
 const btnPlayPause = gui.createButton({
-  group: TRANSPORT_GUI_GROUP,
   bounds: { x: 0, y: 0, width: 180, height: 36 },
   label: 'Play',
 });
 
 const time = gui.createLabel({
-  group: TRANSPORT_GUI_GROUP,
   bounds: { x: 0, y: 0, width: 180, height: 24 },
   text: '--:-- / --:--',
   align: 'left',
 });
 
 const seek = gui.createSlider({
-  group: TRANSPORT_GUI_GROUP,
   bounds: { x: 0, y: 0, width: 180, height: 28 },
   label: '',
   min: 0,
@@ -2160,22 +1979,25 @@ if (event.type === 'mouse_move') gui.handleMouse(event.x, event.y, state.mouseDo
 ```
 
 ```javascript on:update
+// ── Intro oscilloscope: lazy-init ────────────────────────────────────────────
+if (!billyViz) {
+  try {
+    const _osc  = audio.createOscillator();
+    const _gain = audio.createGain();
+    const _an   = audio.fft.createAnalyser({ fftSize: 2048, smoothing: 0.88 });
+    _osc.type            = typeof introOscType === 'string' ? introOscType : 'sawtooth';
+    _osc.frequency.value = typeof introOscFreq === 'number' ? introOscFreq : 110;
+    _gain.gain.value     = 0; // Silent — visual-only
+    _osc.connect(_gain);
+    _gain.connect(audio.destination);
+    _an.connectFrom(_osc);
+    _osc.start();
+    billyViz = { osc: _osc, gain: _gain, analyser: _an };
+  } catch (_e) { /* AudioContext not ready yet — try next frame */ }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 if (typeof state === 'undefined' || !state || !state.widgets) return;
-const exporting = isExportingNow();
-
-if (exporting && !state.wasExporting) {
-  stopAudio({ keepOffset: false });
-  state.pauseOffset = 0;
-  state.prevPosSec = 0;
-}
-
-if (typeof gui.setGroupVisible === 'function') {
-  gui.setGroupVisible(TRANSPORT_GUI_GROUP, !exporting);
-}
-
-if (exporting && state.audioBuffer && typeof audio?.captureForExport === 'function') {
-  audio.captureForExport(state.audioBuffer, 0);
-}
 
 // --- Audio-reactive shader uniforms ---
 if (state.analyser && state.audioBuffer) {
@@ -2184,10 +2006,9 @@ if (state.analyser && state.audioBuffer) {
   // Decay beat impulse toward 0 (~0.2s full decay)
   state.beatImpulse = Math.max(0, state.beatImpulse - dt * 5.0);
   // Fire impulse on each beat edge while playing
-  let beatState = null;
-  if (state.beatAnalysis && isPlaybackActive()) {
-    beatState = audio.beatState(state.beatAnalysis, nowSec, state.prevPosSec);
-    if (beatState.isBeatEdge) state.beatImpulse = 1.0;
+  if (state.beatAnalysis && state.isPlaying) {
+    const bs = audio.beatState(state.beatAnalysis, nowSec, state.prevPosSec);
+    if (bs.isBeatEdge) state.beatImpulse = 1.0;
   }
   state.prevPosSec = nowSec;
   // Three targeted frequency bands:
@@ -2196,21 +2017,13 @@ if (state.analyser && state.audioBuffer) {
   //   lowMid   120–250Hz — available for future effects
   // NOTE: do not narrow the sub-bass window below ~40Hz — at fftSize:4096 each bin is ~11Hz
   // wide, so a 1-2Hz window resolves to a single edge bin and returns near-zero always.
-  let subBass = 0;
-  let midBass = 0;
-  if (exporting) {
-    // Offline export has no live analyser signal, so sample a precomputed 20-60Hz envelope.
-    subBass = sampleExportSubBass(nowSec) * 0.045;
-    midBass = subBass * 0.35;
-  } else {
-    const bands = state.analyser.getBands([
-      { fromHz: 20,  toHz: 60  },   // [0] sub-bass
-      { fromHz: 60,  toHz: 120 },   // [1] mid-bass
-      { fromHz: 120, toHz: 250 },   // [2] low-mid
-    ]);
-    subBass = bands[0] ?? 0;
-    midBass = bands[1] ?? 0;
-  }
+  const bands = state.analyser.getBands([
+    { fromHz: 20,  toHz: 60  },   // [0] sub-bass
+    { fromHz: 60,  toHz: 120 },   // [1] mid-bass
+    { fromHz: 120, toHz: 250 },   // [2] low-mid
+  ]);
+  const subBass = bands[0] ?? 0;
+  const midBass = bands[1] ?? 0;
   // Vignette: blend sub + mid for a fuller feel; beatImpulse adds the flash on any beat
   const bassForShader = subBass * 0.7 + midBass * 0.3;
   //shader.setUniform('lightvignette', 'bass', bassForShader);
@@ -2245,7 +2058,7 @@ state.widgets.time.setBounds({ x, y, width: ctrlW, height: timeH });
 y += timeH + gap;
 state.widgets.seek.setBounds({ x, y, width: ctrlW, height: seekH });
 
-if (!exporting) gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);
+gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);
 
 if (state.widgets.btnPlayPause.wasClicked()) {
   if (state.isPlaying) {
@@ -2288,7 +2101,9 @@ if (secTitle !== state.currentSection) {
     worlds.sections.style.clear(state.prevStyledSection);
   }
   if (focusSec) {
-    worlds.camera.focusOnSectionFit(focusSec.index, WORLDS_SECTION_FILL, { keepRotation: true });
+    if (!isIntroOscSection(focusSec)) {
+      worlds.camera.focusOnSectionFit(focusSec.index, WORLDS_SECTION_FILL, { keepRotation: true });
+    }
     worlds.sections.style.set(focusSec.index, { fg: 'accent1' });
     state.prevStyledSection = focusSec.index;
   } else {
@@ -2307,15 +2122,83 @@ const total = state.audioBuffer ? fmtTime(state.audioBuffer.duration) : '--:--';
 state.widgets.time.setText(`${fmtTime(previewPos)} / ${total}`);
 if (dragging && state.audioBuffer) {
   setStatus(`Scrubbing ${fmtTime(previewPos)} - lyric and section sync are following the local WAV asset.`);
-} else if (exporting && state.audioBuffer) {
-  setStatus(`Exporting synced local audio - ${fmtTime(previewPos)} / ${fmtTime(state.audioBuffer.duration)}.`);
 } else if (state.audioBuffer) {
-  setStatus(isPlaybackActive() ? 'Playing synced local audio.' : 'Paused - drag the scrubber or press Play.');
+  setStatus(state.isPlaying ? 'Playing synced local audio.' : 'Paused - drag the scrubber or press Play.');
 }
-state.widgets.btnPlayPause.setLabel(isPlaybackActive() ? 'Pause' : 'Play');
+state.widgets.btnPlayPause.setLabel(state.isPlaying ? 'Pause' : 'Play');
 
 // Reveal word-art sections as playback time passes their timed: timestamps
 if (state.wordRevealTrack) worlds.timeline.apply(state.wordRevealTrack, previewPos);
-worlds.content.applyAllFrames(previewPos);
-state.wasExporting = exporting;
+```
+
+```javascript on:render section:start-4
+var _w = Math.max(320, ui.section.width || ui.metrics.canvasWidth || 600);
+var _h = Math.max(220, ui.section.height || ui.metrics.canvasHeight || 520);
+var _base = getStyle('default');
+var _accent = getStyle('accent1');
+var _dim = getStyle('dim');
+var _mode = typeof introVizMode === 'string' ? String(introVizMode).trim().toLowerCase() : 'centered';
+var _terrain = _mode === 'terrain' || _mode === 'hills' || _mode === 'mountains';
+var _vizScale = clamp(typeof introVizScale === 'number' ? introVizScale : 1.0, 0.1, 1.0);
+var _fullPadX = 28;
+var _fullPadY = Math.max(26, Math.floor(_h * 0.18));
+var _fullPlotW = Math.max(120, _w - _fullPadX * 2);
+var _fullPlotH = Math.max(80, _h - _fullPadY * 2);
+var _plotW = Math.max(80, Math.round(_fullPlotW * _vizScale));
+var _plotH = Math.max(48, Math.round(_fullPlotH * _vizScale));
+var _padX = Math.round((_w - _plotW) * 0.5);
+var _padY = Math.round((_h - _plotH) * 0.5);
+var _lineWeight = clamp(typeof introVizLineWeight === 'number' ? introVizLineWeight : 1.0, 0.5, 2.5);
+var _stroke = Math.max(1, Math.round((_plotH / 56) * _lineWeight));
+var _crestStroke = Math.max(1, _stroke);
+var _glowStroke = Math.max(_crestStroke + 1, Math.round(_crestStroke * 2));
+var _fillAlpha = clamp(typeof introVizFillAlpha === 'number' ? introVizFillAlpha : 0.12, 0, 0.6);
+var _glowAlpha = clamp(typeof introVizGlowAlpha === 'number' ? introVizGlowAlpha : 0.18, 0, 0.8);
+
+function _withAlpha(_c, _a01) {
+  if (typeof _c !== 'number' || !Number.isFinite(_c)) return _c;
+  var _a = Math.max(0, Math.min(255, Math.round(_a01 * 255)));
+  return ((_c & 0x00ffffff) | ((_a & 0xff) << 24)) >>> 0;
+}
+
+function _drawDot(_x, _y, _size, _color) {
+  ui.rect(Math.round(_x - _size * 0.5), Math.round(_y - _size * 0.5), _size, _size, _color);
+}
+
+function _drawSegment(_x1, _y1, _x2, _y2, _size, _color) {
+  var _dx = _x2 - _x1;
+  var _dy = _y2 - _y1;
+  var _steps = Math.max(1, Math.ceil(Math.max(Math.abs(_dx), Math.abs(_dy)) / Math.max(1, _size * 0.65)));
+  for (var _s = 0; _s <= _steps; _s++) {
+    var _t = _steps <= 0 ? 0 : (_s / _steps);
+    _drawDot(_x1 + _dx * _t, _y1 + _dy * _t, _size, _color);
+  }
+}
+
+ui.clear(ui.colors.rgba(0, 0, 0, 0));
+
+var _sampleCount = Math.max(48, Math.floor(_plotW / 8));
+var _wave = sampleIntroOscilloscope(_sampleCount, _plotH);
+var _lineColor = (_accent.fg || _base.fg);
+var _glowColor = _withAlpha(_lineColor, _glowAlpha);
+var _fillColor = _withAlpha(_lineColor, _fillAlpha);
+var _centerY = _padY + (_terrain ? _plotH : _plotH * 0.5);
+
+if (_wave && Array.isArray(_wave.positions) && _wave.positions.length > 1) {
+  for (var _i = 0; _i < _wave.positions.length; _i++) {
+    var _x = _padX + (_i / Math.max(1, _wave.positions.length - 1)) * _plotW;
+    var _y = _padY + _wave.positions[_i];
+    if (_terrain && _fillAlpha > 0) {
+      ui.rect(Math.round(_x), Math.round(_y), Math.max(1, _crestStroke), Math.max(1, Math.round((_padY + _plotH) - _y)), _fillColor);
+    }
+    if (_i > 0) {
+      var _px = _padX + ((_i - 1) / Math.max(1, _wave.positions.length - 1)) * _plotW;
+      var _py = _padY + _wave.positions[_i - 1];
+      _drawSegment(_px, _py, _x, _y, _glowStroke, _glowColor);
+      _drawSegment(_px, _py, _x, _y, _crestStroke, _lineColor);
+    }
+  }
+} else {
+  ui.rect(_padX, Math.round(_centerY), _plotW, Math.max(1, _crestStroke), (_dim.fg || _base.fg));
+}
 ```

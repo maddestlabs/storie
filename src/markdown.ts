@@ -6,7 +6,7 @@
 import type { Section, CodeBlock, MarkdownDocument, BlobBlock, BlobEncoding, TimedBlock, TimedEntry } from './types.js';
 import { expandMagicBlocks, decompressString } from './magic.js';
 import { extractWGSLBlocks } from './wgsl-parser.js';
-import { parseTimedFormat, type TimedFormat } from './timed-parsers.js';
+import { parseTimedFormat, parseTimedFrames, type TimedFormat } from './timed-parsers.js';
 
 interface HeadingMatch {
   level: number;
@@ -398,6 +398,64 @@ function _parseHeadingDirective(rawTitle: string): {
   return { displayTitle: rawTitle, directive: null, timedMs: undefined };
 }
 
+// ── Inline section frame animation extraction ─────────────────────────────
+
+/**
+ * Detect and extract `timed animate:content` / `timed animate:title` fenced
+ * blocks from raw section content.  The fence is removed from the returned
+ * `strippedContent` so it never reaches the card renderer.
+ *
+ * Syntax inside a section:
+ * ```timed animate:content
+ * 37600ms
+ * first frame line one
+ * first frame line two
+ * ---
+ * 37650ms
+ * second frame…
+ * ```
+ */
+function extractSectionAnimateBlocks(content: string): {
+  contentFrames: TimedEntry[] | undefined;
+  titleFrames: TimedEntry[] | undefined;
+  contentFramesRelative: boolean;
+  titleFramesRelative: boolean;
+  strippedContent: string;
+} {
+  let strippedContent = content;
+  let contentFrames: TimedEntry[] | undefined;
+  let titleFrames: TimedEntry[] | undefined;
+  let contentFramesRelative = false;
+  let titleFramesRelative = false;
+
+  // Match ```timed animate:content or ```timed animate:title fenced blocks.
+  // Optional modifiers follow the target, e.g. ```timed animate:content relative
+  // The `s` (dotAll) flag is not used for compatibility; [\s\S] covers newlines.
+  const fenceRe = /^```timed\s+animate:(content|title)((?:[ \t][^\n]*)?)\n([\s\S]*?)^```/gm;
+  const matches = [...content.matchAll(fenceRe)];
+
+  for (const match of matches) {
+    const target = match[1] as 'content' | 'title';
+    const modifiers = (match[2] ?? '').toLowerCase();
+    const isRelative = /\brelative\b/.test(modifiers);
+    const body = match[3] ?? '';
+    const entries = parseTimedFrames(body);
+    if (entries.length > 0) {
+      if (target === 'content') {
+        contentFrames = entries;
+        contentFramesRelative = isRelative;
+      } else {
+        titleFrames = entries;
+        titleFramesRelative = isRelative;
+      }
+    }
+    strippedContent = strippedContent.replace(match[0]!, '');
+  }
+
+  strippedContent = strippedContent.trim();
+  return { contentFrames, titleFrames, contentFramesRelative, titleFramesRelative, strippedContent };
+}
+
 // ── Timed block extraction ────────────────────────────────────────────
 
 /**
@@ -595,19 +653,26 @@ function extractSections(source: string): Section[] {
 
     // Extract content (everything between this heading and the next)
     const contentLines = lines.slice(heading.line + 1, endLine + 1);
-    const content = contentLines.join('\n').trim();
+    const rawContent = contentLines.join('\n').trim();
+
+    // Extract inline animation blocks before storing content
+    const { contentFrames, titleFrames, contentFramesRelative, titleFramesRelative, strippedContent } = extractSectionAnimateBlocks(rawContent);
 
     const { displayTitle, directive, timedMs } = _parseHeadingDirective(heading.title);
     const section: Section = {
       id: undefined,
       title: displayTitle,
       level: heading.level,
-      content,
+      content: strippedContent,
       startLine: heading.line,
       endLine,
       children: [],
-      ...(timedMs !== undefined ? { timedMs } : {}),
-      ...(directive            ? { directive } : {}),
+      ...(timedMs !== undefined       ? { timedMs }               : {}),
+      ...(directive                   ? { directive }              : {}),
+      ...(contentFrames               ? { contentFrames }          : {}),
+      ...(titleFrames                 ? { titleFrames }            : {}),
+      ...(contentFramesRelative       ? { contentFramesRelative }  : {}),
+      ...(titleFramesRelative         ? { titleFramesRelative }    : {}),
     };
 
     // Pop from stack until we find a parent

@@ -13,8 +13,10 @@ import type {
   Camera3D,
   CameraShakeConfig,
   CameraShakeState,
+  SectionArtLayout,
   Section3DLayout,
   SectionRenderMode,
+  WorldsBlendMode,
   WorldsConfig
 } from './worlds-types.js';
 
@@ -874,6 +876,39 @@ export function parseTransform3D(
     return 'left';
   };
 
+  const parseBlendMode = (value: unknown, fallback: WorldsBlendMode = 'normal'): WorldsBlendMode => {
+    const raw = String(value ?? '').trim().toLowerCase().replace(/[-_\s]/g, '');
+    switch (raw) {
+      case 'multiply':
+      case 'screen':
+      case 'overlay':
+      case 'softlight':
+      case 'hardlight':
+      case 'darken':
+      case 'lighten':
+      case 'difference':
+      case 'exclusion':
+      case 'colorburn':
+      case 'colordodge':
+        return raw as WorldsBlendMode;
+      default:
+        return fallback;
+    }
+  };
+
+  const parseArtFit = (value: unknown): SectionArtLayout['fit'] => {
+    const raw = String(value ?? '').trim().toLowerCase();
+    if (raw === 'contain') return 'contain';
+    if (raw === 'stretch' || raw === 'fill') return 'stretch';
+    return 'cover';
+  };
+
+  const parseArtLayer = (value: unknown): SectionArtLayout['layer'] => {
+    const raw = String(value ?? '').trim().toLowerCase();
+    if (raw === 'over' || raw === 'overlay' || raw === 'front' || raw === 'above') return 'over';
+    return 'under';
+  };
+
   const metaTruthy = (key: string): boolean => {
     const v = (rawMetadata as any)[key];
     if (v === true) return true;
@@ -974,6 +1009,27 @@ export function parseTransform3D(
     }
   })();
 
+  const sectionArt = (() => {
+    const artUrl = metaStr('art', metaStr('artUrl', metaStr('artSrc', ''))).trim();
+    if (!artUrl) return undefined;
+
+    const rawOpacity = parseFloat(metaStr('artOpacity', '1'));
+    const rawScale = parseFloat(metaStr('artScale', '1'));
+    const rawOffsetX = parseFloat(metaStr('artOffsetX', metaStr('artX', '0')));
+    const rawOffsetY = parseFloat(metaStr('artOffsetY', metaStr('artY', '0')));
+
+    return {
+      url: artUrl,
+      opacity: Number.isFinite(rawOpacity) ? Math.max(0, Math.min(1, rawOpacity)) : 1,
+      blendMode: parseBlendMode((rawMetadata as any).artBlend ?? (rawMetadata as any).artBlendMode, 'normal'),
+      layer: parseArtLayer((rawMetadata as any).artLayer),
+      fit: parseArtFit((rawMetadata as any).artFit),
+      scale: Number.isFinite(rawScale) ? Math.max(0.05, rawScale) : 1,
+      offsetX: Number.isFinite(rawOffsetX) ? rawOffsetX : 0,
+      offsetY: Number.isFinite(rawOffsetY) ? rawOffsetY : 0,
+    } as SectionArtLayout;
+  })();
+
   // For display/rendering: markdown parser already strips directive JSON from
   // the title when it stores it in `section.directive`. Keep a legacy fallback.
   const displayTitle = section.directive
@@ -992,6 +1048,7 @@ export function parseTransform3D(
     renderMode,
     contentAlign,
     textAlign,
+    ...(sectionArt ? { sectionArt } : {}),
     transform: {
       position: vec3(x, y, z),
       rotation: vec3(rotX, rotY, rotZ),

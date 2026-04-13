@@ -553,3 +553,53 @@ export function parseTimedFormat(text: string, format: TimedFormat = 'auto'): Ti
 export function parseTimedAuto(text: string): TimedEntry[] {
   return parseTimedFormat(text, 'auto');
 }
+
+/**
+ * Parse a `---`-delimited frame block used in inline section animations.
+ *
+ * Each frame begins with a timestamp on its first non-empty line
+ * (e.g. `37600ms`, `37.6s`, or a bare millisecond number), followed by the
+ * frame's content lines.  Frames are separated by a `---` line on its own.
+ *
+ * Leading and trailing blank lines within each frame's content are stripped;
+ * internal blank lines are preserved so multi-line ASCII art renders correctly.
+ *
+ * Example:
+ * ```
+ * 37600ms
+ * spill
+ * ⠀⠀
+ * ---
+ * 37650ms
+ * spill
+ * ⠀•
+ * ```
+ */
+export function parseTimedFrames(text: string): TimedEntry[] {
+  const entries: TimedEntry[] = [];
+  const frames = text.split(/^---[ \t]*$/m);
+
+  for (const frame of frames) {
+    const lines = frame.split('\n');
+    let tsLine = '';
+    let tsIdx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const l = (lines[i] ?? '').trim();
+      if (l) { tsLine = l; tsIdx = i; break; }
+    }
+    if (tsIdx < 0) continue;
+
+    const ms = parseTTMLTime(tsLine);
+    if (!Number.isFinite(ms)) continue;
+
+    const contentLines = lines.slice(tsIdx + 1);
+    // Trim leading empty lines
+    while (contentLines.length > 0 && !(contentLines[0] ?? '').trim()) contentLines.shift();
+    // Trim trailing empty lines
+    while (contentLines.length > 0 && !(contentLines[contentLines.length - 1] ?? '').trim()) contentLines.pop();
+
+    entries.push({ ms, text: contentLines.join('\n') });
+  }
+
+  return entries.sort((a, b) => a.ms - b.ms);
+}

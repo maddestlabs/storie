@@ -207,6 +207,26 @@ export interface Section {
    * are left here for user scripts to interpret freely.
    */
   directive?: Record<string, any>;
+  /**
+   * Per-frame content entries parsed from an inline `timed animate:content` fenced block.
+   * When present, `worlds.timeline.apply()` automatically drives the section's content
+   * each frame — no extra user script needed.
+   */
+  contentFrames?: TimedEntry[];
+  /**
+   * Per-frame title entries parsed from an inline `timed animate:title` fenced block.
+   * Behaves identically to `contentFrames` but targets the section heading text.
+   */
+  titleFrames?: TimedEntry[];
+  /**
+   * When `true`, timestamps in `contentFrames` are interpreted as seconds elapsed
+   * since the section became current (i.e. relative to the section enter time)
+   * rather than as absolute elapsed time.
+   * Set by the `relative` modifier on the fence: ` ```timed animate:content relative `
+   */
+  contentFramesRelative?: boolean;
+  /** Same as `contentFramesRelative` but for `titleFrames`. */
+  titleFramesRelative?: boolean;
 }
 
 export interface CodeBlock {

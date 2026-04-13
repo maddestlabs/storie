@@ -66,6 +66,31 @@ export interface CameraShakeState {
 
 export type SectionRenderMode = 'all' | 'heading' | 'content' | 'none';
 
+export type WorldsBlendMode =
+  | 'normal'
+  | 'multiply'
+  | 'screen'
+  | 'overlay'
+  | 'softlight'
+  | 'hardlight'
+  | 'darken'
+  | 'lighten'
+  | 'difference'
+  | 'exclusion'
+  | 'colorburn'
+  | 'colordodge';
+
+export interface SectionArtLayout {
+  url: string;
+  opacity: number;
+  blendMode: WorldsBlendMode;
+  layer: 'under' | 'over';
+  fit: 'cover' | 'contain' | 'stretch';
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}
+
 export interface Section3DLayout {
   sectionId: string;
   sectionIndex: number;
@@ -75,6 +100,7 @@ export interface Section3DLayout {
   renderMode: SectionRenderMode;
   contentAlign: 'start' | 'center';
   textAlign: 'left' | 'center' | 'right';
+  sectionArt?: SectionArtLayout;
   transform: Transform3D;
   /** True when x/y was assigned by Worlds auto-layout (no explicit metadata). */
   autoPositioned?: boolean;
@@ -339,7 +365,7 @@ export interface WorldsConfig {
    * `blendMode=multiply`, e.g.:
    * `'texture:assets/img/paper.jpg;tilePx=160;blendMode=multiply;paperPlaneZ=focus'`
    */
-  sectionBlendMode?: 'normal' | 'multiply';
+  sectionBlendMode?: WorldsBlendMode;
 
   /**
    * Whether markdown links rendered into Worlds section cards should draw an

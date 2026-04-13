@@ -5,7 +5,7 @@
  * Uses WebGPU for hardware-accelerated 3D rendering.
  */
 
-import type { Camera3D, Section3DLayout, Transform3D } from './worlds-types.js';
+import type { Camera3D, Section3DLayout, Transform3D, WorldsBlendMode } from './worlds-types.js';
 import {
   mat4FromTransform,
   getCameraViewMatrix,
@@ -16,6 +16,17 @@ import { ColorUtils, type Color } from './types.js';
 import { ShaderManager } from './shader-manager.js';
 
 type RenderableImageSource = ImageBitmap | HTMLImageElement;
+
+export type WorldsSectionArtRenderState = {
+  image: RenderableImageSource;
+  opacity: number;
+  blendMode: WorldsBlendMode;
+  layer: 'under' | 'over';
+  fit: 'cover' | 'contain' | 'stretch';
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+};
 
 type WorldsBackgroundConfig = {
   enabled: boolean;
@@ -92,6 +103,7 @@ export class WorldsRenderer {
   private backgroundShaderMipLevelCount: number = 1;
   private backgroundImageTexture: GPUTexture | null = null;
   private backgroundImageSource: RenderableImageSource | null = null;
+  private sectionArtTextureCache: Map<RenderableImageSource, GPUTexture> = new Map();
 
   // Neutral 1x1 fallback used to ensure binding(3) is always valid.
   private neutralBackgroundTexture: GPUTexture | null = null;
@@ -250,6 +262,44 @@ export class WorldsRenderer {
       console.warn('[WorldsRenderer] Failed to upload background image texture:', error);
       texture.destroy();
       this.backgroundImageSource = null;
+    }
+  }
+
+  private getRenderableImageSize(image: RenderableImageSource): { width: number; height: number } {
+    return {
+      width: Math.max(1, ((image as any).width ?? (image as any).naturalWidth ?? 1) | 0),
+      height: Math.max(1, ((image as any).height ?? (image as any).naturalHeight ?? 1) | 0),
+    };
+  }
+
+  private ensureSectionArtTexture(image: RenderableImageSource): GPUTexture | null {
+    const cached = this.sectionArtTextureCache.get(image);
+    if (cached) return cached;
+
+    const { width, height } = this.getRenderableImageSize(image);
+    const mipLevelCount = this.calcMipLevelCount(width, height, 10);
+    const texture = this.device.createTexture({
+      size: { width, height },
+      mipLevelCount,
+      format: this.format,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+
+    try {
+      this.device.queue.copyExternalImageToTexture(
+        { source: image },
+        { texture },
+        { width, height }
+      );
+      const encoder = this.device.createCommandEncoder({ label: 'WorldsRenderer Section Art Upload' });
+      this.generateMipmaps(encoder, texture, mipLevelCount, width, height);
+      this.device.queue.submit([encoder.finish()]);
+      this.sectionArtTextureCache.set(image, texture);
+      return texture;
+    } catch (error) {
+      console.warn('[WorldsRenderer] Failed to upload section art texture:', error);
+      texture.destroy();
+      return null;
     }
   }
 
@@ -1024,6 +1074,33 @@ export class WorldsRenderer {
     });
   }
 
+  private getSectionArtQuadSize(
+    baseW: number,
+    baseH: number,
+    art: WorldsSectionArtRenderState,
+    image: RenderableImageSource
+  ): { width: number; height: number } {
+    if (art.fit === 'stretch') {
+      return {
+        width: Math.max(0.001, baseW * art.scale),
+        height: Math.max(0.001, baseH * art.scale),
+      };
+    }
+
+    const dims = this.getRenderableImageSize(image);
+    const imageAspect = dims.width / Math.max(1, dims.height);
+    const baseAspect = baseW / Math.max(0.001, baseH);
+    const useContain = art.fit === 'contain';
+
+    if ((imageAspect >= baseAspect && useContain) || (imageAspect < baseAspect && !useContain)) {
+      const width = Math.max(0.001, baseW * art.scale);
+      return { width, height: Math.max(0.001, width / imageAspect) };
+    }
+
+    const height = Math.max(0.001, baseH * art.scale);
+    return { width: Math.max(0.001, height * imageAspect), height };
+  }
+
   /**
    * Render all 3D sections
    */
@@ -1032,7 +1109,8 @@ export class WorldsRenderer {
     layouts: Section3DLayout[],
     hoveredSectionIndex: number | null = null,
     background?: WorldsBackgroundConfig,
-    connectors: Worlds3DConnector[] = []
+    connectors: Worlds3DConnector[] = [],
+    sectionArt: Map<string, WorldsSectionArtRenderState> = new Map()
   ): void {
     this.setBackgroundImage(background?.image ?? null);
 
@@ -1048,6 +1126,7 @@ export class WorldsRenderer {
       console.warn('WorldsRenderer not fully initialized');
       return;
     }
+    const uniformBuffer = this.uniformBuffer;
     
     // Count visible sections
     // (kept for future stats/debugging)
@@ -1274,6 +1353,106 @@ export class WorldsRenderer {
     const contentBlendStrength = useBlend
       ? Math.max(0, Math.min(1, background?.contentBlendStrength ?? 1.0))
       : 0;
+
+    const isCulled = (mvpMatrix: Float32Array): boolean => {
+      const clip = (x: number, y: number, z: number, w: number) => ({
+        x: mvpMatrix[0] * x + mvpMatrix[4] * y + mvpMatrix[8] * z + mvpMatrix[12] * w,
+        y: mvpMatrix[1] * x + mvpMatrix[5] * y + mvpMatrix[9] * z + mvpMatrix[13] * w,
+        z: mvpMatrix[2] * x + mvpMatrix[6] * y + mvpMatrix[10] * z + mvpMatrix[14] * w,
+        w: mvpMatrix[3] * x + mvpMatrix[7] * y + mvpMatrix[11] * z + mvpMatrix[15] * w,
+      });
+      const corners = [
+        clip(-0.5, -0.5, 0, 1),
+        clip(0.5, -0.5, 0, 1),
+        clip(0.5, 0.5, 0, 1),
+        clip(-0.5, 0.5, 0, 1),
+      ];
+      const all = (pred: (p: { x: number; y: number; z: number; w: number }) => boolean) => corners.every(pred);
+      return all(p => p.x < -p.w)
+        || all(p => p.x > p.w)
+        || all(p => p.y < -p.w)
+        || all(p => p.y > p.w)
+        || all(p => p.z < 0)
+        || all(p => p.z > p.w);
+    };
+
+    const resolveArtPosition = (layout: Section3DLayout, offsetX: number, offsetY: number) => {
+      const localMatrix = mat4FromTransform({
+        position: layout.transform.position,
+        rotation: layout.transform.rotation,
+        scale: layout.transform.scale,
+      });
+      return {
+        x: localMatrix[0] * offsetX + localMatrix[4] * offsetY + localMatrix[12],
+        y: localMatrix[1] * offsetX + localMatrix[5] * offsetY + localMatrix[13],
+        z: localMatrix[2] * offsetX + localMatrix[6] * offsetY + localMatrix[14],
+      };
+    };
+
+    const drawSectionQuad = (options: {
+      texture: GPUTexture;
+      uniformOffset: number;
+      transform: Transform3D;
+      logicalWidth: number;
+      logicalHeight: number;
+      opacity: number;
+      blendModeIndex: number;
+      quadBlendStrength: number;
+      contentDistort: number;
+      hover: number;
+      highlightRect?: { uMin: number; vMin: number; uMax: number; vMax: number };
+    }): boolean => {
+      const modelMatrix = mat4FromTransform(options.transform);
+      const mvpMatrix = mat4Multiply(viewProjectionMatrix, modelMatrix);
+      if (isCulled(mvpMatrix)) return false;
+
+      this.device.queue.writeBuffer(
+        uniformBuffer,
+        options.uniformOffset + 0,
+        mvpMatrix.buffer,
+        mvpMatrix.byteOffset,
+        mvpMatrix.byteLength
+      );
+
+      const rect = options.highlightRect;
+      const highlightEnabled = rect ? 1.0 : 0.0;
+      this.device.queue.writeBuffer(
+        uniformBuffer,
+        options.uniformOffset + 64,
+        new Float32Array([options.logicalWidth, options.logicalHeight, options.hover, highlightEnabled])
+      );
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 96, new Float32Array(paperColor));
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 112, new Float32Array(lineColor));
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 128, new Float32Array([
+        paperEnabled ? (paperParams[0] ?? 0) : 0,
+        0,
+        0,
+        Math.max(0, Math.min(1, options.opacity)),
+      ]));
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 144, cameraPos);
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 160, cameraRight);
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 176, cameraUp);
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 192, cameraForward);
+      this.device.queue.writeBuffer(uniformBuffer, options.uniformOffset + 208, new Float32Array([
+        options.blendModeIndex,
+        Math.max(0, Math.min(0.05, options.contentDistort)),
+        Math.max(0, Math.min(1, options.quadBlendStrength)),
+        useSampledBackground ? 1 : 0,
+      ]));
+      this.device.queue.writeBuffer(
+        uniformBuffer,
+        options.uniformOffset + 80,
+        rect
+          ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax])
+          : new Float32Array([0, 0, 0, 0])
+      );
+
+      const bindGroup = this.createBindGroupForTexture(options.texture, options.uniformOffset, backgroundDetailTexture);
+      if (!bindGroup) return false;
+      pass.setBindGroup(0, bindGroup);
+      pass.drawIndexed(6);
+      return true;
+    };
     
     // Render each visible section
     let drawnCount = 0;
@@ -1283,98 +1462,92 @@ export class WorldsRenderer {
 
       const baseW = (layout.worldWidth ?? layout.width);
       const baseH = (layout.worldHeight ?? layout.height);
-      
-      // Apply section dimensions to transform scale
-      const sectionTransform: Transform3D = {
-        position: layout.transform.position,
-        rotation: layout.transform.rotation,
-        scale: {
-          x: layout.transform.scale.x * baseW,
-          y: layout.transform.scale.y * baseH,
-          z: layout.transform.scale.z
-        }
-      };
-      
-      // Calculate MVP matrix for this section
-      const modelMatrix = mat4FromTransform(sectionTransform);
-      const mvpMatrix = mat4Multiply(viewProjectionMatrix, modelMatrix);
 
-      // Clip-space culling (skip cards fully outside any frustum plane).
-      // Use the quad corners in local space.
-      const clip = (x: number, y: number, z: number, w: number) => {
-        const m = mvpMatrix;
-        return {
-          x: m[0] * x + m[4] * y + m[8] * z + m[12] * w,
-          y: m[1] * x + m[5] * y + m[9] * z + m[13] * w,
-          z: m[2] * x + m[6] * y + m[10] * z + m[14] * w,
-          w: m[3] * x + m[7] * y + m[11] * z + m[15] * w,
-        };
-      };
-      const corners = [
-        clip(-0.5, -0.5, 0, 1),
-        clip(0.5, -0.5, 0, 1),
-        clip(0.5, 0.5, 0, 1),
-        clip(-0.5, 0.5, 0, 1),
-      ];
-      const all = (pred: (p: { x: number; y: number; z: number; w: number }) => boolean) => corners.every(pred);
-      if (all(p => p.x < -p.w) || all(p => p.x > p.w) || all(p => p.y < -p.w) || all(p => p.y > p.w) || all(p => p.z < 0) || all(p => p.z > p.w)) {
-        continue;
-      }
-      
-      // Update this section's uniform slice.
       const uniformIndex = paperEnabled ? (i + 1) : i;
       const uniformOffset = uniformIndex * this.uniformStride;
 
-      // MVP matrix at offset +0
-      this.device.queue.writeBuffer(
-        this.uniformBuffer,
-        uniformOffset + 0,
-        mvpMatrix.buffer,
-        mvpMatrix.byteOffset,
-        mvpMatrix.byteLength
-      );
-      
-      // Params at offset +64: xy=logical size, z=hover flag
+      const art = sectionArt.get(layout.sectionId);
+      if (art && art.layer === 'under') {
+        const artTexture = this.ensureSectionArtTexture(art.image);
+        if (artTexture) {
+          const artSize = this.getSectionArtQuadSize(baseW, baseH, art, art.image);
+          const artPos = resolveArtPosition(layout, art.offsetX, art.offsetY);
+          drawSectionQuad({
+            texture: artTexture,
+            uniformOffset,
+            transform: {
+              position: artPos,
+              rotation: layout.transform.rotation,
+              scale: {
+                x: layout.transform.scale.x * artSize.width,
+                y: layout.transform.scale.y * artSize.height,
+                z: layout.transform.scale.z,
+              },
+            },
+            logicalWidth: artSize.width,
+            logicalHeight: artSize.height,
+            opacity: art.opacity,
+            blendModeIndex: BLEND_MODES[art.blendMode] ?? 0,
+            quadBlendStrength: 1,
+            contentDistort: 0,
+            hover: 0,
+          });
+        }
+      }
+
       const hover = hoveredSectionIndex !== null && layout.sectionIndex === hoveredSectionIndex ? 1.0 : 0.0;
       const rect = layout.highlightUvRect;
-      const highlightEnabled = rect ? 1.0 : 0.0;
-      const params0 = new Float32Array([baseW, baseH, hover, highlightEnabled]);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 64, params0);
-
-      // Paper uniforms (used only for background pass; set disabled for cards)
-      // Exception: write paper scale in .x whenever paperEnabled so the card
-      // fragment can compute tiled UV for content distortion (and bleed in multiply mode).
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 96, new Float32Array(paperColor));
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 112, new Float32Array(lineColor));
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 128, new Float32Array([
-        paperEnabled ? (paperParams[0] ?? 0) : 0, 0, 0, layout.opacity
-      ]));
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 144, cameraPos);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 160, cameraRight);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 176, cameraUp);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 192, cameraForward);
-      // bgFlags for cards:
-      //   x = blend mode index (0=none,1=multiply,2=screen,3=overlay,4=softlight,
-      //                         5=hardlight,6=darken,7=lighten,8=difference,
-      //                         9=exclusion,10=colorburn,11=colordodge)
-      //   y = contentDistortStrength
-      //   z = contentBlendStrength (0=none, 1=full), meaningful when x>0
-      //   w = useSampledBackground
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 208, new Float32Array(
-        [blendModeIndex, contentDistortStrength, contentBlendStrength, useSampledBackground ? 1 : 0]
-      ));
-      // params1 = highlight UV rect (or zeros). No longer used for camera params
-      // since multiply blend is in-shader and doesn't need screen-space reconstruction.
-      const params1 = rect
-        ? new Float32Array([rect.uMin, rect.vMin, rect.uMax, rect.vMax])
-        : new Float32Array([0, 0, 0, 0]);
-      this.device.queue.writeBuffer(this.uniformBuffer, uniformOffset + 80, params1);
-      const bindGroup = this.createBindGroupForTexture(layout.texture, uniformOffset, backgroundDetailTexture);
-      if (!bindGroup) continue;
-      
-      pass.setBindGroup(0, bindGroup);
-      pass.drawIndexed(6); // 6 indices for quad
+      const drewCard = drawSectionQuad({
+        texture: layout.texture,
+        uniformOffset,
+        transform: {
+          position: layout.transform.position,
+          rotation: layout.transform.rotation,
+          scale: {
+            x: layout.transform.scale.x * baseW,
+            y: layout.transform.scale.y * baseH,
+            z: layout.transform.scale.z,
+          },
+        },
+        logicalWidth: baseW,
+        logicalHeight: baseH,
+        opacity: layout.opacity,
+        blendModeIndex,
+        quadBlendStrength: contentBlendStrength,
+        contentDistort: contentDistortStrength,
+        hover,
+        highlightRect: rect,
+      });
+      if (!drewCard) continue;
       drawnCount++;
+
+      if (art && art.layer === 'over') {
+        const artTexture = this.ensureSectionArtTexture(art.image);
+        if (artTexture) {
+          const artSize = this.getSectionArtQuadSize(baseW, baseH, art, art.image);
+          const artPos = resolveArtPosition(layout, art.offsetX, art.offsetY);
+          drawSectionQuad({
+            texture: artTexture,
+            uniformOffset,
+            transform: {
+              position: artPos,
+              rotation: layout.transform.rotation,
+              scale: {
+                x: layout.transform.scale.x * artSize.width,
+                y: layout.transform.scale.y * artSize.height,
+                z: layout.transform.scale.z,
+              },
+            },
+            logicalWidth: artSize.width,
+            logicalHeight: artSize.height,
+            opacity: art.opacity,
+            blendModeIndex: BLEND_MODES[art.blendMode] ?? 0,
+            quadBlendStrength: 1,
+            contentDistort: 0,
+            hover: 0,
+          });
+        }
+      }
     }
 
     if (connectors.length > 0 && this.linePipeline && this.lineUniformBuffer && this.lineVertexBuffer && this.lineIndexBuffer) {
@@ -1518,6 +1691,10 @@ export class WorldsRenderer {
     this.backgroundTexture?.destroy();
     this.backgroundShaderTexture?.destroy();
     this.backgroundImageTexture?.destroy();
+    for (const texture of this.sectionArtTextureCache.values()) {
+      texture.destroy();
+    }
+    this.sectionArtTextureCache.clear();
     this.neutralBackgroundTexture?.destroy();
   }
 }

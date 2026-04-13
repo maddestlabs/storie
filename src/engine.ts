@@ -64,7 +64,7 @@ import { getHiddenTextInputBridgeAttributes, normalizeSingleLineText } from './u
 import type { TextInputCapable } from './ui/core/types.js';
 import { ShaderManager } from './shader-manager.js';
 import { ShaderChainManager } from './shader-chain.js';
-import { WorldsRenderer } from './worlds-renderer.js';
+import { WorldsRenderer, type WorldsSectionArtRenderState } from './worlds-renderer.js';
 import { parseFIGfont, renderFigletCharLines, renderFigletLines, measureFigletLinesWidth, type FigletFont } from './figlet.js';
 import { parseAnsiToRuns, type AnsiParsed, type AnsiRun } from './ansi.js';
 import {
@@ -398,6 +398,7 @@ export class StorieEngine {
   private readonly backgroundImageUrlCache: Map<string, RenderableImageSource> = new Map();
   private readonly backgroundImageUrlInFlightCache: Map<string, Promise<RenderableImageSource | null>> = new Map();
   private readonly backgroundImageUrlFailures: Set<string> = new Set();
+  private readonly worldsBackgroundCompositeCache: Map<string, RenderableImageSource> = new Map();
   private audioGestureUnlocked: boolean = false;
   private trustedAudioGestureDepth: number = 0;
   private pendingGestureAudioStarts: Array<() => void> = [];
@@ -589,6 +590,9 @@ export class StorieEngine {
   }> = new Map();
   private sectionLinkRegionsCache: Map<string, LinkRegion[]> = new Map();
   private sectionWidgetPlacementsCache: Map<string, WidgetPlacement[]> = new Map();
+  /** Records the `elapsedTime` (seconds) when each section last became current,
+   *  keyed by sectionId. Used for `timed animate:content relative` blocks. */
+  private sectionAnimEnterTimes: Map<string, number> = new Map();
   private worldsInlineWidgetInstances: Array<{
     engineId: string;
     sectionId: string;
@@ -1625,7 +1629,7 @@ export class StorieEngine {
     return await promise;
   }
 
-  private resolveWorldsBackgroundImageUrl(rawUrl: string): string {
+  private resolveWorldsImageUrl(rawUrl: string): string {
     const trimmed = String(rawUrl ?? '').trim();
     if (!trimmed) {
       throw new Error('[worlds.background] Missing texture URL');
@@ -1664,7 +1668,7 @@ export class StorieEngine {
     return resolved.toString();
   }
 
-  private async loadWorldsBackgroundImageFromResolvedUrl(resolvedUrl: string): Promise<RenderableImageSource | null> {
+  private async loadWorldsImageFromResolvedUrl(resolvedUrl: string): Promise<RenderableImageSource | null> {
     const MAX_IMAGE_URL_BYTES = 128 * 1024 * 1024;
 
     try {
@@ -1699,13 +1703,13 @@ export class StorieEngine {
     }
   }
 
-  private ensureWorldsBackgroundImageLoaded(rawUrl: string): RenderableImageSource | null {
+  private ensureWorldsImageLoaded(rawUrl: string): RenderableImageSource | null {
     const rawKey = String(rawUrl ?? '').trim();
     if (!rawKey || this.backgroundImageUrlFailures.has(rawKey)) return null;
 
     let resolvedUrl: string;
     try {
-      resolvedUrl = this.resolveWorldsBackgroundImageUrl(rawUrl);
+      resolvedUrl = this.resolveWorldsImageUrl(rawUrl);
     } catch (error) {
       console.warn(error);
       this.backgroundImageUrlFailures.add(rawKey);
@@ -1718,7 +1722,7 @@ export class StorieEngine {
     if (cached) return cached;
 
     if (!this.backgroundImageUrlInFlightCache.has(resolvedUrl)) {
-      const promise = this.loadWorldsBackgroundImageFromResolvedUrl(resolvedUrl)
+      const promise = this.loadWorldsImageFromResolvedUrl(resolvedUrl)
         .then(image => {
           if (!image) {
             this.backgroundImageUrlFailures.add(resolvedUrl);
@@ -1737,6 +1741,89 @@ export class StorieEngine {
     }
 
     return null;
+  }
+
+  private ensureWorldsBackgroundImageLoaded(rawUrl: string): RenderableImageSource | null {
+    return this.ensureWorldsImageLoaded(rawUrl);
+  }
+
+  private composeWorldsBackgroundOverlay(
+    cacheKey: string,
+    baseImage: RenderableImageSource,
+    overlayImage: RenderableImageSource,
+    options: {
+      blendMode: 'normal' | 'multiply' | 'screen' | 'overlay' | 'softlight' | 'hardlight' | 'darken' | 'lighten' | 'difference' | 'exclusion' | 'colorburn' | 'colordodge';
+      opacity: number;
+      fit?: 'cover' | 'contain' | 'stretch';
+    }
+  ): RenderableImageSource | null {
+    const cached = this.worldsBackgroundCompositeCache.get(cacheKey);
+    if (cached) return cached;
+
+    const width = Math.max(1, Math.round((baseImage as any).width ?? (baseImage as any).naturalWidth ?? 0));
+    const height = Math.max(1, Math.round((baseImage as any).height ?? (baseImage as any).naturalHeight ?? 0));
+    const overlayWidth = Math.max(1, Math.round((overlayImage as any).width ?? (overlayImage as any).naturalWidth ?? 0));
+    const overlayHeight = Math.max(1, Math.round((overlayImage as any).height ?? (overlayImage as any).naturalHeight ?? 0));
+    if (!(width > 0 && height > 0 && overlayWidth > 0 && overlayHeight > 0)) return null;
+
+    const canvas = typeof OffscreenCanvas !== 'undefined'
+      ? new OffscreenCanvas(width, height)
+      : (() => {
+          if (typeof document === 'undefined') return null;
+          const element = document.createElement('canvas');
+          element.width = width;
+          element.height = height;
+          return element;
+        })();
+    if (!canvas) return null;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.drawImage(baseImage, 0, 0, width, height);
+
+    const fit = options.fit ?? 'cover';
+    let drawW = width;
+    let drawH = height;
+    let drawX = 0;
+    let drawY = 0;
+    if (fit !== 'stretch') {
+      const scale = fit === 'contain'
+        ? Math.min(width / overlayWidth, height / overlayHeight)
+        : Math.max(width / overlayWidth, height / overlayHeight);
+      drawW = Math.max(1, Math.round(overlayWidth * scale));
+      drawH = Math.max(1, Math.round(overlayHeight * scale));
+      drawX = Math.round((width - drawW) * 0.5);
+      drawY = Math.round((height - drawH) * 0.5);
+    }
+
+    const blendModeMap: Record<string, GlobalCompositeOperation> = {
+      normal: 'source-over',
+      multiply: 'multiply',
+      screen: 'screen',
+      overlay: 'overlay',
+      softlight: 'soft-light',
+      hardlight: 'hard-light',
+      darken: 'darken',
+      lighten: 'lighten',
+      difference: 'difference',
+      exclusion: 'exclusion',
+      colorburn: 'color-burn',
+      colordodge: 'color-dodge',
+    };
+    const compositeMode = blendModeMap[options.blendMode] ?? 'source-over';
+    ctx.globalCompositeOperation = compositeMode;
+    ctx.globalAlpha = Math.max(0, Math.min(1, options.opacity));
+    ctx.drawImage(overlayImage, drawX, drawY, drawW, drawH);
+
+    const result = typeof OffscreenCanvas !== 'undefined' && canvas instanceof OffscreenCanvas && typeof canvas.transferToImageBitmap === 'function'
+      ? canvas.transferToImageBitmap()
+      : canvas as unknown as RenderableImageSource;
+    this.worldsBackgroundCompositeCache.set(cacheKey, result);
+    return result;
   }
 
   private ensureMarkdownBlobImageLoaded(source: string, documentId?: string): MarkdownImageCacheEntry | null {
@@ -2841,10 +2928,11 @@ export class StorieEngine {
       doc: {
         sectionsFlat: () => {
           const roots = engine.getReadableSectionRoots();
-          if (roots.length === 0) return [] as Array<{ index: number; title: string; level: number; timedMs?: number; directive?: Record<string, any> }>;
+          if (roots.length === 0) return [] as Array<{ index: number; sectionId: string; title: string; level: number; timedMs?: number; directive?: Record<string, any> }>;
           const flat = flattenSections(roots);
           return flat.map((s, index) => ({
             index,
+            sectionId: typeof s.id === 'string' && s.id.length > 0 ? s.id : `section-${index}`,
             title: s.title,
             level: s.level,
             ...(s.timedMs    !== undefined ? { timedMs:   s.timedMs   } : {}),
@@ -6471,6 +6559,9 @@ export class StorieEngine {
           ) => {
             return engine.applyWorldsTimedContent(selector, entries, Number(timeSec) || 0, options);
           },
+          applyAllFrames: (timeSec: number) => {
+            engine.applyAllSectionFrames(Number(timeSec) || 0);
+          },
         },
 
         timeline: {
@@ -9669,6 +9760,33 @@ ${exportVars}
   }
 
   /**
+   * Iterate all runtime sections and auto-apply any inline `contentFrames` /
+   * `titleFrames` entries parsed from `timed animate:*` blocks in the document.
+   * Called automatically at the end of `applyWorldsTimeline`.
+   */
+  private applyAllSectionFrames(timeSec: number): void {
+    for (const ref of this.getRuntimeSectionRefs()) {
+      const { section, sectionId } = ref;
+      if (section.contentFrames && section.contentFrames.length > 0) {
+        const t = section.contentFramesRelative
+          ? timeSec - (section.timedMs !== undefined
+              ? section.timedMs / 1000
+              : (this.sectionAnimEnterTimes.get(sectionId) ?? 0))
+          : timeSec;
+        this.applyWorldsTimedContent(sectionId, section.contentFrames as any, t);
+      }
+      if (section.titleFrames && section.titleFrames.length > 0) {
+        const t = section.titleFramesRelative
+          ? timeSec - (section.timedMs !== undefined
+              ? section.timedMs / 1000
+              : (this.sectionAnimEnterTimes.get(sectionId) ?? 0))
+          : timeSec;
+        this.applyWorldsTimedContent(sectionId, section.titleFrames as any, t, { target: 'title' });
+      }
+    }
+  }
+
+  /**
    * Start the main loop (async to support WebGPU init)
    */
   async start(): Promise<void> {
@@ -9893,8 +10011,25 @@ ${exportVars}
           // Check for shader background
           const shaderInfo = this.parseWorldsSectionBackgroundShader();
           const textureInfo = this.parseWorldsSectionBackgroundTexture();
-          const textureImage = textureInfo
+          const baseTextureImage = textureInfo
             ? this.ensureWorldsBackgroundImageLoaded(textureInfo.url)
+            : null;
+          const overlayTextureImage = textureInfo?.overlayUrl
+            ? this.ensureWorldsImageLoaded(textureInfo.overlayUrl)
+            : null;
+          const textureImage = textureInfo && baseTextureImage
+            ? (overlayTextureImage && textureInfo.overlayUrl
+                ? this.composeWorldsBackgroundOverlay(
+                    `bg-overlay:${String((this.worldsConfig as any).sectionBackground ?? '')}`,
+                    baseTextureImage,
+                    overlayTextureImage,
+                    {
+                      blendMode: textureInfo.overlayBlendMode ?? 'hardlight',
+                      opacity: textureInfo.overlayOpacity ?? 0.24,
+                      fit: textureInfo.overlayFit ?? 'cover',
+                    }
+                  ) ?? baseTextureImage
+                : baseTextureImage)
             : null;
 
           // If using a shader background, merge in a few engine-provided uniforms
@@ -10010,7 +10145,7 @@ ${exportVars}
                 spacing: 1,
                 thickness: 0.06,
                 noiseStrength: paperNoiseStrength,
-                sectionBlendMode: (textureInfo?.blendMode ?? (this.worldsConfig as any)?.sectionBlendMode) as ('multiply' | undefined),
+                sectionBlendMode: (textureInfo?.blendMode ?? (this.worldsConfig as any)?.sectionBlendMode) as any,
                 contentDistortStrength: (Number.isFinite((textureInfo as any)?.contentDistort as any)
                   ? ((textureInfo as any).contentDistort as number)
                   : (Number.isFinite((this.worldsConfig as any)?.contentDistortStrength as any)
@@ -10022,8 +10157,26 @@ ${exportVars}
               }
             : undefined;
 
+          const sectionArtStates = new Map<string, WorldsSectionArtRenderState>();
+          for (const layout of this.section3DLayouts) {
+            const art = layout.sectionArt;
+            if (!art?.url) continue;
+            const image = this.ensureWorldsImageLoaded(art.url);
+            if (!image) continue;
+            sectionArtStates.set(layout.sectionId, {
+              image,
+              opacity: art.opacity,
+              blendMode: art.blendMode,
+              layer: art.layer,
+              fit: art.fit,
+              scale: art.scale,
+              offsetX: art.offsetX,
+              offsetY: art.offsetY,
+            });
+          }
+
           const linkConnectors = this.getRendered3DLinkConnectors();
-          this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig, linkConnectors);
+          this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig, linkConnectors, sectionArtStates);
         }
 
         // Render GPU UI into its own texture (if created)
@@ -10267,6 +10420,34 @@ ${exportVars}
   }
 
   /**
+   * Suggest an export duration based on the current export context.
+   * Prefers a captured AudioBuffer, and falls back to the selected timed block.
+   */
+  getSuggestedExportDuration(): number | null {
+    const captured = this.getExportAudioBuffer();
+    if (captured?.buffer) {
+      const duration = Number(captured.buffer.duration);
+      const offset = Math.max(0, Math.min(duration, Number(captured.offsetSec) || 0));
+      const remaining = duration - offset;
+      if (Number.isFinite(remaining) && remaining > 0) return remaining;
+    }
+
+    const selected = this._exportTimedBlockSelection;
+    if (!selected) return null;
+
+    const docId = this.activeDocumentId;
+    if (!docId) return null;
+    const doc = this.documents.get(docId) as any;
+    const store = doc?._timedStore as Map<string, { name: string; entries: Array<{ ms: number; text: string }> }> | undefined;
+    const entries = store?.get(selected)?.entries;
+    if (!entries || entries.length === 0) return null;
+
+    const last = entries[entries.length - 1];
+    const duration = Number(last?.ms) / 1000;
+    return Number.isFinite(duration) && duration > 0 ? duration : null;
+  }
+
+  /**
    * Resize the canvas and engine to an exact pixel resolution for native-quality
    * video export. The canvas is resized to the nearest cell-aligned dimensions
    * that fit within exportWidth × exportHeight.
@@ -10360,6 +10541,16 @@ ${exportVars}
     this.deltaTime   = delta;
     this.runFrame();
     this.frameCount++;
+  }
+
+  /**
+   * Render one export-preflight frame without advancing the export frame counter.
+   * Useful when the host UI needs document code to latch export metadata first.
+   */
+  primeExportFrame(elapsed: number = 0): void {
+    this.elapsedTime = elapsed;
+    this.deltaTime = 0;
+    this.runFrame();
   }
 
   /**
@@ -11331,6 +11522,10 @@ ${exportVars}
     paperPlaneZ?: number;
     paperPlaneZMode?: 'focus';
     screenLock?: boolean;
+    overlayUrl?: string;
+    overlayBlendMode?: 'normal' | 'multiply' | 'screen' | 'overlay' | 'softlight' | 'hardlight' | 'darken' | 'lighten' | 'difference' | 'exclusion' | 'colorburn' | 'colordodge';
+    overlayOpacity?: number;
+    overlayFit?: 'cover' | 'contain' | 'stretch';
     blendMode?: 'multiply' | 'screen' | 'overlay' | 'softlight' | 'hardlight' | 'darken' | 'lighten' | 'difference' | 'exclusion' | 'colorburn' | 'colordodge';
   } | null {
     const v: any = (this.worldsConfig as any).sectionBackground;
@@ -11348,6 +11543,10 @@ ${exportVars}
     let paperPlaneZ: number | undefined;
     let paperPlaneZMode: 'focus' | undefined;
     let screenLock: boolean | undefined;
+    let overlayUrl: string | undefined;
+    let overlayBlendMode: 'normal' | 'multiply' | 'screen' | 'overlay' | 'softlight' | 'hardlight' | 'darken' | 'lighten' | 'difference' | 'exclusion' | 'colorburn' | 'colordodge' | undefined;
+    let overlayOpacity: number | undefined;
+    let overlayFit: 'cover' | 'contain' | 'stretch' | undefined;
     let blendMode: 'multiply' | 'screen' | 'overlay' | 'softlight' | 'hardlight' | 'darken' | 'lighten' | 'difference' | 'exclusion' | 'colorburn' | 'colordodge' | undefined;
 
     for (const spec of paramSpecs) {
@@ -11418,6 +11617,37 @@ ${exportVars}
         continue;
       }
 
+      if (trimmedKey === 'overlay' || trimmedKey === 'overlayUrl' || trimmedKey === 'overlaySrc') {
+        if (trimmedValue) overlayUrl = trimmedValue;
+        continue;
+      }
+
+      if (trimmedKey === 'overlayOpacity') {
+        const num = parseFloat(trimmedValue);
+        if (!isNaN(num) && Number.isFinite(num)) {
+          overlayOpacity = Math.max(0, Math.min(1, num));
+        }
+        continue;
+      }
+
+      if (trimmedKey === 'overlayBlend' || trimmedKey === 'overlayBlendMode') {
+        const lower = trimmedValue.toLowerCase().replace(/[-_\s]/g, '');
+        const validModes = ['normal','multiply','screen','overlay','softlight','hardlight',
+                            'darken','lighten','difference','exclusion','colorburn','colordodge'];
+        if (validModes.includes(lower)) {
+          overlayBlendMode = lower as typeof overlayBlendMode;
+        }
+        continue;
+      }
+
+      if (trimmedKey === 'overlayFit') {
+        const lower = trimmedValue.toLowerCase();
+        if (lower === 'contain') overlayFit = 'contain';
+        else if (lower === 'stretch' || lower === 'fill') overlayFit = 'stretch';
+        else overlayFit = 'cover';
+        continue;
+      }
+
       if (trimmedKey === 'blendStrength' || trimmedKey === 'blendAmount' || trimmedKey === 'paperBlend') {
         const num = parseFloat(trimmedValue);
         if (!isNaN(num) && Number.isFinite(num)) {
@@ -11427,7 +11657,21 @@ ${exportVars}
       }
     }
 
-    return { url: textureUrl, coordScale, tilePx, contentDistort, blendStrength, paperPlaneZ, paperPlaneZMode, screenLock, blendMode };
+    return {
+      url: textureUrl,
+      coordScale,
+      tilePx,
+      contentDistort,
+      blendStrength,
+      paperPlaneZ,
+      paperPlaneZMode,
+      screenLock,
+      overlayUrl,
+      overlayBlendMode,
+      overlayOpacity,
+      overlayFit,
+      blendMode,
+    };
   }
 
   private isWorldsSectionBackgroundProceduralChainEnabled(): boolean {
@@ -14549,6 +14793,12 @@ ${exportVars}
   private runSectionEnterHandlers(sectionIndex: number): void {
     const doc = this.getActiveDocument() as any;
     if (!doc?.id) return;
+
+    // Record enter time for relative animate blocks.
+    const layout = this.section3DLayouts.find(l => l.sectionIndex === sectionIndex);
+    if (layout?.sectionId) {
+      this.sectionAnimEnterTimes.set(layout.sectionId, this.elapsedTime);
+    }
 
     const scope = this.sandbox.getScope(doc.id) as any;
     const handler = scope?.__enterHandlers?.[sectionIndex];
