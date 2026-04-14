@@ -2,6 +2,7 @@
 name: "Ballad of Saint Billy"
 title: "Ballad of Saint Billy"
 author: "Maddest Labs"
+requiresAudioGesture: true
 theme: "saintbilly"
 shaders: "audioshake+vintage"
 font: "Rye"
@@ -579,10 +580,9 @@ Bring
 
 the
 
-# cross-103 {x: 1, y: 40.5, scale: 0.8, timed: "79000ms"}
+# cross-103 {x: 1, y: 40.5, scale: 1.0, timed: "79000ms"}
 
-▒█▀▄▒▄▀▄░█░█▄░█
-░█▀▒░█▀█░█░█▒█
+𝕻𝖆𝖎𝖓
 
 # cross-103a {x: 6, y: 40.5, scale: 1.5, timed: "79100ms"}
 
@@ -1157,7 +1157,7 @@ outside
 
 a
 
-# cross-234 {x: -49.3, y: 9, scale: 1.195, timed: "155667ms", art: "assets/img/saintbilly-saloon-plan.svg", artBlend: "hardlight", artOpacity: 0.28, artFit: "cover", artScale: 1.18}
+# cross-234 {x: -49.3, y: 9, scale: 1.195, timed: "155667ms"}
 
 saloon
 
@@ -1214,7 +1214,7 @@ so
 
 # cross-246 {x: -73.1, y: 4.5, scale: 0.858, timed: "162670ms"}
 
-Town
+town
 
 # cross-247 {x: -69.7, y: 4.5, scale: 0.842, timed: "163051ms"}
 
@@ -1249,9 +1249,9 @@ He
 
 told
 
-# cross-255 {x: -1.7, y: 4.5, scale: 1.139, timed: "166490ms"}
+# cross-255 {x: -1.7, y: 4.5, scale: 1.139, timed: "166400ms"}
 
-him
+and
 
 # cross-256 {x: 1.7, y: 4.5, scale: 0.93, timed: "167065ms"}
 
@@ -1271,7 +1271,9 @@ a
 
 # cross-260 {x: 35.7, y: 4.5, scale: 1.138, timed: "168600ms"}
 
-pin
+p
+i
+n
 
 # cross-261 {x: 39.1, y: 4.5, scale: 1.356, timed: "168920ms"}
 
@@ -1379,16 +1381,33 @@ crowd
 
 # cross-287 {x: 1.7, y: -4.5, scale: 0.943, timed: "180840ms"}
 
-b.ro:k.e
+```timed animate:content relative
+0ms
+⠀⠀⠀⠀broke⠀⠀⠀⠀
+---
+100ms
+⠀⠀⠀b⠀roke⠀⠀⠀⠀
+---
+200ms
+⠀b⠀⠀⠀rok⠀e⠀⠀⠀
+---
+300ms
+b⠀⠀r⠀o⠀k⠀⠀⠀e⠀
+---
+400ms
+b⠀r⠀⠀o⠀⠀⠀k⠀⠀e
+---
+```
 
 # cross-288 {x: -17, y: -9, scale: 1.23, timed: "181440ms"}
 
-up
+u
+p
  
 
 # cross-289 {x: -8.5, y: -9, scale: 0.878, timed: "182040ms"}
 
-But
+but
 
 # cross-290 {x: -5.1, y: -9, scale: 0.852, timed: "182424ms"}
 
@@ -1400,7 +1419,11 @@ stood
 
 # cross-292 {x: 1.7, y: -9, scale: 0.831, timed: "183192ms"}
 
-shook
+s
+⠀h
+o
+⠀o
+k
 
 # cross-293 {x: -17, y: -13.5, scale: 0.9, timed: "183576ms"}
 
@@ -1600,8 +1623,8 @@ was
 
 won.
 
-# cross-341 {x: 0, y: -58, scale: 1.365, timed: "222000ms"}
-»──────────────◦─•♛•─◦──────────────«
+# cross-341 {x: 0, y: -58, scale: 1.0, timed: "222000ms"}
+»────────────◦─•♛•─◦────────────«
 
 ```javascript
 var state = {
@@ -1611,6 +1634,8 @@ var state = {
   gain: null,
   playRequested: false,
   isPlaying: false,
+  autoPlayOnFirstTap: false,
+  pendingTapAutoplay: false,
   startTime: 0,
   pauseOffset: 0,
   wasSeeking: false,
@@ -1655,6 +1680,18 @@ function fmtTime(sec) {
   const m = Math.floor(Math.max(0, sec) / 60);
   const s = Math.floor(Math.max(0, sec) % 60);
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function isTouchLikeDevice() {
+  try {
+    return !!(
+      navigator.maxTouchPoints > 0 ||
+      'ontouchstart' in globalThis ||
+      (typeof globalThis.matchMedia === 'function' && globalThis.matchMedia('(pointer: coarse)').matches)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function normalizeEnvelope(values, smoothFrames) {
@@ -1864,6 +1901,19 @@ function playFrom(offsetSec) {
   }
 }
 
+function requestPlaybackStart() {
+  if (state.isPlaying) return;
+  audio.context.resume().catch(() => {});
+  state.playRequested = true;
+  if (state.audioBuffer) {
+    playFrom(state.pauseOffset);
+    state.playRequested = false;
+  } else {
+    void loadLocalAudio();
+    setStatus('Loading local WAV asset...');
+  }
+}
+
 function setStatus(text) {
   state.statusText = text;
 }
@@ -1910,12 +1960,12 @@ function loadLocalAudio() {
         playFrom(state.pauseOffset);
       }
 
-      setStatus(`Track ready from local asset - ${fmtTime(buffer.duration)}. Press Play to start.`);
+      setStatus(`Track ready from local asset - ${fmtTime(buffer.duration)}. ${state.autoPlayOnFirstTap ? 'Tap anywhere or press Play to start.' : 'Press Play to start.'}`);
       return buffer;
     } catch (e) {
       console.warn('[saintbilly-lyrics] local audio load failed:', e);
       state.playRequested = false;
-      setStatus('Local WAV failed to load. Press Play to retry.');
+      setStatus(state.autoPlayOnFirstTap ? 'Local WAV failed to load. Tap anywhere or press Play to retry.' : 'Local WAV failed to load. Press Play to retry.');
       return null;
     } finally {
       state.audioLoadPromise = null;
@@ -2128,6 +2178,7 @@ state.widgets = { time, seek, btnPlayPause };
 state.gain = audio.createGain();
 state.gain.gain.value = 1;
 state.gain.connect(audio.destination);
+state.autoPlayOnFirstTap = isTouchLikeDevice();
 
 // Realtime FFT analyser for audio-reactive shader uniforms.
 // fftSize: 4096 gives ~11Hz/bin resolution at 44.1kHz — needed for sub-bass targeting.
@@ -2153,7 +2204,12 @@ if (event.type === 'keydown') {
 }
 if (event.type === 'text') gui.handleText(event.text);
 if (event.type === 'mouse') {
-  if (event.button === 'left') state.mouseDownLeft = event.action === 'press' || event.action === 'repeat';
+  if (event.button === 'left') {
+    state.mouseDownLeft = event.action === 'press' || event.action === 'repeat';
+    if (!state.mouseDownLeft && state.autoPlayOnFirstTap && !state.isPlaying && state.pauseOffset <= 0.001) {
+      state.pendingTapAutoplay = true;
+    }
+  }
   gui.handleMouse(event.x, event.y, state.mouseDownLeft);
 }
 if (event.type === 'mouse_move') gui.handleMouse(event.x, event.y, state.mouseDownLeft);
@@ -2247,21 +2303,20 @@ state.widgets.seek.setBounds({ x, y, width: ctrlW, height: seekH });
 
 if (!exporting) gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);
 
+if (state.pendingTapAutoplay) {
+  state.pendingTapAutoplay = false;
+  state.autoPlayOnFirstTap = false;
+  requestPlaybackStart();
+}
+
 if (state.widgets.btnPlayPause.wasClicked()) {
   if (state.isPlaying) {
+    state.autoPlayOnFirstTap = false;
     state.playRequested = false;
     stopAudio({ keepOffset: true });
   } else {
-    audio.context.resume().catch(() => {});
-    state.playRequested = true;
-    if (state.audioBuffer) {
-      playFrom(state.pauseOffset);
-      state.playRequested = false;
-    }
-    else {
-      void loadLocalAudio();
-      setStatus('Loading local WAV asset...');
-    }
+    state.autoPlayOnFirstTap = false;
+    requestPlaybackStart();
   }
 }
 
@@ -2310,7 +2365,9 @@ if (dragging && state.audioBuffer) {
 } else if (exporting && state.audioBuffer) {
   setStatus(`Exporting synced local audio - ${fmtTime(previewPos)} / ${fmtTime(state.audioBuffer.duration)}.`);
 } else if (state.audioBuffer) {
-  setStatus(isPlaybackActive() ? 'Playing synced local audio.' : 'Paused - drag the scrubber or press Play.');
+  setStatus(isPlaybackActive()
+    ? 'Playing synced local audio.'
+    : (state.autoPlayOnFirstTap ? 'Paused - tap anywhere or press Play.' : 'Paused - drag the scrubber or press Play.'));
 }
 state.widgets.btnPlayPause.setLabel(isPlaybackActive() ? 'Pause' : 'Play');
 
