@@ -7,9 +7,10 @@
   "types": "dist/storie.d.ts",
   "scripts": {
     "dev": "vite",
-    "build": "npm run build:lib && npm run build:site",
+    "build": "npm run check:authoring && npm run build:lib && npm run build:site",
     "build:lib": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\" && tsc && vite build",
     "build:site": "node scripts/build-site.js",
+    "check:authoring": "node scripts/check-authored-conditionals.js",
     "compile:app": "npm run build:lib && node scripts/compile-app.js",
     "generate-favicons": "node scripts/generate-favicons.js",
     "preview": "vite preview --outDir docs",

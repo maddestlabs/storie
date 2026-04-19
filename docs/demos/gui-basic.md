@@ -1,7 +1,8 @@
 ---
 name: "Retained GUI Demo (Storie)"
-theme: "outrun"
+theme: "nord"
 shaders: "paper+invert"
+authoringCheck: explicit-conditionals
 ---
 
 A demo showing retained-mode graphical UI widgets with mouse and keyboard input.
@@ -14,151 +15,112 @@ A demo showing retained-mode graphical UI widgets with mouse and keyboard input.
 ## Game Code
 
 ```js
-// Persistent state - automatically available in all lifecycle blocks
-let clickCount = 0;
-let lastEvent = '';
-let mouseDownLeft = false;
-
-// Widget references (initialized in on:init)
-let widgets = null;
-
-// Debug: Track GUI system state
-let guiInitialized = false;
+// Preferred persistent pattern: keep shared demo state in one object.
+var state = {
+  clickCount: 0,
+  featureEnabled: false,
+  volume: 50,
+  text: 'Type here\nSecond line'
+};
 ```
 
 ```js on:init
 term.layerID = 'default';
 
-// Initialize the built-in retained-mode GUI system
-gui.init();
-
-// Create widgets (using pixel coordinates)
-const title = gui.createLabel({
-  bounds: { x: 20, y: 30, width: 600, height: 30 },
-  text: 'Retained-Mode GUI Demo (Storie)',
-  align: 'center'
-});
-
-const btn = gui.createButton({
-  bounds: { x: 20, y: 80, width: 260, height: 50 },
-  label: 'Click Me'
-});
-
-const chk = gui.createCheckbox({
-  bounds: { x: 20, y: 150, width: 300, height: 30 },
-  label: 'Enable Feature',
-  checked: false
-});
-
-const sld = gui.createSlider({
-  bounds: { x: 20, y: 200, width: 400, height: 50 },
-  label: 'Volume',
-  min: 0,
-  max: 100,
-  value: 50
-});
-
-const input = (typeof gui.createTextEditor === 'function')
-  ? gui.createTextEditor({
-      bounds: { x: 20, y: 270, width: 400, height: 120 },
-      value: 'Type here\nSecond line',
-      placeholder: 'Type here'
-    })
-  : gui.createTextField({
-      bounds: { x: 20, y: 270, width: 400, height: 44 },
-      value: 'Type here',
-      placeholder: 'Type here'
-    });
-
-const status = gui.createLabel({
-  bounds: { x: 20, y: 410, width: 600, height: 30 },
-  text: 'Status: Ready'
-});
-
-const debugLabel = gui.createLabel({
-  bounds: { x: 20, y: 450, width: 600, height: 30 },
-  text: 'Debug: ...'
-});
-
-// Store widget references in persistent state
-widgets = { title, btn, chk, sld, input, status, debugLabel };
-```
-
-```js on:input
-// Storie provides global mouse coordinates: mouseX/mouseY (pixels by default).
-// For graphical UI, we use pixel coordinates directly.
-if (!event) return;
-
-if (event.type === 'keydown') {
-  lastEvent = `key: ${event.key}`;
-  gui.handleKey(event.key, {
-    shift: (event.mods || []).includes('shift'),
-    ctrl: (event.mods || []).includes('ctrl'),
-    alt: (event.mods || []).includes('alt'),
-    meta: (event.mods || []).includes('meta')
-  });
-}
-
-if (event.type === 'text') {
-  lastEvent = `text: ${event.text}`;
-  gui.handleText(event.text);
-}
-
-if (event.type === 'mouse') {
-  if (event.button === 'left') {
-    mouseDownLeft = event.action === 'press' || event.action === 'repeat';
+gui.screen({
+  input: 'auto',
+  update: 'auto',
+  state,
+  layout: {
+    type: 'panel',
+    insetX: 'lg',
+    insetTop: 'xl',
+    insetBottom: 'lg',
+    maxWidth: 640,
+    padding: 0,
+    rowGap: 'md',
+    alignX: 'stretch',
+    anchorX: 'start',
+    anchorY: 'start'
+  },
+  widgets: {
+    title: {
+      type: 'label',
+      bounds: { height: 30 },
+      text: 'Retained-Mode GUI Demo (Storie)',
+      align: 'center'
+    },
+    click: {
+      type: 'button',
+      bounds: { height: 50 },
+      label: 'Click Me',
+      onClick() {
+        state.clickCount++;
+        var suffix = '';
+        if (state.clickCount !== 1) suffix = 's';
+        gui.text('status', `Button clicked ${state.clickCount} time${suffix}!`);
+      }
+    },
+    feature: {
+      type: 'checkbox',
+      bounds: { height: 30 },
+      label: 'Enable Feature',
+      checked: state.featureEnabled,
+      bind: 'featureEnabled',
+      onToggle() {
+        var featureStatus = 'disabled';
+        if (state.featureEnabled) featureStatus = 'enabled';
+        gui.text('status', `Feature ${featureStatus}`);
+      }
+    },
+    volume: {
+      type: 'slider',
+      bounds: { height: 50 },
+      label: 'Volume',
+      min: 0,
+      max: 100,
+      value: state.volume,
+      bind: 'volume'
+    },
+    input: {
+      type: 'editor',
+      bounds: { height: 120 },
+      value: state.text,
+      placeholder: 'Type here',
+      bind: 'text',
+      onChange() {
+        const safe = String(state.text).replace(/\n/g, '\\n');
+        gui.text('status', `Input = "${safe}"`);
+      }
+    },
+    status: {
+      type: 'label',
+      bounds: { height: 30 },
+      text: 'Status: Ready'
+    },
+    debug: {
+      type: 'label',
+      bounds: { height: 30 },
+      text: 'Debug: ...'
+    }
   }
-
-  // Use event coordinates for immediate input handling
-  gui.handleMouse(event.x, event.y, mouseDownLeft);
-}
-
-if (event.type === 'mouse_move') {
-  // Use event coordinates for hover state
-  gui.handleMouse(event.x, event.y, mouseDownLeft);
-}
+});
 ```
 
 ```js on:update
-if (!widgets) return;
+const btn = gui.get('click');
 
-// Per-frame update keeps widget states consistent
-// Use function calls for mouse coordinates
-gui.update(getMouseX(), getMouseY(), mouseDownLeft);
-
-// Check for button clicks
-if (widgets.btn.wasClicked()) {
-  clickCount++;
-  widgets.status.setText(`Button clicked ${clickCount} time${clickCount !== 1 ? 's' : ''}!`);
-  lastEvent = 'button clicked';
-}
-
-// Check for checkbox toggles
-if (widgets.chk.wasToggled()) {
-  const enabled = widgets.chk.isChecked();
-  widgets.status.setText(`Feature ${enabled ? 'enabled' : 'disabled'}`);
-  lastEvent = `checkbox ${enabled ? 'checked' : 'unchecked'}`;
-}
-
-// Read slider value
-const volume = widgets.sld.getValue();
-
-if (widgets.input.wasChanged()) {
-  const safe = String(widgets.input.getValue()).replace(/\n/g, '\\n');
-  widgets.status.setText(`Input = "${safe}"`);
-}
+if (!btn) return;
 
 // Check if mouse is over button (for debugging)
-const btnBounds = widgets.btn.bounds;
+const btnBounds = btn.bounds;
 const mx = getMouseX();
 const my = getMouseY();
 const overBtn = mx >= btnBounds.x && mx < (btnBounds.x + btnBounds.width) &&
                 my >= btnBounds.y && my < (btnBounds.y + btnBounds.height);
 
 // Update debug display
-widgets.debugLabel.setText(
-  `Frame ${getFrame()} | Mouse: (${mx.toFixed(0)}, ${my.toFixed(0)}) | Over: ${overBtn} | Hover: ${widgets.btn.state.hovered} | Vol: ${Math.round(volume)}`
-);
+gui.text('debug', `Frame ${getFrame()} | Mouse: (${mx.toFixed(0)}, ${my.toFixed(0)}) | Over: ${overBtn} | Hover: ${btn.state.hovered} | Vol: ${Math.round(Number(state.volume) || 0)}`);
 ```
 
 ```js on:render
@@ -184,9 +146,14 @@ term.write(0, termHeight - 1, "═".repeat(termWidth));
 ### Retained vs Immediate Mode
 
 **Retained Mode** (this demo):
-- Widgets created once in `on:init`
-- State persists automatically
-- Query state with `.wasClicked()`, `.getValue()`, etc.
+- Widgets created once in `on:init`, here via `gui.screen(...)`
+- Input routing and per-frame GUI stepping are enabled via `gui.screen({ input: 'auto', update: 'auto', ... })`
+- Shared app state lives in one persistent `state` object
+- A simple `layout` block can stack and fit screen widgets without per-widget x/y math
+- Layout spacing can use GUI token names like `sm`, `md`, `lg`, and `xl`
+- Widgets are declared by name and still accessible via `gui.get(...)`, `gui.text(...)`, `gui.value(...)`, and `gui.checked(...)`
+- `gui.bind(...)` keeps widget values synchronized with explicit state for common retained controls
+- `gui.screen(...)` specs can attach simple `onClick`, `onToggle`, and `onChange` callbacks for common reactions
 - Visual updates handled automatically
 - Focus, hover, and keyboard navigation built-in
 

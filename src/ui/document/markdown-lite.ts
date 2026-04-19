@@ -84,14 +84,16 @@ function parseLooseDirectiveObject(raw: string): Record<string, any> | null {
   if (buf.trim()) parts.push(buf.trim());
 
   const out: Record<string, any> = {};
+  let parsedEntryCount = 0;
   for (const part of parts) {
     if (!part) continue;
     const colon = part.indexOf(':');
     if (colon <= 0) continue;
     const key = part.slice(0, colon).trim().replace(/^"|"$/g, '').replace(/^'|'$/g, '');
     out[key] = parseLooseDirectiveValue(part.slice(colon + 1));
+    parsedEntryCount++;
   }
-  return out;
+  return parsedEntryCount > 0 ? out : null;
 }
 
 function parseDirectiveObject(raw: string): Record<string, any> | null {
@@ -277,6 +279,63 @@ function findInlineDirectiveEnd(text: string, start: number): number {
   return -1;
 }
 
+function findClosingParen(text: string, start: number): number {
+  let i = start;
+  let depth = 1;
+  let quote: '"' | "'" | null = null;
+
+  while (i < text.length) {
+    const ch = text[i] || '';
+    if (quote) {
+      if (ch === '\\') {
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      i++;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch as '"' | "'";
+      i++;
+      continue;
+    }
+    if (ch === '(') {
+      depth++;
+      i++;
+      continue;
+    }
+    if (ch === ')') {
+      depth--;
+      if (depth === 0) return i;
+      i++;
+      continue;
+    }
+    i++;
+  }
+
+  return -1;
+}
+
+function parseLinkDestination(raw: string): { url: string; title?: string } | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const titleMatch = trimmed.match(/^(.*?)(?:\s+("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'))\s*$/);
+  if (!titleMatch) {
+    return { url: trimmed };
+  }
+
+  const url = String(titleMatch[1] ?? '').trim();
+  const quotedTitle = String(titleMatch[2] ?? '');
+  if (!url || !quotedTitle) return { url: trimmed };
+
+  return {
+    url,
+    title: quotedTitle.slice(1, -1).replace(/\\([\\"'])/g, '$1'),
+  };
+}
+
 function parseInlines(text: string, options?: ParseMarkdownLiteOptions): Inline[] {
   const inlines: Inline[] = [];
   let i = 0;
@@ -332,13 +391,34 @@ function parseInlines(text: string, options?: ParseMarkdownLiteOptions): Inline[
     if (ch === '[') {
       const closeBracket = text.indexOf(']', i + 1);
       const openParen = closeBracket !== -1 ? text.indexOf('(', closeBracket + 1) : -1;
-      const closeParen = openParen !== -1 ? text.indexOf(')', openParen + 1) : -1;
+      const closeParen = openParen !== -1 ? findClosingParen(text, openParen + 1) : -1;
       if (closeBracket !== -1 && openParen === closeBracket + 1 && closeParen !== -1) {
         const label = text.slice(i + 1, closeBracket);
-        const url = text.slice(openParen + 1, closeParen);
+        const destination = parseLinkDestination(text.slice(openParen + 1, closeParen));
+        let consumed = closeParen + 1;
+        let meta: Record<string, any> | null = null;
+        let directiveStart = consumed;
+        while (directiveStart < text.length && /\s/.test(text[directiveStart] || '')) directiveStart++;
+        if (text[directiveStart] === '{') {
+          const directiveEnd = findInlineDirectiveEnd(text, directiveStart + 1);
+          if (directiveEnd !== -1) {
+            meta = parseDirectiveObject(text.slice(directiveStart, directiveEnd + 1));
+            if (meta) {
+              consumed = directiveEnd + 1;
+            }
+          }
+        }
         flushText();
-        if (label) inlines.push({ kind: 'link', text: label, url });
-        i = closeParen + 1;
+        if (label && destination?.url) {
+          inlines.push({
+            kind: 'link',
+            text: label,
+            url: destination.url,
+            ...(destination.title ? { title: destination.title } : {}),
+            ...(meta ? { meta } : {}),
+          });
+        }
+        i = consumed;
         continue;
       }
     }

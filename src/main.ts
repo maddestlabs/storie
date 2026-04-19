@@ -16,6 +16,25 @@ export { ModuleLoader } from './modules/loader.js';
 export { BuiltInModules } from './modules/types.js';
 export { WorldsRenderer } from './worlds-renderer.js';
 export {
+  cloneSfxGraphPreset,
+  serializeSfxGraphPreset,
+  createSfxGraphDocument,
+  cloneSfxGraphDocument,
+  createSfxGraphInstrumentDocument,
+  cloneSfxGraphInstrumentDocument,
+  normalizeSfxGraphInstrumentDocument,
+  applyPresetToSfxGraphInstrumentDocument,
+  parseSfxGraphInstrumentSource,
+} from './audio/sfx-graph-document.js';
+export {
+  createSequencerTrack,
+  normalizeSequencerTrack,
+  graphPresetForSequencerTrack,
+  graphSourceTextForSequencerTrack,
+  applyPresetToSequencerTrack,
+  createSequencerDocument,
+} from './sequencer/document.js';
+export {
   stateAtWorldsContent,
 } from './worlds-content.js';
 export {
@@ -104,6 +123,24 @@ export type {
   WorldsContentState,
   WorldsContentStateOptions,
 } from './worlds-content.js';
+
+export type {
+  SfxGraphDocumentLayout,
+  SfxGraphDocumentMeta,
+  SfxGraphDocument,
+  SfxGraphInstrumentDocument,
+  LegacySfxGraphInstrumentShape,
+} from './audio/sfx-graph-document.js';
+
+export type {
+  SequencerNote,
+  SequencerPattern,
+  SequencerTrack,
+  LegacySequencerTrack,
+  SequencerDocument,
+  CreateSequencerTrackOptions,
+  CreateSequencerDocumentOptions,
+} from './sequencer/document.js';
 
 export type {
   WorldsTimelineSectionSelector,

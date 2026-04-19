@@ -155,6 +155,9 @@ type WorldsVisualLinkConnection = {
   linkIndex: number;
   url: string;
   text: string;
+  title: string | null;
+  meta: Record<string, any> | null;
+  relation: string | null;
   internal: boolean;
   targetSectionId: string | null;
   targetSectionIndex: number | null;
@@ -576,7 +579,7 @@ export class StorieEngine {
     thickness: 0.22,
     allVisible: false,
   };
-  private activated3DLinksQueue: Array<{ url: string; sectionId: string | null; sectionIndex: number | null; linkIndex: number | null }> = [];
+  private activated3DLinksQueue: Array<{ url: string; text: string | null; title: string | null; meta: Record<string, any> | null; relation: string | null; sectionId: string | null; sectionIndex: number | null; linkIndex: number | null }> = [];
 
   // 3D section texture rasterization cache
   private sectionTextureCache: Map<string, {
@@ -2120,6 +2123,13 @@ export class StorieEngine {
       return (doc && doc._timedStore) ? (doc._timedStore as Map<string, any>) : null;
     };
 
+    const getLogicStore = (documentId?: string): Array<any> | null => {
+      const docId = documentId ?? engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId) as any;
+      return Array.isArray(doc?._logicStore) ? doc._logicStore : null;
+    };
+
     const applyWorldsConfigDefaults = (config: Partial<WorldsConfig>) => {
       let requiresSectionLayoutRecompile = false;
       if (config.defaultDepth !== undefined) {
@@ -2955,6 +2965,55 @@ export class StorieEngine {
           const store = getTimedStore();
           if (!store) return [] as string[];
           return Array.from(store.keys());
+        },
+        logicBlocks: () => {
+          const store = getLogicStore();
+          if (!store) return [] as Array<any>;
+          return store.map((block: any) => ({
+            ...(block.name ? { name: block.name } : {}),
+            ...(Object.prototype.hasOwnProperty.call(block, 'sectionId') ? { sectionId: block.sectionId ?? null } : {}),
+            ...(Object.prototype.hasOwnProperty.call(block, 'sectionTitle') ? { sectionTitle: block.sectionTitle ?? null } : {}),
+            startLine: block.startLine,
+            endLine: block.endLine,
+            statements: Array.isArray(block.statements)
+              ? block.statements.map((statement: any) => ({
+                  source: String(statement.source ?? ''),
+                  target: String(statement.target ?? ''),
+                  ...(typeof statement.rel === 'string' && statement.rel ? { rel: statement.rel } : {}),
+                  ...(statement.meta ? { meta: { ...statement.meta } } : {}),
+                  line: Number(statement.line ?? 0),
+                }))
+              : [],
+          }));
+        },
+        logicForSection: (section?: 'current' | number | string | null) => {
+          const store = getLogicStore();
+          if (!store) return [] as Array<any>;
+          if (section === undefined || section === null) {
+            return store.flatMap((block: any) => Array.isArray(block.statements) ? block.statements.map((statement: any) => ({
+              source: String(statement.source ?? ''),
+              target: String(statement.target ?? ''),
+              ...(typeof statement.rel === 'string' && statement.rel ? { rel: statement.rel } : {}),
+              ...(statement.meta ? { meta: { ...statement.meta } } : {}),
+              line: Number(statement.line ?? 0),
+            })) : []);
+          }
+
+          const resolved = section === 'current'
+            ? engine.resolveRuntimeSectionRef('current')
+            : engine.resolveRuntimeSectionRef(section as any);
+          const wantedSectionId = resolved?.sectionId ?? null;
+          if (!wantedSectionId) return [] as Array<any>;
+
+          return store
+            .filter((block: any) => block.sectionId === wantedSectionId)
+            .flatMap((block: any) => Array.isArray(block.statements) ? block.statements.map((statement: any) => ({
+              source: String(statement.source ?? ''),
+              target: String(statement.target ?? ''),
+              ...(typeof statement.rel === 'string' && statement.rel ? { rel: statement.rel } : {}),
+              ...(statement.meta ? { meta: { ...statement.meta } } : {}),
+              line: Number(statement.line ?? 0),
+            })) : []);
         },
         atTime: (name: string, timeSec: number) => {
           const store = getTimedStore();
@@ -7271,6 +7330,14 @@ export class StorieEngine {
     }
   }
 
+  private getWorldsSectionGUIMode(): 'baked' | 'overlay' {
+    let mode: 'baked' | 'overlay' = 'overlay';
+    if ((this.worldsConfig as any).sectionGuiMode === 'baked') {
+      mode = 'baked';
+    }
+    return mode;
+  }
+
   private clearWorldsInlineWidgets(): void {
     const guiAPI = this.api?.gui as any;
     const system = guiAPI?.getSystem?.();
@@ -7567,6 +7634,9 @@ export class StorieEngine {
       for (let linkIndex = 0; linkIndex < regions.length; linkIndex++) {
         const region = regions[linkIndex];
         const internal = typeof region.url === 'string' && region.url.startsWith('#');
+        const relation = typeof region.meta?.rel === 'string' && region.meta.rel.trim()
+          ? region.meta.rel.trim()
+          : (typeof region.title === 'string' && region.title.trim() ? region.title.trim() : null);
         if (internalOnly && !internal) continue;
 
         const targetLayout = internal ? this.resolveWorldsInternalLinkTarget(region.url) : null;
@@ -7593,6 +7663,9 @@ export class StorieEngine {
           linkIndex,
           url: region.url,
           text: region.text,
+          title: typeof region.title === 'string' ? region.title : null,
+          meta: region.meta ? { ...region.meta } : null,
+          relation,
           internal,
           targetSectionId: targetLayout?.sectionId ?? null,
           targetSectionIndex: targetLayout?.sectionIndex ?? null,
@@ -7677,26 +7750,6 @@ export class StorieEngine {
     const themeActiveLinkColor = this.getStyle('active').fg;
     const activeLink = this.getActive3DLink();
 
-    // In allVisible mode, frustum-cull connectors so we don't spend time
-    // generating lines for offscreen cards.
-    let viewProj: any = null;
-    if (this.worlds3DRenderedLinkOverlay.allVisible && this.camera3D) {
-      const canvasW = this.canvas.width;
-      const canvasH = this.canvas.height;
-      if (canvasW > 0 && canvasH > 0) {
-        const aspect = canvasW / canvasH;
-        const view = getCameraViewMatrix(this.camera3D);
-        const proj = getCameraProjectionMatrix(this.camera3D, aspect);
-        viewProj = mat4Multiply(proj, view);
-      }
-    }
-
-    const isCardPossiblyVisible = (layout: Section3DLayout): boolean => {
-      if (!this.worlds3DRenderedLinkOverlay.allVisible) return true;
-      if (!viewProj) return true;
-      return this.is3DCardPossiblyVisible(viewProj, layout);
-    };
-
     const connectors: Array<{ start: { x: number; y: number; z: number }; end: { x: number; y: number; z: number }; control: { x: number; y: number; z: number }; color: Color; thickness: number; opacity: number }> = [];
 
     const getBezierControlPoint = (start: { x: number; y: number; z: number }, end: { x: number; y: number; z: number }): { x: number; y: number; z: number } => {
@@ -7741,7 +7794,6 @@ export class StorieEngine {
 
     const addConnectorsForSource = (sourceLayout: Section3DLayout): void => {
       if (!sourceLayout || !sourceLayout.visible || !sourceLayout.texture) return;
-      if (!isCardPossiblyVisible(sourceLayout)) return;
 
       const regions = this.sectionLinkRegionsCache.get(sourceLayout.sectionId);
       if (!regions || regions.length === 0) return;
@@ -7757,7 +7809,6 @@ export class StorieEngine {
 
         const targetLayout = internal ? this.resolveWorldsInternalLinkTarget(region.url) : null;
         if (!targetLayout || !targetLayout.visible || !targetLayout.texture) continue;
-        if (!isCardPossiblyVisible(targetLayout)) continue;
 
         const sourceBounds = this.getTextureRectLocalBounds(sourceLayout, region);
         if (!sourceBounds) continue;
@@ -7890,17 +7941,43 @@ export class StorieEngine {
           const configMin = configState?.min;
           const configMax = configState?.max;
           const configStep = configState?.step;
+          let min = 0;
+          if (Number.isFinite(configMin)) {
+            min = Number(configMin);
+          } else if (Number.isFinite(placement.widget.min)) {
+            min = Number(placement.widget.min);
+          }
+
+          let max = 100;
+          if (Number.isFinite(configMax)) {
+            max = Number(configMax);
+          } else if (Number.isFinite(placement.widget.max)) {
+            max = Number(placement.widget.max);
+          }
+
+          let value = 0;
+          if (typeof persisted === 'number') {
+            value = persisted;
+          } else if (Number.isFinite(placement.widget.value)) {
+            value = Number(placement.widget.value);
+          }
+
+          let step = 1;
+          if (Number.isFinite(configStep)) {
+            step = Number(configStep);
+          } else if (Number.isFinite(placement.widget.step)) {
+            step = Number(placement.widget.step);
+          }
+
           widget = system.createSlider({
             id: `worlds-inline-${widgetKey}`,
             group: '__worlds-inline-widgets',
             bounds,
             label: String(configState?.label ?? placement.widget.label ?? ''),
-            min: Number.isFinite(configMin) ? Number(configMin) : (Number.isFinite(placement.widget.min) ? Number(placement.widget.min) : 0),
-            max: Number.isFinite(configMax) ? Number(configMax) : (Number.isFinite(placement.widget.max) ? Number(placement.widget.max) : 100),
-            value: typeof persisted === 'number'
-              ? persisted
-              : (Number.isFinite(placement.widget.value) ? Number(placement.widget.value) : 0),
-            step: Number.isFinite(configStep) ? Number(configStep) : (Number.isFinite(placement.widget.step) ? Number(placement.widget.step) : 1),
+            min,
+            max,
+            value,
+            step,
             showValue: typeof configState?.showValue === 'boolean' ? configState.showValue : placement.widget.showValue,
             sliderStyle: {
               ...(typeof configState?.fg === 'number' ? { fg: configState.fg } : {}),
@@ -7948,12 +8025,13 @@ export class StorieEngine {
           widgetId: placement.widget.id,
           kind: placement.widget.type,
           widget,
-          lastValue: placement.widget.type === 'slider'
-            ? widget.getValue()
-            : placement.widget.type === 'checkbox'
-              ? !!widget.isChecked()
-              : undefined,
+          lastValue: undefined,
         };
+        if (placement.widget.type === 'slider') {
+          entry.lastValue = widget.getValue();
+        } else if (placement.widget.type === 'checkbox') {
+          entry.lastValue = !!widget.isChecked();
+        }
         if (entry.lastValue !== undefined) {
           this.worldsInlineWidgetValueState.set(widgetKey, entry.lastValue);
         }
@@ -8078,6 +8156,38 @@ export class StorieEngine {
     }
 
     return handled;
+  }
+
+  private handleOverlayRetainedGUIMouse(pixelX: number, pixelY: number, mouseDown: boolean): boolean {
+    const guiAPI: any = this.api?.gui;
+    const system = guiAPI?.getSystem?.();
+    if (!system) return false;
+    if (typeof guiAPI?.isAutoInputEnabled === 'function' && !guiAPI.isAutoInputEnabled()) return false;
+
+    const hasSectionBindings = Array.isArray(guiAPI?._sectionBindings) && guiAPI._sectionBindings.length > 0;
+    if (this.worldsEnabled && hasSectionBindings) return false;
+
+    const hitBefore = this.isPointOverVisibleGUIWidget(pixelX, pixelY);
+    const focusedBefore = system.getFocusedWidget?.();
+    const { charWidth, charHeight } = this.getGUIPixelMetrics();
+
+    system.handleMouse(pixelX, pixelY, mouseDown, charWidth, charHeight);
+
+    const focusedAfter = system.getFocusedWidget?.();
+    return hitBefore || !!focusedBefore || !!focusedAfter;
+  }
+
+  private handleOverlayRetainedGUIKey(key: string, modifiers?: { shift?: boolean; ctrl?: boolean; alt?: boolean; meta?: boolean }): boolean {
+    const guiAPI: any = this.api?.gui;
+    const system = guiAPI?.getSystem?.();
+    if (!system) return false;
+    if (typeof guiAPI?.isAutoInputEnabled === 'function' && !guiAPI.isAutoInputEnabled()) return false;
+
+    const hasSectionBindings = Array.isArray(guiAPI?._sectionBindings) && guiAPI._sectionBindings.length > 0;
+    if (this.worldsEnabled && hasSectionBindings) return false;
+
+    system.handleKey(key, modifiers);
+    return true;
   }
 
   private handleWorldsInlineWidgetKey(key: string, modifiers?: { shift?: boolean; ctrl?: boolean; alt?: boolean }): boolean {
@@ -8301,6 +8411,20 @@ export class StorieEngine {
           timedStore.set(name, { name, entries: b.entries });
         }
         console.log(`  Found ${timedStore.size} timed block(s)`);
+      }
+
+      const logicStore = Array.isArray(parsed.logicBlocks)
+        ? parsed.logicBlocks.map((block) => ({
+            ...block,
+            statements: block.statements.map((statement) => ({
+              ...statement,
+              ...(statement.meta ? { meta: { ...statement.meta } } : {}),
+            })),
+            ...(block.metadata ? { metadata: { ...block.metadata } } : {}),
+          }))
+        : [];
+      if (logicStore.length > 0) {
+        console.log(`  Found ${logicStore.length} logic block(s)`);
       }
 
       // Build ASCII store (```ascii name:...)
@@ -8844,6 +8968,7 @@ ${exportVars}
         _ansiStore: ansiStore,
         _stfxrStore: stfxrStore,
         _timedStore: timedStore,
+        _logicStore: logicStore,
         _stfxrBakedStore: new Map()
       } as any);
       
@@ -10183,7 +10308,10 @@ ${exportVars}
         if (this.webgpuUIRenderer) {
           this.syncWorldsInlineWidgets();
 
-          const inlineGui = this.worldsInlineWidgetInstances.length > 0 ? (this.api?.gui as any)?.getSystem?.() : null;
+          let inlineGui: any = null;
+          if (this.worldsInlineWidgetInstances.length > 0) {
+            inlineGui = (this.api?.gui as any)?.getSystem?.();
+          }
           if (inlineGui) {
             const { charWidth, charHeight } = this.getGUIPixelMetrics();
             inlineGui.update(this.input.getMouseX(), this.input.getMouseY(), this.input.isMouseDown(0), charWidth, charHeight);
@@ -10195,11 +10323,12 @@ ${exportVars}
           // preferred active section when bindings exist.
           const guiAPIAny: any = this.api?.gui;
           const systemForSectionGUI = guiAPIAny?.getSystem?.();
-          const bindingsForSectionGUI: Array<{ group: string | number; sections: number[] }> = Array.isArray(guiAPIAny?._sectionBindings)
-            ? guiAPIAny._sectionBindings
-            : [];
+          let bindingsForSectionGUI: Array<{ group: string | number; sections: number[] }> = [];
+          if (Array.isArray(guiAPIAny?._sectionBindings)) {
+            bindingsForSectionGUI = guiAPIAny._sectionBindings;
+          }
           if (systemForSectionGUI && this.worldsEnabled && this.camera3D && bindingsForSectionGUI.length > 0) {
-            const sectionGuiMode = ((this.worldsConfig as any).sectionGuiMode === 'baked') ? 'baked' : 'overlay';
+            const sectionGuiMode = this.getWorldsSectionGUIMode();
 
             // In baked mode, visuals live in the section texture. If the GUI system
             // indicates a state change (hover/pressed/focus/caret/etc), re-bake all
@@ -10221,7 +10350,11 @@ ${exportVars}
               }
             }
 
-            const preferredIndex = this.getResolvedSelected3DSectionIndex() ?? this.current3DSectionIndex;
+            let preferredIndex = this.current3DSectionIndex;
+            const selectedSectionIndex = this.getResolvedSelected3DSectionIndex();
+            if (typeof selectedSectionIndex === 'number' && Number.isFinite(selectedSectionIndex)) {
+              preferredIndex = selectedSectionIndex;
+            }
             const preferredLayout = this.getSectionLayoutByIndex(preferredIndex);
             if (preferredLayout && preferredLayout.visible && preferredLayout.interactive !== false && preferredLayout.texture) {
               const xform = this.getWorldsSectionTextureToScreenAffine(preferredLayout);
@@ -10248,11 +10381,17 @@ ${exportVars}
 
           // Render retained-mode GUI widgets
           const guiAPI = this.api?.gui;
-          if (guiAPI && guiAPI.getSystem && guiAPI.getSystem()) {
+          const guiSystem = guiAPI?.getSystem?.();
+          if (guiAPI && guiSystem) {
             const hasSectionBindings = Array.isArray((guiAPI as any)?._sectionBindings) && (guiAPI as any)._sectionBindings.length > 0;
+            const autoUpdateEnabled = typeof (guiAPI as any).isAutoUpdateEnabled === 'function' && !!(guiAPI as any).isAutoUpdateEnabled();
+            if (autoUpdateEnabled && (!this.worldsEnabled || !hasSectionBindings)) {
+              const { charWidth, charHeight } = this.getGUIPixelMetrics();
+              guiSystem.update(this.input.getMouseX(), this.input.getMouseY(), this.input.isMouseDown(0), charWidth, charHeight);
+            }
             // When sections are bound, render those groups in section-space.
             // Avoid double-rendering the same widgets in the global overlay pass.
-            const sectionGuiMode = ((this.worldsConfig as any).sectionGuiMode === 'baked') ? 'baked' : 'overlay';
+            const sectionGuiMode = this.getWorldsSectionGUIMode();
             if (sectionGuiMode !== 'baked') {
               this.renderWorldsSectionBoundGUI(this.webgpuUIRenderer, this.activeDocumentId ?? undefined);
             }
@@ -10786,11 +10925,12 @@ ${exportVars}
       }
     })();
 
-    const sectionGuiMode = ((this.worldsConfig as any).sectionGuiMode === 'baked') ? 'baked' : 'overlay';
+    const sectionGuiMode = this.getWorldsSectionGUIMode();
     const guiAPIAny: any = this.api?.gui;
-    const guiBindings: Array<{ group: string | number; sections: number[] }> = Array.isArray(guiAPIAny?._sectionBindings)
-      ? guiAPIAny._sectionBindings
-      : [];
+    let guiBindings: Array<{ group: string | number; sections: number[] }> = [];
+    if (Array.isArray(guiAPIAny?._sectionBindings)) {
+      guiBindings = guiAPIAny._sectionBindings;
+    }
     const bakedGuiSections = new Set<number>();
     if (sectionGuiMode === 'baked' && guiBindings.length > 0) {
       for (const binding of guiBindings) {
@@ -11054,15 +11194,16 @@ ${exportVars}
       // Render section-bound retained GUI into the section texture, so it transforms with the card.
       // This path is only used when sectionGuiMode is 'baked' and GUI section bindings exist.
       {
-        const sectionGuiMode = ((this.worldsConfig as any).sectionGuiMode === 'baked') ? 'baked' : 'overlay';
+        const sectionGuiMode = this.getWorldsSectionGUIMode();
         if (sectionGuiMode !== 'baked') {
           // Skip: overlay mode renders section-bound GUI via the UI layer.
         } else {
         const guiAPI: any = this.api?.gui;
         const system = guiAPI?.getSystem?.();
-        const bindings: Array<{ group: string | number; sections: number[] }> = Array.isArray(guiAPI?._sectionBindings)
-          ? guiAPI._sectionBindings
-          : [];
+        let bindings: Array<{ group: string | number; sections: number[] }> = [];
+        if (Array.isArray(guiAPI?._sectionBindings)) {
+          bindings = guiAPI._sectionBindings;
+        }
         if (system && bindings.length > 0) {
           // IMPORTANT: GUI section bindings default to showing groups only for the
           // *currently active* section. When baking, we want the groups that are
@@ -12579,18 +12720,22 @@ ${exportVars}
   private getFocusedGUITextInput(): TextInputCapable | null {
     const guiAPI = (this.api as any)?.gui;
     const system = guiAPI?.getSystem?.();
-    return system && typeof system.getFocusedTextInput === 'function'
-      ? system.getFocusedTextInput()
-      : null;
+    if (system && typeof system.getFocusedTextInput === 'function') {
+      return system.getFocusedTextInput();
+    }
+    return null;
   }
 
   private isPointOverVisibleGUIWidget(pixelX: number, pixelY: number): boolean {
     const guiAPI = (this.api as any)?.gui;
     const system = guiAPI?.getSystem?.();
     const manager = system?.getWidgetManager?.();
-    const widgets = manager && typeof manager.getVisible === 'function'
-      ? manager.getVisible()
-      : (system && typeof system.getWidgets === 'function' ? system.getWidgets() : []);
+    let widgets: any[] = [];
+    if (manager && typeof manager.getVisible === 'function') {
+      widgets = manager.getVisible();
+    } else if (system && typeof system.getWidgets === 'function') {
+      widgets = system.getWidgets();
+    }
 
     if (!Array.isArray(widgets) || widgets.length === 0) return false;
 
@@ -12891,9 +13036,10 @@ ${exportVars}
     if (!input || !target) return;
 
     const options = target.getTextInputOptions();
-    const nextValue = options.multiline
-      ? String(input.value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-      : normalizeSingleLineText(input.value ?? '');
+    let nextValue = normalizeSingleLineText(input.value ?? '');
+    if (options.multiline) {
+      nextValue = String(input.value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    }
     const currentValue = target.getValue();
 
     if (nextValue !== currentValue) {
@@ -12902,9 +13048,10 @@ ${exportVars}
 
     const selectionStart = Number.isFinite(input.selectionStart as number) ? (input.selectionStart ?? nextValue.length) : nextValue.length;
     const selectionEnd = Number.isFinite(input.selectionEnd as number) ? (input.selectionEnd ?? selectionStart) : selectionStart;
-    const direction = (input.selectionDirection === 'forward' || input.selectionDirection === 'backward')
-      ? input.selectionDirection
-      : 'none';
+    let direction: 'forward' | 'backward' | 'none' = 'none';
+    if (input.selectionDirection === 'forward' || input.selectionDirection === 'backward') {
+      direction = input.selectionDirection;
+    }
     target.setSelectionRange(selectionStart, selectionEnd, direction);
     this.syncHiddenTextInputBridge(false);
   }
@@ -13401,12 +13548,14 @@ ${exportVars}
 
       const inlineWidgetConsumed = this.handleWorldsInlineWidgetMouse(pixelX, pixelY, action === 'press');
 
+      const overlayGUIConsumed = this.handleOverlayRetainedGUIMouse(pixelX, pixelY, action === 'press');
+
       const sectionGuiConsumed = this.handleWorldsSectionBoundGUIMouse(pixelX, pixelY, action === 'press');
 
       this.input.applySyntheticEvent({ type: 'mouse', action, button: 'left', x: pixelX, y: pixelY });
 
       let handledBy3D = false;
-      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && !sectionGuiConsumed && action === 'press') {
+      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && !overlayGUIConsumed && !sectionGuiConsumed && action === 'press') {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
@@ -13418,7 +13567,7 @@ ${exportVars}
               linkIndex: linkHit.linkIndex,
             };
             this.activate3DLink(
-              linkHit.region.url,
+              linkHit.region,
               picked.layout.sectionId,
               picked.layout.sectionIndex,
               linkHit.linkIndex,
@@ -13660,11 +13809,20 @@ ${exportVars}
             alt: e.altKey,
           })
         : false;
+      const overlayGUIHandled = action === 'press' && !inlineWidgetHandled
+        ? this.handleOverlayRetainedGUIKey(e.key, {
+            shift: e.shiftKey,
+            ctrl: e.ctrlKey,
+            alt: e.altKey,
+            meta: e.metaKey,
+          })
+        : false;
 
       // Built-in 3D link navigation (canvas.nim parity)
       let handledBy3D = false;
       if (
         !inlineWidgetHandled &&
+        !overlayGUIHandled &&
         action === 'press' &&
         this.worldsEnabled &&
         this.camera3D &&
@@ -13726,7 +13884,7 @@ ${exportVars}
         }
       }
 
-      if (handledBy3D || inlineWidgetHandled || doc?.handlers?.input) {
+      if (handledBy3D || inlineWidgetHandled || overlayGUIHandled || doc?.handlers?.input) {
         e.preventDefault();
       }
 
@@ -13824,10 +13982,13 @@ ${exportVars}
       const inlineWidgetConsumed = e.button === 0
         ? this.handleWorldsInlineWidgetMouse(pixelX, pixelY, action === 'press')
         : false;
+      const overlayGUIConsumed = e.button === 0 && !inlineWidgetConsumed
+        ? this.handleOverlayRetainedGUIMouse(pixelX, pixelY, action === 'press')
+        : false;
 
       // Built-in 3D picking/navigation: click a section card to focus camera.
       // This runs even if the document doesn't define an on:input handler.
-      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && action === 'press' && e.button === 0) {
+      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && !overlayGUIConsumed && action === 'press' && e.button === 0) {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
@@ -13838,7 +13999,7 @@ ${exportVars}
               linkIndex: linkHit.linkIndex,
             };
             this.activate3DLink(
-              linkHit.region.url,
+              linkHit.region,
               picked.layout.sectionId,
               picked.layout.sectionIndex,
               linkHit.linkIndex,
@@ -14013,7 +14174,10 @@ ${exportVars}
   }
 
   private getActive3DLink(): { sectionIndex: number; linkIndex: number } | null {
-    return this.hovered3DLink ?? this.focused3DLink;
+    if (this.hovered3DLink) {
+      return this.hovered3DLink;
+    }
+    return this.focused3DLink;
   }
 
   private getWorldsListMarker(): string | null | undefined {
@@ -14037,10 +14201,13 @@ ${exportVars}
     const focused = this.focused3DLink;
     if (!focused) return;
     const sectionKey = focused.sectionId;
-    const regions = sectionKey ? this.sectionLinkRegionsCache.get(sectionKey) : null;
+    let regions: LinkRegion[] | null | undefined = null;
+    if (sectionKey) {
+      regions = this.sectionLinkRegionsCache.get(sectionKey);
+    }
     const region = regions ? regions[focused.linkIndex] : undefined;
     if (!region) return;
-    this.activate3DLink(region.url, focused.sectionId, focused.sectionIndex, focused.linkIndex);
+    this.activate3DLink(region, focused.sectionId, focused.sectionIndex, focused.linkIndex);
   }
 
   private move3DLinkFocus(delta: number): void {
@@ -14080,13 +14247,21 @@ ${exportVars}
     if (candidates.length === 0) return;
 
     const currentIdx = this.getResolvedCurrent3DSectionIndex();
-    const pos = currentIdx !== null && Number.isFinite(currentIdx)
-      ? candidates.findIndex((l) => l.sectionIndex === currentIdx)
-      : -1;
+    let pos = -1;
+    if (currentIdx !== null && Number.isFinite(currentIdx)) {
+      pos = candidates.findIndex((l) => l.sectionIndex === currentIdx);
+    }
 
-    const nextPos = pos < 0
-      ? (delta > 0 ? 0 : candidates.length - 1)
-      : Math.max(0, Math.min(candidates.length - 1, pos + delta));
+    let nextPos = 0;
+    if (pos < 0) {
+      if (delta > 0) {
+        nextPos = 0;
+      } else {
+        nextPos = candidates.length - 1;
+      }
+    } else {
+      nextPos = Math.max(0, Math.min(candidates.length - 1, pos + delta));
+    }
 
     const target = candidates[nextPos];
     if (!target) return;
@@ -14095,35 +14270,60 @@ ${exportVars}
     // forwarding only the section-independent options (keepRotation, straighten).
     const last = this.lastApplied3DCameraFocus;
     if (last && last.kind === 'focus') {
-      this.request3DCameraFocus({
+      const focusRequest: any = {
         kind: 'focus',
         sectionIndex: target.sectionIndex,
         distance: last.distance,
-        ...(last.keepRotation ? { keepRotation: true } : {}),
-        ...(last.straighten ? { straighten: true } : {}),
-      });
+      };
+      if (last.keepRotation) {
+        focusRequest.keepRotation = true;
+      }
+      if (last.straighten) {
+        focusRequest.straighten = true;
+      }
+      this.request3DCameraFocus(focusRequest);
     } else {
-      const fill = (last && last.kind === 'fit') ? last.fill : 0.9;
-      this.request3DCameraFocus({
+      let fill = 0.9;
+      if (last && last.kind === 'fit') {
+        fill = last.fill;
+      }
+      const fitRequest: any = {
         kind: 'fit',
         sectionIndex: target.sectionIndex,
         fill,
-        ...((last && last.kind === 'fit' && last.keepRotation) ? { keepRotation: true } : {}),
-        ...((last && last.kind === 'fit' && last.straighten) ? { straighten: true } : {}),
-      });
+      };
+      if (last && last.kind === 'fit' && last.keepRotation) {
+        fitRequest.keepRotation = true;
+      }
+      if (last && last.kind === 'fit' && last.straighten) {
+        fitRequest.straighten = true;
+      }
+      this.request3DCameraFocus(fitRequest);
     }
   }
 
   private activate3DLink(
-    url: string,
+    link: string | LinkRegion,
     sectionId?: string | null,
     sectionIndex?: number | null,
     linkIndex?: number | null,
   ): void {
+    const url = typeof link === 'string' ? link : link.url;
     if (!url) return;
+
+    const text = typeof link === 'string' ? null : (typeof link.text === 'string' ? link.text : null);
+    const title = typeof link === 'string' ? null : (typeof link.title === 'string' ? link.title : null);
+    const meta = typeof link === 'string' ? null : (link.meta ? { ...link.meta } : null);
+    const relation = typeof meta?.rel === 'string' && meta.rel.trim()
+      ? meta.rel.trim()
+      : (title && title.trim() ? title.trim() : null);
 
     this.activated3DLinksQueue.push({
       url,
+      text,
+      title,
+      meta,
+      relation,
       sectionId: typeof sectionId === 'string' && sectionId ? sectionId : null,
       sectionIndex: typeof sectionIndex === 'number' ? sectionIndex : null,
       linkIndex: typeof linkIndex === 'number' ? linkIndex : null,
@@ -14140,20 +14340,28 @@ ${exportVars}
         // Use the engine focus request path so fill/options stay sticky and we
         // don't accidentally reset camera framing or rotation.
         const style = this.lastApplied3DCameraFocus;
-        const fill = style?.kind === 'fit' ? style.fill : 0.9;
-        const styleOptions = style && style.kind !== 'frame'
-          ? {
-              ...(style.keepRotation ? { keepRotation: true } : {}),
-              ...(style.positionOffset ? { positionOffset: style.positionOffset } : {}),
-              ...(style.rotationOffset ? { rotationOffset: style.rotationOffset } : {}),
-            }
-          : {};
-        this.request3DCameraFocus({
+        let fill = 0.9;
+        const focusRequest: any = {
           kind: 'fit',
           sectionIndex: layout.sectionIndex,
           fill,
-          ...styleOptions,
-        });
+        };
+        if (style && style.kind === 'fit') {
+          fill = style.fill;
+          focusRequest.fill = fill;
+        }
+        if (style && style.kind !== 'frame') {
+          if (style.keepRotation) {
+            focusRequest.keepRotation = true;
+          }
+          if (style.positionOffset) {
+            focusRequest.positionOffset = style.positionOffset;
+          }
+          if (style.rotationOffset) {
+            focusRequest.rotationOffset = style.rotationOffset;
+          }
+        }
+        this.request3DCameraFocus(focusRequest);
       }
       return;
     }
@@ -14232,6 +14440,28 @@ ${exportVars}
     return { forward, right, up };
   }
 
+  private getWorldsFocusRecenterOptions(keepRotation: boolean): { screenSpaceRecenter?: boolean; screenSpaceRecenterIters?: number } {
+    const options: { screenSpaceRecenter?: boolean; screenSpaceRecenterIters?: number } = {};
+    if (!keepRotation) {
+      return options;
+    }
+
+    const cfg: any = this.worldsConfig as any;
+    const hasDefaultRecenter = (cfg as any).screenSpaceRecenter !== undefined;
+    if (!hasDefaultRecenter) {
+      return options;
+    }
+
+    const defaultRecenter = !!cfg.screenSpaceRecenter;
+    options.screenSpaceRecenter = defaultRecenter;
+    if (defaultRecenter) {
+      const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
+      options.screenSpaceRecenterIters = defaultRecenterIters;
+    }
+
+    return options;
+  }
+
   private resolve3DCameraFrameLayouts(
     sectionSelectors?: Array<number | string>,
     includeHidden: boolean = false,
@@ -14291,18 +14521,16 @@ ${exportVars}
     }
     this.reflowWorldsAutoLayout();
 
-    const rotation = (() => {
-      const fallback = this.camera3D ? this.camera3D.rotation : { x: 0, y: 0, z: 0 };
-      const raw = req.rotation;
-      const x = Number(raw?.x);
-      const y = Number(raw?.y);
-      const z = Number(raw?.z);
-      return {
-        x: Number.isFinite(x) ? x : fallback.x,
-        y: Number.isFinite(y) ? y : fallback.y,
-        z: Number.isFinite(z) ? z : fallback.z,
-      };
-    })();
+    const fallbackRotation = this.camera3D ? this.camera3D.rotation : { x: 0, y: 0, z: 0 };
+    const rawRotation = req.rotation;
+    const rotationX = Number(rawRotation?.x);
+    const rotationY = Number(rawRotation?.y);
+    const rotationZ = Number(rawRotation?.z);
+    const rotation = {
+      x: Number.isFinite(rotationX) ? rotationX : fallbackRotation.x,
+      y: Number.isFinite(rotationY) ? rotationY : fallbackRotation.y,
+      z: Number.isFinite(rotationZ) ? rotationZ : fallbackRotation.z,
+    };
 
     const points: Array<{ x: number; y: number; z: number }> = [];
     for (const layout of layouts) {
@@ -14333,9 +14561,21 @@ ${exportVars}
     };
 
     const basis = this.getCameraBasisFromRotation(rotation);
-    const safeFill = Math.max(0.05, Math.min(0.99, Number.isFinite(req.fill) ? req.fill : 0.9));
-    const padding = Math.max(0, Number.isFinite(req.padding) ? req.padding : 0);
-    const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? (this.canvas.width / this.canvas.height) : 1;
+    let fill = 0.9;
+    if (Number.isFinite(req.fill)) {
+      fill = req.fill;
+    }
+    const safeFill = Math.max(0.05, Math.min(0.99, fill));
+
+    let padding = 0;
+    if (Number.isFinite(req.padding)) {
+      padding = Math.max(0, req.padding);
+    }
+
+    let aspect = 1;
+    if (this.canvas.width > 0 && this.canvas.height > 0) {
+      aspect = this.canvas.width / this.canvas.height;
+    }
     const vFov = this.camera3D.fov;
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * Math.max(1e-6, aspect));
     const halfPad = padding / 2;
@@ -14446,44 +14686,58 @@ ${exportVars}
 
     const cfg: any = this.worldsConfig as any;
     const defaultKeepRotation = !!cfg.keepRotation;
-    const hasDefaultRecenter = (cfg as any).screenSpaceRecenter !== undefined;
-    const defaultRecenter = !!cfg.screenSpaceRecenter;
-    const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
     const defaultStraighten = !!cfg.straightenOnFocus;
-    const keepRotation = (req as any).keepRotation !== undefined ? !!(req as any).keepRotation : defaultKeepRotation;
-    const straighten = (req as any).straighten !== undefined ? !!(req as any).straighten : defaultStraighten;
-    const recenterOpts = keepRotation && hasDefaultRecenter
-      ? {
-          screenSpaceRecenter: defaultRecenter,
-          ...(defaultRecenter ? { screenSpaceRecenterIters: defaultRecenterIters } : {}),
-        }
-      : {};
+    let keepRotation = defaultKeepRotation;
+    if ((req as any).keepRotation !== undefined) {
+      keepRotation = !!(req as any).keepRotation;
+    }
+    let straighten = defaultStraighten;
+    if ((req as any).straighten !== undefined) {
+      straighten = !!(req as any).straighten;
+    }
+    const recenterOpts = this.getWorldsFocusRecenterOptions(keepRotation);
 
     // Remember last applied focus (use resolved numeric section index).
     if (req.kind === 'focus') {
-      this.lastApplied3DCameraFocus = {
+      const lastApplied: any = {
         kind: 'focus',
         sectionId: layout.sectionId,
         sectionIndex: layout.sectionIndex,
         distance: req.distance,
-        ...(keepRotation ? { keepRotation: true } : {}),
-        ...(straighten ? { straighten: true } : {}),
-        ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
-        ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
       };
-    } else {
-      if (req.kind === 'fit') {
-        this.lastApplied3DCameraFocus = {
-          kind: 'fit',
-          sectionId: layout.sectionId,
-          sectionIndex: layout.sectionIndex,
-          fill: req.fill,
-          ...(keepRotation ? { keepRotation: true } : {}),
-          ...(straighten ? { straighten: true } : {}),
-          ...(req.positionOffset ? { positionOffset: req.positionOffset } : {}),
-          ...(req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}),
-        };
+      if (keepRotation) {
+        lastApplied.keepRotation = true;
       }
+      if (straighten) {
+        lastApplied.straighten = true;
+      }
+      if (req.positionOffset) {
+        lastApplied.positionOffset = req.positionOffset;
+      }
+      if (req.rotationOffset) {
+        lastApplied.rotationOffset = req.rotationOffset;
+      }
+      this.lastApplied3DCameraFocus = lastApplied;
+    } else if (req.kind === 'fit') {
+      const lastApplied: any = {
+        kind: 'fit',
+        sectionId: layout.sectionId,
+        sectionIndex: layout.sectionIndex,
+        fill: req.fill,
+      };
+      if (keepRotation) {
+        lastApplied.keepRotation = true;
+      }
+      if (straighten) {
+        lastApplied.straighten = true;
+      }
+      if (req.positionOffset) {
+        lastApplied.positionOffset = req.positionOffset;
+      }
+      if (req.rotationOffset) {
+        lastApplied.rotationOffset = req.rotationOffset;
+      }
+      this.lastApplied3DCameraFocus = lastApplied;
     }
 
     // Now that lastApplied is updated, navigation + host sync can use the
@@ -14669,21 +14923,14 @@ ${exportVars}
 
     const lastFocus = this.lastApplied3DCameraFocus;
 
-    const layout = this.getSectionLayoutById(lastFocus.sectionId)
-      ?? this.section3DLayouts.find(l => l.sectionIndex === lastFocus.sectionIndex);
+    let layout = this.getSectionLayoutById(lastFocus.sectionId);
+    if (!layout) {
+      layout = this.section3DLayouts.find(l => l.sectionIndex === lastFocus.sectionIndex) ?? null;
+    }
     if (!layout) return;
 
     if (lastFocus.kind === 'focus') {
-      const cfg: any = this.worldsConfig as any;
-      const hasDefaultRecenter = (cfg as any).screenSpaceRecenter !== undefined;
-      const defaultRecenter = !!cfg.screenSpaceRecenter;
-      const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
-      const recenterOpts = lastFocus.keepRotation && hasDefaultRecenter
-        ? {
-            screenSpaceRecenter: defaultRecenter,
-            ...(defaultRecenter ? { screenSpaceRecenterIters: defaultRecenterIters } : {}),
-          }
-        : {};
+      const recenterOpts = this.getWorldsFocusRecenterOptions(!!lastFocus.keepRotation);
       focusOnSection(this.camera3D, layout, lastFocus.distance, {
         ...(lastFocus.keepRotation ? { keepRotation: true } : {}),
         ...(lastFocus.straighten ? { straighten: true } : {}),
@@ -14692,19 +14939,11 @@ ${exportVars}
         ...recenterOpts,
       });
     } else {
-      const aspect = this.canvas.width > 0 && this.canvas.height > 0
-        ? this.canvas.width / this.canvas.height
-        : 1;
-      const cfg: any = this.worldsConfig as any;
-      const hasDefaultRecenter = (cfg as any).screenSpaceRecenter !== undefined;
-      const defaultRecenter = !!cfg.screenSpaceRecenter;
-      const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
-      const recenterOpts = lastFocus.keepRotation && hasDefaultRecenter
-        ? {
-            screenSpaceRecenter: defaultRecenter,
-            ...(defaultRecenter ? { screenSpaceRecenterIters: defaultRecenterIters } : {}),
-          }
-        : {};
+      let aspect = 1;
+      if (this.canvas.width > 0 && this.canvas.height > 0) {
+        aspect = this.canvas.width / this.canvas.height;
+      }
+      const recenterOpts = this.getWorldsFocusRecenterOptions(!!lastFocus.keepRotation);
       focusOnSectionFit(this.camera3D, layout, aspect, lastFocus.fill, {}, {
         ...(lastFocus.keepRotation ? { keepRotation: true } : {}),
         ...(lastFocus.straighten ? { straighten: true } : {}),
@@ -14732,9 +14971,10 @@ ${exportVars}
     }
     const navigationSideEffects = options?.navigationSideEffects !== false;
     const previousSectionIndex = this.getResolvedCurrent3DSectionIndex();
-    const previousLayout = (typeof previousSectionIndex === 'number' && Number.isFinite(previousSectionIndex))
-      ? this.getSectionLayoutByIndex(previousSectionIndex)
-      : null;
+    let previousLayout: Section3DLayout | null = null;
+    if (typeof previousSectionIndex === 'number' && Number.isFinite(previousSectionIndex)) {
+      previousLayout = this.getSectionLayoutByIndex(previousSectionIndex);
+    }
     this.clearWorldsInlineWidgets();
 
     // Leaving a section: optionally remove it after the first visit.
@@ -14774,7 +15014,10 @@ ${exportVars}
     // Keep this narrowly scoped to navigation only (no arbitrary messaging).
     const h = this.hostSync;
     if (navigationSideEffects && h && h.getSessionInfo().role === 'host') {
-      const fill = this.lastApplied3DCameraFocus?.kind === 'fit' ? this.lastApplied3DCameraFocus.fill : 0.9;
+      let fill = 0.9;
+      if (this.lastApplied3DCameraFocus?.kind === 'fit') {
+        fill = this.lastApplied3DCameraFocus.fill;
+      }
       h.sendGotoSectionFit(nextLayout.sectionIndex, fill);
       h.sendSceneFit(nextLayout.sectionIndex, this.sceneState.revealStep, fill);
     }
@@ -15097,8 +15340,13 @@ ${exportVars}
       this.handleWorldsInlineWidgetMouse(pixelX, pixelY, this.input.isMouseDown(0));
     }
 
+    const overlayGUIConsumed = this.handleOverlayRetainedGUIMouse(pixelX, pixelY, this.input.isMouseDown(0));
+
     const doc = this.getActiveDocument();
-    if (!doc?.handlers?.input) return;
+    if (!doc?.handlers?.input) {
+      if (this.worldsEnabled || overlayGUIConsumed) e.preventDefault();
+      return;
+    }
     
     // Calculate character size in backing store pixels (same coordinate system as pixelX/pixelY)
     const charWidth = this.canvas.width / this.width;
@@ -15124,6 +15372,8 @@ ${exportVars}
     } catch (error) {
       console.error('Error in input handler:', error);
     }
+
+    if (this.worldsEnabled || overlayGUIConsumed) e.preventDefault();
   }
 
   private handleWheelEvent(e: WheelEvent): void {

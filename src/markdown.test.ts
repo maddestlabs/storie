@@ -154,4 +154,36 @@ describe('heading directives', () => {
 
     expect(doc.sections.map((section) => section.id)).toEqual(['card-one-1', 'card-one-5']);
   });
+
+  it('parses logic blocks and attaches them to the owning section', async () => {
+    const doc = await parseMarkdown([
+      '# Main Claim',
+      '',
+      'A short statement.',
+      '',
+      '```logic name:eph2',
+      'that -> #main-claim {rel: refers-to-clause}',
+      'that -> #saved {rel: excludes}',
+      '```',
+      '',
+      '# Saved',
+      '',
+      'Lexical note.',
+    ].join('\n'));
+
+    expect(doc.logicBlocks).toHaveLength(1);
+    expect(doc.logicBlocks?.[0]).toMatchObject({
+      name: 'eph2',
+      sectionId: 'main-claim-1',
+      sectionTitle: 'Main Claim',
+      statements: [
+        { source: 'that', target: '#main-claim', rel: 'refers-to-clause' },
+        { source: 'that', target: '#saved', rel: 'excludes' },
+      ],
+    });
+
+    expect(doc.sections[0]?.logicBlocks).toHaveLength(1);
+    expect(doc.sections[0]?.logicBlocks?.[0]?.statements).toHaveLength(2);
+    expect(doc.sections[1]?.logicBlocks).toBeUndefined();
+  });
 });

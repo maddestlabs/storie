@@ -3,6 +3,7 @@ name: "Hex Viewer Demo"
 dropTarget: true
 theme: "neotopia"
 shaders: "invert+ruledlines+paper"
+authoringCheck: explicit-conditionals
 ---
 
 # Hex Viewer
@@ -53,12 +54,19 @@ function computeLayout(st, width, height) {
   const maxBPR = 16;
   const minBPR = 4;
   const fit = Math.floor((width - 15) / 4);
-  st.bytesPerRow = clamp(Number.isFinite(fit) ? fit : maxBPR, minBPR, maxBPR);
+  let bytesPerRow = maxBPR;
+  if (Number.isFinite(fit)) {
+    bytesPerRow = fit;
+  }
+  st.bytesPerRow = clamp(bytesPerRow, minBPR, maxBPR);
 
   st.maxVisibleRows = Math.max(0, height - headerLines - footerLines);
 
   const size = st.file?.bytes?.byteLength ?? 0;
-  const totalRows = st.bytesPerRow > 0 ? Math.ceil(size / st.bytesPerRow) : 0;
+  let totalRows = 0;
+  if (st.bytesPerRow > 0) {
+    totalRows = Math.ceil(size / st.bytesPerRow);
+  }
   const maxScroll = Math.max(0, totalRows - st.maxVisibleRows);
   st.scrollRow = clamp(st.scrollRow, 0, maxScroll);
 
@@ -166,7 +174,10 @@ for (let offset = startByte; offset < endByte; offset += st.bytesPerRow) {
     const sty = byteStyle(getStyle, b);
     term.write(hexX, y, toHex(b, 2), sty.fg, sty.bg);
 
-    const ch = (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.';
+    let ch = '.';
+    if (b >= 32 && b <= 126) {
+      ch = String.fromCharCode(b);
+    }
     term.write(asciiX, y, ch, sty.fg, sty.bg);
 
     hexX += 3;
@@ -178,9 +189,10 @@ for (let offset = startByte; offset < endByte; offset += st.bytesPerRow) {
 }
 
 // Footer
-const rowInfo = totalRows > 0
-  ? `Row ${Math.min(totalRows, st.scrollRow + 1)} / ${totalRows}`
-  : 'Row 0 / 0';
+let rowInfo = 'Row 0 / 0';
+if (totalRows > 0) {
+  rowInfo = `Row ${Math.min(totalRows, st.scrollRow + 1)} / ${totalRows}`;
+}
 const help = `${rowInfo}  (↑/↓, PgUp/PgDn, Home/End)`;
 term.write(2, termHeight - 1, help.slice(0, Math.max(0, termWidth - 4)), dim.fg, dim.bg);
 ```

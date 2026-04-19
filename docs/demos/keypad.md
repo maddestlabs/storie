@@ -3,17 +3,20 @@ name: "Soft Keypad Demo"
 theme: "zerorain"
 font: "AnomalyMono"
 fontsize: 18
+authoringCheck: explicit-conditionals
 ---
 
 ```js
 var SEED_MAX_DIGITS = 12;
 
-var guiMouseDown = false;
-var seedText = String(random.seed());
-var statusText = 'Tap the seed field or the buttons below it.';
-var currentBreakpoint = '';
-var widgets = null;
-var layouts = null;
+var state = {
+  seedText: String(random.seed()),
+  statusText: 'Tap the seed field or the buttons below it.',
+  breakpoint: '',
+  footerText: '',
+  subtitleVisible: true,
+  seedValueVisible: true
+};
 
 var keypadSpec = [
   { label: '1', action: 'digit', value: '1' },
@@ -35,80 +38,103 @@ var keypadSpec = [
 ];
 
 function normalizeSeedText(value) {
-  return String(value == null ? '' : value).replace(/\D+/g, '').slice(0, SEED_MAX_DIGITS);
+  var source = value;
+  if (source == null) source = '';
+  return String(source).replace(/\D+/g, '').slice(0, SEED_MAX_DIGITS);
+}
+
+function getSeedInput() {
+  return gui.get('seedInput');
+}
+
+function syncDerivedLabels() {
+  var numericValue = '-';
+  if (state.seedText.length) {
+    numericValue = String(Math.floor(Number(state.seedText)));
+  }
+  gui.text('statusLabel', state.statusText);
+  gui.text('seedValueLabel', 'Numeric value: ' + numericValue);
 }
 
 function setStatus(next) {
-  statusText = String(next == null ? '' : next);
-  if (widgets && widgets.statusLabel) widgets.statusLabel.setText(statusText);
+  var status = next;
+  if (status == null) status = '';
+  state.statusText = String(status);
+  syncDerivedLabels();
 }
 
 function isSeedFocused() {
-  return !!(widgets && widgets.seedInput && widgets.seedInput.state.focused);
+  var seedInput = getSeedInput();
+  return !!(seedInput && seedInput.state.focused);
 }
 
-function syncWidgetState() {
-  if (!widgets) return;
-  if (widgets.seedInput.getValue() !== seedText) {
-    widgets.seedInput.setValue(seedText);
+function syncSeedFromWidget(status) {
+  var seedInput = getSeedInput();
+  if (!seedInput || typeof seedInput.getValue !== 'function') return;
+
+  var next = normalizeSeedText(seedInput.getValue());
+  if (typeof seedInput.setValue === 'function' && seedInput.getValue() !== next) {
+    seedInput.setValue(next);
   }
-  widgets.statusLabel.setText(statusText);
-  if (widgets.seedValueLabel) {
-    widgets.seedValueLabel.setText('Numeric value: ' + (seedText.length ? String(Math.floor(Number(seedText))) : '-'));
-  }
+  state.seedText = next;
+  gui.syncBindings();
+  if (arguments.length) setStatus(status);
+  else syncDerivedLabels();
 }
 
 function appendSeedDigit(digit) {
-  if (isSeedFocused() && widgets.seedInput && typeof widgets.seedInput.handleText === 'function') {
-    if (String(widgets.seedInput.getValue() || '').length >= SEED_MAX_DIGITS) {
+  var seedInput = getSeedInput();
+  if (isSeedFocused() && seedInput && typeof seedInput.handleText === 'function') {
+    if (String(seedInput.getValue() || '').length >= SEED_MAX_DIGITS) {
       setStatus('Seed is already at max length.');
       return;
     }
-    widgets.seedInput.handleText(String(digit));
-    setStatus('Inserted ' + String(digit) + '.');
+    seedInput.handleText(String(digit));
+    syncSeedFromWidget('Inserted ' + String(digit) + '.');
     return;
   }
 
-  var next = normalizeSeedText(seedText + String(digit));
-  if (next === seedText) {
+  var next = normalizeSeedText(state.seedText + String(digit));
+  if (next === state.seedText) {
     setStatus('Seed is already at max length.');
     return;
   }
-  seedText = next;
+  state.seedText = next;
+  gui.syncBindings();
   setStatus('Inserted ' + String(digit) + '.');
-  syncWidgetState();
 }
 
 function removeSeedDigit() {
-  if (isSeedFocused() && widgets.seedInput && typeof widgets.seedInput.handleKey === 'function') {
-    widgets.seedInput.handleKey('Backspace');
-    setStatus('Removed digit at cursor.');
+  var seedInput = getSeedInput();
+  if (isSeedFocused() && seedInput && typeof seedInput.handleKey === 'function') {
+    seedInput.handleKey('Backspace');
+    syncSeedFromWidget('Removed digit at cursor.');
     return;
   }
 
-  if (!seedText.length) {
+  if (!state.seedText.length) {
     setStatus('Seed is already empty.');
     return;
   }
-  seedText = seedText.slice(0, -1);
+  state.seedText = state.seedText.slice(0, -1);
+  gui.syncBindings();
   setStatus('Removed last digit.');
-  syncWidgetState();
 }
 
 function clearSeedDigits() {
-  if (!seedText.length) {
+  if (!state.seedText.length) {
     setStatus('Seed is already empty.');
     return;
   }
-  seedText = '';
+  state.seedText = '';
+  gui.syncBindings();
   setStatus('Cleared seed.');
-  syncWidgetState();
 }
 
 function randomizeSeedDigits() {
-  seedText = String(random.seed());
+  state.seedText = String(random.seed());
+  gui.syncBindings();
   setStatus('Randomized seed.');
-  syncWidgetState();
 }
 
 function copySeedDigits() {
@@ -116,8 +142,12 @@ function copySeedDigits() {
     setStatus('Clipboard copy is not available here.');
     return;
   }
-  void navigator.clipboard.writeText(seedText).then(function () {
-    setStatus(seedText.length ? 'Copied seed to clipboard.' : 'Copied empty seed to clipboard.');
+  void navigator.clipboard.writeText(state.seedText).then(function () {
+    if (state.seedText.length) {
+      setStatus('Copied seed to clipboard.');
+      return;
+    }
+    setStatus('Copied empty seed to clipboard.');
   }).catch(function () {
     setStatus('Clipboard copy failed.');
   });
@@ -129,9 +159,13 @@ function pasteSeedDigits() {
     return;
   }
   void navigator.clipboard.readText().then(function (text) {
-    seedText = normalizeSeedText(text);
-    setStatus(seedText.length ? 'Pasted seed from clipboard.' : 'Clipboard had no digits to paste.');
-    syncWidgetState();
+    state.seedText = normalizeSeedText(text);
+    gui.syncBindings();
+    if (state.seedText.length) {
+      setStatus('Pasted seed from clipboard.');
+      return;
+    }
+    setStatus('Clipboard had no digits to paste.');
   }).catch(function () {
     setStatus('Clipboard paste failed.');
   });
@@ -150,37 +184,16 @@ function applyKeypadAction(action, value) {
   }
 }
 
-function handleFocusedSeedKey(event) {
-  if (!isSeedFocused()) return false;
+function getBreakpointConfig(viewport, info, tokens) {
+  var width = 800;
+  if (viewport && viewport.width) width = viewport.width;
 
-  var key = String(event.key || '');
-  var mods = event.mods || [];
-  var ctrl = mods.includes('ctrl') || mods.includes('meta');
-  var alt = mods.includes('alt');
+  var usableWidth = width;
+  if (info && info.usableWidth) usableWidth = info.usableWidth;
 
-  if (!ctrl && !alt && /^[0-9]$/.test(key)) {
-    appendSeedDigit(key);
-    return true;
-  }
-  if (!ctrl && !alt && (key === 'Backspace' || key === 'Delete')) {
-    removeSeedDigit();
-    return true;
-  }
-  if (!ctrl && !alt && key === 'Enter') {
-    gui.clearFocus();
-    setStatus('Closed keypad.');
-    return true;
-  }
-  return false;
-}
-
-function getBreakpointConfig() {
-  var viewport = gui.getViewportRect();
-  var width = viewport && viewport.width ? viewport.width : 800;
-  var height = viewport && viewport.height ? viewport.height : 600;
-  var info = gui.getResponsiveInfo({ width: width, height: height });
-  var tokens = gui.getTokens();
-  var breakpoint = info.breakpoint === 'xs' ? 'xs' : info.breakpoint === 'sm' ? 'sm' : 'md';
+  var breakpoint = 'md';
+  if (info.breakpoint === 'xs') breakpoint = 'xs';
+  else if (info.breakpoint === 'sm') breakpoint = 'sm';
 
   if (breakpoint === 'xs') {
     return {
@@ -190,7 +203,7 @@ function getBreakpointConfig() {
       panelPadding: tokens.spacing.md,
       sectionGap: tokens.spacing.sm,
       buttonGap: tokens.spacing.sm,
-      maxWidth: Math.max(280, Math.min(380, info.usableWidth || width)),
+      maxWidth: Math.max(280, Math.min(380, usableWidth)),
       columns: 2,
       showSubtitle: false,
       showSeedValue: false,
@@ -206,7 +219,7 @@ function getBreakpointConfig() {
       panelPadding: tokens.spacing.lg,
       sectionGap: tokens.spacing.sm,
       buttonGap: tokens.spacing.sm,
-      maxWidth: Math.max(360, Math.min(520, info.usableWidth || width)),
+      maxWidth: Math.max(360, Math.min(520, usableWidth)),
       columns: 3,
       showSubtitle: true,
       showSeedValue: false,
@@ -221,7 +234,7 @@ function getBreakpointConfig() {
     panelPadding: tokens.spacing.lg,
     sectionGap: tokens.spacing.md,
     buttonGap: tokens.spacing.md,
-    maxWidth: Math.max(420, Math.min(620, info.usableWidth || width)),
+    maxWidth: Math.max(420, Math.min(620, usableWidth)),
     columns: 4,
     showSubtitle: true,
     showSeedValue: true,
@@ -229,64 +242,96 @@ function getBreakpointConfig() {
   };
 }
 
-function rebuildLayout(force) {
-  var config = getBreakpointConfig();
-  if (!widgets || !layouts) {
-    gui.init();
+function buildKeypadWidgets() {
+  var widgets = {};
+  for (var i = 0; i < keypadSpec.length; i++) {
+    (function (index, spec) {
+      widgets['keypad_' + index] = gui.button(spec.label, {
+        focusable: false,
+        bounds: { height: 46 },
+        onClick: function () {
+          applyKeypadAction(spec.action, spec.value);
+        }
+      });
+    })(i, keypadSpec[i]);
+  }
+  return widgets;
+}
 
-    var tokens = gui.getTokens();
-    var keypadButtons = [];
+function syncKeypadLayout(ctx) {
+  if (!ctx || !ctx.viewport || !ctx.root || !ctx.widgets) return;
 
-    layouts = {
-      root: gui.createResponsivePanel({
-        bounds: { x: 0, y: 0, width: 420, height: 1 },
-        gap: tokens.spacing.md,
-        padding: tokens.spacing.lg,
-        maxWidth: 620,
-        layout: { widthPolicy: 'fill', heightPolicy: 'fit-content' }
-      }),
-      keypad: gui.createContainer({
-        bounds: { x: 0, y: 0, width: 1, height: 1 },
-        mode: 'grid',
-        columns: 4,
-        rowGap: tokens.spacing.sm,
-        columnGap: tokens.spacing.sm,
-        alignX: 'stretch',
-        alignY: 'stretch',
-        layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-      })
-    };
+  var config = getBreakpointConfig(ctx.viewport, ctx.responsive, ctx.tokens || gui.getTokens());
+  state.breakpoint = config.breakpoint;
+  state.footerText = config.footerText;
+  state.subtitleVisible = config.showSubtitle;
+  state.seedValueVisible = config.showSeedValue;
 
-    var title = gui.createLabel({
+  ctx.widgets.subtitle.setVisible(config.showSubtitle);
+  ctx.widgets.seedValueLabel.setVisible(config.showSeedValue);
+  gui.text('footerLabel', config.footerText);
+
+  if (ctx.root.container) {
+    ctx.root.container.padding = config.panelPadding;
+    ctx.root.container.gap = config.sectionGap;
+    ctx.root.container.rowGap = config.sectionGap;
+  }
+
+  if (ctx.widgets.keypadGrid) {
+    ctx.widgets.keypadGrid.setColumns(config.columns, false);
+    ctx.widgets.keypadGrid.gap = config.buttonGap;
+    ctx.widgets.keypadGrid.rowGap = config.buttonGap;
+    ctx.widgets.keypadGrid.columnGap = config.buttonGap;
+  }
+
+  return {
+    insetTop: config.insetY,
+    insetRight: config.insetX,
+    insetBottom: config.insetY,
+    insetLeft: config.insetX,
+    maxWidth: config.maxWidth,
+    anchorX: 'center',
+    anchorY: 'start'
+  };
+}
+```
+
+```js on:init
+term.layerID = 'default';
+gui.screen({
+  input: 'auto',
+  update: 'auto',
+  state,
+  layout: {
+    type: 'panel',
+    rowGap: 'md',
+    anchorX: 'center',
+    anchorY: 'start',
+    onLayout: syncKeypadLayout
+  },
+  widgets: {
+    title: gui.label('Soft Keypad Demo', {
       focusable: false,
       align: 'center',
-      bounds: { x: 0, y: 0, width: 1, height: 30 },
-      text: 'Soft Keypad Demo',
-      labelStyle: { typographyRole: 'title' },
-      layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-    });
-
-    var subtitle = gui.createLabel({
+      bounds: { height: 30 },
+      labelStyle: { typographyRole: 'title' }
+    }),
+    subtitle: gui.label('Responsive soft keypad with fluid relayout', {
       focusable: false,
       align: 'center',
-      bounds: { x: 0, y: 0, width: 1, height: 24 },
-      text: 'Responsive soft keypad with fluid relayout',
-      layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-    });
-
-    var seedLabel = gui.createLabel({
+      bounds: { height: 24 }
+    }),
+    seedLabel: gui.label('SEED', {
       focusable: false,
       align: 'left',
-      bounds: { x: 0, y: 0, width: 1, height: 20 },
-      text: 'SEED',
-      labelStyle: { typographyRole: 'caption' },
-      layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-    });
-
-    var seedInput = gui.createTextField({
+      bounds: { height: 20 },
+      labelStyle: { typographyRole: 'caption' }
+    }),
+    seedInput: gui.input({
       align: 'right',
-      bounds: { x: 0, y: 0, width: 1, height: 44 },
-      value: seedText,
+      bounds: { height: 44 },
+      value: state.seedText,
+      bind: 'seedText',
       placeholder: 'Seed',
       textInput: {
         showSoftKeyboard: false
@@ -296,171 +341,50 @@ function rebuildLayout(force) {
         drawBorder: false,
         drawBackground: false
       },
-      layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-    });
-
-    var seedValueLabel = gui.createLabel({
+      onChange: function () {
+        syncSeedFromWidget('Seed updated from text field.');
+      }
+    }),
+    seedValueLabel: gui.label('', {
       focusable: false,
       align: 'left',
-      bounds: { x: 0, y: 0, width: 1, height: 22 },
-      text: '',
-      layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-    });
-
-    var statusLabel = gui.createLabel({
+      bounds: { height: 22 }
+    }),
+    statusLabel: gui.label(state.statusText, {
       focusable: false,
       align: 'left',
-      bounds: { x: 0, y: 0, width: 1, height: 22 },
-      text: statusText,
-      layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-    });
-
-    for (var i = 0; i < keypadSpec.length; i++) {
-      var spec = keypadSpec[i];
-      var button = gui.createButton({
-        focusable: false,
-        bounds: { x: 0, y: 0, width: 1, height: 46 },
-        label: spec.label,
-        layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-      });
-      (function (buttonAction, buttonValue) {
-        button.on('click', function () {
-          applyKeypadAction(buttonAction, buttonValue);
-        });
-      })(spec.action, spec.value);
-      keypadButtons.push({ action: spec.action, value: spec.value, button: button });
-      layouts.keypad.add(button);
-    }
-
-    var footerLabel = gui.createLabel({
+      bounds: { height: 22 }
+    }),
+    keypadGrid: gui.container({
+      bounds: { height: 1 },
+      mode: 'grid',
+      columns: 4,
+      rowGap: 8,
+      columnGap: 8,
+      alignX: 'stretch',
+      alignY: 'stretch',
+      widgets: buildKeypadWidgets()
+    }),
+    footerLabel: gui.label('', {
       focusable: false,
       align: 'left',
-      bounds: { x: 0, y: 0, width: 1, height: 24 },
-      text: config.footerText,
-      layout: { widthPolicy: 'fill', heightPolicy: 'fit-content', minWidth: 0 }
-    });
-
-    layouts.root
-      .add(title)
-      .add(subtitle)
-      .add(seedLabel)
-      .add(seedInput)
-      .add(seedValueLabel)
-      .add(statusLabel)
-      .add(layouts.keypad)
-      .add(footerLabel);
-
-    widgets = {
-      title: title,
-      subtitle: subtitle,
-      seedLabel: seedLabel,
-      seedInput: seedInput,
-      seedValueLabel: seedValueLabel,
-      statusLabel: statusLabel,
-      footerLabel: footerLabel,
-      keypadButtons: keypadButtons
-    };
+      bounds: { height: 24 }
+    })
   }
+});
 
-  currentBreakpoint = config.breakpoint;
-  widgets.subtitle.setVisible(config.showSubtitle);
-  widgets.seedValueLabel.setVisible(config.showSeedValue);
-  widgets.footerLabel.setText(config.footerText);
-
-  layouts.root.container.padding = config.panelPadding;
-  layouts.root.container.gap = config.sectionGap;
-  layouts.root.setMaxWidth(config.maxWidth, false);
-  layouts.keypad.setColumns(config.columns, false);
-  layouts.keypad.gap = config.buttonGap;
-  layouts.keypad.rowGap = config.buttonGap;
-  layouts.keypad.columnGap = config.buttonGap;
-
-  var viewport = gui.getViewportRect();
-  layouts.root.fitToViewport(viewport, {
-    insetTop: config.insetY,
-    insetRight: config.insetX,
-    insetBottom: config.insetY,
-    insetLeft: config.insetX,
-    safeArea: true,
-    maxWidth: config.maxWidth,
-    anchorX: 'center',
-    anchorY: 'start'
-  }, false);
-  layouts.root.layout();
-  syncWidgetState();
-}
-
-function ensureLayout() {
-  if (!widgets) {
-    rebuildLayout(true);
-  }
-  return !!widgets;
-}
-```
-
-```js on:init
-term.layerID = 'default';
-gui.init();
-rebuildLayout(true);
-```
-
-```js on:input
-if (!event) return;
-if (!ensureLayout()) return;
-
-if (event.type === 'keydown') {
-  if (event.key === 'Escape' && widgets.seedInput.state.focused) {
-    gui.clearFocus();
-    return;
-  }
-
-  if (handleFocusedSeedKey(event)) {
-    return;
-  }
-
-  gui.handleKey(event.key, {
-    shift: (event.mods || []).includes('shift'),
-    ctrl: (event.mods || []).includes('ctrl'),
-    alt: (event.mods || []).includes('alt'),
-    meta: (event.mods || []).includes('meta')
-  });
-}
-
-if (event.type === 'text') {
-  if (!widgets.seedInput.state.focused) {
-    gui.handleText(event.text);
-  }
-}
-
-if (event.type === 'mouse') {
-  if (event.button === 'left') {
-    guiMouseDown = event.action === 'press' || event.action === 'repeat';
-  }
-  gui.handleMouse(event.x, event.y, guiMouseDown);
-}
-
-if (event.type === 'mouse_move') {
-  gui.handleMouse(event.x, event.y, guiMouseDown);
-}
+syncDerivedLabels();
 ```
 
 ```js on:update
-if (!ensureLayout()) return;
-rebuildLayout(false);
-if (!widgets) return;
-gui.update(getMouseX(), getMouseY(), guiMouseDown);
+var seedInput = getSeedInput();
+if (!seedInput) return;
 
-if (widgets.seedInput.wasChanged()) {
-  seedText = normalizeSeedText(widgets.seedInput.getValue());
-  setStatus('Seed updated from text field.');
-  syncWidgetState();
-}
+var focused = !!seedInput.state.focused;
+seedInput.textFieldStyle.drawBorder = focused;
+seedInput.textFieldStyle.drawBackground = focused;
 
-var focused = !!widgets.seedInput.state.focused;
-widgets.seedInput.textFieldStyle.drawBorder = focused;
-widgets.seedInput.textFieldStyle.drawBackground = focused;
-
-syncWidgetState();
+syncDerivedLabels();
 ```
 
 ```js on:render

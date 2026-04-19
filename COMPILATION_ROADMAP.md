@@ -2,271 +2,273 @@
 
 ## Purpose
 
-Storie is not just a browser runtime. The long-term target is an operating system where Storie is the primary application and game development mechanism, and where the OS itself provides the capabilities Storie needs.
+Storie is not meant to stop at being a browser runtime with a clever sandbox.
 
-That means Storie needs two things at once:
+The long-term target is an environment where authored Storie applications can:
 
-1. A scripting-first development workflow that stays fast, flexible, and easy to iterate on.
-2. A native compilation path that can turn the same authored content into a compiled application with minimal friction.
+1. stay fast and pleasant to iterate on during development
+2. compile into deployable applications without carrying the scripting engine forever
+3. eventually target an OS-native runtime without changing the authored model
 
-The target experience is simple: during development, authors work in Markdown with embedded scripting. When ready, they press a button and get a compiled build.
+That requires a change in emphasis.
 
-This document outlines the path from the current Storie web runtime to that model.
+The main problem is not "how do we compile more JavaScript?"
 
-## Background
+The main problem is "how do we make Storie scripts depend less on host-language semantics, and more on the Storie API itself?"
 
-Storie already has the right authoring substrate:
+This roadmap describes that shift.
 
-- Markdown is the document format.
-- Frontmatter carries configuration and feature declarations.
-- Code fences define lifecycle-driven behavior.
-- The runtime already parses content into structured sections, code blocks, timed blocks, blobs, shaders, and metadata.
+## Architectural Decision
 
-The current implementation executes document code through the SES sandbox. That is the correct choice for development, portability, and safety, especially for untrusted or semi-trusted authored content.
+Storie should treat the engine API as the real scripting language.
 
-But the sandbox is not the end state for deployable applications.
+JavaScript is currently only the notation used to write it.
 
-The previous engine, tStorie, already proved the core idea: Markdown-driven authored apps can compile down into native code. That precedent matters. The goal here is not speculative. The goal is to re-establish that capability in the modern Storie architecture, then push it further beyond the terminal.
+That means the compilation strategy is no longer:
+
+- preserve as much arbitrary JavaScript behavior as possible
+- bolt a compiler onto the side later
+
+Instead, the strategy becomes:
+
+- define a constrained Storie scripting profile
+- make the API expressive enough that authors stay inside it
+- represent authored behavior as Storie semantics first
+- lower those semantics to multiple backends
+
+This is consistent with the engine direction described in `ARCHITECTURE.md`:
+
+- the API surface is the scripting language
+- the host language is incidental
+- gaps should be solved by extending the API, not exposing more host features
 
 ## Product Goal
 
-Storie should support three execution modes built from the same authored source:
+Storie should support three execution modes built from the same authored source.
 
 ### 1. Scripted Development Mode
 
-The current model.
+The authoring workflow remains Markdown-first and fast.
 
-- Markdown stays editable.
-- JS fences run through the scripting engine.
-- Hot reload and rapid iteration stay first-class.
-- Dynamic behavior remains maximally flexible.
+- Markdown stays editable
+- lifecycle blocks stay first-class
+- hot reload stays first-class
+- SES remains useful for safety and iteration
+- development mode may be permissive, but it should increasingly validate against the compile model
 
 ### 2. Compiled JavaScript App Mode
 
-The near-term compilation target.
+This is the near-term target.
 
-- Markdown is compiled ahead of time.
-- Script fences become static program units.
-- The SES execution path is removed from the shipped app.
-- Only the needed Storie runtime features are bundled.
-- Output is a deployable web or Tauri app built from generated JS modules.
+- Markdown is parsed and analyzed ahead of time
+- behavior is lowered into explicit program units
+- runtime state becomes explicit
+- capability usage becomes explicit
+- shipped apps do not require the SES scripting engine
+- output can target web or Tauri packaging
 
 ### 3. OS-Native Compiled Mode
 
-The long-term target.
+This is the long-term target.
 
-- Markdown compiles into a Storie-defined AST or intermediate representation.
-- The OS hosts the runtime directly.
-- Script behavior compiles into native OS-understood program structures.
-- The same authored app can target a browser-compatible runtime during development and a native OS pipeline for deployment.
+- the same authored source lowers into a Storie-defined intermediate form
+- the OS runtime provides Storie capabilities directly
+- authored behavior maps to native structures instead of browser scripting machinery
+- the authored model stays recognizable across all targets
 
-The current repository should focus on making mode 2 real in a clean, principled way that naturally evolves into mode 3.
+The core objective for this repository is to make mode 2 real in a way that naturally evolves into mode 3.
 
-## Core Principle
+## New Core Principle
 
-The compiler should not be a one-off exporter bolted onto the engine.
+The compiler is not an export feature.
 
-It should become a first-class stage in the Storie architecture.
+It is the discipline that should shape the runtime.
 
-That means:
+Every major Storie subsystem should now be evaluated with this question:
 
-- Parsing should produce stable structured data.
-- Document behavior should be representable independently of SES.
-- Runtime capabilities should be split into explicit feature packs.
-- Script behavior should be compilable into an intermediate form.
-- The dev runtime and compiled runtime should share as much semantics as possible.
+> Does this make authored behavior more obviously representable as Storie semantics, or does it make the engine more dependent on JavaScript tricks?
 
-## What Exists Today
+If a feature relies on more sandbox rewriting, more implicit scope magic, or more host-language cleverness, it is moving in the wrong direction unless it is temporary and on a path to removal.
 
-Storie already contains most of the front half of the pipeline:
+## What Must Change
 
-- Markdown parsing into sections, frontmatter, code blocks, blob blocks, timed blocks, and WGSL blocks.
-- Lifecycle-oriented script organization.
-- Module declarations via frontmatter.
-- A broad runtime capability surface including UI, Worlds, audio, shaders, blobs, GUI, TUI, random, and host APIs.
+Storie currently has the front half of the compile pipeline:
 
-This means the missing piece is not content understanding. The missing piece is compilation.
+- Markdown parsing
+- frontmatter extraction
+- lifecycle-oriented code fences
+- timed blocks
+- blob blocks
+- WGSL extraction
+- a broad runtime capability surface
+- an early compiler scaffold under `src/compile/`
 
-More specifically, the missing piece is taking the authored document and converting it into a generated app package with explicit static structure.
+What is still too JS-centric is the execution model.
 
-## Near-Term Compiler Goal
+Today, a meaningful amount of behavior depends on:
 
-The first serious compiler target should be:
+- implicit persistence of top-level variables
+- sandbox transforms and rewrites
+- lifecycle wrapper generation
+- global-object style runtime exposure
+- user scripts carrying more state semantics than they should
 
-> Compile a Storie Markdown document into a generated JavaScript application that preserves document behavior without requiring the SES scripting engine at runtime.
+That is acceptable for development ergonomics in the short term, but it should no longer be treated as the design center.
 
-That target is ambitious enough to matter and constrained enough to ship.
+## The Direction
 
-It avoids trying to solve the full OS-native compilation problem too early, while forcing the architecture to become compiler-friendly.
+The next stage of Storie should make the scripting engine thinner and the API stronger.
 
-## Proposed Architecture
+The intended end state is:
 
-The compile pipeline should be organized into distinct stages.
+- authors write small, clear, API-centered scripts
+- scripts look closer to Scratch or Nimini than to advanced browser JavaScript
+- state is explicit
+- lifecycle behavior is explicit
+- capability use is explicit
+- compilation is a normal execution path, not a special case
 
-### Stage 1. Parse
+## Storie Script Profile v1
 
-Input:
+Storie should define and progressively enforce a constrained scripting profile.
 
-- Markdown source
-- Optional included assets or referenced local files
+This profile is the real authored language, even when written in JS syntax.
 
-Output:
+### Allowed shape
 
-- Normalized document model
+- data literals
+- object and array construction
+- simple variable bindings
+- simple function definitions for callbacks and handlers
+- calls into Storie API objects
+- frontmatter-driven configuration
+- lifecycle blocks
 
-Suggested structure:
+### Strongly discouraged or rejected in compile-oriented mode
 
-- Frontmatter
-- Section tree
-- Code blocks with lifecycle metadata
-- Timed blocks
-- Blob blocks
-- Shader blocks
-- Inline GUI or widget metadata where applicable
+- dynamic import
+- eval or Function constructors
+- arbitrary fetch-driven orchestration in user code
+- ad hoc async control flow as the primary authoring model
+- prototype-heavy or class-heavy abstractions in document scripts
+- complex closure tricks used only to preserve state
+- user-land dependency injection patterns
+- host-environment escape hatches
 
-This stage already mostly exists.
+### Design rule
 
-### Stage 2. Analyze
+If authors repeatedly want a host-language feature, that is usually evidence that the Storie API is missing a concept.
 
-The compiler should analyze document behavior before generating code.
+The fix should usually be one of:
 
-Analysis outputs should include:
+- a new API method
+- a new lifecycle capability
+- a new declarative metadata field
+- a new intermediate-representation construct
 
-- Which lifecycle hooks are used
-- Which runtime capabilities are referenced by scripts
-- Which optional modules are declared in frontmatter
-- Which assets are embedded or externally referenced
-- Whether the document relies on dynamic runtime-only features that compiled mode cannot safely support
+It should not usually be "support more JavaScript semantics in authored content."
 
-Examples of capability buckets:
+## API Completeness As The Main Work
 
-- terminal
-- ui
-- gui
-- worlds
-- audio
-- shader
-- blobs
-- timed
-- random
-- modules
-- host sync
-- export
+To make thin scripting viable, the API must absorb complexity that authors should not carry themselves.
 
-This stage is where Storie starts moving from a monolithic runtime surface toward a compiler-aware runtime surface.
+That includes higher-level solutions for common needs such as:
 
-### Stage 3. Lower To An Intermediate Representation
+- repeated actions
+- time-based sequencing
+- event routing
+- state transitions
+- widget binding
+- section navigation
+- asset lookup
+- animation and automation
+- host communication
+- export orchestration
 
-This is the most important architectural step.
+The practical rule is simple:
 
-Instead of generating final code directly from raw Markdown parse results, the compiler should lower documents into a Storie application IR.
+if user scripts are becoming clever, the API is probably too weak.
 
-Suggested IR layers:
+## Explicit State Model
 
-#### Content IR
+One of the most important changes is to stop treating implicit sandbox persistence as the long-term semantic model.
 
-Represents:
+Compiled mode needs explicit state.
 
-- sections
-- content fragments
-- metadata
-- timed content
-- embedded resources
+Development mode should converge on the same model.
 
-#### Behavior IR
+The preferred authored pattern should become a single explicit persistent state object, rather than many magically persisted top-level bindings.
 
-Represents:
+Conceptually:
 
-- init/update/render/input/enter/export handlers
-- state variables
-- event bindings
-- section-scoped handlers
-- widget interactions
-- link actions
-
-#### Capability IR
-
-Represents:
-
-- required runtime packs
-- required modules
-- required host permissions or OS capabilities
-
-#### Asset IR
-
-Represents:
-
-- blobs
-- decoded assets
-- shaders
-- generated textures or imported files
-
-This IR becomes the bridge between:
-
-- the browser scripting runtime
-- compiled JS output
-- future OS-native AST output
-
-If this IR is well-designed, Storie can target multiple backends without changing the authoring model.
-
-### Stage 4. Generate Compiled App Code
-
-The JS compiler backend should emit generated source files.
-
-Example generated outputs:
-
-- app.manifest.json
-- app.content.json
-- app.assets.js
-- app.behavior.js
-- app.runtime-config.js
-- main.js
-
-Possible structure:
-
-```text
-generated/
-  manifest.json
-  content.json
-  assets.ts
-  behavior.ts
-  main.ts
+```js
+var state = {
+  score: 0,
+  currentScene: 'title',
+  widgets: null
+};
 ```
 
-The generated behavior module should expose explicit handler functions instead of dynamic string execution.
+Then lifecycle blocks operate on that state through a stable reference.
 
-Example shape:
+In compiled mode, this becomes:
 
 ```ts
-export function init(ctx) {}
-export function update(ctx, delta) {}
-export function render(ctx) {}
-export function input(ctx, event) {}
-export const enterHandlers = new Map();
+export function createAppState() {
+  return {
+    score: 0,
+    currentScene: 'title',
+    widgets: null
+  };
+}
 ```
 
-The compiled runtime then imports those functions normally.
+The semantic goal is the same in both modes.
 
-### Stage 5. Bundle
+This change reduces reliance on:
 
-The bundler should receive:
+- auto-binding transforms
+- variable import/export wrappers
+- hot-reload-sensitive persistence tricks
+- closure recreation hacks
 
-- generated app files
-- only the runtime packs required by the analyzed document
-- only the declared optional modules required by the document
+## Lifecycle Model
 
-This is where bundle minimization happens.
+Lifecycle blocks should be represented as Storie behavior units first, not as loose snippets of JavaScript that the runtime later tries to interpret.
 
-## Required Runtime Refactor
+The important lifecycle concepts are already visible:
 
-To make real compilation possible, Storie needs to stop treating the entire runtime API as one inseparable global blob.
+- global setup
+- init
+- update
+- render
+- input
+- drop
+- export
+- enter
 
-The runtime should be reorganized into explicit capability packs.
+The next step is to make those units explicit in the compile pipeline and increasingly explicit in development execution as well.
 
-Suggested pack breakdown:
+Each block should be understood as:
+
+- a hook type
+- a section scope if relevant
+- declared or inferred capability usage
+- explicit state interaction
+- explicit asset interaction
+
+This is the bridge between dev mode and compiled mode.
+
+## Capability Packs
+
+The runtime must continue moving away from one giant scripting surface and toward explicit capability packs.
+
+Suggested pack layout:
 
 - core-document
+- core-state
 - core-loop
+- input
 - terminal
 - ui-2d
 - gui
@@ -283,221 +285,308 @@ Suggested pack breakdown:
 
 Each pack should:
 
-- define its public context surface
-- initialize independently when possible
-- avoid hidden side effects across unrelated packs
-- be importable directly by the compiled backend
+- define a stable public surface
+- avoid hidden dependencies on unrelated packs
+- initialize as independently as possible
+- be importable directly by compiled backends
+- be analyzable during compilation
 
-In development mode, Storie can still compose these packs into the familiar global scripting API.
+Development mode can still compose these into the familiar author-facing API object.
 
-In compiled mode, the generator can import only what is needed.
+Compiled mode should import only what is needed.
 
-## Script Compatibility Strategy
+## Compiler Pipeline
 
-Current Storie scripts are authored against globals like:
+The compile pipeline should be organized into explicit stages.
 
-- scope
-- ui
-- worlds
-- audio
-- random
-- shader
-- themes
-- modules
+### Stage 1. Parse
 
-That is convenient for authors, but it is not naturally tree-shakeable or compiler-friendly.
+Input:
 
-The compile pipeline should preserve this authoring model while changing how it is implemented.
+- Markdown source
+- local asset references
+- frontmatter configuration
 
-### Development Mode
+Output:
 
-- Keep global-style authoring.
-- Keep sandbox execution.
-- Keep hot reload semantics.
+- normalized document model
 
-### Compiled Mode
+This mostly already exists.
 
-The compiler should transform those globals into explicit context accesses.
+### Stage 2. Validate Against The Script Profile
 
-Conceptually:
+Before generation, the compiler should determine whether authored scripts stay inside the intended Storie profile.
 
-```js
-ui.clear();
-worlds.enable();
-random.seed();
-```
+Validation outputs should include:
 
-becomes generated behavior that receives a context object:
+- unsupported host-language features
+- dynamic dependency usage
+- non-portable behavior
+- API gaps suggested by recurring patterns
 
-```ts
-export function init(ctx) {
-  ctx.ui.clear();
-  ctx.worlds.enable();
-  ctx.random.seed();
-}
-```
+This stage should gradually become useful in development mode too.
 
-The author does not need to write that form directly. The compiler does the lowering.
+### Stage 3. Analyze Capabilities
 
-## Persistent State Model
+The compiler should detect:
 
-One of the most important current Storie semantics is persistent document scope.
+- used lifecycle hooks
+- used capability packs
+- declared modules
+- assets referenced by behavior
+- features that require compile restrictions or warnings
 
-That must survive compilation.
+The current analyzer scaffold is the start of this, not the finish.
 
-Compiled behavior should therefore receive an explicit state object.
+### Stage 4. Lower To Storie IR
 
-Suggested pattern:
+This is the most important step.
 
-```ts
-export function createAppState() {
-  return {
-    gs: null,
-    sections: {},
-    _settings: { themeIndex: 0, jitterIndex: 2 }
-  };
-}
-```
+The compiler should lower authored content into a Storie application IR that separates:
 
-Handlers then operate on `ctx.state` instead of relying on SES-managed persistence.
+#### Content IR
 
-This is the same semantic model, just made explicit.
+- sections
+- structure
+- metadata
+- timed content
+- document-scoped resources
 
-## Handling Optional Modules
+#### Behavior IR
 
-Frontmatter-declared modules are already a strong fit for compilation.
+- lifecycle handlers
+- section-scoped behavior
+- event bindings
+- explicit state access
+- widget and interaction bindings
 
-Compiled mode should prefer static inclusion over runtime dynamic loading whenever possible.
+#### Capability IR
 
-For example:
+- required runtime packs
+- module requirements
+- host permissions
+- export requirements
 
-- Development mode: `modules: [babylon]` triggers runtime loading.
-- Compiled mode: the compiler emits a bundle that statically includes the Babylon module pack.
+#### Asset IR
 
-This makes startup more deterministic and eliminates a major class of runtime indirection.
+- blobs
+- shaders
+- decoded resources
+- generated resources
 
-Dynamic `modules.load(...)` should either:
+If this IR is solid, Storie can support multiple backends without changing the authored model.
 
-- be unsupported in strict compiled mode, or
-- require declaration in a compile manifest so the compiler knows what to include.
+### Stage 5. Generate Backend Code
 
-## Asset Strategy
+The JS backend should emit explicit modules and explicit runtime entrypoints.
 
-The compiler should normalize assets into a stable manifest.
-
-Sources include:
-
-- embedded blob blocks
-- embedded timed blocks
-- embedded shaders
-- referenced local files
-- declared textures, audio, and images
-
-Compiled outputs should contain:
-
-- a logical asset manifest
-- any necessary generated binary or text payloads
-- preprocessed shader and timed data where useful
-
-This is especially important for the future OS target, where assets should be addressable through a uniform app package format.
-
-## Button-Click Compilation
-
-The user-facing workflow should eventually become:
-
-1. Author or open a Storie Markdown app.
-2. Click Compile.
-3. Select target:
-   - web app
-   - Tauri/native shell
-   - OS-native package
-4. Receive a packaged build.
-
-The implementation should therefore aim toward a single compiler command with multiple backends.
-
-Suggested shape:
+Generated output should resemble:
 
 ```text
-storie compile app.md --target web
-storie compile app.md --target tauri
-storie compile app.md --target os
+generated/
+  manifest.json
+  content.json
+  behavior.js
+  runtime.js
+  main.js
 ```
 
-The button in the future UI should just call the same pipeline.
+The current compiler scaffold already points in this direction and should now be treated as a real architectural foundation.
+
+### Stage 6. Bundle Only What Is Needed
+
+The bundler should receive:
+
+- generated application modules
+- required runtime packs only
+- required optional modules only
+- the asset payload required by the document
+
+This is where compile mode stops behaving like "dev mode with strings removed" and starts behaving like a real product backend.
+
+## Development Mode Strategy
+
+Development mode still matters.
+
+It should remain:
+
+- editable
+- hot-reloadable
+- forgiving enough for experimentation
+- safe for untrusted or semi-trusted content
+
+But development mode should stop diverging from compiled semantics where possible.
+
+That means:
+
+- validate authored scripts against the compile-oriented profile
+- steer authors toward explicit state
+- prefer API-level helpers over JS cleverness
+- preserve the same lifecycle meanings as compiled mode
+- keep sandbox transforms on a path toward reduction, not growth
+
+SES remains useful as enforcement and isolation.
+
+It should not remain the semantic definition of Storie applications.
+
+## Compatibility Strategy
+
+Storie should preserve current authored content where practical, but compatibility should be framed carefully.
+
+The goal is not to preserve every sandbox-era trick forever.
+
+The goal is to keep useful authored apps working while converging toward the better model.
+
+Recommended compatibility policy:
+
+### Tier 1. Supported And Preferred
+
+- API-centered scripts
+- explicit state object patterns
+- straightforward lifecycle handlers
+- frontmatter-declared modules
+- explicit asset references
+
+### Tier 2. Supported But Transitional
+
+- implicit persistent top-level variables
+- global-style access patterns that can be mechanically lowered
+- limited existing hot-reload conveniences
+
+These can remain during transition, but should emit guidance where appropriate.
+
+### Tier 3. Not A Compile Contract
+
+- dynamic module graphs discovered only at runtime
+- arbitrary JS metaprogramming
+- sandbox-specific behavior quirks
+- reliance on transform internals
+- code that depends on browser-global reachability rather than Storie APIs
+
+These should not define the future architecture.
+
+## Runtime Refactor Priorities
+
+The highest-leverage runtime changes are not glamorous.
+
+They are the ones that remove hidden semantics from the scripting layer.
+
+Priority order:
+
+1. converge on explicit persistent state
+2. define and enforce the Storie script profile
+3. keep growing the analyzer and warning surface
+4. split runtime APIs into true capability packs
+5. route more author needs through the API instead of through JS patterns
+6. reduce sandbox rewriting that exists only to preserve implicit JS behavior
 
 ## Proposed Milestones
 
-### Milestone 1. Establish Compiler Data Model
+### Milestone 1. Define The Storie Script Profile
 
 Deliverables:
 
-- stable compile manifest type
-- application IR type definitions
-- document analysis pass
+- a written script-profile specification
+- validation rules for unsupported or discouraged host-language features
+- clear author guidance for preferred patterns
 
 Success criteria:
 
-- given a Markdown document, Storie can produce a full structured compile description without running the app
+- authors can tell what counts as normal Storie code
+- the engine can warn when authored code drifts outside the intended model
 
-### Milestone 2. Generate Compiled JavaScript Behavior
+### Milestone 2. Make Persistent State Explicit
 
 Deliverables:
 
-- code generation for lifecycle handlers
-- explicit state object generation
-- explicit context binding generation
+- an explicit app-state model for compiled output
+- a preferred dev-mode state pattern
+- migration guidance away from broad implicit persistence
 
 Success criteria:
 
-- a non-trivial document can run without SES in generated JS form
+- non-trivial apps can use explicit state without extra ceremony
+- compile and dev semantics get noticeably closer
 
-### Milestone 3. Split Runtime Into Capability Packs
+### Milestone 3. Strengthen Analysis And IR
 
 Deliverables:
 
-- feature-oriented runtime modules
-- generated imports based on analysis
-- smaller compiled bundles
+- richer capability analysis
+- script-profile validation output
+- stable application IR types for content, behavior, capabilities, and assets
 
 Success criteria:
 
-- bundle contents differ meaningfully based on document feature usage
+- a document can be fully described without executing it
+- unsupported compile behavior is detected before generation
 
-### Milestone 4. Add Compile CLI And UI Trigger
+### Milestone 4. Make Compiled JS A Real Runtime Path
 
 Deliverables:
 
-- compile command
+- generated lifecycle modules
+- explicit state creation
+- compiled runtime adapter
+- removal of SES from shipped compiled apps
+
+Success criteria:
+
+- a non-trivial document runs from generated JS output alone
+
+### Milestone 5. Split Runtime Into True Capability Packs
+
+Deliverables:
+
+- pack-oriented runtime modules
+- compile-time selected imports
+- smaller generated runtime surface per app
+
+Success criteria:
+
+- bundle contents differ substantially based on document usage
+- pack boundaries become stable enough to be backend contracts
+
+### Milestone 6. Add Stable Compile Entry Points
+
+Deliverables:
+
+- compile CLI
 - output directory structure
-- integration into dev workflow
+- editor or UI trigger
+- repeatable packaging targets for web and Tauri
 
 Success criteria:
 
-- a document author can compile an app without hand-editing generated files
+- authors can compile without hand-editing generated files
 
-### Milestone 5. Add OS-Oriented Backend
+### Milestone 7. Add OS-Oriented Lowering
 
 Deliverables:
 
-- IR-to-OS AST lowering
+- IR-to-native-lowering path
 - OS capability manifest generation
 - native packaging integration
 
 Success criteria:
 
-- the same authored Markdown app targets the OS-native backend through the same compiler front end
+- the same authored model can target an OS-native runtime through the same front end
 
 ## Suggested Repository Work
 
-The first implementation pass in this repo should likely add:
+The repository already contains the beginnings of the compiler front end under `src/compile/`.
 
-- a dedicated compiler module under `src/compile/`
-- compile IR and manifest types
-- a document analyzer for capability detection
-- a JS backend that emits generated TypeScript or JavaScript
-- a minimal compiled runtime entrypoint
+That work should continue, but with a clearer architectural mandate.
 
-Possible layout:
+Near-term implementation work should focus on:
+
+- strengthening `src/compile/analyze.ts` into a real validation and capability pass
+- strengthening `src/compile/ir.ts` into the stable application IR contract
+- keeping `src/compile/generate-js.ts` focused on explicit modules and explicit state
+- keeping `src/compile/compile.ts` as the front-end entry point from Markdown to IR and generated output
+- evolving `scripts/compile-app.js` into a stable compile interface
+
+Likely structure:
 
 ```text
 src/compile/
@@ -506,67 +595,72 @@ src/compile/
   manifest.ts
   generate-js.ts
   generate-assets.ts
+  validate-profile.ts
   compile.ts
 ```
 
-And perhaps:
+Possible adjacent refactors:
 
-```text
-scripts/
-  compile-app.js
-```
+- reduce sandbox persistence magic as explicit state becomes normal
+- expose cleaner pack boundaries from engine/runtime modules
+- add author-facing diagnostics for compile incompatibilities
 
 ## Constraints And Non-Goals
 
-The first compiler does not need to solve everything.
+The first compiler should not try to:
 
-It should not try to:
+- compile arbitrary JavaScript semantics into native form
+- preserve every sandbox-era convenience indefinitely
+- infer every dynamic dependency perfectly
+- make compile mode equivalent to unrestricted browser scripting
+- replace development mode as an experimentation environment
 
-- compile arbitrary dynamic JavaScript semantics into an OS-native form immediately
-- preserve every sandbox-only feature in compiled mode
-- infer every possible dynamic dependency perfectly
-- replace the development runtime
+The first serious goal is narrower and more useful:
 
-The initial goal is narrower:
+> Make compiled deployment real for the class of Storie apps that stay inside the intended Storie scripting model.
 
-> Make compiled deployment real and useful for a large class of Storie apps.
-
-That is enough to justify the architecture work.
+That is enough to justify the architectural work.
 
 ## Why This Matters
 
-Without compilation, Storie risks becoming only a powerful runtime.
+Without this shift, Storie risks becoming a runtime that happens to have an exporter.
 
-With compilation, Storie becomes a real authoring system.
+With this shift, Storie becomes a real authored system with a stable semantic core.
 
-That distinction matters for the broader OS vision. If Storie is meant to be the application layer of an operating system, it cannot depend forever on an interpreted browser-style scripting setup. It needs a path where authored apps become stable compiled artifacts.
+That distinction matters for the OS vision.
 
-The scripting runtime remains essential because it makes Storie usable.
+If Storie is meant to become part of an application platform, the authored model cannot be permanently defined by sandboxed JavaScript behavior. It needs a core that:
 
-The compiler becomes essential because it makes Storie foundational.
+- is author-friendly
+- is portable across backends
+- is analyzable ahead of execution
+- is implementable natively later
+
+That core should be the Storie API and its intermediate representation.
 
 ## Immediate Recommendation
 
-The next implementation work should begin with the compiler front end, not the final backend.
+The next implementation work should proceed in this order:
 
-Specifically:
+1. write down the Storie script profile explicitly
+2. standardize the explicit state model
+3. expand compile analysis to validate authored code against that profile
+4. keep improving generated JS output as the primary compile backend
+5. split runtime APIs into stable capability packs
 
-1. Define the Storie compile IR.
-2. Add document capability analysis.
-3. Generate explicit JS lifecycle modules from Markdown code fences.
-4. Create a minimal compiled runtime that runs those modules without SES.
-
-If that ships cleanly, the path to pack-level bundling and eventual OS-native AST lowering becomes much clearer.
+This keeps the project moving toward a simpler scripting engine, a stronger API contract, and a realistic path to OS-native compilation.
 
 ## Summary
 
-Storie should treat compilation as a primary product capability.
+Storie should treat the API as the language, and the scripting engine as a temporary host.
 
 The authored format remains Markdown.
 The development model remains scripting-first.
 The deployment model becomes compiled.
 
-The short-term backend is compiled JavaScript without the scripting engine.
-The long-term backend is OS-native compilation through a custom AST.
+The near-term backend is compiled JavaScript without SES.
+The long-term backend is OS-native lowering through the same semantic core.
 
-That path is consistent with Storie's goals, consistent with the tStorie precedent, and consistent with building an operating system where Storie is both empowered by the platform and the mechanism through which software for that platform is created.
+The crucial move is not to make the sandbox more powerful.
+
+It is to make authored Storie behavior more obviously representable as Storie semantics.

@@ -10385,6 +10385,193 @@ async function expandMagicBlocks(source) {
   }
   return result.join("\n");
 }
+function tryParseJsonObject$1(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {
+  }
+  return null;
+}
+function parseLooseValue(raw) {
+  const text = raw.trim();
+  if (text === "true") return true;
+  if (text === "false") return false;
+  if (text === "null") return null;
+  if (/^[+-]?(?:\d+\.?\d*|\d*\.\d+)$/.test(text)) return Number(text);
+  const quoted = text.match(/^"([\s\S]*)"$/) ?? text.match(/^'([\s\S]*)'$/);
+  if (quoted) return quoted[1];
+  return text;
+}
+function splitTopLevelComma(input) {
+  const parts = [];
+  let start = 0;
+  let quote2 = null;
+  let escape = false;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (quote2) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escape = true;
+        continue;
+      }
+      if (ch === quote2) quote2 = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote2 = ch;
+      continue;
+    }
+    if (ch === "{") {
+      braceDepth++;
+      continue;
+    }
+    if (ch === "}") {
+      if (braceDepth === 0) return null;
+      braceDepth--;
+      continue;
+    }
+    if (ch === "[") {
+      bracketDepth++;
+      continue;
+    }
+    if (ch === "]") {
+      if (bracketDepth === 0) return null;
+      bracketDepth--;
+      continue;
+    }
+    if (ch === "," && braceDepth === 0 && bracketDepth === 0) {
+      parts.push(input.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  if (quote2 || escape || braceDepth !== 0 || bracketDepth !== 0) return null;
+  const tail = input.slice(start).trim();
+  if (tail) parts.push(tail);
+  return parts;
+}
+function parseLooseDirectiveObject$1(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  const inner = trimmed.slice(1, -1).trim();
+  if (!inner) return {};
+  const parts = splitTopLevelComma(inner);
+  if (!parts) return null;
+  const out = {};
+  let parsedEntries = 0;
+  for (const part of parts) {
+    const colon = part.indexOf(":");
+    if (colon <= 0) continue;
+    const key = part.slice(0, colon).trim().replace(/^"|"$/g, "").replace(/^'|'$/g, "");
+    if (!key) continue;
+    out[key] = parseLooseValue(part.slice(colon + 1));
+    parsedEntries++;
+  }
+  return parsedEntries > 0 ? out : null;
+}
+function parseDirectiveObject$1(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  return tryParseJsonObject$1(trimmed) ?? parseLooseDirectiveObject$1(trimmed);
+}
+function parseLogicStatement(line, lineNumber) {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("//") || trimmed.startsWith("#")) return null;
+  let relationMeta = null;
+  let statementText = trimmed;
+  const directiveStart = trimmed.lastIndexOf("{");
+  if (directiveStart >= 0) {
+    const maybeDirective = trimmed.slice(directiveStart);
+    const parsed = parseDirectiveObject$1(maybeDirective);
+    if (parsed) {
+      relationMeta = parsed;
+      statementText = trimmed.slice(0, directiveStart).trimEnd();
+    }
+  }
+  const arrowIndex = statementText.indexOf("->");
+  if (arrowIndex <= 0) return null;
+  const source = statementText.slice(0, arrowIndex).trim().replace(/^"|"$/g, "").replace(/^'|'$/g, "");
+  const target = statementText.slice(arrowIndex + 2).trim().replace(/^"|"$/g, "").replace(/^'|'$/g, "");
+  if (!source || !target) return null;
+  const rel = typeof (relationMeta == null ? void 0 : relationMeta.rel) === "string" && relationMeta.rel.trim() ? relationMeta.rel.trim() : void 0;
+  return {
+    source,
+    target,
+    ...rel ? { rel } : {},
+    ...relationMeta ? { meta: relationMeta } : {},
+    line: lineNumber
+  };
+}
+function findSectionForLine$1(sections, line) {
+  for (const section of sections) {
+    if (line >= section.startLine && line <= section.endLine) {
+      for (const child of section.children) {
+        const nested = findSectionForLine$1([child], line);
+        if (nested) return nested;
+      }
+      return section;
+    }
+  }
+  return null;
+}
+function extractLogicBlocks(codeBlocks, sections) {
+  var _a;
+  const out = [];
+  for (const block of codeBlocks) {
+    if (block.lang !== "logic") continue;
+    const statements = block.code.split("\n").map((line, index) => parseLogicStatement(line, block.startLine + index + 2)).filter((statement) => !!statement);
+    const owner = findSectionForLine$1(sections, block.startLine);
+    out.push({
+      ...((_a = block.metadata) == null ? void 0 : _a.name) ? { name: String(block.metadata.name).trim() } : {},
+      ...(owner == null ? void 0 : owner.id) ? { sectionId: owner.id } : { sectionId: null },
+      ...(owner == null ? void 0 : owner.title) ? { sectionTitle: owner.title } : { sectionTitle: null },
+      ...block.metadata ? { metadata: { ...block.metadata } } : {},
+      statements,
+      startLine: block.startLine,
+      endLine: block.endLine
+    });
+  }
+  return out;
+}
+function attachLogicBlocksToSections(sections, logicBlocks) {
+  if (!logicBlocks.length) return sections;
+  const bySectionId = /* @__PURE__ */ new Map();
+  for (const block of logicBlocks) {
+    const sectionId = typeof block.sectionId === "string" ? block.sectionId.trim() : "";
+    if (!sectionId) continue;
+    const existing = bySectionId.get(sectionId) ?? [];
+    existing.push(block);
+    bySectionId.set(sectionId, existing);
+  }
+  const assign2 = (list) => {
+    for (const section of list) {
+      const sectionId = typeof section.id === "string" ? section.id.trim() : "";
+      const blocks = sectionId ? bySectionId.get(sectionId) : void 0;
+      if (blocks && blocks.length > 0) {
+        section.logicBlocks = blocks.map((block) => ({
+          ...block,
+          statements: block.statements.map((statement) => ({
+            ...statement,
+            ...statement.meta ? { meta: { ...statement.meta } } : {}
+          })),
+          ...block.metadata ? { metadata: { ...block.metadata } } : {}
+        }));
+      }
+      if (section.children.length > 0) assign2(section.children);
+    }
+  };
+  assign2(sections);
+  return sections;
+}
 function parseWGSLShader(name, code) {
   const result = {
     name,
@@ -10899,6 +11086,8 @@ async function parseMarkdown(source) {
   const wgslShaders = extractWGSLBlocks(expandedSource);
   const sections = extractSections(expandedSource);
   const codeBlocks = extractCodeBlocks(expandedSource);
+  const logicBlocks = extractLogicBlocks(codeBlocks, sections);
+  attachLogicBlocksToSections(sections, logicBlocks);
   let blobBlocks = extractBlobBlocks(codeBlocks);
   if (blobBlocks.length > 0 && blobBlocks.some((b) => !!b.magic)) {
     blobBlocks = await Promise.all(
@@ -10923,7 +11112,8 @@ async function parseMarkdown(source) {
     metadata,
     wgslShaders,
     blobBlocks,
-    timedBlocks
+    timedBlocks,
+    logicBlocks
   };
 }
 function _parseTimedMs(v2) {
@@ -16323,14 +16513,16 @@ function parseLooseDirectiveObject(raw) {
   }
   if (buf.trim()) parts.push(buf.trim());
   const out = {};
+  let parsedEntryCount = 0;
   for (const part of parts) {
     if (!part) continue;
     const colon = part.indexOf(":");
     if (colon <= 0) continue;
     const key = part.slice(0, colon).trim().replace(/^"|"$/g, "").replace(/^'|'$/g, "");
     out[key] = parseLooseDirectiveValue(part.slice(colon + 1));
+    parsedEntryCount++;
   }
-  return out;
+  return parsedEntryCount > 0 ? out : null;
 }
 function parseDirectiveObject(raw) {
   const trimmed = raw.trim();
@@ -16491,6 +16683,56 @@ function findInlineDirectiveEnd(text, start) {
   }
   return -1;
 }
+function findClosingParen(text, start) {
+  let i = start;
+  let depth = 1;
+  let quote2 = null;
+  while (i < text.length) {
+    const ch = text[i] || "";
+    if (quote2) {
+      if (ch === "\\") {
+        i += 2;
+        continue;
+      }
+      if (ch === quote2) quote2 = null;
+      i++;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote2 = ch;
+      i++;
+      continue;
+    }
+    if (ch === "(") {
+      depth++;
+      i++;
+      continue;
+    }
+    if (ch === ")") {
+      depth--;
+      if (depth === 0) return i;
+      i++;
+      continue;
+    }
+    i++;
+  }
+  return -1;
+}
+function parseLinkDestination(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const titleMatch = trimmed.match(/^(.*?)(?:\s+("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'))\s*$/);
+  if (!titleMatch) {
+    return { url: trimmed };
+  }
+  const url = String(titleMatch[1] ?? "").trim();
+  const quotedTitle = String(titleMatch[2] ?? "");
+  if (!url || !quotedTitle) return { url: trimmed };
+  return {
+    url,
+    title: quotedTitle.slice(1, -1).replace(/\\([\\"'])/g, "$1")
+  };
+}
 function parseInlines(text, options) {
   const inlines = [];
   let i = 0;
@@ -16538,13 +16780,34 @@ function parseInlines(text, options) {
     if (ch === "[") {
       const closeBracket = text.indexOf("]", i + 1);
       const openParen = closeBracket !== -1 ? text.indexOf("(", closeBracket + 1) : -1;
-      const closeParen = openParen !== -1 ? text.indexOf(")", openParen + 1) : -1;
+      const closeParen = openParen !== -1 ? findClosingParen(text, openParen + 1) : -1;
       if (closeBracket !== -1 && openParen === closeBracket + 1 && closeParen !== -1) {
         const label = text.slice(i + 1, closeBracket);
-        const url = text.slice(openParen + 1, closeParen);
+        const destination = parseLinkDestination(text.slice(openParen + 1, closeParen));
+        let consumed = closeParen + 1;
+        let meta = null;
+        let directiveStart = consumed;
+        while (directiveStart < text.length && /\s/.test(text[directiveStart] || "")) directiveStart++;
+        if (text[directiveStart] === "{") {
+          const directiveEnd = findInlineDirectiveEnd(text, directiveStart + 1);
+          if (directiveEnd !== -1) {
+            meta = parseDirectiveObject(text.slice(directiveStart, directiveEnd + 1));
+            if (meta) {
+              consumed = directiveEnd + 1;
+            }
+          }
+        }
         flushText();
-        if (label) inlines.push({ kind: "link", text: label, url });
-        i = closeParen + 1;
+        if (label && (destination == null ? void 0 : destination.url)) {
+          inlines.push({
+            kind: "link",
+            text: label,
+            url: destination.url,
+            ...destination.title ? { title: destination.title } : {},
+            ...meta ? { meta } : {}
+          });
+        }
+        i = consumed;
         continue;
       }
     }
@@ -16767,7 +17030,7 @@ function tokenizeInlines(inlines, ctx) {
   const runs = [];
   const em = (ctx == null ? void 0 : ctx.em) === true;
   const strong = (ctx == null ? void 0 : ctx.strong) === true;
-  const pushText = (text, kind, url) => {
+  const pushText = (text, kind, url, title, meta) => {
     if (kind === "text") {
       const parts = text.split(/(\s+)/);
       for (const p of parts) {
@@ -16776,7 +17039,7 @@ function tokenizeInlines(inlines, ctx) {
       }
       return;
     }
-    runs.push({ kind, text, ...url ? { url } : {}, em, strong });
+    runs.push({ kind, text, ...url ? { url } : {}, ...title ? { title } : {}, ...meta ? { meta } : {}, em, strong });
   };
   for (const inline of inlines) {
     if (inline.kind === "text") {
@@ -16786,7 +17049,7 @@ function tokenizeInlines(inlines, ctx) {
     } else if (inline.kind === "widget") {
       runs.push({ kind: "widget", widget: inline.widget });
     } else if (inline.kind === "link") {
-      pushText(inline.text, "link", inline.url);
+      pushText(inline.text, "link", inline.url, inline.title, inline.meta);
     } else if (inline.kind === "code") {
       pushText(inline.text, "code");
     } else if (inline.kind === "em") {
@@ -17113,7 +17376,16 @@ function layoutMarkdownDocument(nodes, box, metrics, style, scrollY = 0, padding
       }
       if (run.kind === "link" && run.url && run.text.trim().length > 0) {
         const w = measure ? measure(run.text) : run.text.length * charW;
-        linkRegions.push({ x: cx, y: textY, w, h: charH, url: run.url, text: run.text });
+        linkRegions.push({
+          x: cx,
+          y: textY,
+          w,
+          h: charH,
+          url: run.url,
+          text: run.text,
+          ...run.title ? { title: run.title } : {},
+          ...run.meta ? { meta: { ...run.meta } } : {}
+        });
         if (linkUnderline) {
           ops.push({ kind: "rect", x: cx, y: textY + charH - 2, w, h: 2, color });
           bumpMax(cx, textY + charH - 2, w, 2);
@@ -18837,6 +19109,12 @@ class GUISystem {
   }
 }
 function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, getViewportRect, getSafeAreaInsets, getCurrentWorldSection, resolveWorldSectionSelector) {
+  const normalizeAutoMode = (value) => {
+    if (value === true || value === "auto") return true;
+    if (value === false || value === "manual" || value === void 0 || value === null) return false;
+    return !!value;
+  };
+  const valuesEqual = (a, b) => Object.is(a, b);
   const defaultBreakpointThresholds = {
     sm: 480,
     md: 768,
@@ -18855,8 +19133,14 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
       }
     } catch {
     }
-    const dpr = typeof window !== "undefined" && window.devicePixelRatio ? Number(window.devicePixelRatio) : 1;
-    const v2 = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+    let dpr = 1;
+    if (typeof window !== "undefined" && window.devicePixelRatio) {
+      dpr = Number(window.devicePixelRatio);
+    }
+    let v2 = 1;
+    if (Number.isFinite(dpr) && dpr > 0) {
+      v2 = dpr;
+    }
     return { scaleX: v2, scaleY: v2 };
   };
   const scaleBounds = (bounds) => {
@@ -19057,12 +19341,15 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
         const width = Number((rect == null ? void 0 : rect.width) ?? 0);
         const height = Number((rect == null ? void 0 : rect.height) ?? 0);
         if ([x, y, width, height].every(Number.isFinite)) {
-          return api._boundsSpace === "device" ? normalizeViewport({ x, y, width, height, boundsSpace: "css" }) : { x, y, width, height };
+          if (api._boundsSpace === "device") {
+            return normalizeViewport({ x, y, width, height, boundsSpace: "css" });
+          }
+          return { x, y, width, height };
         }
       }
     } catch {
     }
-    return api._boundsSpace === "device" ? { x: 0, y: 0, width: 0, height: 0 } : { x: 0, y: 0, width: 0, height: 0 };
+    return { x: 0, y: 0, width: 0, height: 0 };
   };
   const safeGetSafeAreaInsets = () => {
     const zero = { top: 0, right: 0, bottom: 0, left: 0 };
@@ -19110,8 +19397,14 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
   };
   const safeGetCurrentWorldSection = () => {
     try {
-      const section = typeof getCurrentWorldSection === "function" ? getCurrentWorldSection() : null;
-      return typeof section === "number" && Number.isFinite(section) ? section : null;
+      let section = null;
+      if (typeof getCurrentWorldSection === "function") {
+        section = getCurrentWorldSection();
+      }
+      if (typeof section === "number" && Number.isFinite(section)) {
+        return section;
+      }
+      return null;
     } catch {
       return null;
     }
@@ -19134,7 +19427,10 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
     try {
       if (typeof resolveWorldSectionSelector === "function") {
         const resolved = resolveWorldSectionSelector(raw);
-        return typeof resolved === "number" && Number.isFinite(resolved) ? resolved : null;
+        if (typeof resolved === "number" && Number.isFinite(resolved)) {
+          return resolved;
+        }
+        return null;
       }
     } catch {
       return null;
@@ -19151,19 +19447,74 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
     }
     return resolved;
   };
+  const normalizeBindingPath = (path) => {
+    if (Array.isArray(path)) {
+      return path.map((part) => String(part)).filter(Boolean);
+    }
+    if (typeof path === "string") {
+      const parts = path.split(".").map((part) => part.trim()).filter(Boolean);
+      if (parts[0] === "state" && parts.length > 1) {
+        return parts.slice(1);
+      }
+      return parts;
+    }
+    if (path === null || path === void 0 || path === "") {
+      return [];
+    }
+    return [String(path)];
+  };
+  const resolveScreenWidgetType = (type) => {
+    const raw = String(type ?? "").trim();
+    if (!raw) return "label";
+    if (raw === "editor") return "textEditor";
+    if (raw === "markdown") return "markdownView";
+    if (raw === "piano") return "pianoKeyboard";
+    if (raw === "text") return "label";
+    return raw;
+  };
+  const resolveScreenLayoutMode = (type) => {
+    const raw = String(type ?? "").trim();
+    if (raw === "row") return "row";
+    if (raw === "grid") return "grid";
+    return "stack";
+  };
+  const resolveSpacingTokenValue = (tokens, value) => {
+    if (typeof value === "number") return value;
+    if (typeof value !== "string") return value;
+    const raw = value.trim();
+    if (!raw) return value;
+    if (tokens && Object.prototype.hasOwnProperty.call(tokens.spacing, raw)) {
+      return tokens.spacing[raw];
+    }
+    const numeric = Number(raw);
+    return Number.isFinite(numeric) ? numeric : value;
+  };
   const api = {
     _system: null,
     _boundsSpace: "css",
+    _autoInput: false,
+    _autoUpdate: false,
     _nextSectionGroupId: 1,
+    _bindings: [],
+    _screenObservers: [],
+    _screenLayouts: [],
     _sectionBindings: [],
     /**
      * Initialize GUI system
      * Call this in on:init
      */
     init(options) {
-      this._boundsSpace = options && options.boundsSpace === "device" ? "device" : "css";
+      this._boundsSpace = "css";
+      if (options && options.boundsSpace === "device") {
+        this._boundsSpace = "device";
+      }
+      this._autoInput = normalizeAutoMode((options == null ? void 0 : options.autoInput) ?? (options == null ? void 0 : options.input));
+      this._autoUpdate = normalizeAutoMode((options == null ? void 0 : options.autoUpdate) ?? (options == null ? void 0 : options.update));
       this._system = new GUISystem();
       this._nextSectionGroupId = 1;
+      this._bindings = [];
+      this._screenObservers = [];
+      this._screenLayouts = [];
       this._sectionBindings = [];
       if (getStyle) {
         try {
@@ -19177,6 +19528,12 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
       }
       return this._system;
     },
+    isAutoInputEnabled() {
+      return !!this._autoInput;
+    },
+    isAutoUpdateEnabled() {
+      return !!this._autoUpdate;
+    },
     _allocateSectionGroup() {
       const group = `__storie_gui_section_${this._nextSectionGroupId++}`;
       return group;
@@ -19186,7 +19543,10 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
     },
     _applySectionBinding(binding, currentSection) {
       if (!this._system) return false;
-      const activeSection = typeof currentSection === "number" && Number.isFinite(currentSection) ? currentSection : safeGetCurrentWorldSection();
+      let activeSection = safeGetCurrentWorldSection();
+      if (typeof currentSection === "number" && Number.isFinite(currentSection)) {
+        activeSection = currentSection;
+      }
       const visible = activeSection !== null && binding.sections.includes(activeSection);
       if (!visible && binding.clearFocusOnHide) {
         const focused = this._system.getFocusedWidget();
@@ -19199,7 +19559,10 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
     },
     syncSectionBindings(currentSection) {
       if (!this._system) return;
-      const activeSection = typeof currentSection === "number" && Number.isFinite(currentSection) ? currentSection : safeGetCurrentWorldSection();
+      let activeSection = safeGetCurrentWorldSection();
+      if (typeof currentSection === "number" && Number.isFinite(currentSection)) {
+        activeSection = currentSection;
+      }
       for (const binding of this._sectionBindings) {
         this._applySectionBinding(binding, activeSection);
       }
@@ -19291,6 +19654,567 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
      */
     getSystem() {
       return this._system;
+    },
+    _resolveWidget(target) {
+      if (!this._system || target === null || target === void 0) return null;
+      if (typeof target === "string") {
+        return this._system.getWidgetManager().get(target) ?? null;
+      }
+      if (typeof target === "object" && typeof target.id === "string") {
+        return target;
+      }
+      return null;
+    },
+    _readBoundState(source, path) {
+      if (!source || !path.length) return void 0;
+      let current = source;
+      for (const key of path) {
+        if (current === null || current === void 0) return void 0;
+        current = current[key];
+      }
+      return current;
+    },
+    _writeBoundState(source, path, value) {
+      if (!source || !path.length) return false;
+      let current = source;
+      for (let i = 0; i < path.length - 1; i++) {
+        const key = path[i];
+        if (current[key] === null || current[key] === void 0 || typeof current[key] !== "object") {
+          current[key] = {};
+        }
+        current = current[key];
+      }
+      current[path[path.length - 1]] = value;
+      return true;
+    },
+    _inferBindingMode(widget) {
+      if (!widget) return null;
+      if (typeof widget.getValue === "function" && typeof widget.setValue === "function") return "value";
+      if (typeof widget.isChecked === "function" && typeof widget.setChecked === "function") return "checked";
+      if (typeof widget.setText === "function" || typeof widget.setLabel === "function") return "text";
+      return null;
+    },
+    _readWidgetBindingValue(widget, mode) {
+      if (!widget) return void 0;
+      if (mode === "value") {
+        return typeof widget.getValue === "function" ? widget.getValue() : void 0;
+      }
+      if (mode === "checked") {
+        return typeof widget.isChecked === "function" ? !!widget.isChecked() : void 0;
+      }
+      if (typeof widget.text === "string") return widget.text;
+      if (typeof widget.label === "string") return widget.label;
+      return void 0;
+    },
+    _writeWidgetBindingValue(widget, mode, value) {
+      if (!widget) return;
+      if (mode === "value") {
+        if (typeof widget.setValue === "function") widget.setValue(value);
+        return;
+      }
+      if (mode === "checked") {
+        if (typeof widget.setChecked === "function") widget.setChecked(!!value);
+        return;
+      }
+      if (typeof widget.setText === "function") {
+        widget.setText(value);
+      } else if (typeof widget.setLabel === "function") {
+        widget.setLabel(value);
+      }
+    },
+    _syncBinding(binding) {
+      const widget = this._resolveWidget(binding.widget);
+      if (!widget) return;
+      const stateValue = this._readBoundState(binding.source, binding.path);
+      const widgetValue = this._readWidgetBindingValue(widget, binding.mode);
+      const canPush = binding.direction !== "widget-to-state";
+      const canPull = binding.direction !== "state-to-widget";
+      if (!binding.initialized) {
+        if (stateValue !== void 0 && canPush && !valuesEqual(stateValue, widgetValue)) {
+          this._writeWidgetBindingValue(widget, binding.mode, stateValue);
+        } else if (stateValue === void 0 && canPull && widgetValue !== void 0) {
+          this._writeBoundState(binding.source, binding.path, widgetValue);
+        }
+        binding.initialized = true;
+        binding.lastStateValue = this._readBoundState(binding.source, binding.path);
+        binding.lastWidgetValue = this._readWidgetBindingValue(widget, binding.mode);
+        return;
+      }
+      let nextStateValue = stateValue;
+      let nextWidgetValue = widgetValue;
+      if (canPush && !valuesEqual(nextStateValue, binding.lastStateValue) && !valuesEqual(nextStateValue, nextWidgetValue)) {
+        this._writeWidgetBindingValue(widget, binding.mode, nextStateValue);
+        nextWidgetValue = this._readWidgetBindingValue(widget, binding.mode);
+      } else if (canPull && !valuesEqual(nextWidgetValue, binding.lastWidgetValue) && !valuesEqual(nextWidgetValue, nextStateValue)) {
+        this._writeBoundState(binding.source, binding.path, nextWidgetValue);
+        nextStateValue = this._readBoundState(binding.source, binding.path);
+      }
+      binding.lastStateValue = nextStateValue;
+      binding.lastWidgetValue = nextWidgetValue;
+    },
+    _buildScreenCallbackContext(name, widget, state, extra) {
+      const mode = this._inferBindingMode(widget) ?? "text";
+      const value = this._readWidgetBindingValue(widget, mode);
+      let checked = void 0;
+      let text = void 0;
+      if (mode === "checked") {
+        checked = value;
+      }
+      if (mode === "text") {
+        text = value;
+      }
+      const context = {
+        name,
+        widget,
+        state,
+        value,
+        checked,
+        text,
+        gui: this
+      };
+      if (extra && typeof extra === "object") {
+        Object.assign(context, extra);
+      }
+      return context;
+    },
+    _registerScreenObserver(widget, name, state, callbackType, callback, mode) {
+      const resolvedMode = mode ?? this._inferBindingMode(widget);
+      if (!resolvedMode) return;
+      const initialValue = this._readWidgetBindingValue(widget, resolvedMode);
+      this._screenObservers.push({
+        widget,
+        name,
+        state,
+        mode: resolvedMode,
+        callbackType,
+        callback,
+        lastValue: initialValue,
+        initialized: true
+      });
+    },
+    _syncScreenObservers() {
+      for (const observer of this._screenObservers) {
+        const widget = this._resolveWidget(observer.widget);
+        if (!widget) continue;
+        const value = this._readWidgetBindingValue(widget, observer.mode);
+        if (!observer.initialized) {
+          observer.initialized = true;
+          observer.lastValue = value;
+          continue;
+        }
+        if (valuesEqual(value, observer.lastValue)) {
+          continue;
+        }
+        observer.lastValue = value;
+        observer.callback(this._buildScreenCallbackContext(observer.name, widget, observer.state, {
+          type: observer.callbackType,
+          event: observer.callbackType
+        }));
+      }
+    },
+    _syncScreenLayouts() {
+      for (const entry of this._screenLayouts) {
+        if (!(entry == null ? void 0 : entry.container) || typeof entry.container.fitToViewport !== "function") continue;
+        const viewport = this.getViewportRect();
+        const fit = entry.fit && typeof entry.fit === "object" ? { ...entry.fit } : {};
+        if (typeof entry.callback === "function") {
+          const responsive = viewport ? this.getResponsiveInfo(viewport) : null;
+          const layout = entry.layout && typeof entry.layout === "object" ? { ...entry.layout } : null;
+          const override = entry.callback({
+            gui: this,
+            root: entry.container,
+            widgets: entry.widgets,
+            state: entry.state,
+            viewport,
+            responsive,
+            tokens: this.getTokens(),
+            fit: { ...fit },
+            layout
+          });
+          if (override && typeof override === "object") {
+            let nextFit = override;
+            if (override.fit && typeof override.fit === "object") {
+              nextFit = override.fit;
+            }
+            Object.assign(fit, nextFit);
+          }
+        }
+        entry.container.fitToViewport(viewport, fit, true);
+      }
+    },
+    bind(target, source, path, options) {
+      if (!this._system) {
+        throw new Error("GUI system not initialized. Call gui.init() first.");
+      }
+      const widget = this._resolveWidget(target);
+      if (!widget) {
+        throw new Error("gui.bind(target, source, path): widget could not be resolved");
+      }
+      const bindingPath = normalizeBindingPath(path);
+      if (!bindingPath.length) {
+        throw new Error("gui.bind(target, source, path): path is required");
+      }
+      const mode = (options == null ? void 0 : options.mode) ?? this._inferBindingMode(widget);
+      if (!mode) {
+        throw new Error("gui.bind(target, source, path): widget does not support a bindable value mode");
+      }
+      const binding = {
+        widget,
+        source,
+        path: bindingPath,
+        mode,
+        direction: (options == null ? void 0 : options.direction) ?? "both",
+        lastStateValue: void 0,
+        lastWidgetValue: void 0,
+        initialized: false
+      };
+      this._bindings.push(binding);
+      this._syncBinding(binding);
+      return widget;
+    },
+    screen(options) {
+      const nextOptions = options && typeof options === "object" ? options : {};
+      if (!this._system) {
+        this.init(nextOptions);
+      }
+      const created = {};
+      let layoutConfig = null;
+      if (nextOptions.layout && typeof nextOptions.layout === "object") {
+        layoutConfig = { ...nextOptions.layout };
+      }
+      let layoutCallback = null;
+      if (typeof nextOptions.onLayout === "function") {
+        layoutCallback = nextOptions.onLayout;
+      } else if (typeof (layoutConfig == null ? void 0 : layoutConfig.onLayout) === "function") {
+        layoutCallback = layoutConfig.onLayout;
+      }
+      let rootLayout = null;
+      let rootLayoutEntry = null;
+      if (layoutConfig) {
+        delete layoutConfig.onLayout;
+        const tokens = this.getTokens();
+        layoutConfig.padding = resolveSpacingTokenValue(tokens, layoutConfig.padding);
+        layoutConfig.gap = resolveSpacingTokenValue(tokens, layoutConfig.gap);
+        layoutConfig.rowGap = resolveSpacingTokenValue(tokens, layoutConfig.rowGap);
+        layoutConfig.columnGap = resolveSpacingTokenValue(tokens, layoutConfig.columnGap);
+        layoutConfig.inset = resolveSpacingTokenValue(tokens, layoutConfig.inset);
+        layoutConfig.insetX = resolveSpacingTokenValue(tokens, layoutConfig.insetX);
+        layoutConfig.insetY = resolveSpacingTokenValue(tokens, layoutConfig.insetY);
+        layoutConfig.insetTop = resolveSpacingTokenValue(tokens, layoutConfig.insetTop);
+        layoutConfig.insetRight = resolveSpacingTokenValue(tokens, layoutConfig.insetRight);
+        layoutConfig.insetBottom = resolveSpacingTokenValue(tokens, layoutConfig.insetBottom);
+        layoutConfig.insetLeft = resolveSpacingTokenValue(tokens, layoutConfig.insetLeft);
+        const rawBounds = layoutConfig.bounds && typeof layoutConfig.bounds === "object" ? layoutConfig.bounds : null;
+        const rootBounds = {
+          x: Number((rawBounds == null ? void 0 : rawBounds.x) ?? 0),
+          y: Number((rawBounds == null ? void 0 : rawBounds.y) ?? 0),
+          width: Number((rawBounds == null ? void 0 : rawBounds.width) ?? layoutConfig.maxWidth ?? 640),
+          height: Number((rawBounds == null ? void 0 : rawBounds.height) ?? 1)
+        };
+        rootLayout = this.createResponsivePanel({
+          bounds: rootBounds,
+          mode: resolveScreenLayoutMode(layoutConfig.type ?? layoutConfig.mode),
+          padding: layoutConfig.padding,
+          gap: layoutConfig.gap,
+          rowGap: layoutConfig.rowGap,
+          columnGap: layoutConfig.columnGap,
+          columns: layoutConfig.columns,
+          maxWidth: layoutConfig.maxWidth,
+          alignX: layoutConfig.alignX ?? "stretch",
+          alignY: layoutConfig.alignY,
+          layout: layoutConfig.layout,
+          group: nextOptions.group
+        });
+        rootLayoutEntry = {
+          container: rootLayout,
+          fit: {
+            inset: layoutConfig.inset,
+            insetX: layoutConfig.insetX,
+            insetY: layoutConfig.insetY,
+            insetTop: layoutConfig.insetTop,
+            insetRight: layoutConfig.insetRight,
+            insetBottom: layoutConfig.insetBottom,
+            insetLeft: layoutConfig.insetLeft,
+            width: layoutConfig.width,
+            height: layoutConfig.height,
+            maxWidth: layoutConfig.maxWidth,
+            maxHeight: layoutConfig.maxHeight,
+            anchorX: layoutConfig.anchorX,
+            anchorY: layoutConfig.anchorY
+          },
+          callback: layoutCallback,
+          state: nextOptions.state,
+          widgets: created,
+          layout: layoutConfig
+        };
+        this._screenLayouts.push(rootLayoutEntry);
+      }
+      const widgets = nextOptions.widgets && typeof nextOptions.widgets === "object" ? nextOptions.widgets : {};
+      const createWidget = (name, spec, parentLayout) => {
+        if (!spec || typeof spec !== "object") {
+          throw new Error(`gui.screen(...): widget "${name}" must be an object spec`);
+        }
+        const nextSpec = { ...spec };
+        const type = resolveScreenWidgetType(nextSpec.type);
+        const bindSpec = nextSpec.bind;
+        let childSpecs = null;
+        if (nextSpec.widgets && typeof nextSpec.widgets === "object") {
+          childSpecs = nextSpec.widgets;
+        } else if (nextSpec.children && typeof nextSpec.children === "object") {
+          childSpecs = nextSpec.children;
+        }
+        const onClick = typeof nextSpec.onClick === "function" ? nextSpec.onClick : null;
+        const onToggle = typeof nextSpec.onToggle === "function" ? nextSpec.onToggle : null;
+        const onChange = typeof nextSpec.onChange === "function" ? nextSpec.onChange : null;
+        delete nextSpec.type;
+        delete nextSpec.bind;
+        delete nextSpec.widgets;
+        delete nextSpec.children;
+        delete nextSpec.onClick;
+        delete nextSpec.onToggle;
+        delete nextSpec.onChange;
+        if (nextSpec.id === void 0) nextSpec.id = name;
+        if (nextOptions.group !== void 0 && nextSpec.group === void 0) {
+          nextSpec.group = nextOptions.group;
+        }
+        if (layoutConfig) {
+          const rawBounds = nextSpec.bounds && typeof nextSpec.bounds === "object" ? nextSpec.bounds : {};
+          nextSpec.bounds = {
+            x: Number(rawBounds.x ?? 0),
+            y: Number(rawBounds.y ?? 0),
+            width: Number(rawBounds.width ?? 1),
+            height: Number(rawBounds.height ?? 1)
+          };
+          nextSpec.layout = {
+            widthPolicy: "fill",
+            heightPolicy: "fit-content",
+            minWidth: 0,
+            ...nextSpec.layout || {}
+          };
+        }
+        let widget;
+        switch (type) {
+          case "button":
+            widget = this.createButton(nextSpec);
+            break;
+          case "label":
+            widget = this.createLabel(nextSpec);
+            break;
+          case "checkbox":
+            widget = this.createCheckbox(nextSpec);
+            break;
+          case "slider":
+            widget = this.createSlider(nextSpec);
+            break;
+          case "pianoKeyboard":
+            widget = this.createPianoKeyboard(nextSpec);
+            break;
+          case "textField":
+            widget = this.createTextField(nextSpec);
+            break;
+          case "textEditor":
+            if (typeof this.createTextEditor === "function") {
+              widget = this.createTextEditor(nextSpec);
+            } else {
+              widget = this.createTextField(nextSpec);
+            }
+            break;
+          case "markdownView":
+            widget = this.createMarkdownView(nextSpec);
+            break;
+          case "container":
+            widget = this.createContainer(nextSpec);
+            break;
+          case "responsivePanel":
+            widget = this.createResponsivePanel(nextSpec);
+            break;
+          default:
+            throw new Error(`gui.screen(...): unsupported widget type "${type}" for "${name}"`);
+        }
+        created[name] = widget;
+        const hostLayout = parentLayout ?? rootLayout;
+        if (hostLayout && typeof hostLayout.add === "function") {
+          hostLayout.add(widget);
+        }
+        if (onClick && typeof widget.on === "function") {
+          widget.on("click", (event) => {
+            onClick(this._buildScreenCallbackContext(name, widget, nextOptions.state, {
+              type: "onClick",
+              event
+            }));
+          });
+        }
+        if (onToggle) {
+          this._registerScreenObserver(widget, name, nextOptions.state, "onToggle", onToggle, "checked");
+        }
+        if (onChange) {
+          this._registerScreenObserver(widget, name, nextOptions.state, "onChange", onChange);
+        }
+        if (bindSpec !== void 0) {
+          if (typeof bindSpec === "string" || Array.isArray(bindSpec)) {
+            if (!nextOptions.state) {
+              throw new Error(`gui.screen(...): widget "${name}" uses bind but no screen state was provided`);
+            }
+            this.bind(widget, nextOptions.state, bindSpec);
+          } else if (bindSpec && typeof bindSpec === "object") {
+            let source = nextOptions.state;
+            if (Object.prototype.hasOwnProperty.call(bindSpec, "source")) {
+              source = bindSpec.source;
+            }
+            const path = bindSpec.path;
+            if (!source) {
+              throw new Error(`gui.screen(...): widget "${name}" binding requires a source object`);
+            }
+            this.bind(widget, source, path, {
+              mode: bindSpec.mode,
+              direction: bindSpec.direction
+            });
+          }
+        }
+        if (childSpecs && (type === "container" || type === "responsivePanel")) {
+          for (const [childName, childSpec] of Object.entries(childSpecs)) {
+            createWidget(childName, childSpec, widget);
+          }
+          if (typeof widget.layout === "function") {
+            widget.layout();
+          }
+        }
+        return widget;
+      };
+      for (const [name, spec] of Object.entries(widgets)) {
+        createWidget(name, spec);
+      }
+      if (rootLayout) {
+        this._syncScreenLayouts();
+      }
+      const screenAPI = {
+        widgets: created,
+        root: rootLayout,
+        get: (target) => created[target] ?? this.get(target),
+        onLayout: (callback) => {
+          if (rootLayoutEntry) {
+            if (typeof callback === "function") {
+              rootLayoutEntry.callback = callback;
+            } else {
+              rootLayoutEntry.callback = null;
+            }
+          }
+          return screenAPI;
+        },
+        bind: (target, source, path, bindOptions) => {
+          const resolvedTarget = typeof target === "string" && created[target] ? created[target] : target;
+          this.bind(resolvedTarget, source, path, bindOptions);
+          return screenAPI;
+        }
+      };
+      return screenAPI;
+    },
+    syncBindings() {
+      if (!this._system) return;
+      for (const binding of this._bindings) {
+        this._syncBinding(binding);
+      }
+    },
+    get(target) {
+      return this._resolveWidget(target);
+    },
+    label(text, config) {
+      return {
+        ...config && typeof config === "object" ? config : {},
+        type: "label",
+        text
+      };
+    },
+    button(label, config) {
+      return {
+        ...config && typeof config === "object" ? config : {},
+        type: "button",
+        label
+      };
+    },
+    checkbox(label, config) {
+      return {
+        ...config && typeof config === "object" ? config : {},
+        type: "checkbox",
+        label
+      };
+    },
+    slider(label, config) {
+      return {
+        ...config && typeof config === "object" ? config : {},
+        type: "slider",
+        label
+      };
+    },
+    input(config) {
+      return {
+        ...config && typeof config === "object" ? config : {},
+        type: "textField"
+      };
+    },
+    editor(config) {
+      return {
+        ...config && typeof config === "object" ? config : {},
+        type: "textEditor"
+      };
+    },
+    container(config) {
+      return {
+        ...config && typeof config === "object" ? config : {},
+        type: "container"
+      };
+    },
+    panel(config) {
+      return {
+        ...config && typeof config === "object" ? config : {},
+        type: "responsivePanel"
+      };
+    },
+    text(target, nextText) {
+      const widget = this._resolveWidget(target);
+      if (!widget) return null;
+      if (arguments.length >= 2) {
+        if (typeof widget.setText === "function") {
+          widget.setText(nextText);
+        } else if (typeof widget.setLabel === "function") {
+          widget.setLabel(nextText);
+        } else {
+          throw new Error("gui.text(target, value): widget does not support text/label updates");
+        }
+      }
+      if (typeof widget.text === "string") return widget.text;
+      if (typeof widget.label === "string") return widget.label;
+      return null;
+    },
+    value(target, nextValue) {
+      const widget = this._resolveWidget(target);
+      if (!widget) return null;
+      if (arguments.length >= 2) {
+        if (typeof widget.setValue === "function") {
+          widget.setValue(nextValue);
+        } else {
+          throw new Error("gui.value(target, value): widget does not support setValue()");
+        }
+      }
+      if (typeof widget.getValue === "function") {
+        return widget.getValue();
+      }
+      return null;
+    },
+    checked(target, nextChecked) {
+      const widget = this._resolveWidget(target);
+      if (!widget) return null;
+      if (arguments.length >= 2) {
+        if (typeof widget.setChecked === "function") {
+          widget.setChecked(!!nextChecked);
+        } else {
+          throw new Error("gui.checked(target, value): widget does not support setChecked()");
+        }
+      }
+      if (typeof widget.isChecked === "function") {
+        return !!widget.isChecked();
+      }
+      return null;
     },
     syncTheme() {
       if (!this._system || !getStyle) {
@@ -19565,8 +20489,11 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
      */
     update(mouseX, mouseY, mouseDown) {
       if (!this._system) return;
+      this._syncScreenLayouts();
       const { charWidth, charHeight } = getMetrics();
       this._system.update(mouseX, mouseY, mouseDown, charWidth, charHeight);
+      this.syncBindings();
+      this._syncScreenObservers();
     },
     /**
      * Handle mouse input immediately (pixel coordinates)
@@ -19575,8 +20502,11 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
      */
     handleMouse(mouseX, mouseY, mouseDown) {
       if (!this._system) return;
+      this._syncScreenLayouts();
       const { charWidth, charHeight } = getMetrics();
       this._system.handleMouse(mouseX, mouseY, mouseDown, charWidth, charHeight);
+      this.syncBindings();
+      this._syncScreenObservers();
     },
     /**
      * Handle keyboard input
@@ -19628,6 +20558,8 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
         }
       }
       this._system.handleKey(key, modifiers);
+      this.syncBindings();
+      this._syncScreenObservers();
     },
     /**
      * Handle text input (printable characters)
@@ -19636,6 +20568,8 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
     handleText(text) {
       if (!this._system) return;
       this._system.handleText(text);
+      this.syncBindings();
+      this._syncScreenObservers();
     },
     /**
      * Clear focus from the currently focused widget.
@@ -19657,6 +20591,8 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
      */
     render(uiAPI) {
       if (!this._system) return;
+      this._syncScreenLayouts();
+      this.syncBindings();
       const { charWidth, charHeight } = getMetrics();
       this._system.render(uiAPI, charWidth, charHeight);
     },
@@ -19669,10 +20605,12 @@ function createGUIAPI(getMetrics, getStyle, isTrustedUserInput, getPixelScale, g
      *
      * @example
      * ```js
+    * const rgb = (r, g, b) => ((r & 255) << 24) | ((g & 255) << 16) | ((b & 255) << 8) | 255;
+    *
     * gui.setWidgetRenderer((w, ui) => {
      *   if (w.kind === 'button') {
-     *     ui.rect(w.bounds.x, w.bounds.y, w.bounds.width, w.bounds.height, ui.colors.rgb(255, 80, 140));
-     *     ui.text(w.label, w.bounds.x + 10, w.bounds.y + 18, ui.colors.rgb(10, 10, 10));
+    *     ui.rect(w.bounds.x, w.bounds.y, w.bounds.width, w.bounds.height, rgb(255, 80, 140));
+    *     ui.text(w.label, w.bounds.x + 10, w.bounds.y + 18, rgb(10, 10, 10));
      *     return true;
      *   }
      *   return false;
@@ -26341,6 +27279,15 @@ function parseSfxGraphPreset(value) {
   }
   return { vars, nodes, edges, events };
 }
+function parseSfxGraphPresetJson(jsonText) {
+  let v2;
+  try {
+    v2 = JSON.parse(jsonText);
+  } catch (e) {
+    throw new Error(`[stfxr] Invalid JSON: ${String((e == null ? void 0 : e.message) ?? e)}`);
+  }
+  return parseSfxGraphPreset(v2);
+}
 function parseStfxrDefinition(value) {
   if (!isPlainObject(value)) err("$", "stfxr definition must be an object");
   if (value.nodes !== void 0 || value.preset !== void 0) {
@@ -29047,6 +29994,12 @@ class StorieEngine {
       const doc = engine.documents.get(docId);
       return doc && doc._timedStore ? doc._timedStore : null;
     };
+    const getLogicStore = (documentId) => {
+      const docId = engine.activeDocumentId;
+      if (!docId) return null;
+      const doc = engine.documents.get(docId);
+      return Array.isArray(doc == null ? void 0 : doc._logicStore) ? doc._logicStore : null;
+    };
     const applyWorldsConfigDefaults = (config) => {
       let requiresSectionLayoutRecompile = false;
       if (config.defaultDepth !== void 0) {
@@ -29793,6 +30746,47 @@ class StorieEngine {
           const store = getTimedStore();
           if (!store) return [];
           return Array.from(store.keys());
+        },
+        logicBlocks: () => {
+          const store = getLogicStore();
+          if (!store) return [];
+          return store.map((block) => ({
+            ...block.name ? { name: block.name } : {},
+            ...Object.prototype.hasOwnProperty.call(block, "sectionId") ? { sectionId: block.sectionId ?? null } : {},
+            ...Object.prototype.hasOwnProperty.call(block, "sectionTitle") ? { sectionTitle: block.sectionTitle ?? null } : {},
+            startLine: block.startLine,
+            endLine: block.endLine,
+            statements: Array.isArray(block.statements) ? block.statements.map((statement) => ({
+              source: String(statement.source ?? ""),
+              target: String(statement.target ?? ""),
+              ...typeof statement.rel === "string" && statement.rel ? { rel: statement.rel } : {},
+              ...statement.meta ? { meta: { ...statement.meta } } : {},
+              line: Number(statement.line ?? 0)
+            })) : []
+          }));
+        },
+        logicForSection: (section) => {
+          const store = getLogicStore();
+          if (!store) return [];
+          if (section === void 0 || section === null) {
+            return store.flatMap((block) => Array.isArray(block.statements) ? block.statements.map((statement) => ({
+              source: String(statement.source ?? ""),
+              target: String(statement.target ?? ""),
+              ...typeof statement.rel === "string" && statement.rel ? { rel: statement.rel } : {},
+              ...statement.meta ? { meta: { ...statement.meta } } : {},
+              line: Number(statement.line ?? 0)
+            })) : []);
+          }
+          const resolved = section === "current" ? engine.resolveRuntimeSectionRef("current") : engine.resolveRuntimeSectionRef(section);
+          const wantedSectionId = (resolved == null ? void 0 : resolved.sectionId) ?? null;
+          if (!wantedSectionId) return [];
+          return store.filter((block) => block.sectionId === wantedSectionId).flatMap((block) => Array.isArray(block.statements) ? block.statements.map((statement) => ({
+            source: String(statement.source ?? ""),
+            target: String(statement.target ?? ""),
+            ...typeof statement.rel === "string" && statement.rel ? { rel: statement.rel } : {},
+            ...statement.meta ? { meta: { ...statement.meta } } : {},
+            line: Number(statement.line ?? 0)
+          })) : []);
         },
         atTime: (name, timeSec) => {
           const store = getTimedStore();
@@ -33572,6 +34566,13 @@ class StorieEngine {
       }
     }
   }
+  getWorldsSectionGUIMode() {
+    let mode = "overlay";
+    if (this.worldsConfig.sectionGuiMode === "baked") {
+      mode = "baked";
+    }
+    return mode;
+  }
   clearWorldsInlineWidgets() {
     var _a, _b;
     const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
@@ -33769,6 +34770,7 @@ class StorieEngine {
     return best;
   }
   getVisual3DLinkConnections(options) {
+    var _a;
     if (!this.worldsEnabled || !this.camera3D) return [];
     const visibleOnly = (options == null ? void 0 : options.visibleOnly) === true;
     const internalOnly = (options == null ? void 0 : options.internalOnly) === true;
@@ -33783,6 +34785,7 @@ class StorieEngine {
       for (let linkIndex = 0; linkIndex < regions.length; linkIndex++) {
         const region = regions[linkIndex];
         const internal = typeof region.url === "string" && region.url.startsWith("#");
+        const relation = typeof ((_a = region.meta) == null ? void 0 : _a.rel) === "string" && region.meta.rel.trim() ? region.meta.rel.trim() : typeof region.title === "string" && region.title.trim() ? region.title.trim() : null;
         if (internalOnly && !internal) continue;
         const targetLayout = internal ? this.resolveWorldsInternalLinkTarget(region.url) : null;
         const sourceRectScreen = this.project3DTextureRectToScreen(layout, region);
@@ -33800,6 +34803,9 @@ class StorieEngine {
           linkIndex,
           url: region.url,
           text: region.text,
+          title: typeof region.title === "string" ? region.title : null,
+          meta: region.meta ? { ...region.meta } : null,
+          relation,
           internal,
           targetSectionId: (targetLayout == null ? void 0 : targetLayout.sectionId) ?? null,
           targetSectionIndex: (targetLayout == null ? void 0 : targetLayout.sectionIndex) ?? null,
@@ -33865,22 +34871,6 @@ class StorieEngine {
     const themeLinkColor = this.getStyle("link").fg;
     const themeActiveLinkColor = this.getStyle("active").fg;
     const activeLink = this.getActive3DLink();
-    let viewProj = null;
-    if (this.worlds3DRenderedLinkOverlay.allVisible && this.camera3D) {
-      const canvasW = this.canvas.width;
-      const canvasH = this.canvas.height;
-      if (canvasW > 0 && canvasH > 0) {
-        const aspect = canvasW / canvasH;
-        const view = getCameraViewMatrix(this.camera3D);
-        const proj = getCameraProjectionMatrix(this.camera3D, aspect);
-        viewProj = mat4Multiply(proj, view);
-      }
-    }
-    const isCardPossiblyVisible = (layout) => {
-      if (!this.worlds3DRenderedLinkOverlay.allVisible) return true;
-      if (!viewProj) return true;
-      return this.is3DCardPossiblyVisible(viewProj, layout);
-    };
     const connectors = [];
     const getBezierControlPoint = (start, end) => {
       const worldUp = { x: 0, y: 1, z: 0 };
@@ -33914,7 +34904,6 @@ class StorieEngine {
     };
     const addConnectorsForSource = (sourceLayout2) => {
       if (!sourceLayout2 || !sourceLayout2.visible || !sourceLayout2.texture) return;
-      if (!isCardPossiblyVisible(sourceLayout2)) return;
       const regions = this.sectionLinkRegionsCache.get(sourceLayout2.sectionId);
       if (!regions || regions.length === 0) return;
       const sourceModel = this.get3DCardModelMatrix(sourceLayout2);
@@ -33926,7 +34915,6 @@ class StorieEngine {
         if (this.worlds3DRenderedLinkOverlay.internalOnly && !internal) continue;
         const targetLayout = internal ? this.resolveWorldsInternalLinkTarget(region.url) : null;
         if (!targetLayout || !targetLayout.visible || !targetLayout.texture) continue;
-        if (!isCardPossiblyVisible(targetLayout)) continue;
         const sourceBounds = this.getTextureRectLocalBounds(sourceLayout2, region);
         if (!sourceBounds) continue;
         const targetModel = this.get3DCardModelMatrix(targetLayout);
@@ -34034,15 +35022,39 @@ class StorieEngine {
           const configMin = configState == null ? void 0 : configState.min;
           const configMax = configState == null ? void 0 : configState.max;
           const configStep = configState == null ? void 0 : configState.step;
+          let min = 0;
+          if (Number.isFinite(configMin)) {
+            min = Number(configMin);
+          } else if (Number.isFinite(placement.widget.min)) {
+            min = Number(placement.widget.min);
+          }
+          let max = 100;
+          if (Number.isFinite(configMax)) {
+            max = Number(configMax);
+          } else if (Number.isFinite(placement.widget.max)) {
+            max = Number(placement.widget.max);
+          }
+          let value = 0;
+          if (typeof persisted === "number") {
+            value = persisted;
+          } else if (Number.isFinite(placement.widget.value)) {
+            value = Number(placement.widget.value);
+          }
+          let step = 1;
+          if (Number.isFinite(configStep)) {
+            step = Number(configStep);
+          } else if (Number.isFinite(placement.widget.step)) {
+            step = Number(placement.widget.step);
+          }
           widget = system.createSlider({
             id: `worlds-inline-${widgetKey}`,
             group: "__worlds-inline-widgets",
             bounds,
             label: String((configState == null ? void 0 : configState.label) ?? placement.widget.label ?? ""),
-            min: Number.isFinite(configMin) ? Number(configMin) : Number.isFinite(placement.widget.min) ? Number(placement.widget.min) : 0,
-            max: Number.isFinite(configMax) ? Number(configMax) : Number.isFinite(placement.widget.max) ? Number(placement.widget.max) : 100,
-            value: typeof persisted === "number" ? persisted : Number.isFinite(placement.widget.value) ? Number(placement.widget.value) : 0,
-            step: Number.isFinite(configStep) ? Number(configStep) : Number.isFinite(placement.widget.step) ? Number(placement.widget.step) : 1,
+            min,
+            max,
+            value,
+            step,
             showValue: typeof (configState == null ? void 0 : configState.showValue) === "boolean" ? configState.showValue : placement.widget.showValue,
             sliderStyle: {
               ...typeof (configState == null ? void 0 : configState.fg) === "number" ? { fg: configState.fg } : {},
@@ -34087,8 +35099,13 @@ class StorieEngine {
           widgetId: placement.widget.id,
           kind: placement.widget.type,
           widget,
-          lastValue: placement.widget.type === "slider" ? widget.getValue() : placement.widget.type === "checkbox" ? !!widget.isChecked() : void 0
+          lastValue: void 0
         };
+        if (placement.widget.type === "slider") {
+          entry.lastValue = widget.getValue();
+        } else if (placement.widget.type === "checkbox") {
+          entry.lastValue = !!widget.isChecked();
+        }
         if (entry.lastValue !== void 0) {
           this.worldsInlineWidgetValueState.set(widgetKey, entry.lastValue);
         }
@@ -34189,6 +35206,32 @@ class StorieEngine {
       }
     }
     return handled;
+  }
+  handleOverlayRetainedGUIMouse(pixelX, pixelY, mouseDown) {
+    var _a, _b, _c, _d;
+    const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
+    const system = (_b = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _b.call(guiAPI);
+    if (!system) return false;
+    if (typeof (guiAPI == null ? void 0 : guiAPI.isAutoInputEnabled) === "function" && !guiAPI.isAutoInputEnabled()) return false;
+    const hasSectionBindings = Array.isArray(guiAPI == null ? void 0 : guiAPI._sectionBindings) && guiAPI._sectionBindings.length > 0;
+    if (this.worldsEnabled && hasSectionBindings) return false;
+    const hitBefore = this.isPointOverVisibleGUIWidget(pixelX, pixelY);
+    const focusedBefore = (_c = system.getFocusedWidget) == null ? void 0 : _c.call(system);
+    const { charWidth, charHeight } = this.getGUIPixelMetrics();
+    system.handleMouse(pixelX, pixelY, mouseDown, charWidth, charHeight);
+    const focusedAfter = (_d = system.getFocusedWidget) == null ? void 0 : _d.call(system);
+    return hitBefore || !!focusedBefore || !!focusedAfter;
+  }
+  handleOverlayRetainedGUIKey(key, modifiers) {
+    var _a, _b;
+    const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
+    const system = (_b = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _b.call(guiAPI);
+    if (!system) return false;
+    if (typeof (guiAPI == null ? void 0 : guiAPI.isAutoInputEnabled) === "function" && !guiAPI.isAutoInputEnabled()) return false;
+    const hasSectionBindings = Array.isArray(guiAPI == null ? void 0 : guiAPI._sectionBindings) && guiAPI._sectionBindings.length > 0;
+    if (this.worldsEnabled && hasSectionBindings) return false;
+    system.handleKey(key, modifiers);
+    return true;
   }
   handleWorldsInlineWidgetKey(key, modifiers) {
     var _a, _b, _c;
@@ -34352,6 +35395,17 @@ class StorieEngine {
           timedStore.set(name, { name, entries: b.entries });
         }
         console.log(`  Found ${timedStore.size} timed block(s)`);
+      }
+      const logicStore = Array.isArray(parsed.logicBlocks) ? parsed.logicBlocks.map((block) => ({
+        ...block,
+        statements: block.statements.map((statement) => ({
+          ...statement,
+          ...statement.meta ? { meta: { ...statement.meta } } : {}
+        })),
+        ...block.metadata ? { metadata: { ...block.metadata } } : {}
+      })) : [];
+      if (logicStore.length > 0) {
+        console.log(`  Found ${logicStore.length} logic block(s)`);
       }
       const asciiStore = /* @__PURE__ */ new Map();
       for (const b of parsed.codeBlocks) {
@@ -34759,6 +35813,7 @@ ${exportVars}
         _ansiStore: ansiStore,
         _stfxrStore: stfxrStore,
         _timedStore: timedStore,
+        _logicStore: logicStore,
         _stfxrBakedStore: /* @__PURE__ */ new Map()
       });
       this.activeDocumentId = documentId;
@@ -35600,7 +36655,7 @@ ${exportVars}
    * Shared by the live mainLoop and tickExportFrame.
    */
   runFrame() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     try {
       this.update();
       this.render();
@@ -35758,7 +36813,10 @@ ${exportVars}
         }
         if (this.webgpuUIRenderer) {
           this.syncWorldsInlineWidgets();
-          const inlineGui = this.worldsInlineWidgetInstances.length > 0 ? (_f = (_e = (_d = this.api) == null ? void 0 : _d.gui) == null ? void 0 : _e.getSystem) == null ? void 0 : _f.call(_e) : null;
+          let inlineGui = null;
+          if (this.worldsInlineWidgetInstances.length > 0) {
+            inlineGui = (_f = (_e = (_d = this.api) == null ? void 0 : _d.gui) == null ? void 0 : _e.getSystem) == null ? void 0 : _f.call(_e);
+          }
           if (inlineGui) {
             const { charWidth, charHeight } = this.getGUIPixelMetrics();
             inlineGui.update(this.input.getMouseX(), this.input.getMouseY(), this.input.isMouseDown(0), charWidth, charHeight);
@@ -35766,9 +36824,12 @@ ${exportVars}
           }
           const guiAPIAny = (_g = this.api) == null ? void 0 : _g.gui;
           const systemForSectionGUI = (_h = guiAPIAny == null ? void 0 : guiAPIAny.getSystem) == null ? void 0 : _h.call(guiAPIAny);
-          const bindingsForSectionGUI = Array.isArray(guiAPIAny == null ? void 0 : guiAPIAny._sectionBindings) ? guiAPIAny._sectionBindings : [];
+          let bindingsForSectionGUI = [];
+          if (Array.isArray(guiAPIAny == null ? void 0 : guiAPIAny._sectionBindings)) {
+            bindingsForSectionGUI = guiAPIAny._sectionBindings;
+          }
           if (systemForSectionGUI && this.worldsEnabled && this.camera3D && bindingsForSectionGUI.length > 0) {
-            const sectionGuiMode = this.worldsConfig.sectionGuiMode === "baked" ? "baked" : "overlay";
+            const sectionGuiMode = this.getWorldsSectionGUIMode();
             if (sectionGuiMode === "baked") {
               const anySystem = systemForSectionGUI;
               const needsRebake = typeof anySystem.needsRedraw === "function" && !!anySystem.needsRedraw() || typeof anySystem.getNeedsRedraw === "function" && !!anySystem.getNeedsRedraw();
@@ -35782,7 +36843,11 @@ ${exportVars}
                 }
               }
             }
-            const preferredIndex = this.getResolvedSelected3DSectionIndex() ?? this.current3DSectionIndex;
+            let preferredIndex = this.current3DSectionIndex;
+            const selectedSectionIndex = this.getResolvedSelected3DSectionIndex();
+            if (typeof selectedSectionIndex === "number" && Number.isFinite(selectedSectionIndex)) {
+              preferredIndex = selectedSectionIndex;
+            }
             const preferredLayout = this.getSectionLayoutByIndex(preferredIndex);
             if (preferredLayout && preferredLayout.visible && preferredLayout.interactive !== false && preferredLayout.texture) {
               const xform = this.getWorldsSectionTextureToScreenAffine(preferredLayout);
@@ -35804,9 +36869,15 @@ ${exportVars}
             }
           }
           const guiAPI = (_i = this.api) == null ? void 0 : _i.gui;
-          if (guiAPI && guiAPI.getSystem && guiAPI.getSystem()) {
+          const guiSystem = (_j = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _j.call(guiAPI);
+          if (guiAPI && guiSystem) {
             const hasSectionBindings = Array.isArray(guiAPI == null ? void 0 : guiAPI._sectionBindings) && guiAPI._sectionBindings.length > 0;
-            const sectionGuiMode = this.worldsConfig.sectionGuiMode === "baked" ? "baked" : "overlay";
+            const autoUpdateEnabled = typeof guiAPI.isAutoUpdateEnabled === "function" && !!guiAPI.isAutoUpdateEnabled();
+            if (autoUpdateEnabled && (!this.worldsEnabled || !hasSectionBindings)) {
+              const { charWidth, charHeight } = this.getGUIPixelMetrics();
+              guiSystem.update(this.input.getMouseX(), this.input.getMouseY(), this.input.isMouseDown(0), charWidth, charHeight);
+            }
+            const sectionGuiMode = this.getWorldsSectionGUIMode();
             if (sectionGuiMode !== "baked") {
               this.renderWorldsSectionBoundGUI(this.webgpuUIRenderer, this.activeDocumentId ?? void 0);
             }
@@ -36222,9 +37293,12 @@ ${exportVars}
         return null;
       }
     })();
-    const sectionGuiMode = this.worldsConfig.sectionGuiMode === "baked" ? "baked" : "overlay";
+    const sectionGuiMode = this.getWorldsSectionGUIMode();
     const guiAPIAny = (_a = this.api) == null ? void 0 : _a.gui;
-    const guiBindings = Array.isArray(guiAPIAny == null ? void 0 : guiAPIAny._sectionBindings) ? guiAPIAny._sectionBindings : [];
+    let guiBindings = [];
+    if (Array.isArray(guiAPIAny == null ? void 0 : guiAPIAny._sectionBindings)) {
+      guiBindings = guiAPIAny._sectionBindings;
+    }
     const bakedGuiSections = /* @__PURE__ */ new Set();
     if (sectionGuiMode === "baked" && guiBindings.length > 0) {
       for (const binding of guiBindings) {
@@ -36416,12 +37490,15 @@ ${exportVars}
         }
       }
       {
-        const sectionGuiMode2 = this.worldsConfig.sectionGuiMode === "baked" ? "baked" : "overlay";
+        const sectionGuiMode2 = this.getWorldsSectionGUIMode();
         if (sectionGuiMode2 !== "baked") ;
         else {
           const guiAPI = (_b = this.api) == null ? void 0 : _b.gui;
           const system = (_c = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _c.call(guiAPI);
-          const bindings = Array.isArray(guiAPI == null ? void 0 : guiAPI._sectionBindings) ? guiAPI._sectionBindings : [];
+          let bindings = [];
+          if (Array.isArray(guiAPI == null ? void 0 : guiAPI._sectionBindings)) {
+            bindings = guiAPI._sectionBindings;
+          }
           if (system && bindings.length > 0) {
             let restoreBindings = null;
             if (typeof guiAPI.syncSectionBindings === "function") {
@@ -37621,14 +38698,22 @@ ${exportVars}
     var _a, _b;
     const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
     const system = (_b = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _b.call(guiAPI);
-    return system && typeof system.getFocusedTextInput === "function" ? system.getFocusedTextInput() : null;
+    if (system && typeof system.getFocusedTextInput === "function") {
+      return system.getFocusedTextInput();
+    }
+    return null;
   }
   isPointOverVisibleGUIWidget(pixelX, pixelY) {
     var _a, _b, _c;
     const guiAPI = (_a = this.api) == null ? void 0 : _a.gui;
     const system = (_b = guiAPI == null ? void 0 : guiAPI.getSystem) == null ? void 0 : _b.call(guiAPI);
     const manager = (_c = system == null ? void 0 : system.getWidgetManager) == null ? void 0 : _c.call(system);
-    const widgets = manager && typeof manager.getVisible === "function" ? manager.getVisible() : system && typeof system.getWidgets === "function" ? system.getWidgets() : [];
+    let widgets = [];
+    if (manager && typeof manager.getVisible === "function") {
+      widgets = manager.getVisible();
+    } else if (system && typeof system.getWidgets === "function") {
+      widgets = system.getWidgets();
+    }
     if (!Array.isArray(widgets) || widgets.length === 0) return false;
     const charWidth = this.width > 0 ? this.canvas.width / this.width : 1;
     const charHeight = this.height > 0 ? this.canvas.height / this.height : 1;
@@ -37870,14 +38955,20 @@ ${exportVars}
     const target = this.getFocusedGUITextInput();
     if (!input || !target) return;
     const options = target.getTextInputOptions();
-    const nextValue = options.multiline ? String(input.value ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n") : normalizeSingleLineText(input.value ?? "");
+    let nextValue = normalizeSingleLineText(input.value ?? "");
+    if (options.multiline) {
+      nextValue = String(input.value ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    }
     const currentValue = target.getValue();
     if (nextValue !== currentValue) {
       target.replaceTextRange(0, currentValue.length, nextValue);
     }
     const selectionStart = Number.isFinite(input.selectionStart) ? input.selectionStart ?? nextValue.length : nextValue.length;
     const selectionEnd = Number.isFinite(input.selectionEnd) ? input.selectionEnd ?? selectionStart : selectionStart;
-    const direction = input.selectionDirection === "forward" || input.selectionDirection === "backward" ? input.selectionDirection : "none";
+    let direction = "none";
+    if (input.selectionDirection === "forward" || input.selectionDirection === "backward") {
+      direction = input.selectionDirection;
+    }
     target.setSelectionRange(selectionStart, selectionEnd, direction);
     this.syncHiddenTextInputBridge(false);
   }
@@ -38287,10 +39378,11 @@ ${exportVars}
         }
       }
       const inlineWidgetConsumed = this.handleWorldsInlineWidgetMouse(pixelX, pixelY, action === "press");
+      const overlayGUIConsumed = this.handleOverlayRetainedGUIMouse(pixelX, pixelY, action === "press");
       const sectionGuiConsumed = this.handleWorldsSectionBoundGUIMouse(pixelX, pixelY, action === "press");
       this.input.applySyntheticEvent({ type: "mouse", action, button: "left", x: pixelX, y: pixelY });
       let handledBy3D = false;
-      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && !sectionGuiConsumed && action === "press") {
+      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && !overlayGUIConsumed && !sectionGuiConsumed && action === "press") {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
@@ -38302,7 +39394,7 @@ ${exportVars}
               linkIndex: linkHit.linkIndex
             };
             this.activate3DLink(
-              linkHit.region.url,
+              linkHit.region,
               picked.layout.sectionId,
               picked.layout.sectionIndex,
               linkHit.linkIndex
@@ -38493,8 +39585,14 @@ ${exportVars}
         ctrl: e.ctrlKey,
         alt: e.altKey
       }) : false;
+      const overlayGUIHandled = action === "press" && !inlineWidgetHandled ? this.handleOverlayRetainedGUIKey(e.key, {
+        shift: e.shiftKey,
+        ctrl: e.ctrlKey,
+        alt: e.altKey,
+        meta: e.metaKey
+      }) : false;
       let handledBy3D = false;
-      if (!inlineWidgetHandled && action === "press" && this.worldsEnabled && this.camera3D && this.worldsLinkKeyHandlingEnabled) {
+      if (!inlineWidgetHandled && !overlayGUIHandled && action === "press" && this.worldsEnabled && this.camera3D && this.worldsLinkKeyHandlingEnabled) {
         if (e.key === "Tab") {
           this.move3DLinkFocus(e.shiftKey ? -1 : 1);
           handledBy3D = true;
@@ -38543,7 +39641,7 @@ ${exportVars}
           this.inputDispatchDepth = Math.max(0, this.inputDispatchDepth - 1);
         }
       }
-      if (handledBy3D || inlineWidgetHandled || ((_b = doc == null ? void 0 : doc.handlers) == null ? void 0 : _b.input)) {
+      if (handledBy3D || inlineWidgetHandled || overlayGUIHandled || ((_b = doc == null ? void 0 : doc.handlers) == null ? void 0 : _b.input)) {
         e.preventDefault();
       }
       this.syncHiddenTextInputBridge(action === "press");
@@ -38622,7 +39720,8 @@ ${exportVars}
         }
       }
       const inlineWidgetConsumed = e.button === 0 ? this.handleWorldsInlineWidgetMouse(pixelX, pixelY, action === "press") : false;
-      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && action === "press" && e.button === 0) {
+      const overlayGUIConsumed = e.button === 0 && !inlineWidgetConsumed ? this.handleOverlayRetainedGUIMouse(pixelX, pixelY, action === "press") : false;
+      if (!this.worldsControlsEnabled && !inlineWidgetConsumed && !overlayGUIConsumed && action === "press" && e.button === 0) {
         const picked = this.pick3DAt(pixelX, pixelY);
         if (picked && this.camera3D) {
           const linkHit = this.hitTest3DLinkAtUV(picked.layout.sectionIndex, picked.u, picked.v);
@@ -38633,7 +39732,7 @@ ${exportVars}
               linkIndex: linkHit.linkIndex
             };
             this.activate3DLink(
-              linkHit.region.url,
+              linkHit.region,
               picked.layout.sectionId,
               picked.layout.sectionIndex,
               linkHit.linkIndex
@@ -38764,7 +39863,10 @@ ${exportVars}
     return null;
   }
   getActive3DLink() {
-    return this.hovered3DLink ?? this.focused3DLink;
+    if (this.hovered3DLink) {
+      return this.hovered3DLink;
+    }
+    return this.focused3DLink;
   }
   getWorldsListMarker() {
     const marker = this.worldsConfig.sectionListMarker;
@@ -38784,10 +39886,13 @@ ${exportVars}
     const focused = this.focused3DLink;
     if (!focused) return;
     const sectionKey = focused.sectionId;
-    const regions = sectionKey ? this.sectionLinkRegionsCache.get(sectionKey) : null;
+    let regions = null;
+    if (sectionKey) {
+      regions = this.sectionLinkRegionsCache.get(sectionKey);
+    }
     const region = regions ? regions[focused.linkIndex] : void 0;
     if (!region) return;
-    this.activate3DLink(region.url, focused.sectionId, focused.sectionIndex, focused.linkIndex);
+    this.activate3DLink(region, focused.sectionId, focused.sectionIndex, focused.linkIndex);
   }
   move3DLinkFocus(delta) {
     const links = this.getVisible3DLinks();
@@ -38815,34 +39920,68 @@ ${exportVars}
     );
     if (candidates.length === 0) return;
     const currentIdx = this.getResolvedCurrent3DSectionIndex();
-    const pos = currentIdx !== null && Number.isFinite(currentIdx) ? candidates.findIndex((l) => l.sectionIndex === currentIdx) : -1;
-    const nextPos = pos < 0 ? delta > 0 ? 0 : candidates.length - 1 : Math.max(0, Math.min(candidates.length - 1, pos + delta));
+    let pos = -1;
+    if (currentIdx !== null && Number.isFinite(currentIdx)) {
+      pos = candidates.findIndex((l) => l.sectionIndex === currentIdx);
+    }
+    let nextPos = 0;
+    if (pos < 0) {
+      if (delta > 0) {
+        nextPos = 0;
+      } else {
+        nextPos = candidates.length - 1;
+      }
+    } else {
+      nextPos = Math.max(0, Math.min(candidates.length - 1, pos + delta));
+    }
     const target = candidates[nextPos];
     if (!target) return;
     const last = this.lastApplied3DCameraFocus;
     if (last && last.kind === "focus") {
-      this.request3DCameraFocus({
+      const focusRequest = {
         kind: "focus",
         sectionIndex: target.sectionIndex,
-        distance: last.distance,
-        ...last.keepRotation ? { keepRotation: true } : {},
-        ...last.straighten ? { straighten: true } : {}
-      });
+        distance: last.distance
+      };
+      if (last.keepRotation) {
+        focusRequest.keepRotation = true;
+      }
+      if (last.straighten) {
+        focusRequest.straighten = true;
+      }
+      this.request3DCameraFocus(focusRequest);
     } else {
-      const fill = last && last.kind === "fit" ? last.fill : 0.9;
-      this.request3DCameraFocus({
+      let fill = 0.9;
+      if (last && last.kind === "fit") {
+        fill = last.fill;
+      }
+      const fitRequest = {
         kind: "fit",
         sectionIndex: target.sectionIndex,
-        fill,
-        ...last && last.kind === "fit" && last.keepRotation ? { keepRotation: true } : {},
-        ...last && last.kind === "fit" && last.straighten ? { straighten: true } : {}
-      });
+        fill
+      };
+      if (last && last.kind === "fit" && last.keepRotation) {
+        fitRequest.keepRotation = true;
+      }
+      if (last && last.kind === "fit" && last.straighten) {
+        fitRequest.straighten = true;
+      }
+      this.request3DCameraFocus(fitRequest);
     }
   }
-  activate3DLink(url, sectionId, sectionIndex, linkIndex) {
+  activate3DLink(link2, sectionId, sectionIndex, linkIndex) {
+    const url = typeof link2 === "string" ? link2 : link2.url;
     if (!url) return;
+    const text = typeof link2 === "string" ? null : typeof link2.text === "string" ? link2.text : null;
+    const title = typeof link2 === "string" ? null : typeof link2.title === "string" ? link2.title : null;
+    const meta = typeof link2 === "string" ? null : link2.meta ? { ...link2.meta } : null;
+    const relation = typeof (meta == null ? void 0 : meta.rel) === "string" && meta.rel.trim() ? meta.rel.trim() : title && title.trim() ? title.trim() : null;
     this.activated3DLinksQueue.push({
       url,
+      text,
+      title,
+      meta,
+      relation,
       sectionId: typeof sectionId === "string" && sectionId ? sectionId : null,
       sectionIndex: typeof sectionIndex === "number" ? sectionIndex : null,
       linkIndex: typeof linkIndex === "number" ? linkIndex : null
@@ -38854,18 +39993,28 @@ ${exportVars}
       const layout = this.resolveWorldsInternalLinkTarget(url);
       if (layout) {
         const style = this.lastApplied3DCameraFocus;
-        const fill = (style == null ? void 0 : style.kind) === "fit" ? style.fill : 0.9;
-        const styleOptions = style && style.kind !== "frame" ? {
-          ...style.keepRotation ? { keepRotation: true } : {},
-          ...style.positionOffset ? { positionOffset: style.positionOffset } : {},
-          ...style.rotationOffset ? { rotationOffset: style.rotationOffset } : {}
-        } : {};
-        this.request3DCameraFocus({
+        let fill = 0.9;
+        const focusRequest = {
           kind: "fit",
           sectionIndex: layout.sectionIndex,
-          fill,
-          ...styleOptions
-        });
+          fill
+        };
+        if (style && style.kind === "fit") {
+          fill = style.fill;
+          focusRequest.fill = fill;
+        }
+        if (style && style.kind !== "frame") {
+          if (style.keepRotation) {
+            focusRequest.keepRotation = true;
+          }
+          if (style.positionOffset) {
+            focusRequest.positionOffset = style.positionOffset;
+          }
+          if (style.rotationOffset) {
+            focusRequest.rotationOffset = style.rotationOffset;
+          }
+        }
+        this.request3DCameraFocus(focusRequest);
       }
       return;
     }
@@ -38926,6 +40075,24 @@ ${exportVars}
     }
     return { forward, right, up };
   }
+  getWorldsFocusRecenterOptions(keepRotation) {
+    const options = {};
+    if (!keepRotation) {
+      return options;
+    }
+    const cfg = this.worldsConfig;
+    const hasDefaultRecenter = cfg.screenSpaceRecenter !== void 0;
+    if (!hasDefaultRecenter) {
+      return options;
+    }
+    const defaultRecenter = !!cfg.screenSpaceRecenter;
+    options.screenSpaceRecenter = defaultRecenter;
+    if (defaultRecenter) {
+      const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
+      options.screenSpaceRecenterIters = defaultRecenterIters;
+    }
+    return options;
+  }
   resolve3DCameraFrameLayouts(sectionSelectors, includeHidden = false, includeNonNavigable = true) {
     const seen = /* @__PURE__ */ new Set();
     const pushLayout = (layout, acc) => {
@@ -38965,18 +40132,16 @@ ${exportVars}
       this.premeasure3DCardWorldSize(layout);
     }
     this.reflowWorldsAutoLayout();
-    const rotation = (() => {
-      const fallback = this.camera3D ? this.camera3D.rotation : { x: 0, y: 0, z: 0 };
-      const raw = req.rotation;
-      const x = Number(raw == null ? void 0 : raw.x);
-      const y = Number(raw == null ? void 0 : raw.y);
-      const z = Number(raw == null ? void 0 : raw.z);
-      return {
-        x: Number.isFinite(x) ? x : fallback.x,
-        y: Number.isFinite(y) ? y : fallback.y,
-        z: Number.isFinite(z) ? z : fallback.z
-      };
-    })();
+    const fallbackRotation = this.camera3D ? this.camera3D.rotation : { x: 0, y: 0, z: 0 };
+    const rawRotation = req.rotation;
+    const rotationX = Number(rawRotation == null ? void 0 : rawRotation.x);
+    const rotationY = Number(rawRotation == null ? void 0 : rawRotation.y);
+    const rotationZ = Number(rawRotation == null ? void 0 : rawRotation.z);
+    const rotation = {
+      x: Number.isFinite(rotationX) ? rotationX : fallbackRotation.x,
+      y: Number.isFinite(rotationY) ? rotationY : fallbackRotation.y,
+      z: Number.isFinite(rotationZ) ? rotationZ : fallbackRotation.z
+    };
     const points = [];
     for (const layout of layouts) {
       points.push(...this.get3DCardWorldCorners(layout));
@@ -39003,9 +40168,19 @@ ${exportVars}
       z: (minZ + maxZ) / 2
     };
     const basis = this.getCameraBasisFromRotation(rotation);
-    const safeFill = Math.max(0.05, Math.min(0.99, Number.isFinite(req.fill) ? req.fill : 0.9));
-    const padding = Math.max(0, Number.isFinite(req.padding) ? req.padding : 0);
-    const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
+    let fill = 0.9;
+    if (Number.isFinite(req.fill)) {
+      fill = req.fill;
+    }
+    const safeFill = Math.max(0.05, Math.min(0.99, fill));
+    let padding = 0;
+    if (Number.isFinite(req.padding)) {
+      padding = Math.max(0, req.padding);
+    }
+    let aspect = 1;
+    if (this.canvas.width > 0 && this.canvas.height > 0) {
+      aspect = this.canvas.width / this.canvas.height;
+    }
     const vFov = this.camera3D.fov;
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * Math.max(1e-6, aspect));
     const halfPad = padding / 2;
@@ -39064,40 +40239,56 @@ ${exportVars}
     }
     const cfg = this.worldsConfig;
     const defaultKeepRotation = !!cfg.keepRotation;
-    const hasDefaultRecenter = cfg.screenSpaceRecenter !== void 0;
-    const defaultRecenter = !!cfg.screenSpaceRecenter;
-    const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
     const defaultStraighten = !!cfg.straightenOnFocus;
-    const keepRotation = req.keepRotation !== void 0 ? !!req.keepRotation : defaultKeepRotation;
-    const straighten = req.straighten !== void 0 ? !!req.straighten : defaultStraighten;
-    const recenterOpts = keepRotation && hasDefaultRecenter ? {
-      screenSpaceRecenter: defaultRecenter,
-      ...defaultRecenter ? { screenSpaceRecenterIters: defaultRecenterIters } : {}
-    } : {};
+    let keepRotation = defaultKeepRotation;
+    if (req.keepRotation !== void 0) {
+      keepRotation = !!req.keepRotation;
+    }
+    let straighten = defaultStraighten;
+    if (req.straighten !== void 0) {
+      straighten = !!req.straighten;
+    }
+    const recenterOpts = this.getWorldsFocusRecenterOptions(keepRotation);
     if (req.kind === "focus") {
-      this.lastApplied3DCameraFocus = {
+      const lastApplied = {
         kind: "focus",
         sectionId: layout.sectionId,
         sectionIndex: layout.sectionIndex,
-        distance: req.distance,
-        ...keepRotation ? { keepRotation: true } : {},
-        ...straighten ? { straighten: true } : {},
-        ...req.positionOffset ? { positionOffset: req.positionOffset } : {},
-        ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}
+        distance: req.distance
       };
-    } else {
-      if (req.kind === "fit") {
-        this.lastApplied3DCameraFocus = {
-          kind: "fit",
-          sectionId: layout.sectionId,
-          sectionIndex: layout.sectionIndex,
-          fill: req.fill,
-          ...keepRotation ? { keepRotation: true } : {},
-          ...straighten ? { straighten: true } : {},
-          ...req.positionOffset ? { positionOffset: req.positionOffset } : {},
-          ...req.rotationOffset ? { rotationOffset: req.rotationOffset } : {}
-        };
+      if (keepRotation) {
+        lastApplied.keepRotation = true;
       }
+      if (straighten) {
+        lastApplied.straighten = true;
+      }
+      if (req.positionOffset) {
+        lastApplied.positionOffset = req.positionOffset;
+      }
+      if (req.rotationOffset) {
+        lastApplied.rotationOffset = req.rotationOffset;
+      }
+      this.lastApplied3DCameraFocus = lastApplied;
+    } else if (req.kind === "fit") {
+      const lastApplied = {
+        kind: "fit",
+        sectionId: layout.sectionId,
+        sectionIndex: layout.sectionIndex,
+        fill: req.fill
+      };
+      if (keepRotation) {
+        lastApplied.keepRotation = true;
+      }
+      if (straighten) {
+        lastApplied.straighten = true;
+      }
+      if (req.positionOffset) {
+        lastApplied.positionOffset = req.positionOffset;
+      }
+      if (req.rotationOffset) {
+        lastApplied.rotationOffset = req.rotationOffset;
+      }
+      this.lastApplied3DCameraFocus = lastApplied;
     }
     this.setCurrent3DSection(layout.sectionIndex);
     if (req.kind === "focus") {
@@ -39229,17 +40420,13 @@ ${exportVars}
       return;
     }
     const lastFocus = this.lastApplied3DCameraFocus;
-    const layout = this.getSectionLayoutById(lastFocus.sectionId) ?? this.section3DLayouts.find((l) => l.sectionIndex === lastFocus.sectionIndex);
+    let layout = this.getSectionLayoutById(lastFocus.sectionId);
+    if (!layout) {
+      layout = this.section3DLayouts.find((l) => l.sectionIndex === lastFocus.sectionIndex) ?? null;
+    }
     if (!layout) return;
     if (lastFocus.kind === "focus") {
-      const cfg = this.worldsConfig;
-      const hasDefaultRecenter = cfg.screenSpaceRecenter !== void 0;
-      const defaultRecenter = !!cfg.screenSpaceRecenter;
-      const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
-      const recenterOpts = lastFocus.keepRotation && hasDefaultRecenter ? {
-        screenSpaceRecenter: defaultRecenter,
-        ...defaultRecenter ? { screenSpaceRecenterIters: defaultRecenterIters } : {}
-      } : {};
+      const recenterOpts = this.getWorldsFocusRecenterOptions(!!lastFocus.keepRotation);
       focusOnSection(this.camera3D, layout, lastFocus.distance, {
         ...lastFocus.keepRotation ? { keepRotation: true } : {},
         ...lastFocus.straighten ? { straighten: true } : {},
@@ -39248,15 +40435,11 @@ ${exportVars}
         ...recenterOpts
       });
     } else {
-      const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 1;
-      const cfg = this.worldsConfig;
-      const hasDefaultRecenter = cfg.screenSpaceRecenter !== void 0;
-      const defaultRecenter = !!cfg.screenSpaceRecenter;
-      const defaultRecenterIters = Number.isFinite(cfg.screenSpaceRecenterIters) ? cfg.screenSpaceRecenterIters : 5;
-      const recenterOpts = lastFocus.keepRotation && hasDefaultRecenter ? {
-        screenSpaceRecenter: defaultRecenter,
-        ...defaultRecenter ? { screenSpaceRecenterIters: defaultRecenterIters } : {}
-      } : {};
+      let aspect = 1;
+      if (this.canvas.width > 0 && this.canvas.height > 0) {
+        aspect = this.canvas.width / this.canvas.height;
+      }
+      const recenterOpts = this.getWorldsFocusRecenterOptions(!!lastFocus.keepRotation);
       focusOnSectionFit(this.camera3D, layout, aspect, lastFocus.fill, {}, {
         ...lastFocus.keepRotation ? { keepRotation: true } : {},
         ...lastFocus.straighten ? { straighten: true } : {},
@@ -39283,7 +40466,10 @@ ${exportVars}
     }
     const navigationSideEffects = (options == null ? void 0 : options.navigationSideEffects) !== false;
     const previousSectionIndex = this.getResolvedCurrent3DSectionIndex();
-    const previousLayout = typeof previousSectionIndex === "number" && Number.isFinite(previousSectionIndex) ? this.getSectionLayoutByIndex(previousSectionIndex) : null;
+    let previousLayout = null;
+    if (typeof previousSectionIndex === "number" && Number.isFinite(previousSectionIndex)) {
+      previousLayout = this.getSectionLayoutByIndex(previousSectionIndex);
+    }
     this.clearWorldsInlineWidgets();
     if (previousLayout && previousLayout.removeAfterVisit) {
       this.worldsRemovedSectionIds.add(previousLayout.sectionId);
@@ -39311,7 +40497,10 @@ ${exportVars}
     }
     const h = this.hostSync;
     if (navigationSideEffects && h && h.getSessionInfo().role === "host") {
-      const fill = ((_b = this.lastApplied3DCameraFocus) == null ? void 0 : _b.kind) === "fit" ? this.lastApplied3DCameraFocus.fill : 0.9;
+      let fill = 0.9;
+      if (((_b = this.lastApplied3DCameraFocus) == null ? void 0 : _b.kind) === "fit") {
+        fill = this.lastApplied3DCameraFocus.fill;
+      }
       h.sendGotoSectionFit(nextLayout.sectionIndex, fill);
       h.sendSceneFit(nextLayout.sectionIndex, this.sceneState.revealStep, fill);
     }
@@ -39550,8 +40739,12 @@ ${exportVars}
     if (this.worldsInlineWidgetInstances.length > 0) {
       this.handleWorldsInlineWidgetMouse(pixelX, pixelY, this.input.isMouseDown(0));
     }
+    const overlayGUIConsumed = this.handleOverlayRetainedGUIMouse(pixelX, pixelY, this.input.isMouseDown(0));
     const doc = this.getActiveDocument();
-    if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) return;
+    if (!((_a = doc == null ? void 0 : doc.handlers) == null ? void 0 : _a.input)) {
+      if (this.worldsEnabled || overlayGUIConsumed) e.preventDefault();
+      return;
+    }
     const charWidth = this.canvas.width / this.width;
     const charHeight = this.canvas.height / this.height;
     const cellX = Math.floor(pixelX / charWidth);
@@ -39574,6 +40767,7 @@ ${exportVars}
     } catch (error) {
       console.error("Error in input handler:", error);
     }
+    if (this.worldsEnabled || overlayGUIConsumed) e.preventDefault();
   }
   handleWheelEvent(e) {
     if (Date.now() - this.lastTouchEventAt < 750) {
@@ -39721,7 +40915,7 @@ function getHook$1(block) {
   }
 }
 function analyzeMarkdownDocument(document2) {
-  var _a, _b, _c;
+  var _a, _b, _c, _d;
   const lifecycleUsage = {
     global: 0,
     init: 0,
@@ -39746,7 +40940,8 @@ function analyzeMarkdownDocument(document2) {
   }
   if ((((_a = document2.blobBlocks) == null ? void 0 : _a.length) ?? 0) > 0) capabilities.add("blobs");
   if ((((_b = document2.timedBlocks) == null ? void 0 : _b.length) ?? 0) > 0) capabilities.add("timed");
-  if ((((_c = document2.wgslShaders) == null ? void 0 : _c.length) ?? 0) > 0 || document2.metadata.shaders) capabilities.add("shader");
+  if ((((_c = document2.logicBlocks) == null ? void 0 : _c.length) ?? 0) > 0) capabilities.add("logic");
+  if ((((_d = document2.wgslShaders) == null ? void 0 : _d.length) ?? 0) > 0 || document2.metadata.shaders) capabilities.add("shader");
   const modules = normalizeModules(document2.metadata.modules);
   if (modules.length > 0) capabilities.add("modules");
   if (/\bmodules\.load(All)?\s*\(/.test(allScript)) {
@@ -40131,6 +41326,7 @@ function createManifest(app, sourcePath) {
     },
     assets: {
       timedBlocks: app.assets.timedBlockNames.length,
+      logicBlocks: app.assets.logicBlockNames.length,
       blobBlocks: app.assets.blobNames.length,
       shaderBlocks: app.assets.shaderNames.length
     },
@@ -40161,6 +41357,7 @@ async function compileMarkdownApp(markdown, options = {}) {
     },
     assets: {
       timedBlockNames: (document2.timedBlocks ?? []).map((block) => block.name),
+      logicBlockNames: (document2.logicBlocks ?? []).map((block, index) => String(block.name ?? block.sectionId ?? `logic-${index + 1}`)),
       blobNames: (document2.blobBlocks ?? []).map((block) => block.name),
       shaderNames: (document2.wgslShaders ?? []).map((shader) => shader.name)
     }
@@ -40184,6 +41381,176 @@ var BuiltInModules = /* @__PURE__ */ ((BuiltInModules2) => {
   BuiltInModules2["Networking"] = "networking";
   return BuiltInModules2;
 })(BuiltInModules || {});
+function cloneJsonValue$1(value) {
+  try {
+    if (typeof structuredClone === "function") {
+      return structuredClone(value);
+    }
+  } catch {
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+function cloneSfxGraphPreset(preset) {
+  return cloneJsonValue$1(preset);
+}
+function serializeSfxGraphPreset(preset) {
+  return JSON.stringify(preset, null, 2);
+}
+function createSfxGraphDocument(preset, options = {}) {
+  const document2 = {
+    version: 1,
+    preset: cloneSfxGraphPreset(preset)
+  };
+  if (options.layout) {
+    document2.layout = cloneJsonValue$1(options.layout);
+  }
+  if (options.meta) {
+    document2.meta = cloneJsonValue$1(options.meta);
+  }
+  return document2;
+}
+function cloneSfxGraphDocument(document2) {
+  return {
+    version: 1,
+    preset: cloneSfxGraphPreset(document2.preset),
+    ...document2.layout ? { layout: cloneJsonValue$1(document2.layout) } : {},
+    ...document2.meta ? { meta: cloneJsonValue$1(document2.meta) } : {}
+  };
+}
+function createSfxGraphInstrumentDocument(preset, options = {}) {
+  const graphDocument = createSfxGraphDocument(preset, {
+    layout: options.layout,
+    meta: options.meta
+  });
+  return {
+    kind: "stfxr-graph",
+    graphDocument,
+    sourceText: String(options.sourceText || serializeSfxGraphPreset(graphDocument.preset))
+  };
+}
+function cloneSfxGraphInstrumentDocument(instrument) {
+  return {
+    kind: "stfxr-graph",
+    graphDocument: cloneSfxGraphDocument(instrument.graphDocument),
+    sourceText: String(instrument.sourceText || serializeSfxGraphPreset(instrument.graphDocument.preset))
+  };
+}
+function normalizeSfxGraphInstrumentDocument(value, fallbackPreset) {
+  if (value && "kind" in value && value.kind === "stfxr-graph" && value.graphDocument) {
+    return cloneSfxGraphInstrumentDocument({
+      graphDocument: value.graphDocument,
+      sourceText: value.sourceText
+    });
+  }
+  const legacyPreset = value && "graphPreset" in value && value.graphPreset ? value.graphPreset : fallbackPreset;
+  const legacyText = value && "graphText" in value && value.graphText ? String(value.graphText) : void 0;
+  return createSfxGraphInstrumentDocument(legacyPreset, {
+    sourceText: legacyText
+  });
+}
+function applyPresetToSfxGraphInstrumentDocument(instrument, preset, sourceText) {
+  return {
+    kind: "stfxr-graph",
+    graphDocument: createSfxGraphDocument(preset, {
+      layout: instrument.graphDocument.layout,
+      meta: instrument.graphDocument.meta
+    }),
+    sourceText: String(sourceText || serializeSfxGraphPreset(preset))
+  };
+}
+function parseSfxGraphInstrumentSource(sourceText, instrument) {
+  const preset = parseSfxGraphPresetJson(sourceText);
+  if (!instrument) {
+    return createSfxGraphInstrumentDocument(preset, { sourceText });
+  }
+  return applyPresetToSfxGraphInstrumentDocument(instrument, preset, sourceText);
+}
+function cloneJsonValue(value) {
+  try {
+    if (typeof structuredClone === "function") {
+      return structuredClone(value);
+    }
+  } catch {
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+function createSequencerTrack(options) {
+  return {
+    id: String(options.id),
+    name: String(options.name),
+    ...options.transpose != null ? { transpose: options.transpose } : {},
+    ...options.gain != null ? { gain: options.gain } : {},
+    ...options.volume != null ? { volume: options.volume } : {},
+    ...options.muted != null ? { muted: options.muted } : {},
+    ...options.solo != null ? { solo: options.solo } : {},
+    slots: Array.isArray(options.slots) ? options.slots.map((slot) => String(slot)) : [],
+    instrument: createSfxGraphInstrumentDocument(options.preset)
+  };
+}
+function normalizeSequencerTrack(track, fallbackPreset) {
+  let legacyGraphPreset;
+  let legacyGraphText;
+  if ("graphPreset" in track) {
+    legacyGraphPreset = track.graphPreset;
+  }
+  if ("graphText" in track && typeof track.graphText === "string") {
+    legacyGraphText = track.graphText;
+  }
+  const normalizedInstrument = normalizeSfxGraphInstrumentDocument(
+    track.instrument ?? {
+      graphPreset: legacyGraphPreset,
+      graphText: legacyGraphText
+    },
+    fallbackPreset
+  );
+  return {
+    id: String(track.id),
+    name: String(track.name),
+    ...track.transpose != null ? { transpose: track.transpose } : {},
+    ...track.gain != null ? { gain: track.gain } : {},
+    ...track.volume != null ? { volume: track.volume } : {},
+    ...track.muted != null ? { muted: track.muted } : {},
+    ...track.solo != null ? { solo: track.solo } : {},
+    slots: Array.isArray(track.slots) ? track.slots.map((slot) => String(slot)) : [],
+    instrument: normalizedInstrument
+  };
+}
+function graphPresetForSequencerTrack(track) {
+  return cloneJsonValue(track.instrument.graphDocument.preset);
+}
+function graphSourceTextForSequencerTrack(track) {
+  return String(track.instrument.sourceText || "");
+}
+function applyPresetToSequencerTrack(track, preset, sourceText) {
+  return {
+    ...track,
+    slots: track.slots.map((slot) => String(slot)),
+    instrument: applyPresetToSfxGraphInstrumentDocument(track.instrument, preset, sourceText)
+  };
+}
+function createSequencerDocument(options) {
+  const patterns = {};
+  for (const [patternId, pattern] of Object.entries(options.patterns || {})) {
+    patterns[String(patternId)] = {
+      id: String(pattern.id),
+      name: String(pattern.name),
+      notes: Array.isArray(pattern.notes) ? pattern.notes.map((note2) => ({
+        id: Number(note2.id),
+        row: Number(note2.row),
+        start: Number(note2.start),
+        length: Number(note2.length),
+        ...note2.velocity != null ? { velocity: Number(note2.velocity) } : {}
+      })) : []
+    };
+  }
+  return {
+    version: 1,
+    bpm: Number(options.bpm),
+    stepCount: Number(options.stepCount),
+    tracks: Array.isArray(options.tracks) ? options.tracks.map((track) => normalizeSequencerTrack(track, options.fallbackPreset)) : [],
+    patterns
+  };
+}
 const VERSION = "2.0.0-alpha.1";
 export {
   BuiltInModules,
@@ -40200,11 +41567,20 @@ export {
   WebGPURenderer,
   WorldsRenderer,
   analyzeMarkdownDocument,
+  applyPresetToSequencerTrack,
+  applyPresetToSfxGraphInstrumentDocument,
   applyTheme,
+  cloneSfxGraphDocument,
+  cloneSfxGraphInstrumentDocument,
+  cloneSfxGraphPreset,
   compileMarkdownApp,
   compileWorldsTimeline,
   createCamera3D,
   createSection3DLayouts,
+  createSequencerDocument,
+  createSequencerTrack,
+  createSfxGraphDocument,
+  createSfxGraphInstrumentDocument,
   distance,
   findSection,
   flattenSections$1 as flattenSections,
@@ -40213,12 +41589,18 @@ export {
   getDefaultWorldsConfig,
   getTheme,
   getWorldsTimelineSelectorKey,
+  graphPresetForSequencerTrack,
+  graphSourceTextForSequencerTrack,
   lerp,
   lerpAngle,
   lerpRotation,
   lerpVec3,
   mergeWorldsTimelinePatch,
+  normalizeSequencerTrack,
+  normalizeSfxGraphInstrumentDocument,
   parseMarkdown,
+  parseSfxGraphInstrumentSource,
+  serializeSfxGraphPreset,
   stateAtWorldsContent,
   stateAtWorldsTimeline,
   updateCamera3D,

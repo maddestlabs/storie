@@ -5,6 +5,7 @@
 
 import type { Section, CodeBlock, MarkdownDocument, BlobBlock, BlobEncoding, TimedBlock, TimedEntry } from './types.js';
 import { expandMagicBlocks, decompressString } from './magic.js';
+import { attachLogicBlocksToSections, extractLogicBlocks } from './logic-blocks.js';
 import { extractWGSLBlocks } from './wgsl-parser.js';
 import { parseTimedFormat, parseTimedFrames, type TimedFormat } from './timed-parsers.js';
 
@@ -72,6 +73,8 @@ export async function parseMarkdown(source: string): Promise<MarkdownDocument> {
   // Step 3: Extract normal markdown elements
   const sections = extractSections(expandedSource);
   const codeBlocks = extractCodeBlocks(expandedSource);
+  const logicBlocks = extractLogicBlocks(codeBlocks, sections);
+  attachLogicBlocksToSections(sections, logicBlocks);
   let blobBlocks = extractBlobBlocks(codeBlocks);
   // Blob-level magic decompression: ```blob ... magic
   // If present, the blob payload is treated as base64(deflate-raw(utf8(text)))
@@ -100,7 +103,8 @@ export async function parseMarkdown(source: string): Promise<MarkdownDocument> {
     metadata,
     wgslShaders,
     blobBlocks,
-    timedBlocks
+    timedBlocks,
+    logicBlocks,
   };
 }
 

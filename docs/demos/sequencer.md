@@ -2,6 +2,9 @@
 name: "Pattern Sequencer Sketch"
 theme: "nord"
 requiresAudioGesture: true
+authoringCheck: explicit-conditionals
+exports: [sequencerDocument, sequencerTransportState, selectedTrack, selectedPattern]
+accepts: [sequencerDocument, sfxGraphDocument, sfxGraphPreset, transportCommand, readonly]
 ---
 
 A pattern-first sequencer sketch that is closer to a DAW layout:
@@ -9,8 +12,74 @@ A pattern-first sequencer sketch that is closer to a DAW layout:
 - A compact transport strip sits at the top
 - The pattern arranger is the primary surface
 - Clicking a pattern opens the note sequencer over the arranger
-- Clicking a track name opens the JSON graph editor for that track
+- Clicking a track name opens the instrument graph editor for that track
 - The graph editor stays hidden otherwise
+
+## Modular Role
+
+This document should evolve into a reusable sequencing host, not just a standalone sketch.
+
+Its target roles are:
+
+1. A standalone pattern sequencer for arranging notes and auditioning track instruments.
+2. A host for the reusable `stfxr-graph` editor when a track instrument is opened.
+3. A composable sequencing panel inside [daw.md](./daw.md).
+
+That means the sequencer should own arrangement, transport, and track orchestration while delegating instrument graph editing to the shared graph module.
+
+### Stable Data Boundary
+
+The reusable boundary for the sequencer should be split into three layers:
+
+- `SequencerDocument`: durable song data such as tracks, slots, patterns, track instrument references, and per-track sequencing settings.
+- `SequencerViewDocument`: optional durable UI metadata such as panel visibility, zoom, row offsets, and editor docking preferences.
+- `SequencerSession`: transient runtime state such as selection, drag interactions, live transport counters, gate audition voices, and temporary editor state.
+
+Only durable document state should be passed between hosts. Session state should remain local to the mounted sequencer instance.
+
+### Graph Module Boundary
+
+This file currently carries local graph editor state for each track (`graphPreset`, `graphText`, and related widget flow). That is a transitional shape, not the desired end state.
+
+The intended direction is:
+
+- sequencer owns which track is focused
+- sequencer passes that track's `SfxGraphDocument` or `SfxGraphPreset` into the graph module
+- the graph module owns graph editing behavior
+- sequencer receives `sfxGraphPresetChanged` or `sfxGraphDocumentChanged` and stores the result back into the selected track
+
+That keeps graph layout, validation, and editing semantics centralized in one place.
+
+### Embedding Contract
+
+When the sequencer is embedded by another Storie document, the host should treat it as the owner of timeline and arrangement behavior.
+
+Recommended incoming payloads:
+
+- `sequencerDocument` to open a full pattern/song document.
+- `sfxGraphDocument` or `sfxGraphPreset` to replace the currently focused track instrument.
+- `transportCommand` for play, pause, stop, or seek requests from an outer host.
+- `readonly` to lock arrangement editing while still allowing playback or inspection.
+
+Recommended outgoing payloads:
+
+- `sequencerDocumentChanged` when track, pattern, or arrangement data changes.
+- `sequencerTransportChanged` when play state, beat, or step changes.
+- `sequencerSelectionChanged` when track or pattern focus changes.
+- `sequencerTrackInstrumentRequested` when the user asks to open or edit a track instrument.
+- `sequencerTrackInstrumentChanged` when an embedded graph editor produces a new instrument document or preset.
+
+The main rule is that the sequencer publishes song state and orchestration events, while instrument-specific editing remains delegated to the graph module.
+
+### Implementation Direction
+
+The optimal implementation path is:
+
+1. Extract sequencer document helpers, transport logic, and arrangement edit actions into shared `src` modules.
+2. Separate durable track instrument data from temporary graph editor widget state.
+3. Replace the inlined track graph editor flow with the shared `stfxr-graph` module contract.
+4. Keep this file as the standalone shell that mounts sequencing, note editing, mixer, and graph-panel shells together.
+5. Add `host.send(...)` and `host.on(...)` wiring once the document and graph contracts are stable.
 
 ## Demo
 
@@ -131,6 +200,73 @@ function deepClone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function serializeGraphPreset(preset) {
+  return JSON.stringify(preset || DEFAULT_MONO_PRESET, null, 2);
+}
+
+function createGraphDocumentFromPreset(preset) {
+  return {
+    version: 1,
+    preset: deepClone(preset || DEFAULT_MONO_PRESET)
+  };
+}
+
+function createDefaultTrackInstrument() {
+  const graphDocument = createGraphDocumentFromPreset(DEFAULT_MONO_PRESET);
+  return {
+    graphDocument: graphDocument,
+    graphText: serializeGraphPreset(graphDocument.preset)
+  };
+}
+
+function ensureTrackInstrument(track) {
+  if (!track) return createDefaultTrackInstrument();
+  if (track.instrument && track.instrument.graphDocument && track.instrument.graphDocument.preset) {
+    if (!track.instrument.graphText) {
+      track.instrument.graphText = serializeGraphPreset(track.instrument.graphDocument.preset);
+    }
+    return track.instrument;
+  }
+
+  let legacyPreset = DEFAULT_MONO_PRESET;
+  if (track.instrument && track.instrument.graphPreset) {
+    legacyPreset = track.instrument.graphPreset;
+  } else if (track.graphPreset) {
+    legacyPreset = track.graphPreset;
+  }
+
+  let legacyText = '';
+  if (track.instrument && track.instrument.graphText) {
+    legacyText = String(track.instrument.graphText || '');
+  } else if (track.graphText) {
+    legacyText = String(track.graphText || '');
+  }
+
+  const instrument = {
+    graphDocument: createGraphDocumentFromPreset(legacyPreset),
+    graphText: legacyText || serializeGraphPreset(legacyPreset)
+  };
+  track.instrument = instrument;
+  delete track.graphPreset;
+  delete track.graphText;
+  return instrument;
+}
+
+function graphDocumentForTrack(track) {
+  return ensureTrackInstrument(track).graphDocument;
+}
+
+function graphTextForTrack(track) {
+  return ensureTrackInstrument(track).graphText;
+}
+
+function applyTrackGraphPreset(track, preset, rawText) {
+  if (!track) return;
+  const instrument = ensureTrackInstrument(track);
+  instrument.graphDocument = createGraphDocumentFromPreset(preset);
+  instrument.graphText = String(rawText || serializeGraphPreset(instrument.graphDocument.preset));
+}
+
 function nowSeconds() {
   try {
     if (typeof performance !== 'undefined' && performance && typeof performance.now === 'function') {
@@ -166,11 +302,10 @@ function addPatternNote(patternId, row, start, length) {
 }
 
 function initState() {
-  const defaultGraphText = JSON.stringify(DEFAULT_MONO_PRESET, null, 2);
   state.tracks = [
-    { id: 'lead', name: 'Lead', transpose: 0, gain: 0.8, volume: 0.92, muted: false, solo: false, slots: ['A', '.', 'B', '.', 'A', '.', 'C', '.'], graphText: defaultGraphText, graphPreset: deepClone(DEFAULT_MONO_PRESET) },
-    { id: 'bass', name: 'Bass', transpose: -12, gain: 0.72, volume: 0.88, muted: false, solo: false, slots: ['B', '.', 'B', '.', 'C', '.', 'B', '.'], graphText: defaultGraphText, graphPreset: deepClone(DEFAULT_MONO_PRESET) },
-    { id: 'arp', name: 'Arp', transpose: 12, gain: 0.58, volume: 0.8, muted: false, solo: false, slots: ['.', 'C', '.', 'A', '.', 'C', '.', 'A'], graphText: defaultGraphText, graphPreset: deepClone(DEFAULT_MONO_PRESET) }
+    { id: 'lead', name: 'Lead', transpose: 0, gain: 0.8, volume: 0.92, muted: false, solo: false, slots: ['A', '.', 'B', '.', 'A', '.', 'C', '.'], instrument: createDefaultTrackInstrument() },
+    { id: 'bass', name: 'Bass', transpose: -12, gain: 0.72, volume: 0.88, muted: false, solo: false, slots: ['B', '.', 'B', '.', 'C', '.', 'B', '.'], instrument: createDefaultTrackInstrument() },
+    { id: 'arp', name: 'Arp', transpose: 12, gain: 0.58, volume: 0.8, muted: false, solo: false, slots: ['.', 'C', '.', 'A', '.', 'C', '.', 'A'], instrument: createDefaultTrackInstrument() }
   ];
 
   state.patterns = {
@@ -219,11 +354,17 @@ function focusedTrack() {
   return state.tracks[clamp(state.selectedTrackIndex, 0, state.tracks.length - 1)] || null;
 }
 
-function graphTrack() {
+function graphEditorTrack() {
   for (let i = 0; i < state.tracks.length; i++) {
     if (state.tracks[i] && state.tracks[i].id === state.graphEditorTrackId) return state.tracks[i];
   }
   return null;
+}
+
+function activeTrackInstrument() {
+  const track = graphEditorTrack();
+  if (!track) return null;
+  return ensureTrackInstrument(track);
 }
 
 function noteNameForMidi(midi) {
@@ -244,8 +385,11 @@ function mixerDockMetrics() {
   const bounds = state.pianoBounds;
   if (!bounds || bounds.w <= 0 || bounds.h <= 0) return null;
   const compact = bounds.w < 900;
-  const pad = compact ? 8 : 10;
-  const gap = compact ? 4 : 6;
+  let pad = 10;
+  if (compact) pad = 8;
+
+  let gap = 6;
+  if (compact) gap = 4;
   const railOuterH = 14;
   const railPad = 2;
   const railBounds = {
@@ -265,20 +409,27 @@ function mixerDockMetrics() {
   const startIndex = clamp(state.mixerScrollIndex, 0, maxStart);
   const channelW = Math.max(50, Math.floor((dockInnerW - gap * Math.max(0, visibleCount - 1)) / visibleCount));
   const titleH = Math.max(10, Math.min(16, Math.floor(contentHeight * 0.15)));
-  const buttonW = channelW < 54 ? 20 : 22;
+  let buttonW = 22;
+  if (channelW < 54) buttonW = 20;
   const buttonH = Math.max(12, Math.min(18, Math.floor(contentHeight * 0.16)));
-  const buttonGapY = contentHeight < 110 ? 2 : 4;
-  const valueReserve = contentHeight >= 100 ? 14 : 0;
+  let buttonGapY = 4;
+  if (contentHeight < 110) buttonGapY = 2;
+
+  let valueReserve = 0;
+  if (contentHeight >= 100) valueReserve = 14;
   const controlsBottomY = contentBottom - (buttonH * 2 + buttonGapY);
   const faderY = contentTop + titleH + 4;
   const faderBottomY = controlsBottomY - 6 - valueReserve;
   const faderH = Math.max(24, faderBottomY - faderY);
-  const faderW = channelW >= 60 ? 30 : 26;
-  const thumbW = maxStart === 0
-    ? railBounds.w
-    : Math.max(20, Math.round((railBounds.w * visibleCount) / totalTracks));
+  let faderW = 26;
+  if (channelW >= 60) faderW = 30;
+
+  let thumbW = Math.max(20, Math.round((railBounds.w * visibleCount) / totalTracks));
+  if (maxStart === 0) thumbW = railBounds.w;
   const thumbTravel = Math.max(0, railBounds.w - thumbW);
-  const thumbX = railBounds.x + (maxStart > 0 ? Math.round((startIndex / maxStart) * thumbTravel) : 0);
+  let thumbOffset = 0;
+  if (maxStart > 0) thumbOffset = Math.round((startIndex / maxStart) * thumbTravel);
+  const thumbX = railBounds.x + thumbOffset;
   const thumbBounds = {
     x: thumbX,
     y: railBounds.y + railPad,
@@ -321,7 +472,10 @@ function beginMixerRailInteraction(x, y) {
   state.mixerRailStartY = y;
   state.mixerRailStartHeight = state.pianoStripHeight;
   const thumb = metrics.thumbBounds;
-  state.mixerRailDragOffset = (x >= thumb.x && x < thumb.x + thumb.w) ? x - thumb.x : Math.round(thumb.w / 2);
+  state.mixerRailDragOffset = Math.round(thumb.w / 2);
+  if (x >= thumb.x && x < thumb.x + thumb.w) {
+    state.mixerRailDragOffset = x - thumb.x;
+  }
   updateMixerRailInteraction(x, y);
   setStatus('Scrolling and resizing bottom mixer from the dock rail.');
   return true;
@@ -369,7 +523,9 @@ function rowToMidi(rowIndex) {
 }
 
 function setStatus(text) {
-  state.statusText = String(text == null ? '' : text);
+  let nextText = text;
+  if (nextText == null) nextText = '';
+  state.statusText = String(nextText);
   syncTopBarText();
 }
 
@@ -404,8 +560,12 @@ function clearTapState() {
 }
 
 function bottomPanelMinHeight(compact, mode) {
-  if (mode === 'mixer') return compact ? 146 : 164;
-  return compact ? 88 : 104;
+  if (mode === 'mixer') {
+    if (compact) return 146;
+    return 164;
+  }
+  if (compact) return 88;
+  return 104;
 }
 
 function currentBottomPanelMinHeight(mode) {
@@ -417,28 +577,49 @@ function currentBottomPanelMinHeight(mode) {
 }
 
 function setBottomPanelMode(mode) {
-  const nextMode = mode === 'mixer' ? 'mixer' : 'keys';
+  let nextMode = 'keys';
+  if (mode === 'mixer') nextMode = 'mixer';
   if (state.bottomPanelMode === nextMode) return;
   state.bottomPanelMode = nextMode;
   state.pianoStripHeight = Math.max(state.pianoStripHeight, currentBottomPanelMinHeight(nextMode));
   syncWidgets();
-  setStatus(nextMode === 'mixer' ? 'Bottom dock switched to mixer.' : 'Bottom dock switched to keys.');
+  if (nextMode === 'mixer') {
+    setStatus('Bottom dock switched to mixer.');
+    return;
+  }
+  setStatus('Bottom dock switched to keys.');
 }
 
 function syncWidgets() {
   if (!state.widgets) return;
 
   if (typeof state.widgets.playButton.setLabel === 'function') {
-    state.widgets.playButton.setLabel(state.isPlaying ? 'Pause' : 'Play');
-    state.widgets.keysModeButton.setLabel(state.bottomPanelMode === 'keys' ? '[Keys]' : 'Keys');
-    state.widgets.mixerModeButton.setLabel(state.bottomPanelMode === 'mixer' ? '[Mixer]' : 'Mixer');
+    let playLabel = 'Play';
+    if (state.isPlaying) playLabel = 'Pause';
+    state.widgets.playButton.setLabel(playLabel);
+
+    let keysModeLabel = 'Keys';
+    if (state.bottomPanelMode === 'keys') keysModeLabel = '[Keys]';
+    state.widgets.keysModeButton.setLabel(keysModeLabel);
+
+    let mixerModeLabel = 'Mixer';
+    if (state.bottomPanelMode === 'mixer') mixerModeLabel = '[Mixer]';
+    state.widgets.mixerModeButton.setLabel(mixerModeLabel);
   }
   state.widgets.closeEditorButton.setVisible(!!state.editorOpen);
 
   if (typeof state.widgets.assignAButton.setLabel === 'function') {
-    state.widgets.assignAButton.setLabel(state.selectedPatternId === 'A' ? '[A]' : 'A');
-    state.widgets.assignBButton.setLabel(state.selectedPatternId === 'B' ? '[B]' : 'B');
-    state.widgets.assignCButton.setLabel(state.selectedPatternId === 'C' ? '[C]' : 'C');
+    let assignALabel = 'A';
+    if (state.selectedPatternId === 'A') assignALabel = '[A]';
+    state.widgets.assignAButton.setLabel(assignALabel);
+
+    let assignBLabel = 'B';
+    if (state.selectedPatternId === 'B') assignBLabel = '[B]';
+    state.widgets.assignBButton.setLabel(assignBLabel);
+
+    let assignCLabel = 'C';
+    if (state.selectedPatternId === 'C') assignCLabel = '[C]';
+    state.widgets.assignCButton.setLabel(assignCLabel);
   }
 
   state.widgets.assignLabel.setVisible(false);
@@ -461,8 +642,13 @@ function syncWidgets() {
       state.widgets.trackMuteButtons[i].setVisible(mixerVisible);
       state.widgets.trackVolumeSliders[i].setVisible(mixerVisible);
       if (typeof state.widgets.trackSoloButtons[i].setLabel === 'function') {
-        state.widgets.trackSoloButtons[i].setLabel(track.solo ? '[S]' : 'S');
-        state.widgets.trackMuteButtons[i].setLabel(track.muted ? '[M]' : 'M');
+        let soloLabel = 'S';
+        if (track.solo) soloLabel = '[S]';
+        state.widgets.trackSoloButtons[i].setLabel(soloLabel);
+
+        let muteLabel = 'M';
+        if (track.muted) muteLabel = '[M]';
+        state.widgets.trackMuteButtons[i].setLabel(muteLabel);
       }
     }
   }
@@ -500,8 +686,11 @@ function buildTunedPreset(basePreset, hz) {
 
 function applyDurationToPreset(preset, durationSec) {
   const safeDuration = Math.max(0.06, Number(durationSec) || 0.12);
-  const nodes = Array.isArray(preset.nodes) ? preset.nodes : [];
-  const events = Array.isArray(preset.events) ? preset.events : [];
+  let nodes = [];
+  if (Array.isArray(preset.nodes)) nodes = preset.nodes;
+
+  let events = [];
+  if (Array.isArray(preset.events)) events = preset.events;
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
     if (!node || typeof node !== 'object') continue;
@@ -526,7 +715,9 @@ function stepDurationSeconds() {
 }
 
 function graphPresetForTrack(track) {
-  return track && track.graphPreset ? track.graphPreset : DEFAULT_MONO_PRESET;
+  const graphDocument = graphDocumentForTrack(track);
+  if (graphDocument && graphDocument.preset) return graphDocument.preset;
+  return DEFAULT_MONO_PRESET;
 }
 
 function hasSoloTracks() {
@@ -545,12 +736,20 @@ function isTrackAudible(track) {
 function effectiveTrackBusGain(track) {
   if (!track) return 0;
   if (!isTrackAudible(track)) return 0;
-  return clamp(track.volume == null ? 1 : track.volume, 0, 1);
+  let volume = track.volume;
+  if (volume == null) volume = 1;
+  return clamp(volume, 0, 1);
 }
 
 function voiceGainForTrack(track, velocity) {
   if (!track) return 0;
-  return clamp(clamp(track.gain == null ? 1 : track.gain, 0.05, 1) * clamp(velocity == null ? 0.8 : velocity, 0.05, 1), 0, 1);
+  let gain = track.gain;
+  if (gain == null) gain = 1;
+
+  let resolvedVelocity = velocity;
+  if (resolvedVelocity == null) resolvedVelocity = 0.8;
+
+  return clamp(clamp(gain, 0.05, 1) * clamp(resolvedVelocity, 0.05, 1), 0, 1);
 }
 
 function audioContextOrNull() {
@@ -608,7 +807,11 @@ function toggleTrackMute(index) {
   track.muted = !track.muted;
   syncMixerRouting();
   syncWidgets();
-  setStatus((track.muted ? 'Muted ' : 'Unmuted ') + track.name + '.');
+  if (track.muted) {
+    setStatus('Muted ' + track.name + '.');
+    return;
+  }
+  setStatus('Unmuted ' + track.name + '.');
 }
 
 function toggleTrackSolo(index) {
@@ -617,7 +820,11 @@ function toggleTrackSolo(index) {
   track.solo = !track.solo;
   syncMixerRouting();
   syncWidgets();
-  setStatus((track.solo ? 'Solo enabled for ' : 'Solo disabled for ') + track.name + '.');
+  if (track.solo) {
+    setStatus('Solo enabled for ' + track.name + '.');
+    return;
+  }
+  setStatus('Solo disabled for ' + track.name + '.');
 }
 
 function stopVoice(voice) {
@@ -739,27 +946,28 @@ function closeNoteEditor() {
   setStatus('Closed note editor.');
 }
 
-function openGraphEditor(trackIndex) {
+function openTrackInstrumentEditor(trackIndex) {
   const track = state.tracks[clamp(trackIndex, 0, state.tracks.length - 1)];
   if (!track) return;
+  ensureTrackInstrument(track);
   state.selectedTrackIndex = trackIndex;
   state.graphEditorTrackId = track.id;
   if (state.widgets && state.widgets.graphEditor) {
-    state.widgets.graphEditor.setValue(String(track.graphText || JSON.stringify(DEFAULT_MONO_PRESET, null, 2)));
+    state.widgets.graphEditor.setValue(graphTextForTrack(track));
   }
   syncWidgets();
-  setGraphStatus('Editing graph for ' + track.name + '.');
-  setStatus('Opened graph editor for ' + track.name + '.');
+  setGraphStatus('Editing instrument graph for ' + track.name + '.');
+  setStatus('Opened instrument editor for ' + track.name + '.');
 }
 
-function closeGraphEditor() {
+function closeTrackInstrumentEditor() {
   state.graphEditorTrackId = null;
   syncWidgets();
-  setStatus('Closed graph editor.');
+  setStatus('Closed instrument editor.');
 }
 
-function parseGraphEditor() {
-  const track = graphTrack();
+function applyTrackInstrumentEditor() {
+  const track = graphEditorTrack();
   if (!track || !state.widgets || !state.widgets.graphEditor) return false;
   const raw = String(state.widgets.graphEditor.getValue() || '').trim();
   if (!raw) {
@@ -769,30 +977,30 @@ function parseGraphEditor() {
     return false;
   }
   try {
-    track.graphPreset = JSON.parse(raw);
-    track.graphText = raw;
+    applyTrackGraphPreset(track, JSON.parse(raw), raw);
     state.graphError = '';
     disposeVoicesForTrack(track.id);
-    setGraphStatus('Applied graph for ' + track.name + '.');
-    setStatus('Applied graph for ' + track.name + '.');
+    setGraphStatus('Applied instrument graph for ' + track.name + '.');
+    setStatus('Applied instrument graph for ' + track.name + '.');
     return true;
   } catch (error) {
-    state.graphError = 'Graph parse error: ' + String(error && error.message ? error.message : error);
+    let errorText = error;
+    if (error && error.message) errorText = error.message;
+    state.graphError = 'Graph parse error: ' + String(errorText);
     setGraphStatus(state.graphError);
     setStatus(state.graphError);
     return false;
   }
 }
 
-function resetGraphEditor() {
-  const track = graphTrack();
+function resetTrackInstrumentEditor() {
+  const track = graphEditorTrack();
   if (!track || !state.widgets) return;
-  track.graphPreset = deepClone(DEFAULT_MONO_PRESET);
-  track.graphText = JSON.stringify(DEFAULT_MONO_PRESET, null, 2);
-  state.widgets.graphEditor.setValue(track.graphText);
+  applyTrackGraphPreset(track, DEFAULT_MONO_PRESET);
+  state.widgets.graphEditor.setValue(graphTextForTrack(track));
   disposeVoicesForTrack(track.id);
-  setGraphStatus('Reset graph for ' + track.name + '.');
-  setStatus('Reset graph for ' + track.name + '.');
+  setGraphStatus('Reset instrument graph for ' + track.name + '.');
+  setStatus('Reset instrument graph for ' + track.name + '.');
 }
 
 function getTransportBeats() {
@@ -870,8 +1078,10 @@ function updateTransport() {
   const safeStep = state.currentStep % arrangementTotalSteps();
   const slotIndex = Math.floor(safeStep / state.patternStepCount) + 1;
   const patternStep = (safeStep % state.patternStepCount) + 1;
+  let transportState = 'Stopped';
+  if (state.isPlaying) transportState = 'Running';
   setTransportText(
-    (state.isPlaying ? 'Running' : 'Stopped') +
+    transportState +
     ' | Slot ' + String(slotIndex).padStart(2, '0') +
     ' | Step ' + String(patternStep).padStart(2, '0') +
     ' | BPM ' + String(Math.round(state.bpm))
@@ -888,21 +1098,33 @@ function layoutWidgets() {
   const deviceWidth = Math.max(1, Number(ui.metrics.canvasWidth || 0));
   const deviceHeight = Math.max(1, Number(ui.metrics.canvasHeight || 0));
   const responsive = gui.getResponsiveInfo(viewport);
-  const scaleX = viewport.width > 0 ? deviceWidth / viewport.width : 1;
-  const scaleY = viewport.height > 0 ? deviceHeight / viewport.height : 1;
+  let scaleX = 1;
+  if (viewport.width > 0) scaleX = deviceWidth / viewport.width;
+
+  let scaleY = 1;
+  if (viewport.height > 0) scaleY = deviceHeight / viewport.height;
   const width = Math.max(720, Math.floor(viewport.width || responsive.usableWidth || 0));
   const height = Math.max(520, Math.floor(viewport.height || responsive.usableHeight || 0));
   const compact = responsive.breakpoint === 'xs' || responsive.breakpoint === 'sm' || width < 1180;
-  const rightPanelWidth = compact ? 220 : 280;
-  const pad = compact ? 10 : 16;
-  const gap = compact ? 8 : 12;
-  const stripH = compact ? 60 : 68;
+  let rightPanelWidth = 280;
+  if (compact) rightPanelWidth = 220;
+
+  let pad = 16;
+  if (compact) pad = 10;
+
+  let gap = 12;
+  if (compact) gap = 8;
+
+  let stripH = 68;
+  if (compact) stripH = 60;
   const pianoStripMinH = bottomPanelMinHeight(compact, state.bottomPanelMode);
   const leftX = Math.floor(viewport.x || 0);
   const topY = Math.floor((viewport.y || 0) + pad);
   const contentWidth = Math.max(320, width);
   const contentHeight = Math.max(240, height - pad * 2);
-  const pianoStripH = clamp(state.pianoStripHeight || (compact ? 128 : 142), pianoStripMinH, Math.max(pianoStripMinH, contentHeight - 220 - gap));
+  let defaultPianoStripHeight = 142;
+  if (compact) defaultPianoStripHeight = 128;
+  const pianoStripH = clamp(state.pianoStripHeight || defaultPianoStripHeight, pianoStripMinH, Math.max(pianoStripMinH, contentHeight - 220 - gap));
   state.pianoStripHeight = pianoStripH;
   const stageHeight = Math.max(220, contentHeight - pianoStripH - gap);
   const panelY = topY + stripH + gap;
@@ -956,10 +1178,17 @@ function layoutWidgets() {
   state.rightPanelBounds = toDeviceRect({ x: rightPanelX, y: panelY, w: rightPanelWidth, h: panelH, headerH: 0, labelW: 0, rowH: 0 });
   state.pianoBounds = toDeviceRect({ x: leftX, y: pianoY, w: contentWidth, h: pianoStripH, headerH: 0, labelW: 0, rowH: 0 });
 
-  const stripButtonW = compact ? 84 : 92;
-  const closeButtonW = compact ? 110 : 124;
-  const dockModeW = compact ? 80 : 90;
-  const stripSliderW = compact ? Math.max(120, Math.floor((contentWidth - 340) * 0.36)) : 220;
+  let stripButtonW = 92;
+  if (compact) stripButtonW = 84;
+
+  let closeButtonW = 124;
+  if (compact) closeButtonW = 110;
+
+  let dockModeW = 90;
+  if (compact) dockModeW = 80;
+
+  let stripSliderW = 220;
+  if (compact) stripSliderW = Math.max(120, Math.floor((contentWidth - 340) * 0.36));
   const stripY = topY + Math.max(8, Math.floor((stripH - 42) / 2));
   let stripX = leftX + 10;
   state.widgets.playButton.setBounds(toDeviceBox(stripX, stripY, stripButtonW, 40));
@@ -1109,11 +1338,11 @@ function focusArrangementSlot(trackIndex, slotIndex) {
   state.selectedTrackIndex = trackIndex;
   if (patternId !== '.') state.selectedPatternId = patternId;
   syncWidgets();
-  setStatus(
-    patternId === '.'
-      ? 'Focused ' + track.name + ' slot ' + String(slotIndex + 1) + '.'
-      : 'Focused pattern ' + patternId + ' on ' + track.name + ' slot ' + String(slotIndex + 1) + '. Double tap to open note editing.'
-  );
+  if (patternId === '.') {
+    setStatus('Focused ' + track.name + ' slot ' + String(slotIndex + 1) + '.');
+    return;
+  }
+  setStatus('Focused pattern ' + patternId + ' on ' + track.name + ' slot ' + String(slotIndex + 1) + '. Double tap to open note editing.');
 }
 
 function handleArrangementTap(trackIndex, slotIndex) {
@@ -1126,9 +1355,12 @@ function handleArrangementTap(trackIndex, slotIndex) {
   }
 
   const tapTime = nowSeconds();
-  const doubleTap = state.lastTapTrackIndex === trackIndex
+  let doubleTap = false;
+  if (state.lastTapTrackIndex === trackIndex
     && state.lastTapSlotIndex === slotIndex
-    && (tapTime - state.lastTapAt) <= 0.35;
+    && (tapTime - state.lastTapAt) <= 0.35) {
+    doubleTap = true;
+  }
 
   focusArrangementSlot(trackIndex, slotIndex);
 
@@ -1166,7 +1398,8 @@ function moveArrangementPattern(sourceTrackIndex, sourceSlotIndex, targetTrackIn
 
 function beginArrangementBlockInteraction(trackIndex, slotIndex, x, y) {
   const track = state.tracks[trackIndex];
-  const patternId = track ? (track.slots[slotIndex] || '.') : '.';
+  let patternId = '.';
+  if (track) patternId = track.slots[slotIndex] || '.';
   if (patternId === '.') {
     handleArrangementTap(trackIndex, slotIndex);
     return true;
@@ -1331,9 +1564,12 @@ function updateNoteEditorInteraction(x, y) {
 
   if (state.pointerMode === 'note-create' || state.pointerMode === 'note-resize') {
     const hit = noteGridHit(x, y);
-    const targetStep = hit ? hit.step : note.start;
+    let targetStep = note.start;
+    if (hit) targetStep = hit.step;
     note.length = Math.max(1, Math.min(state.patternStepCount - note.start, (targetStep - note.start) + 1));
-    setStatus('Adjusted note length to ' + String(note.length) + ' step' + (note.length === 1 ? '' : 's') + '.');
+    let stepSuffix = 's';
+    if (note.length === 1) stepSuffix = '';
+    setStatus('Adjusted note length to ' + String(note.length) + ' step' + stepSuffix + '.');
     return true;
   }
 
@@ -1390,12 +1626,12 @@ function createWidgets() {
     visible: true
   });
 
-  const graphTitle = gui.createLabel({ bounds: { x: 0, y: 0, width: 200, height: 24 }, text: 'Track Graph', align: 'left', visible: false });
-  const closeGraphButton = gui.createButton({ bounds: { x: 0, y: 0, width: 100, height: 34 }, label: 'Close Graph', visible: false });
+  const graphTitle = gui.createLabel({ bounds: { x: 0, y: 0, width: 200, height: 24 }, text: 'Track Instrument', align: 'left', visible: false });
+  const closeGraphButton = gui.createButton({ bounds: { x: 0, y: 0, width: 100, height: 34 }, label: 'Close Instrument', visible: false });
   const graphStatus = gui.createLabel({ bounds: { x: 0, y: 0, width: 200, height: 44 }, text: '', align: 'left', visible: false });
   const graphEditor = gui.createTextEditor({ bounds: { x: 0, y: 0, width: 200, height: 180 }, value: JSON.stringify(DEFAULT_MONO_PRESET, null, 2), placeholder: '{\n  "nodes": []\n}', visible: false });
-  const applyGraphButton = gui.createButton({ bounds: { x: 0, y: 0, width: 120, height: 40 }, label: 'Apply Graph', visible: false });
-  const resetGraphButton = gui.createButton({ bounds: { x: 0, y: 0, width: 120, height: 40 }, label: 'Reset Graph', visible: false });
+  const applyGraphButton = gui.createButton({ bounds: { x: 0, y: 0, width: 120, height: 40 }, label: 'Apply Instrument', visible: false });
+  const resetGraphButton = gui.createButton({ bounds: { x: 0, y: 0, width: 120, height: 40 }, label: 'Reset Instrument', visible: false });
   const trackSoloButtons = state.tracks.map(function () {
     return gui.createButton({ bounds: { x: 0, y: 0, width: 38, height: 28 }, label: 'S' });
   });
@@ -1403,7 +1639,9 @@ function createWidgets() {
     return gui.createButton({ bounds: { x: 0, y: 0, width: 38, height: 28 }, label: 'M' });
   });
   const trackVolumeSliders = state.tracks.map(function (track) {
-    return gui.createSlider({ bounds: { x: 0, y: 0, width: 30, height: 120 }, orientation: 'vertical', label: '', min: 0, max: 100, value: Math.round(clamp(track.volume == null ? 1 : track.volume, 0, 1) * 100), showValue: true, sliderStyle: { trackHeight: 6, knobWidth: 24, knobHeight: 12, valueGap: 4 } });
+    let trackVolume = track.volume;
+    if (trackVolume == null) trackVolume = 1;
+    return gui.createSlider({ bounds: { x: 0, y: 0, width: 30, height: 120 }, orientation: 'vertical', label: '', min: 0, max: 100, value: Math.round(clamp(trackVolume, 0, 1) * 100), showValue: true, sliderStyle: { trackHeight: 6, knobWidth: 24, knobHeight: 12, valueGap: 4 } });
   });
 
   piano.on('noteon', function (event) {
@@ -1502,7 +1740,7 @@ scope.input = function(event) {
       return;
     }
     if (event.key === 'Enter' && (event.mods || []).includes('ctrl')) {
-      if (state.graphEditorTrackId) parseGraphEditor();
+      if (state.graphEditorTrackId) applyTrackInstrumentEditor();
       return;
     }
     gui.handleKey(event.key, {
@@ -1529,13 +1767,15 @@ scope.input = function(event) {
         }
         if (state.editorOpen && beginNoteEditorLeftInteraction(event.x, event.y)) return;
 
-        const labelTrack = !state.editorOpen ? arrangementTrackLabelHit(event.x, event.y) : null;
+        let labelTrack = null;
+        if (!state.editorOpen) labelTrack = arrangementTrackLabelHit(event.x, event.y);
         if (labelTrack != null) {
-          openGraphEditor(labelTrack);
+          openTrackInstrumentEditor(labelTrack);
           return;
         }
 
-        const arrangementCell = !state.editorOpen ? arrangementCellHit(event.x, event.y) : null;
+        let arrangementCell = null;
+        if (!state.editorOpen) arrangementCell = arrangementCellHit(event.x, event.y);
         if (arrangementCell) {
           beginArrangementBlockInteraction(arrangementCell.trackIndex, arrangementCell.slotIndex, event.x, event.y);
           return;
@@ -1608,7 +1848,9 @@ scope.update = function() {
     const track = state.tracks[i];
     if (!track) continue;
     const sliderValue = clamp((state.widgets.trackVolumeSliders[i].getValue() || 0) / 100, 0, 1);
-    if (Math.abs(sliderValue - clamp(track.volume == null ? 1 : track.volume, 0, 1)) > 0.0001) {
+    let currentTrackVolume = track.volume;
+    if (currentTrackVolume == null) currentTrackVolume = 1;
+    if (Math.abs(sliderValue - clamp(currentTrackVolume, 0, 1)) > 0.0001) {
       track.volume = sliderValue;
       syncMixerRouting();
     }
@@ -1624,13 +1866,18 @@ scope.update = function() {
   if (state.widgets.mixerModeButton.wasClicked()) setBottomPanelMode('mixer');
   if (state.widgets.stopButton.wasClicked()) stopTransport();
   if (state.widgets.closeEditorButton.wasClicked()) closeNoteEditor();
-  if (state.widgets.closeGraphButton.wasClicked()) closeGraphEditor();
-  if (state.graphEditorTrackId && state.widgets.applyGraphButton.wasClicked()) parseGraphEditor();
-  if (state.graphEditorTrackId && state.widgets.resetGraphButton.wasClicked()) resetGraphEditor();
+  if (state.widgets.closeGraphButton.wasClicked()) closeTrackInstrumentEditor();
+  if (state.graphEditorTrackId && state.widgets.applyGraphButton.wasClicked()) applyTrackInstrumentEditor();
+  if (state.graphEditorTrackId && state.widgets.resetGraphButton.wasClicked()) resetTrackInstrumentEditor();
 
   if (state.graphEditorTrackId) {
-    const track = graphTrack();
-    state.widgets.graphTitle.setText('Track Graph: ' + (track ? track.name : '(none)'));
+    const track = graphEditorTrack();
+    const instrument = activeTrackInstrument();
+    let graphTrackName = '(none)';
+    if (track) graphTrackName = track.name;
+    let suffix = '';
+    if (instrument && instrument.graphDocument) suffix = ' [graph]';
+    state.widgets.graphTitle.setText('Track Instrument: ' + graphTrackName + suffix);
   }
 
   updateTransport();
@@ -1665,10 +1912,17 @@ scope.render = function() {
   ui.rect(rightPanel.x + rightPanel.w - 1, rightPanel.y, 1, rightPanel.h, frame);
 
   if (!state.graphEditorTrackId) {
+    let selectedTrackName = '(none)';
+    const activeTrack = selectedTrack();
+    if (activeTrack) selectedTrackName = activeTrack.name;
+
+    let bottomDockLabel = 'Keys';
+    if (state.bottomPanelMode === 'mixer') bottomDockLabel = 'Mixer';
+
     ui.text('Inspector', rightPanel.x + 10, rightPanel.y + 10, strong);
-    ui.text('Selected: ' + (selectedTrack() ? selectedTrack().name : '(none)'), rightPanel.x + 10, rightPanel.y + 162, subtle);
+    ui.text('Selected: ' + selectedTrackName, rightPanel.x + 10, rightPanel.y + 162, subtle);
     ui.text('Pattern: ' + state.selectedPatternId, rightPanel.x + 10, rightPanel.y + 180, subtle);
-    ui.text('Bottom dock: ' + (state.bottomPanelMode === 'mixer' ? 'Mixer' : 'Keys'), rightPanel.x + 10, rightPanel.y + 198, subtle);
+    ui.text('Bottom dock: ' + bottomDockLabel, rightPanel.x + 10, rightPanel.y + 198, subtle);
     ui.text('Bottom dock height: ' + String(state.pianoStripHeight), rightPanel.x + 10, rightPanel.y + 216, subtle);
     ui.text('Status: ' + state.statusText, rightPanel.x + 10, rightPanel.y + 244, subtle);
     ui.text('Track name click: open JSON graph editor here.', rightPanel.x + 10, rightPanel.y + 272, subtle);
@@ -1684,7 +1938,9 @@ scope.render = function() {
     const metrics = mixerDockMetrics();
     if (metrics) {
       ui.rect(metrics.railBounds.x, metrics.railBounds.y, metrics.railBounds.w, metrics.railBounds.h, rgba01(255, 255, 255, 0.08));
-      ui.rect(metrics.thumbBounds.x, metrics.thumbBounds.y, metrics.thumbBounds.w, metrics.thumbBounds.h, state.pointerMode === 'mixer-rail' ? rgba01(255, 188, 92, 0.9) : rgba01(132, 164, 196, 0.9));
+      let railThumbColor = rgba01(132, 164, 196, 0.9);
+      if (state.pointerMode === 'mixer-rail') railThumbColor = rgba01(255, 188, 92, 0.9);
+      ui.rect(metrics.thumbBounds.x, metrics.thumbBounds.y, metrics.thumbBounds.w, metrics.thumbBounds.h, railThumbColor);
       for (let i = metrics.startIndex; i < Math.min(state.tracks.length, metrics.startIndex + metrics.visibleCount); i++) {
       const visibleIndex = i - metrics.startIndex;
       const stripLeft = metrics.railBounds.x + visibleIndex * (metrics.channelW + metrics.gap);
@@ -1692,9 +1948,13 @@ scope.render = function() {
       if (!track) continue;
       const color = TRACK_COLORS[i % TRACK_COLORS.length];
       const dimmed = !isTrackAudible(track) && !track.solo;
-      ui.rect(stripLeft, metrics.stripTop, metrics.channelW, metrics.stripHeight, i === state.selectedTrackIndex ? rgba01(255, 255, 255, 0.05) : rgba01(255, 255, 255, 0.015));
+      let stripColor = rgba01(255, 255, 255, 0.015);
+      if (i === state.selectedTrackIndex) stripColor = rgba01(255, 255, 255, 0.05);
+      ui.rect(stripLeft, metrics.stripTop, metrics.channelW, metrics.stripHeight, stripColor);
       ui.rect(stripLeft, metrics.stripTop, 3, metrics.stripHeight, color);
-      ui.text(shortTrackLabel(track), stripLeft + 6, metrics.stripTop + 4, dimmed ? subtle : strong);
+      let trackLabelColor = strong;
+      if (dimmed) trackLabelColor = subtle;
+      ui.text(shortTrackLabel(track), stripLeft + 6, metrics.stripTop + 4, trackLabelColor);
       if (track.solo) ui.text('S', stripLeft + metrics.channelW - 12, metrics.stripTop + 4, color);
       else if (track.muted) ui.text('M', stripLeft + metrics.channelW - 12, metrics.stripTop + 4, subtle);
       }
@@ -1713,7 +1973,9 @@ scope.render = function() {
       const x = Math.round(m.x + slot * m.cellW);
       const w = Math.ceil(m.cellW);
       if (slot === currentSlot) ui.rect(x, m.y, w, m.h, playHead);
-      ui.text(String(slot + 1).padStart(2, '0'), x + 8, a.y + 5, slot === currentSlot ? strong : subtle);
+      let slotLabelColor = subtle;
+      if (slot === currentSlot) slotLabelColor = strong;
+      ui.text(String(slot + 1).padStart(2, '0'), x + 8, a.y + 5, slotLabelColor);
       ui.rect(x, a.y, 1, a.h, gridLine);
     }
     ui.rect(Math.round(m.x + m.w), a.y, 1, a.h, gridLine);
@@ -1730,9 +1992,12 @@ scope.render = function() {
         const x = Math.round(m.x + slot * m.cellW) + 2;
         const w = Math.max(4, Math.ceil(m.cellW) - 4);
         const label = track.slots[slot] || '.';
-        const fill = label === '.'
-          ? rgba01(255, 255, 255, 0.02)
-          : (label === state.selectedPatternId ? rgba01(101, 189, 255, 0.35) : rgba01(255, 255, 255, 0.1));
+        let fill = rgba01(255, 255, 255, 0.1);
+        if (label === '.') {
+          fill = rgba01(255, 255, 255, 0.02);
+        } else if (label === state.selectedPatternId) {
+          fill = rgba01(101, 189, 255, 0.35);
+        }
         ui.rect(x, y + 2, w, Math.max(4, m.cellH - 4), fill);
         ui.text(label, x + Math.max(10, Math.floor(m.cellW * 0.4)), y + Math.max(2, Math.floor((m.cellH - 16) / 2)), strong);
       }
@@ -1757,7 +2022,9 @@ scope.render = function() {
     const track = editorTrack();
     ui.rect(b.x, b.y, b.w, b.h, panelBg);
     ui.rect(b.x, b.y, b.w, b.headerH, headerBg);
-    ui.text('Note Editor: ' + state.editorPatternId + ' on ' + (track ? track.name : '(none)'), b.x + 8, b.y + 6, strong);
+    let trackName = '(none)';
+    if (track) trackName = track.name;
+    ui.text('Note Editor: ' + state.editorPatternId + ' on ' + trackName, b.x + 8, b.y + 6, strong);
 
     const activePatternStep = state.currentStep % state.patternStepCount;
     for (let step = 0; step < state.visiblePatternSteps; step++) {
@@ -1765,7 +2032,9 @@ scope.render = function() {
       const x = Math.round(m.x + step * m.cellW);
       const w = Math.ceil(m.cellW);
       if (globalStep === activePatternStep) ui.rect(x, m.y, w, m.h, playHead);
-      ui.text(String(globalStep + 1).padStart(2, '0'), x + 8, b.y + 6, globalStep === activePatternStep ? strong : subtle);
+      let stepTextColor = subtle;
+      if (globalStep === activePatternStep) stepTextColor = strong;
+      ui.text(String(globalStep + 1).padStart(2, '0'), x + 8, b.y + 6, stepTextColor);
       ui.rect(x, b.y, 1, b.h, gridLine);
     }
     ui.rect(Math.round(m.x + m.w), b.y, 1, b.h, gridLine);
@@ -1784,7 +2053,9 @@ scope.render = function() {
         const rect = noteScreenRect(note);
         if (!rect) continue;
         const active = activePatternStep >= note.start && activePatternStep < note.start + note.length;
-        ui.rect(rect.x, rect.y, rect.w, rect.h, active ? rgba01(255, 196, 104, 0.95) : rgba01(101, 189, 255, 0.88));
+        let noteFill = rgba01(101, 189, 255, 0.88);
+        if (active) noteFill = rgba01(255, 196, 104, 0.95);
+        ui.rect(rect.x, rect.y, rect.w, rect.h, noteFill);
         ui.rect(rect.x + rect.w - 3, rect.y + 1, 2, Math.max(2, rect.h - 2), rgba01(255, 255, 255, 0.45));
       }
     }

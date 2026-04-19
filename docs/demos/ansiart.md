@@ -2,6 +2,7 @@
 title: ANSI Art Demo
 theme: "solarlight"
 shaders: "ruledlines"
+authoringCheck: explicit-conditionals
 ---
 
 # ANSI Art Support
@@ -20,13 +21,15 @@ Notes:
 
 ```js
 let status = 'Loading…';
+let ansiAssetNames = [];
 ```
 
 ```js on:init
 term.layerID = 'default';
 term.clear();
 
-status = `Found ${ansi.list().length} ANSI asset(s): ${ansi.list().join(', ')}`;
+ansiAssetNames = ansi.list();
+status = `Found ${ansiAssetNames.length} ANSI asset(s): ${ansiAssetNames.join(', ')}`;
 ```
 
 ```js on:render

@@ -3,6 +3,7 @@ name: "Automation: Arcade Intro"
 theme: "neonopia"
 fontsize: 22
 shaders: "lightvignette"
+authoringCheck: explicit-conditionals
 ---
 
 A tiny demo showing a **time-based automation track** that:
@@ -79,7 +80,10 @@ const s = st();
 
 // When exporting, the engine runs a synthetic clock that starts at t=0.
 // Reset automation state so impulses fire deterministically from the beginning.
-const name = (options && options.timedBlock) ? options.timedBlock : 'events';
+let name = 'events';
+if (options && options.timedBlock) {
+  name = options.timedBlock;
+}
 s.track = sys.automation.compile(doc.timedBlock(name));
 s.prevT = 0;
 ```
@@ -117,7 +121,10 @@ if (s.autopilot && s.track) {
 }
 
 // Sample eased variables.
-const speedMul = s.track ? sys.automation.valueAt(s.track, 'player.speed', nowT, 1) : 1;
+let speedMul = 1;
+if (s.track) {
+  speedMul = sys.automation.valueAt(s.track, 'player.speed', nowT, 1);
+}
 const baseSpeedCellsPerSec = 16;
 const spd = baseSpeedCellsPerSec * speedMul;
 
@@ -143,7 +150,10 @@ const s = st();
 term.clear();
 
 const t = getTime();
-const fade = s.track ? sys.automation.valueAt(s.track, 'ui.fade', t, 1) : 1;
+let fade = 1;
+if (s.track) {
+  fade = sys.automation.valueAt(s.track, 'ui.fade', t, 1);
+}
 
 const C_TITLE = rgba(0xffffff, fade);
 const C_DIM = rgba(0xaaaaaa, fade);
@@ -162,7 +172,17 @@ for (let y = 1; y < termHeight - 1; y++) {
 const title = 'AUTOMATION: ARCADE INTRO';
 term.write(Math.max(2, Math.floor((termWidth - title.length) / 2)), 1, title, C_TITLE);
 
-const hud1 = `t=${t.toFixed(2)}s  autopilot=${s.autopilot ? 'ON' : 'OFF'}  speedMul=${(s.track ? sys.automation.valueAt(s.track, 'player.speed', t, 1) : 1).toFixed(2)}`;
+let autopilotStatus = 'OFF';
+if (s.autopilot) {
+  autopilotStatus = 'ON';
+}
+
+let hudSpeedMul = 1;
+if (s.track) {
+  hudSpeedMul = sys.automation.valueAt(s.track, 'player.speed', t, 1);
+}
+
+const hud1 = `t=${t.toFixed(2)}s  autopilot=${autopilotStatus}  speedMul=${hudSpeedMul.toFixed(2)}`;
 term.write(2, 2, hud1.slice(0, termWidth - 4), C_HUD);
 term.write(2, termHeight - 2, 'Arrows move • A toggles autopilot • R resets', C_DIM);
 

@@ -2,6 +2,7 @@
 title: "Image Load Test"
 author: "Maddest Labs"
 theme: "default"
+authoringCheck: explicit-conditionals
 ---
 
 ```js on:init
@@ -23,11 +24,15 @@ ui.loadImageFromURL('assets/img/paper_seamless_texture_3197.jpg').then(function(
   var sz = ui.getImageSize(id);
   console.log('[image-load] getImageSize =', sz);
   scope.imgId  = id;
-  scope.imgW   = sz ? sz.width  : 0;
-  scope.imgH   = sz ? sz.height : 0;
-  scope.status = sz
-    ? 'OK: ' + sz.width + 'x' + sz.height
-    : 'WARN: loaded but getImageSize returned null';
+  scope.imgW = 0;
+  scope.imgH = 0;
+  if (sz) {
+    scope.imgW = sz.width;
+    scope.imgH = sz.height;
+    scope.status = 'OK: ' + sz.width + 'x' + sz.height;
+    return;
+  }
+  scope.status = 'WARN: loaded but getImageSize returned null';
 }).catch(function(err) {
   console.error('[image-load] error:', err);
   scope.status = 'ERROR: ' + String(err);

@@ -6,6 +6,7 @@ requiresAudioGesture: true
 theme: "saintbilly"
 shaders: "audioshake+vintage"
 font: "Rye"
+authoringCheck: explicit-conditionals
 ---
 
 This Saint Billy variant turns the demo into a song board instead of a dungeon crawl.
@@ -1648,8 +1649,6 @@ var state = {
   cameraSections: [],
   wordRevealTrack: null,
 
-  widgets: null,
-  mouseDownLeft: false,
   wasExporting: false,
   statusText: 'Loading local WAV asset...',
 
@@ -1725,7 +1724,10 @@ function analyzeBandEnvelope(buffer, fromHz, toHz, envelopeHz = 120, smoothMs = 
   const upperHz = Math.max(fromHz, toHz);
   const lowerHz = Math.max(0, Math.min(fromHz, toHz));
   const alphaUpper = 1 - Math.exp((-2 * Math.PI * upperHz) / sampleRate);
-  const alphaLower = lowerHz > 0 ? (1 - Math.exp((-2 * Math.PI * lowerHz) / sampleRate)) : 0;
+  let alphaLower = 0;
+  if (lowerHz > 0) {
+    alphaLower = 1 - Math.exp((-2 * Math.PI * lowerHz) / sampleRate);
+  }
   const hop = Math.max(1, Math.floor(sampleRate / Math.max(1, envelopeHz)));
   const frames = Math.max(1, Math.ceil(buffer.length / hop));
   const envelope = new Float32Array(frames);
@@ -1757,8 +1759,12 @@ function analyzeBandEnvelope(buffer, fromHz, toHz, envelopeHz = 120, smoothMs = 
   }
 
   const smoothFrames = Math.max(1, Math.round((smoothMs / 1000) * envelopeHz));
+  let normalizedEnvelope = envelope;
+  if (frameIndex !== envelope.length) {
+    normalizedEnvelope = envelope.slice(0, frameIndex);
+  }
   return {
-    envelope: normalizeEnvelope(frameIndex === envelope.length ? envelope : envelope.slice(0, frameIndex), smoothFrames),
+    envelope: normalizeEnvelope(normalizedEnvelope, smoothFrames),
     envelopeHz,
   };
 }
@@ -1777,7 +1783,13 @@ function sampleEnvelope(envelope, envelopeHz, timeSec) {
 
 function sampleBeatEnvelope(timeSec) {
   const analysis = state.beatAnalysis;
-  return sampleEnvelope(analysis?.envelope, Number(analysis?.envelopeHz), timeSec);
+  let envelope = null;
+  let envelopeHz = 0;
+  if (analysis) {
+    envelope = analysis.envelope;
+    envelopeHz = Number(analysis.envelopeHz);
+  }
+  return sampleEnvelope(envelope, envelopeHz, timeSec);
 }
 
 function sampleExportSubBass(timeSec) {
@@ -1785,9 +1797,10 @@ function sampleExportSubBass(timeSec) {
 }
 
 function isExportingNow() {
-  return (typeof getIsExporting === 'function')
-    ? !!getIsExporting()
-    : (typeof isExporting === 'boolean' && isExporting);
+  if (typeof getIsExporting === 'function') {
+    return !!getIsExporting();
+  }
+  return typeof isExporting === 'boolean' && isExporting;
 }
 
 function isPlaybackActive() {
@@ -1807,29 +1820,28 @@ function buildTimedSections() {
 function buildWordRevealTrack() {
   const all = doc.sectionsFlat().filter((s) => s.sectionId?.startsWith('cross-') && s.timedMs !== undefined);
   const events = all.map((s) => ({ ms: s.timedMs, text: JSON.stringify({ section: s.sectionId, visible: true }) }));
-  state.wordRevealTrack = events.length ? worlds.timeline.compile(events) : null;
+  state.wordRevealTrack = null;
+  if (events.length) {
+    state.wordRevealTrack = worlds.timeline.compile(events);
+  }
+}
+
+function findTimedSectionAtMs(list, posMs) {
+  if (!list.length) return null;
+  let result = null;
+  for (const section of list) {
+    if (section.timedMs <= posMs) result = section;
+    else break;
+  }
+  return result;
 }
 
 function sectionAtMs(posMs) {
-  const list = state.timedSections;
-  if (!list.length) return null;
-  let result = null;
-  for (const section of list) {
-    if (section.timedMs <= posMs) result = section;
-    else break;
-  }
-  return result;
+  return findTimedSectionAtMs(state.timedSections, posMs);
 }
 
 function cameraSectionAtMs(posMs) {
-  const list = state.cameraSections;
-  if (!list.length) return null;
-  let result = null;
-  for (const section of list) {
-    if (section.timedMs <= posMs) result = section;
-    else break;
-  }
-  return result;
+  return findTimedSectionAtMs(state.cameraSections, posMs);
 }
 
 function getDemoTimeSec() {
@@ -1852,10 +1864,15 @@ function resetDemo(autoplay) {
   state.currentSection = '';
   state.currentLine = '';
   state.prevStyledSection = null;
-  if (state.widgets?.seek) state.widgets.seek.setValue(0);
-  if (state.widgets?.time) {
-    const total = state.audioBuffer ? fmtTime(state.audioBuffer.duration) : '--:--';
-    state.widgets.time.setText(`0:00 / ${total}`);
+  const seekWidget = getTransportSeekWidget();
+  if (seekWidget) gui.value('seek', 0);
+  const timeWidget = getTransportTimeWidget();
+  if (timeWidget) {
+    let total = '--:--';
+    if (state.audioBuffer) {
+      total = fmtTime(state.audioBuffer.duration);
+    }
+    gui.text('time', `0:00 / ${total}`);
   }
   if (autoplay !== false && state.audioBuffer) playFrom(0);
 }
@@ -1864,7 +1881,11 @@ function stopAudio({ keepOffset } = { keepOffset: true }) {
   if (!state.source) return;
   try {
     if (keepOffset) {
-      state.pauseOffset = clamp(audio.currentTime - state.startTime, 0, state.audioBuffer?.duration ?? 0);
+      let maxDuration = 0;
+      if (state.audioBuffer && Number.isFinite(state.audioBuffer.duration)) {
+        maxDuration = state.audioBuffer.duration;
+      }
+      state.pauseOffset = clamp(audio.currentTime - state.startTime, 0, maxDuration);
     } else {
       state.pauseOffset = 0;
     }
@@ -1883,7 +1904,11 @@ function playFrom(offsetSec) {
   state.pauseOffset = offset;
   const src = audio.createBufferSource();
   src.buffer = state.audioBuffer;
-  src.connect(state.gain ?? audio.destination);
+  let outputNode = audio.destination;
+  if (state.gain) {
+    outputNode = state.gain;
+  }
+  src.connect(outputNode);
   state.startTime = audio.currentTime - offset;
   state.isPlaying = true;
   src.onended = () => {
@@ -1937,11 +1962,14 @@ function loadLocalAudio() {
       state.exportSubBassEnvelope = exportSubBass.envelope;
       state.exportSubBassHz = exportSubBass.envelopeHz;
       state.pauseOffset = 0;
-      state.widgets.seek.min = 0;
-      state.widgets.seek.max = Math.max(0.01, buffer.duration);
-      state.widgets.seek.step = 0.01;
-      state.widgets.seek.setValue(0);
-      state.widgets.time.setText(`0:00 / ${fmtTime(buffer.duration)}`);
+      const seekWidget = getTransportSeekWidget();
+      if (seekWidget) {
+        seekWidget.min = 0;
+        seekWidget.max = Math.max(0.01, buffer.duration);
+        seekWidget.step = 0.01;
+        gui.value('seek', 0);
+      }
+      gui.text('time', `0:00 / ${fmtTime(buffer.duration)}`);
 
       const firstSection = sectionAtMs(0);
       const firstFocusSection = cameraSectionAtMs(0);
@@ -1960,12 +1988,20 @@ function loadLocalAudio() {
         playFrom(state.pauseOffset);
       }
 
-      setStatus(`Track ready from local asset - ${fmtTime(buffer.duration)}. ${state.autoPlayOnFirstTap ? 'Tap anywhere or press Play to start.' : 'Press Play to start.'}`);
+      let readyHint = 'Press Play to start.';
+      if (state.autoPlayOnFirstTap) {
+        readyHint = 'Tap anywhere or press Play to start.';
+      }
+      setStatus(`Track ready from local asset - ${fmtTime(buffer.duration)}. ${readyHint}`);
       return buffer;
     } catch (e) {
       console.warn('[saintbilly-lyrics] local audio load failed:', e);
       state.playRequested = false;
-      setStatus(state.autoPlayOnFirstTap ? 'Local WAV failed to load. Tap anywhere or press Play to retry.' : 'Local WAV failed to load. Press Play to retry.');
+      let retryHint = 'Local WAV failed to load. Press Play to retry.';
+      if (state.autoPlayOnFirstTap) {
+        retryHint = 'Local WAV failed to load. Tap anywhere or press Play to retry.';
+      }
+      setStatus(retryHint);
       return null;
     } finally {
       state.audioLoadPromise = null;
@@ -1977,7 +2013,10 @@ function loadLocalAudio() {
 
 function lineAtTime(timeSec) {
   const entry = doc.atTime('lyrics', timeSec);
-  return entry ? entry.text : '';
+  if (entry) {
+    return entry.text;
+  }
+  return '';
 }
 
 function getTimedEntries(name) {
@@ -1990,8 +2029,14 @@ function getSectionWindow(section) {
   const startMs = Number(section.timedMs);
   if (!Number.isFinite(startMs)) return null;
   const index = list.findIndex((item) => item.index === section.index && item.timedMs === section.timedMs);
-  const next = index >= 0 ? list[index + 1] : null;
-  const endMs = Number.isFinite(next?.timedMs) ? Number(next.timedMs) : null;
+  let next = null;
+  if (index >= 0) {
+    next = list[index + 1] || null;
+  }
+  let endMs = null;
+  if (next && Number.isFinite(next.timedMs)) {
+    endMs = Number(next.timedMs);
+  }
   return { startMs, endMs };
 }
 
@@ -2017,8 +2062,12 @@ function isWordRevealSection(section) {
   if (!wanted) return false;
   if (section.title === wanted) return true;
 
-  const layout = worlds.getSectionLayout?.(section.index);
-  return layout?.sectionId === wanted;
+  let layout = null;
+  if (typeof worlds.getSectionLayout === 'function') {
+    layout = worlds.getSectionLayout(section.index);
+  }
+  if (!layout) return false;
+  return layout.sectionId === wanted;
 }
 
 function sampleWordsForSection(section, posSec) {
@@ -2061,11 +2110,143 @@ function composeWorldsSectionTitle(baseTitle, sampledText) {
   return `${title}`;
 }
 
+function setFocusedCameraSection(section) {
+  let nextTitle = '';
+  if (section) {
+    nextTitle = section.title;
+  }
+  if (nextTitle === state.currentSection) {
+    return;
+  }
+
+  state.currentSection = nextTitle;
+  if (state.prevStyledSection !== null && state.prevStyledSection !== undefined) {
+    worlds.sections.style.clear(state.prevStyledSection);
+  }
+
+  if (!section) {
+    state.prevStyledSection = null;
+    return;
+  }
+
+  worlds.camera.focusOnSectionFit(section.index, WORLDS_SECTION_FILL, { keepRotation: true });
+  worlds.sections.style.set(section.index, { fg: 'accent1' });
+  state.prevStyledSection = section.index;
+}
+
+function syncCurrentLyricLine(posSec) {
+  const nextLine = lineAtTime(posSec);
+  if (nextLine !== state.currentLine) {
+    state.currentLine = nextLine;
+  }
+}
+
+function getTransportStatusText(previewPos, dragging, exporting) {
+  if (!state.audioBuffer) {
+    return null;
+  }
+
+  if (dragging) {
+    return `Scrubbing ${fmtTime(previewPos)} - lyric and section sync are following the local WAV asset.`;
+  }
+
+  if (exporting) {
+    return `Exporting synced local audio - ${fmtTime(previewPos)} / ${fmtTime(state.audioBuffer.duration)}.`;
+  }
+
+  if (isPlaybackActive()) {
+    return 'Playing synced local audio.';
+  }
+
+  if (state.autoPlayOnFirstTap) {
+    return 'Paused - tap anywhere or press Play.';
+  }
+
+  return 'Paused - drag the scrubber or press Play.';
+}
+
+function getTransportSeekWidget() {
+  return gui.get('seek');
+}
+
+function getTransportTimeWidget() {
+  return gui.get('time');
+}
+
+function syncTransportReadout(previewPos, dragging, exporting) {
+  let total = '--:--';
+  if (state.audioBuffer) {
+    total = fmtTime(state.audioBuffer.duration);
+  }
+  gui.text('time', `${fmtTime(previewPos)} / ${total}`);
+
+  const statusText = getTransportStatusText(previewPos, dragging, exporting);
+  if (statusText) {
+    setStatus(statusText);
+  }
+
+  let playPauseLabel = 'Play';
+  if (isPlaybackActive()) {
+    playPauseLabel = 'Pause';
+  }
+  gui.text('btnPlayPause', playPauseLabel);
+}
+
+function handlePlayPauseToggle() {
+  state.autoPlayOnFirstTap = false;
+  if (state.isPlaying) {
+    state.playRequested = false;
+    stopAudio({ keepOffset: true });
+    return;
+  }
+  requestPlaybackStart();
+}
+
+function syncTransportLayout(ctx) {
+  if (!ctx || !ctx.root || !ctx.viewport) return;
+
+  const viewport = ctx.viewport;
+  const tokens = ctx.tokens || gui.getTokens();
+  const responsive = ctx.responsive || gui.getResponsiveInfo(viewport);
+  let inset = 16;
+  if (responsive && responsive.breakpoint === 'xs') {
+    inset = tokens.spacing.sm;
+  }
+
+  let panelWidth = 180;
+  if (viewport.width > 0) {
+    panelWidth = Math.min(180, Math.max(140, viewport.width - inset * 2));
+  }
+
+  if (ctx.root.container) {
+    ctx.root.container.padding = 0;
+    ctx.root.container.gap = 6;
+    ctx.root.container.rowGap = 6;
+  }
+
+  return {
+    insetTop: inset,
+    insetRight: inset,
+    insetBottom: inset,
+    insetLeft: inset,
+    width: panelWidth,
+    maxWidth: panelWidth,
+    anchorX: 'end',
+    anchorY: 'start'
+  };
+}
+
 function syncWorldsSectionContent(section, posSec) {
   if (!worlds.content) return '';
 
-  const nextLayout = section ? worlds.getSectionLayout(section.index) : null;
-  const nextSectionId = nextLayout?.sectionId ?? null;
+  let nextLayout = null;
+  if (section) {
+    nextLayout = worlds.getSectionLayout(section.index);
+  }
+  let nextSectionId = null;
+  if (nextLayout && nextLayout.sectionId != null) {
+    nextSectionId = nextLayout.sectionId;
+  }
 
   if (state.currentSectionId && state.currentSectionId !== nextSectionId) {
     worlds.content.clear(state.currentSectionId, 'all');
@@ -2077,13 +2258,16 @@ function syncWorldsSectionContent(section, posSec) {
   }
 
   const sectionEntries = entriesForSection(section, 'lyrics');
-  const sampledText = isWordRevealSection(section)
-    ? sampleWordsForSection(section, posSec)
-    : worlds.content.stateAt(sectionEntries, posSec, {
-        mode: 'append',
-        separator: '\n',
-        maxEntries: WORLDS_LYRIC_WINDOW,
-      }).text;
+  let sampledText = '';
+  if (isWordRevealSection(section)) {
+    sampledText = sampleWordsForSection(section, posSec);
+  } else {
+    sampledText = worlds.content.stateAt(sectionEntries, posSec, {
+      mode: 'append',
+      separator: '\n',
+      maxEntries: WORLDS_LYRIC_WINDOW,
+    }).text;
+  }
 
   if (!sampledText) {
     worlds.content.clear(nextSectionId, 'all');
@@ -2092,9 +2276,26 @@ function syncWorldsSectionContent(section, posSec) {
   }
 
   const existing = worlds.content.get(nextSectionId);
-  const baseTitle = existing?.baseTitle ?? nextLayout?.sectionTitle ?? section.title ?? '';
-  const authored = worlds.sections?.get ? worlds.sections.get(nextSectionId) : null;
-  const baseContent = existing?.baseContent ?? authored?.content ?? '';
+  let baseTitle = '';
+  if (existing && existing.baseTitle != null) {
+    baseTitle = existing.baseTitle;
+  } else if (nextLayout && nextLayout.sectionTitle != null) {
+    baseTitle = nextLayout.sectionTitle;
+  } else if (section.title != null) {
+    baseTitle = section.title;
+  }
+
+  let authored = null;
+  if (worlds.sections?.get) {
+    authored = worlds.sections.get(nextSectionId);
+  }
+
+  let baseContent = '';
+  if (existing && existing.baseContent != null) {
+    baseContent = existing.baseContent;
+  } else if (authored && authored.content != null) {
+    baseContent = authored.content;
+  }
   const composedTitle = composeWorldsSectionTitle(baseTitle, sampledText);
   const composedContent = composeWorldsSectionContent(baseContent, sampledText);
   const sameTitle = !!existing && (existing.overrideTitle === composedTitle || existing.effectiveTitle === composedTitle);
@@ -2147,34 +2348,41 @@ worlds.camera.shake.setEnabled(true);
 
 worlds.camera.focusOnSectionFit(0, WORLDS_SECTION_FILL, { keepRotation: true });
 
-gui.init({ boundsSpace: 'device' });
+gui.init({ boundsSpace: 'device', input: 'auto', update: 'auto' });
 buildTimedSections();
 buildWordRevealTrack();
 
-const btnPlayPause = gui.createButton({
+const transport = gui.screen({
   group: TRANSPORT_GUI_GROUP,
-  bounds: { x: 0, y: 0, width: 180, height: 36 },
-  label: 'Play',
+  layout: {
+    type: 'panel',
+    rowGap: 6,
+    padding: 0,
+    anchorX: 'end',
+    anchorY: 'start',
+    onLayout: syncTransportLayout
+  },
+  widgets: {
+    btnPlayPause: gui.button('Play', {
+      bounds: { height: 36 },
+      onClick() {
+        handlePlayPauseToggle();
+      }
+    }),
+    time: gui.label('--:-- / --:--', {
+      bounds: { height: 24 },
+      align: 'left'
+    }),
+    seek: gui.slider('', {
+      bounds: { height: 28 },
+      label: '',
+      min: 0,
+      max: 1,
+      value: 0,
+      step: 0.1
+    })
+  }
 });
-
-const time = gui.createLabel({
-  group: TRANSPORT_GUI_GROUP,
-  bounds: { x: 0, y: 0, width: 180, height: 24 },
-  text: '--:-- / --:--',
-  align: 'left',
-});
-
-const seek = gui.createSlider({
-  group: TRANSPORT_GUI_GROUP,
-  bounds: { x: 0, y: 0, width: 180, height: 28 },
-  label: '',
-  min: 0,
-  max: 1,
-  value: 0,
-  step: 0.1,
-});
-
-state.widgets = { time, seek, btnPlayPause };
 state.gain = audio.createGain();
 state.gain.gain.value = 1;
 state.gain.connect(audio.destination);
@@ -2194,29 +2402,20 @@ void loadLocalAudio();
 ```javascript on:input
 if (!event) return;
 if (typeof state === 'undefined' || !state) return;
-if (event.type === 'keydown') {
-  gui.handleKey(event.key, {
-    shift: (event.mods || []).includes('shift'),
-    ctrl: (event.mods || []).includes('ctrl'),
-    alt: (event.mods || []).includes('alt'),
-    meta: (event.mods || []).includes('meta')
-  });
-}
-if (event.type === 'text') gui.handleText(event.text);
 if (event.type === 'mouse') {
   if (event.button === 'left') {
-    state.mouseDownLeft = event.action === 'press' || event.action === 'repeat';
-    if (!state.mouseDownLeft && state.autoPlayOnFirstTap && !state.isPlaying && state.pauseOffset <= 0.001) {
+    const mouseIsDown = event.action === 'press' || event.action === 'repeat';
+    if (!mouseIsDown && state.autoPlayOnFirstTap && !state.isPlaying && state.pauseOffset <= 0.001) {
       state.pendingTapAutoplay = true;
     }
   }
-  gui.handleMouse(event.x, event.y, state.mouseDownLeft);
 }
-if (event.type === 'mouse_move') gui.handleMouse(event.x, event.y, state.mouseDownLeft);
 ```
 
 ```javascript on:update
-if (typeof state === 'undefined' || !state || !state.widgets) return;
+if (typeof state === 'undefined' || !state) return;
+const seekWidget = getTransportSeekWidget();
+if (!seekWidget) return;
 const exporting = isExportingNow();
 
 if (exporting && !state.wasExporting) {
@@ -2264,8 +2463,12 @@ if (state.analyser && state.audioBuffer) {
       { fromHz: 60,  toHz: 120 },   // [1] mid-bass
       { fromHz: 120, toHz: 250 },   // [2] low-mid
     ]);
-    subBass = bands[0] ?? 0;
-    midBass = bands[1] ?? 0;
+    if (bands[0] != null) {
+      subBass = bands[0];
+    }
+    if (bands[1] != null) {
+      midBass = bands[1];
+    }
   }
   // Vignette: blend sub + mid for a fuller feel; beatImpulse adds the flash on any beat
   const bassForShader = subBass * 0.7 + midBass * 0.3;
@@ -2287,21 +2490,10 @@ if (state.analyser && state.audioBuffer) {
   shader.setUniform('audioshake', 'phase', state.shakePhase);
 }
 
-const viewport = gui.getViewportRect ? gui.getViewportRect() : { x: 0, y: 0, width: ui.metrics.canvasWidth, height: ui.metrics.canvasHeight };
-const viewportX = Number.isFinite(viewport?.x) ? Number(viewport.x) : 0;
-const W = Number.isFinite(viewport?.width) && viewport.width > 0 ? Number(viewport.width) : ui.metrics.canvasWidth;
-const inset = 16;
-const ctrlW = 180;
-const btnH = 36, timeH = 24, seekH = 28, gap = 6;
-const x = viewportX + W - inset - ctrlW;
-let y = inset;
-state.widgets.btnPlayPause.setBounds({ x, y, width: ctrlW, height: btnH });
-y += btnH + gap;
-state.widgets.time.setBounds({ x, y, width: ctrlW, height: timeH });
-y += timeH + gap;
-state.widgets.seek.setBounds({ x, y, width: ctrlW, height: seekH });
-
-if (!exporting) gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);
+let viewport = { x: 0, y: 0, width: ui.metrics.canvasWidth, height: ui.metrics.canvasHeight };
+if (gui.getViewportRect) {
+  viewport = gui.getViewportRect();
+}
 
 if (state.pendingTapAutoplay) {
   state.pendingTapAutoplay = false;
@@ -2309,67 +2501,37 @@ if (state.pendingTapAutoplay) {
   requestPlaybackStart();
 }
 
-if (state.widgets.btnPlayPause.wasClicked()) {
-  if (state.isPlaying) {
-    state.autoPlayOnFirstTap = false;
-    state.playRequested = false;
-    stopAudio({ keepOffset: true });
-  } else {
-    state.autoPlayOnFirstTap = false;
-    requestPlaybackStart();
-  }
+let dragging = false;
+if (seekWidget.isDragging?.() != null) {
+  dragging = !!seekWidget.isDragging();
+}
+const livePos = getDemoTimeSec();
+let maxSeek = 0;
+if (state.audioBuffer) {
+  maxSeek = state.audioBuffer.duration;
 }
 
-const dragging = state.widgets.seek.isDragging?.() ?? false;
-const livePos = getDemoTimeSec();
-const maxSeek = state.audioBuffer ? state.audioBuffer.duration : 0;
-const previewPos = dragging ? clamp(state.widgets.seek.getValue(), 0, maxSeek) : livePos;
+let previewPos = livePos;
+if (dragging) {
+  previewPos = clamp(gui.value('seek'), 0, maxSeek);
+}
 
 if (state.audioBuffer && !dragging && state.wasSeeking) {
-  const target = clamp(state.widgets.seek.getValue(), 0, state.audioBuffer.duration);
+  const target = clamp(gui.value('seek'), 0, state.audioBuffer.duration);
   state.pauseOffset = target;
   if (state.isPlaying) playFrom(target);
 }
-if (state.audioBuffer && !dragging) state.widgets.seek.setValue(livePos);
+if (state.audioBuffer && !dragging) gui.value('seek', livePos);
 
 state.wasSeeking = dragging;
 
 const sec = sectionAtMs(previewPos * 1000);
 const focusSec = cameraSectionAtMs(previewPos * 1000);
-const secTitle = focusSec ? focusSec.title : '';
-if (secTitle !== state.currentSection) {
-  state.currentSection = secTitle;
-  if (state.prevStyledSection !== null && state.prevStyledSection !== undefined) {
-    worlds.sections.style.clear(state.prevStyledSection);
-  }
-  if (focusSec) {
-    worlds.camera.focusOnSectionFit(focusSec.index, WORLDS_SECTION_FILL, { keepRotation: true });
-    worlds.sections.style.set(focusSec.index, { fg: 'accent1' });
-    state.prevStyledSection = focusSec.index;
-  } else {
-    state.prevStyledSection = null;
-  }
-}
-
-const newLine = lineAtTime(previewPos);
-if (newLine !== state.currentLine) {
-  state.currentLine = newLine;
-}
+setFocusedCameraSection(focusSec);
+syncCurrentLyricLine(previewPos);
 
 syncWorldsSectionContent(sec, previewPos);
-
-const total = state.audioBuffer ? fmtTime(state.audioBuffer.duration) : '--:--';
-state.widgets.time.setText(`${fmtTime(previewPos)} / ${total}`);
-if (dragging && state.audioBuffer) {
-  setStatus(`Scrubbing ${fmtTime(previewPos)} - lyric and section sync are following the local WAV asset.`);
-} else if (exporting && state.audioBuffer) {
-  setStatus(`Exporting synced local audio - ${fmtTime(previewPos)} / ${fmtTime(state.audioBuffer.duration)}.`);
-} else if (state.audioBuffer) {
-  setStatus(isPlaybackActive()
-    ? 'Playing synced local audio.'
-    : (state.autoPlayOnFirstTap ? 'Paused - tap anywhere or press Play.' : 'Paused - drag the scrubber or press Play.'));
-}
-state.widgets.btnPlayPause.setLabel(isPlaybackActive() ? 'Pause' : 'Play');
+syncTransportReadout(previewPos, dragging, exporting);
 
 // Reveal word-art sections as playback time passes their timed: timestamps
 if (state.wordRevealTrack) worlds.timeline.apply(state.wordRevealTrack, previewPos);

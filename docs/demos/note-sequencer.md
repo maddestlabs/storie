@@ -2,6 +2,7 @@
 name: "Note Sequencer Sketch"
 theme: "nord"
 requiresAudioGesture: true
+authoringCheck: explicit-conditionals
 ---
 
 A dedicated note sequencer sketch for the DAW direction.
@@ -127,7 +128,9 @@ function rowToMidi(rowIndex) {
 }
 
 function setStatus(text) {
-  state.statusText = String(text == null ? '' : text);
+  let nextText = text;
+  if (nextText == null) nextText = '';
+  state.statusText = String(nextText);
   if (state.widgets && state.widgets.status) state.widgets.status.setText(state.statusText);
 }
 
@@ -147,7 +150,9 @@ function setNowPlaying(text) {
 
 function syncTransportButtons() {
   if (state.widgets && state.widgets.playButton && typeof state.widgets.playButton.setLabel === 'function') {
-    state.widgets.playButton.setLabel(state.isPlaying ? 'Pause' : 'Play');
+    let playLabel = 'Play';
+    if (state.isPlaying) playLabel = 'Pause';
+    state.widgets.playButton.setLabel(playLabel);
   }
 }
 
@@ -175,8 +180,11 @@ function buildTunedPreset(basePreset, hz) {
 
 function applyDurationToPreset(preset, durationSec) {
   const safeDuration = Math.max(0.06, Number(durationSec) || 0.12);
-  const nodes = Array.isArray(preset.nodes) ? preset.nodes : [];
-  const events = Array.isArray(preset.events) ? preset.events : [];
+  let nodes = [];
+  if (Array.isArray(preset.nodes)) nodes = preset.nodes;
+
+  let events = [];
+  if (Array.isArray(preset.events)) events = preset.events;
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
     if (!node || typeof node !== 'object') continue;
@@ -201,8 +209,10 @@ function auditionMidi(midi, velocity, sourceLabel, stepLength) {
   const hz = midiToHz(midi);
   const durationSec = stepDurationSeconds() * Math.max(1, Number(stepLength) || 1);
   const preset = applyDurationToPreset(buildTunedPreset(state.graphPreset || DEFAULT_MONO_PRESET, hz), durationSec);
+  let resolvedVelocity = velocity;
+  if (resolvedVelocity == null) resolvedVelocity = 0.8;
   stfxr.playPreset(preset, nextSeed(), {
-    volume: clamp(state.masterVolume * clamp(velocity == null ? 0.8 : velocity, 0.05, 1), 0, 1)
+    volume: clamp(state.masterVolume * clamp(resolvedVelocity, 0.05, 1), 0, 1)
   });
   setNowPlaying(noteNameForMidi(midi) + ' from ' + sourceLabel);
 }
@@ -223,7 +233,9 @@ function parseGraphEditor() {
     setStatus('Applied synth graph from editor.');
     return true;
   } catch (error) {
-    state.graphError = 'Graph parse error: ' + String(error && error.message ? error.message : error);
+    let errorText = error;
+    if (error && error.message) errorText = error.message;
+    state.graphError = 'Graph parse error: ' + String(errorText);
     setGraphStatus(state.graphError);
     setStatus(state.graphError);
     return false;
@@ -308,7 +320,11 @@ function updateTransport() {
   const bar = Math.floor(beat / 4) + 1;
   const stepInBar = (Math.floor(beat / stepDurationBeats()) % state.visibleStepCount) + 1;
   setTransportText(
-    (state.isPlaying ? 'Running' : 'Stopped') +
+    (function () {
+      let transportState = 'Stopped';
+      if (state.isPlaying) transportState = 'Running';
+      return transportState;
+    })() +
     ' | Bar ' + String(bar) +
     ' | Step ' + String(stepInBar).padStart(2, '0') +
     ' | Beat ' + beat.toFixed(2)
@@ -354,32 +370,49 @@ function layoutWidgets() {
   const safeArea = responsive.safeAreaInsets || { top: 0, right: 0, bottom: 0, left: 0 };
   const deviceWidth = Math.max(1, Number(ui.metrics.canvasWidth || 0));
   const deviceHeight = Math.max(1, Number(ui.metrics.canvasHeight || 0));
-  const scaleX = viewport.width > 0 ? deviceWidth / viewport.width : 1;
-  const scaleY = viewport.height > 0 ? deviceHeight / viewport.height : 1;
+  let scaleX = 1;
+  if (viewport.width > 0) scaleX = deviceWidth / viewport.width;
+
+  let scaleY = 1;
+  if (viewport.height > 0) scaleY = deviceHeight / viewport.height;
   const width = Math.max(320, Math.floor(responsive.usableWidth || viewport.width));
   const height = Math.max(360, Math.floor(responsive.usableHeight || viewport.height));
   const compact = responsive.breakpoint === 'xs' || responsive.breakpoint === 'sm';
   const stacked = compact || width < 980 || height < 720 || (responsive.orientation === 'portrait' && width < 1280);
-  const mode = stacked ? 'stacked' : 'split';
+  let mode = 'split';
+  if (stacked) mode = 'stacked';
 
   if (width === state.layoutSize.width && height === state.layoutSize.height && state.layoutSize.mode === mode) return;
   state.layoutSize = { width: width, height: height, mode: mode };
 
-  const pad = compact ? 10 : width < 1200 ? 14 : 18;
-  const gap = compact ? 8 : 12;
+  let pad = 18;
+  if (compact) pad = 10;
+  else if (width < 1200) pad = 14;
+
+  let gap = 12;
+  if (compact) gap = 8;
   const leftX = Math.floor(safeArea.left + pad);
   const topY = Math.floor(safeArea.top + pad);
   const contentWidth = Math.max(240, width - pad * 2);
   const contentHeight = Math.max(240, height - pad * 2);
-  const leftWidth = stacked
-    ? contentWidth
-    : clamp(Math.floor(contentWidth * (width >= 1440 ? 0.27 : 0.30)), 280, 380);
+  let leftWidth = contentWidth;
+  if (!stacked) {
+    let widthRatio = 0.30;
+    if (width >= 1440) widthRatio = 0.27;
+    leftWidth = clamp(Math.floor(contentWidth * widthRatio), 280, 380);
+  }
   const rightX = leftX + leftWidth + gap;
-  const rightWidth = stacked ? contentWidth : Math.max(240, contentWidth - leftWidth - gap);
+  let rightWidth = Math.max(240, contentWidth - leftWidth - gap);
+  if (stacked) rightWidth = contentWidth;
   const bottomY = topY + contentHeight;
-  const buttonColumns = leftWidth >= 320 ? 2 : 1;
-  const buttonWidth = buttonColumns === 2 ? Math.floor((leftWidth - gap) / 2) : leftWidth;
-  const buttonRowHeight = buttonColumns === 2 ? 40 : (40 * 2) + gap;
+  let buttonColumns = 1;
+  if (leftWidth >= 320) buttonColumns = 2;
+
+  let buttonWidth = leftWidth;
+  if (buttonColumns === 2) buttonWidth = Math.floor((leftWidth - gap) / 2);
+
+  let buttonRowHeight = (40 * 2) + gap;
+  if (buttonColumns === 2) buttonRowHeight = 40;
   const toDeviceRect = (bounds) => ({
     x: Math.round(bounds.x * scaleX),
     y: Math.round(bounds.y * scaleY),
@@ -420,8 +453,12 @@ function layoutWidgets() {
   }
   y += buttonRowHeight + gap;
 
-  const pianoWidgetHeight = compact ? 72 : 104;
-  state.widgets.piano.setVisibleWhiteKeys(compact ? 8 : 10, 0.5, false);
+  let pianoWidgetHeight = 104;
+  if (compact) pianoWidgetHeight = 72;
+
+  let visibleWhiteKeys = 10;
+  if (compact) visibleWhiteKeys = 8;
+  state.widgets.piano.setVisibleWhiteKeys(visibleWhiteKeys, 0.5, false);
   state.widgets.pianoLabel.setBounds({ x: leftX, y: y, width: leftWidth, height: 24 });
   state.widgets.nowPlaying.setBounds({ x: leftX, y: y + 24, width: leftWidth, height: 24 });
   state.widgets.piano.setBounds({ x: leftX, y: y + 54, width: leftWidth, height: pianoWidgetHeight });
@@ -429,9 +466,14 @@ function layoutWidgets() {
 
   if (stacked) {
     const graphButtonsHeight = buttonRowHeight;
-    const graphEditorMinHeight = compact ? 88 : 110;
-    const graphEditorIdealHeight = compact ? 96 : 132;
-    const gridMinHeight = compact ? 140 : 200;
+    let graphEditorMinHeight = 110;
+    if (compact) graphEditorMinHeight = 88;
+
+    let graphEditorIdealHeight = 132;
+    if (compact) graphEditorIdealHeight = 96;
+
+    let gridMinHeight = 200;
+    if (compact) gridMinHeight = 140;
     const remainingHeight = Math.max(160, bottomY - y);
     const graphBlockMinHeight = 72 + graphEditorMinHeight + gap + graphButtonsHeight;
     const graphBlockIdealHeight = 72 + graphEditorIdealHeight + gap + graphButtonsHeight;
@@ -444,6 +486,8 @@ function layoutWidgets() {
     const graphButtonsY = bottomY - graphButtonsHeight;
     const graphEditorY = graphY + 72;
     const graphEditorHeight = Math.max(graphEditorMinHeight, graphButtonsY - gap - graphEditorY);
+    let gridLabelWidth = 54;
+    if (compact) gridLabelWidth = 46;
 
     state.gridBounds = toDeviceRect({
       x: leftX,
@@ -451,7 +495,7 @@ function layoutWidgets() {
       w: contentWidth,
       h: gridHeight,
       headerH: 28,
-      labelW: compact ? 46 : 54
+      labelW: gridLabelWidth
     });
 
     state.widgets.graphLabel.setBounds({ x: leftX, y: graphY, width: leftWidth, height: 24 });
@@ -468,7 +512,9 @@ function layoutWidgets() {
   } else {
     const graphButtonsY = bottomY - buttonRowHeight;
     const graphEditorY = y + 72;
-    const graphEditorHeight = Math.max(compact ? 96 : 120, graphButtonsY - gap - graphEditorY);
+    let graphEditorMinHeight = 120;
+    if (compact) graphEditorMinHeight = 96;
+    const graphEditorHeight = Math.max(graphEditorMinHeight, graphButtonsY - gap - graphEditorY);
 
     state.widgets.graphLabel.setBounds({ x: leftX, y: y, width: leftWidth, height: 24 });
     state.widgets.graphStatus.setBounds({ x: leftX, y: y + 24, width: leftWidth, height: 44 });
@@ -494,16 +540,19 @@ function layoutWidgets() {
 
   const innerGridWidth = Math.max(1, state.gridBounds.w - state.gridBounds.labelW);
   const innerGridHeight = Math.max(1, state.gridBounds.h - state.gridBounds.headerH);
-  state.visibleStepCount = clamp(
-    compact ? (innerGridWidth < 420 ? 8 : 12) : (innerGridWidth < 640 ? 12 : 16),
-    8,
-    16
-  );
-  state.visibleRowCount = clamp(
-    innerGridHeight < 220 ? 8 : (innerGridHeight < 300 ? 12 : 16),
-    8,
-    16
-  );
+  let visibleStepCount = 16;
+  if (compact) {
+    visibleStepCount = 12;
+    if (innerGridWidth < 420) visibleStepCount = 8;
+  } else if (innerGridWidth < 640) {
+    visibleStepCount = 12;
+  }
+  state.visibleStepCount = clamp(visibleStepCount, 8, 16);
+
+  let visibleRowCount = 16;
+  if (innerGridHeight < 220) visibleRowCount = 8;
+  else if (innerGridHeight < 300) visibleRowCount = 12;
+  state.visibleRowCount = clamp(visibleRowCount, 8, 16);
   state.viewStartStep = clamp(state.viewStartStep, 0, Math.max(0, state.totalSteps - state.visibleStepCount));
   state.viewRowOffset = clamp(state.viewRowOffset, 0, Math.max(0, state.totalRows - state.visibleRowCount));
 }
@@ -670,11 +719,14 @@ function updateInteraction(x, y) {
   }
 
   if (state.pointerMode === 'create' || state.pointerMode === 'resize') {
-    const targetStep = hit ? hit.step : state.interactionNoteStart;
+    let targetStep = state.interactionNoteStart;
+    if (hit) targetStep = hit.step;
     const endStep = clamp(targetStep, note.start, state.totalSteps - 1);
     note.length = Math.max(1, (endStep - note.start) + 1);
     state.interactionMoved = true;
-    setStatus('Set ' + noteNameForMidi(globalRowToMidi(note.row)) + ' to length ' + String(note.length) + ' step' + (note.length === 1 ? '' : 's') + '.');
+    let stepSuffix = 's';
+    if (note.length === 1) stepSuffix = '';
+    setStatus('Set ' + noteNameForMidi(globalRowToMidi(note.row)) + ' to length ' + String(note.length) + ' step' + stepSuffix + '.');
     return true;
   }
 
@@ -877,7 +929,9 @@ scope.render = function() {
     const w = Math.ceil(m.cellW);
     const globalStep = state.viewStartStep + step;
     if (globalStep === state.currentStep) ui.rect(x, m.y, w, m.h, playHead);
-    ui.text(String(globalStep + 1).padStart(2, '0'), x + 8, b.y + 6, globalStep === state.currentStep ? textColor : subtle);
+    let stepColor = subtle;
+    if (globalStep === state.currentStep) stepColor = textColor;
+    ui.text(String(globalStep + 1).padStart(2, '0'), x + 8, b.y + 6, stepColor);
     ui.rect(x, b.y, 1, b.h, gridLine);
   }
   ui.rect(Math.round(m.x + m.w), b.y, 1, b.h, gridLine);
@@ -895,7 +949,9 @@ scope.render = function() {
     const rect = noteScreenRect(note);
     if (!rect) continue;
     const active = state.currentStep >= note.start && state.currentStep < note.start + note.length;
-    ui.rect(rect.x, rect.y, rect.w, rect.h, active ? cellOnActive : cellOn);
+    let noteColor = cellOn;
+    if (active) noteColor = cellOnActive;
+    ui.rect(rect.x, rect.y, rect.w, rect.h, noteColor);
     ui.rect(rect.x + rect.w - 3, rect.y + 1, 2, Math.max(2, rect.h - 2), handleColor);
   }
 

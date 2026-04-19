@@ -122,6 +122,25 @@ describe('parseMarkdownLite', () => {
       ]
     });
   });
+
+  it('parses link titles and trailing directive metadata', () => {
+    const nodes = parseMarkdownLite('[grace](#grace-and-faith "Explanation") {not-a-link}\n\n[that](#that){rel:"refers-to-clause", strength: 0.9}');
+
+    expect(nodes).toHaveLength(2);
+    expect(nodes[0]).toEqual({
+      kind: 'paragraph',
+      inlines: [
+        { kind: 'link', text: 'grace', url: '#grace-and-faith', title: 'Explanation' },
+        { kind: 'text', text: ' {not-a-link}' },
+      ]
+    });
+    expect(nodes[1]).toEqual({
+      kind: 'paragraph',
+      inlines: [
+        { kind: 'link', text: 'that', url: '#that', meta: { rel: 'refers-to-clause', strength: 0.9 } },
+      ]
+    });
+  });
 });
 
 describe('layoutMarkdownDocument', () => {
@@ -249,6 +268,27 @@ describe('layoutMarkdownDocument', () => {
     const markerOps = result.ops.filter((op) => op.kind === 'text' && (op.text === '➵' || op.text === '* '));
     expect(markerOps.some((op) => op.kind === 'text' && op.text === '➵')).toBe(true);
     expect(markerOps.some((op) => op.kind === 'text' && op.text === '* ')).toBe(true);
+  });
+
+  it('preserves link metadata in link regions', () => {
+    const nodes = parseMarkdownLite('[grace](#grace-and-faith "Explanation"){rel:"explanation"}');
+    const result = layoutMarkdownDocument(
+      nodes,
+      { x: 0, y: 0, width: 240, height: 120 },
+      { charW: 8, charH: 16 },
+      style,
+      0,
+      10
+    );
+
+    expect(result.linkRegions).toEqual([
+      expect.objectContaining({
+        url: '#grace-and-faith',
+        text: 'grace',
+        title: 'Explanation',
+        meta: { rel: 'explanation' },
+      })
+    ]);
   });
 
   it('renders italics using italicFg and strong as a double-draw pass', () => {

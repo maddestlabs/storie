@@ -2,6 +2,8 @@
 name: "STFXR: Graph Viewer"
 theme: "nord"
 requiresAudioGesture: true
+exports: [sfxGraphDocument, sfxGraphPreset, sfxGraphSelection]
+accepts: [sfxGraphDocument, sfxGraphPreset, readonly, auditionRequest]
 ---
 
 A basic **graph viewer** for a single `stfxr` preset.
@@ -14,14 +16,137 @@ A basic **graph viewer** for a single `stfxr` preset.
 
 > Note: this demo uses the WebGPU `ui` immediate-mode drawing API.
 
+## Modular Role
+
+This document is intended to serve three roles over time:
+
+1. A standalone sound-design surface for a single `stfxr` graph.
+2. An embedded instrument editor inside [sequencer.md](./sequencer.md).
+3. The graph-editing surface for instruments, buses, and FX chains inside [daw.md](./daw.md).
+
+To keep those roles aligned, treat this document as a shell around a reusable graph editor subsystem rather than the subsystem itself.
+
+### Stable Data Boundary
+
+The reusable boundary should be split into three layers:
+
+- `SfxGraphPreset`: synth-only data consumed by the audio engine (`vars`, `nodes`, `edges`, `events`).
+- `SfxGraphDocument`: a preset plus editor metadata such as node positions, camera defaults, and future grouping/layout data.
+- `SfxGraphEditorSession`: transient UI state such as selection, hover, drag state, splitter position, and dirty flags.
+
+Only the first two should be shared with a host. Session state should remain local to the graph editor instance.
+
+### Embedding Contract
+
+When this document is embedded by another Storie document, the host should own persistence and orchestration while this module owns graph editing behavior.
+
+Recommended incoming payloads:
+
+- `sfxGraphDocument` to open a saved graph plus layout metadata.
+- `sfxGraphPreset` to open a synth graph when no editor metadata exists yet.
+- `readonly` to disable editing for preview or locked contexts.
+- `auditionRequest` when the host wants a graph to be played externally.
+
+Recommended outgoing payloads:
+
+- `sfxGraphDocumentChanged` when preset or layout state changes.
+- `sfxGraphPresetChanged` when the canonical synth graph changes.
+- `sfxGraphSelectionChanged` when the selected node changes.
+- `sfxGraphValidationChanged` when parse or validation status changes.
+- `sfxGraphAuditionRequested` when the user presses Play inside the graph editor.
+
+The host should treat `sfxGraphPresetChanged` as the main integration seam for track instruments, bus FX, and future DAW routing.
+
+### Implementation Direction
+
+The optimal implementation path is:
+
+1. Extract the graph model, layout, validation, and edit actions into shared `src` modules.
+2. Keep this file as the standalone shell that mounts that shared core.
+3. Make `sequencer.md` and `daw.md` mount the same core instead of carrying their own graph JSON/editor state.
+4. Add `host.send(...)` and `host.on(...)` wiring once the shared controller exists.
+
 ## Demo
 
 ```js
 // Inlined graph utilities (src/graph/core.ts + layout.ts)
+function getArrayOrEmpty(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  return [];
+}
+
+function getClonedArrayOrEmpty(value) {
+  if (Array.isArray(value)) {
+    return value.slice();
+  }
+  return [];
+}
+
+function getNodeId(node) {
+  if (node && node.id !== undefined && node.id !== null) {
+    return String(node.id);
+  }
+  return '';
+}
+
+function getNodeKind(node, fallback) {
+  if (node && node.kind !== undefined && node.kind !== null) {
+    return String(node.kind);
+  }
+  return fallback;
+}
+
+function getEdgeEndpointNodeId(endpoint) {
+  if (endpoint && endpoint.node !== undefined && endpoint.node !== null) {
+    return String(endpoint.node);
+  }
+  return '';
+}
+
+function getEdgeFromNodeId(edge) {
+  return getEdgeEndpointNodeId(edge && edge.from);
+}
+
+function getEdgeToNodeId(edge) {
+  return getEdgeEndpointNodeId(edge && edge.to);
+}
+
+function getEdgeToTarget(edge) {
+  if (edge && edge.to !== undefined && edge.to !== null) {
+    return String(edge.to);
+  }
+  return '';
+}
+
+function getEdgeFromSource(edge) {
+  if (edge && edge.from !== undefined && edge.from !== null) {
+    return String(edge.from);
+  }
+  return '';
+}
+
+function getMapArray(map, key) {
+  const value = map.get(key);
+  if (Array.isArray(value)) {
+    return value;
+  }
+  return [];
+}
+
+function getMapNumber(map, key) {
+  const value = map.get(key);
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  return 0;
+}
+
 function _graphNodeById(graph) {
   const map = new Map();
-  for (const n of graph.nodes ?? []) {
-    const id = String(n?.id ?? '');
+  for (const n of getArrayOrEmpty(graph && graph.nodes)) {
+    const id = getNodeId(n);
     if (!id) continue;
     if (!map.has(id)) map.set(id, { ...n, id });
   }
@@ -33,23 +158,29 @@ function topoSort(graph) {
   const indeg = new Map();
   const out = new Map();
   for (const id of ids) { indeg.set(id, 0); out.set(id, []); }
-  for (const e of graph.edges ?? []) {
-    const a = String(e?.from?.node ?? '');
-    const b = String(e?.to?.node ?? '');
+  for (const e of getArrayOrEmpty(graph && graph.edges)) {
+    const a = getEdgeFromNodeId(e);
+    const b = getEdgeToNodeId(e);
     if (!a || !b || !nodes.has(a) || !nodes.has(b)) continue;
     out.get(a).push(b);
-    indeg.set(b, (indeg.get(b) ?? 0) + 1);
+    indeg.set(b, getMapNumber(indeg, b) + 1);
   }
   const q = [];
-  for (const id of ids) if ((indeg.get(id) ?? 0) === 0) q.push(id);
+  for (const id of ids) {
+    if (getMapNumber(indeg, id) === 0) {
+      q.push(id);
+    }
+  }
   const order = [];
   const indeg2 = new Map(indeg);
   while (q.length) {
     const id = q.shift();
     order.push(id);
-    for (const b of out.get(id) ?? []) {
-      indeg2.set(b, (indeg2.get(b) ?? 0) - 1);
-      if ((indeg2.get(b) ?? 0) === 0) q.push(b);
+    for (const b of getMapArray(out, id)) {
+      indeg2.set(b, getMapNumber(indeg2, b) - 1);
+      if (getMapNumber(indeg2, b) === 0) {
+        q.push(b);
+      }
     }
   }
   if (order.length === ids.length) return { order, hasCycle: false, cyclicNodes: [] };
@@ -62,9 +193,9 @@ function computeLevels(graph, order) {
   const ids = Array.from(nodes.keys());
   const out = new Map();
   for (const id of ids) out.set(id, []);
-  for (const e of graph.edges ?? []) {
-    const a = String(e?.from?.node ?? '');
-    const b = String(e?.to?.node ?? '');
+  for (const e of getArrayOrEmpty(graph && graph.edges)) {
+    const a = getEdgeFromNodeId(e);
+    const b = getEdgeToNodeId(e);
     if (!a || !b || !nodes.has(a) || !nodes.has(b)) continue;
     out.get(a).push(b);
   }
@@ -72,8 +203,10 @@ function computeLevels(graph, order) {
   for (const id of ids) level.set(id, 0);
   const seq = Array.isArray(order) && order.length ? order : topoSort(graph).order;
   for (const id of seq) {
-    const l = level.get(id) ?? 0;
-    for (const b of out.get(id) ?? []) level.set(b, Math.max(level.get(b) ?? 0, l + 1));
+    const l = getMapNumber(level, id);
+    for (const b of getMapArray(out, id)) {
+      level.set(b, Math.max(getMapNumber(level, b), l + 1));
+    }
   }
   return level;
 }
@@ -89,8 +222,8 @@ function autoLayoutLevels(graph, bounds, opts) {
   const level = computeLevels(graph, topo.order);
   const groups = new Map();
   for (const id of nodes.keys()) {
-    const l = level.get(id) ?? 0;
-    const arr = groups.get(l) ?? [];
+    const l = getMapNumber(level, id);
+    const arr = getMapArray(groups, l);
     arr.push(id);
     groups.set(l, arr);
   }
@@ -98,7 +231,7 @@ function autoLayoutLevels(graph, bounds, opts) {
   const layout = new Map();
   for (let li = 0; li < levels.length; li++) {
     const l = levels[li];
-    const ids = groups.get(l) ?? [];
+    const ids = getMapArray(groups, l);
     for (let ri = 0; ri < ids.length; ri++) {
       const id = ids[ri];
       layout.set(id, { x: bounds.x + pad + li * colW, y: bounds.y + pad + ri * rowH, w: nodeW, h: nodeH });
@@ -130,6 +263,7 @@ function drawLine(ui, x0, y0, x1, y1, color, thickness) {
 
 let state = {
   seed: 1337,
+  seedText: '1337',
   volume: 0.7,
 
   // Graph + layout
@@ -150,8 +284,6 @@ let state = {
   hoveredId: null,
   selectedId: null,
 
-  // UI widgets
-  widgets: null,
   lastSelectedId: null,
   inspectorId: null,
   nodeJsonDirty: false,
@@ -202,18 +334,23 @@ function shortExpr(expr) {
 }
 
 function computeGraph(preset) {
-  const nodes = Array.isArray(preset?.nodes) ? preset.nodes.slice() : [];
-  const edges = Array.isArray(preset?.edges) ? preset.edges.slice() : [];
-  const events = Array.isArray(preset?.events) ? preset.events.slice() : [];
+  const nodes = getClonedArrayOrEmpty(preset && preset.nodes);
+  const edges = getClonedArrayOrEmpty(preset && preset.edges);
+  const events = getClonedArrayOrEmpty(preset && preset.events);
 
   const nodeById = new Map();
   for (const n of nodes) {
-    if (n && n.id) nodeById.set(String(n.id), n);
+    const id = getNodeId(n);
+    if (id) {
+      nodeById.set(id, n);
+    }
   }
 
   let needsOut = false;
   for (const e of edges) {
-    if (String(e?.to) === 'out') needsOut = true;
+    if (getEdgeToTarget(e) === 'out') {
+      needsOut = true;
+    }
   }
   if (needsOut && !nodeById.has('out')) {
     nodeById.set('out', { kind: 'out', id: 'out' });
@@ -224,8 +361,8 @@ function computeGraph(preset) {
   const paramEdges = [];
 
   for (const e of edges) {
-    const from = String(e?.from ?? '');
-    const toRaw = String(e?.to ?? '');
+    const from = getEdgeFromSource(e);
+    const toRaw = getEdgeToTarget(e);
     if (!from || !toRaw) continue;
 
     const dot = toRaw.indexOf('.');
@@ -241,7 +378,7 @@ function computeGraph(preset) {
 
   // Reuse shared topo sort + level computation by adapting to the core graph shape.
   const topoGraph = {
-    nodes: Array.from(nodeById.keys()).map((id) => ({ id, kind: String(nodeById.get(id)?.kind ?? 'node') })),
+    nodes: Array.from(nodeById.keys()).map((id) => ({ id, kind: getNodeKind(nodeById.get(id), 'node') })),
     edges: audioEdges.map((e, idx) => ({
       id: `e${idx}`,
       from: { node: String(e.from), port: 'out' },
@@ -256,7 +393,7 @@ function computeGraph(preset) {
   // stfxr graph viewer treats all audio edges as node-level connections.
   const coreGraph = {
     version: 1,
-    nodes: nodesOut.map((n) => ({ id: String(n.id), kind: String(n.kind ?? 'unknown'), params: n })),
+    nodes: nodesOut.map((n) => ({ id: getNodeId(n), kind: getNodeKind(n, 'unknown'), params: n })),
     edges: audioEdges.map((e, idx) => ({
       id: e.id ?? `e${idx}`,
       from: { node: String(e.from), port: 'out' },
@@ -277,7 +414,7 @@ function computeGraph(preset) {
 
 function autoLayout(graph, bounds) {
   const coreGraph = {
-    nodes: graph.nodes.map((n) => ({ id: String(n.id), kind: String(n.kind ?? 'node') })),
+    nodes: graph.nodes.map((n) => ({ id: getNodeId(n), kind: getNodeKind(n, 'node') })),
     edges: graph.audioEdges.map((e, idx) => ({
       id: `e${idx}`,
       from: { node: String(e.from), port: 'out' },
@@ -292,7 +429,7 @@ function autoLayout(graph, bounds) {
   for (const [id, r] of base.entries()) {
     const node = graph.nodeById.get(id);
     const label = `${id}`;
-    const kind = String(node?.kind ?? '');
+    const kind = getNodeKind(node, '');
     const w = Math.max(180, (label.length + Math.max(0, kind.length - 2)) * 9 + 44);
     layout.set(id, { x: r.x, y: r.y, w, h: 60 });
   }
@@ -324,7 +461,7 @@ function paramTargetPoint(layout, toId, param) {
   const portX = b.x;
   const baseY = b.y + 18;
   const hStep = 12;
-  const hash = String(param ?? '')
+  const hash = String(param || '')
     .split('')
     .reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 0);
   const slot = hash % 6;
@@ -602,15 +739,13 @@ function getInspectorId() {
 }
 
 function syncNumericBindingFromEditor() {
-  if (!state.widgets?.nodeJson || !state.widgets?.vol) return;
+  const editor = getNodeJsonEditor();
+  const slider = getVolumeSlider();
+  if (!editor || !slider) return;
 
-  const editor = state.widgets.nodeJson;
-  const slider = state.widgets.vol;
   const inspectorId = getInspectorId();
-  const selection = typeof editor.getSelectionRange === 'function'
-    ? editor.getSelectionRange()
-    : { start: 0, end: 0 };
-  const text = String(editor.getValue() ?? '');
+  const selection = getNodeJsonSelection(editor);
+  const text = getNodeJsonText(editor);
 
   let bindings = [];
   try {
@@ -624,9 +759,7 @@ function syncNumericBindingFromEditor() {
 
   if (!found) {
     state.numericBinding = null;
-    slider.label = inspectorId === 'out' ? 'Volume' : 'Select Numeric Value';
-    slider.setEnabled(false);
-    state.lastSliderWidgetValue = slider.getValue();
+    syncNumericSliderWidget();
     return;
   }
 
@@ -647,19 +780,13 @@ function syncNumericBindingFromEditor() {
     step: spec.step
   };
 
-  slider.label = found.label;
-  slider.min = spec.min;
-  slider.max = spec.max;
-  slider.step = spec.step;
-  slider.setEnabled(true);
-  slider.setValue(found.value);
-  state.lastSliderWidgetValue = slider.getValue();
+  syncNumericSliderWidget();
 }
 
 function applyNumericSliderValue(nextValue) {
-  if (!state.widgets?.nodeJson || !state.numericBinding) return false;
+  const editor = getNodeJsonEditor();
+  if (!editor || !state.numericBinding) return false;
 
-  const editor = state.widgets.nodeJson;
   const binding = state.numericBinding;
   const clamped = clamp(Number(nextValue ?? binding.value), binding.min, binding.max);
   const nextText = formatSliderNumber(clamped, binding.step);
@@ -677,14 +804,14 @@ function applyNumericSliderValue(nextValue) {
 function getPresetNodeById(id) {
   if (!state.preset || !Array.isArray(state.preset.nodes)) return null;
   for (const n of state.preset.nodes) {
-    if (String(n?.id ?? '') === String(id)) return n;
+    if (getNodeId(n) === String(id)) return n;
   }
   return null;
 }
 
 function computeDefaultNodeSize(node) {
-  const id = String(node?.id ?? '');
-  const kind = String(node?.kind ?? '');
+  const id = getNodeId(node);
+  const kind = getNodeKind(node, '');
   const label = `${id}`;
   const w = Math.max(180, (label.length + Math.max(0, kind.length - 2)) * 9 + 44);
   const h = 60;
@@ -696,7 +823,7 @@ function buildInitialLayout(graph, bounds) {
   const out = new Map(auto);
 
   for (const n of graph.nodes) {
-    const id = String(n?.id ?? '');
+    const id = getNodeId(n);
     if (!id) continue;
     const cur = out.get(id) || null;
     const def = computeDefaultNodeSize(n);
@@ -722,6 +849,31 @@ function writeLayoutToPreset(layout) {
     n.x = r.x;
     n.y = r.y;
   }
+}
+
+function rebuildGraphLayout() {
+  if (!state.graph) return;
+  const b = graphBounds();
+  state.layoutById = buildInitialLayout(state.graph, b.graph);
+}
+
+function rebuildGraphFromPreset() {
+  if (!state.preset) return;
+  state.graph = computeGraph(state.preset);
+  rebuildGraphLayout();
+}
+
+function playCurrentPreset() {
+  if (!state.preset) return;
+  stfxr.playPreset(state.preset, state.seed, { volume: state.volume });
+}
+
+function applyAutoLayoutToGraph() {
+  if (!state.graph) return;
+  const b = graphBounds();
+  state.layoutById = autoLayout(state.graph, b.graph);
+  writeLayoutToPreset(state.layoutById);
+  state.statusText = 'Auto layout applied (saved into node x/y).';
 }
 
 function applySelectedNodeJson(jsonText) {
@@ -781,16 +933,12 @@ function applySelectedNodeJson(jsonText) {
     state.preset.nodes = nodes;
   }
 
-  state.graph = computeGraph(state.preset);
-  {
-    const b = graphBounds();
-    state.layoutById = buildInitialLayout(state.graph, b.graph);
-  }
+  rebuildGraphFromPreset();
   state.nodeJsonDirty = false;
   state.statusText = `Updated node ${selectedId} and replayed.`;
 
   // Audition immediately so changes affect sound.
-  stfxr.playPreset(state.preset, state.seed, { volume: state.volume });
+  playCurrentPreset();
   return true;
 }
 
@@ -819,8 +967,7 @@ function ensureGraphLoaded() {
 
   // Ensure layout exists (prefer preset node x/y when present)
   if (!state.layoutById || state.layoutById.size === 0) {
-    const b = graphBounds();
-    state.layoutById = buildInitialLayout(state.graph, b.graph);
+    rebuildGraphLayout();
   }
 }
 
@@ -851,18 +998,26 @@ function graphBounds() {
 }
 
 function layoutToolbar() {
-  if (!state.widgets) return;
   const W = ui.metrics.canvasWidth || 1280;
   const b = graphBounds();
   const y = b.toolbar.y;
   const h = b.toolbar.h;
+  const vol = getVolumeSlider();
+  const seedField = getSeedFieldWidget();
+  const btnRand = getWidget('btnRand');
+  const btnPlay = getWidget('btnPlay');
+  const btnAuto = getWidget('btnAuto');
+  const btnReset = getWidget('btnReset');
+  if (!vol || !seedField || !btnRand || !btnPlay || !btnAuto || !btnReset) return;
 
   // Right-align volume slider.
   const volW = Math.max(220, Math.min(360, Math.floor(W * 0.28)));
-  state.widgets.vol.bounds.x = b.toolbar.x + b.toolbar.w - volW;
-  state.widgets.vol.bounds.y = y + 8;
-  state.widgets.vol.bounds.width = volW;
-  state.widgets.vol.bounds.height = h - 16;
+  setWidgetBounds(vol, {
+    x: b.toolbar.x + b.toolbar.w - volW,
+    y: y + 8,
+    width: volW,
+    height: h - 16
+  });
 
   // Left-to-right controls.
   let x = b.toolbar.x;
@@ -871,18 +1026,22 @@ function layoutToolbar() {
   const btnH = 42;
   const fieldW = 240;
 
-  state.widgets.seedField.bounds.x = x;
-  state.widgets.seedField.bounds.y = y + Math.floor((h - btnH) / 2);
-  state.widgets.seedField.bounds.width = fieldW;
-  state.widgets.seedField.bounds.height = btnH;
+  setWidgetBounds(seedField, {
+    x,
+    y: y + Math.floor((h - btnH) / 2),
+    width: fieldW,
+    height: btnH
+  });
   x += fieldW + gap;
 
-  const buttons = [state.widgets.btnRand, state.widgets.btnPlay, state.widgets.btnAuto, state.widgets.btnReset];
+  const buttons = [btnRand, btnPlay, btnAuto, btnReset];
   for (const btn of buttons) {
-    btn.bounds.x = x;
-    btn.bounds.y = y + Math.floor((h - btnH) / 2);
-    btn.bounds.width = btnW;
-    btn.bounds.height = btnH;
+    setWidgetBounds(btn, {
+      x,
+      y: y + Math.floor((h - btnH) / 2),
+      width: btnW,
+      height: btnH
+    });
     x += btnW + gap;
   }
 }
@@ -895,6 +1054,373 @@ function worldToView(x, y) {
   return { x: x + state.camX, y: y + state.camY };
 }
 
+function setWidgetBounds(widget, bounds) {
+  if (!widget || !bounds) return;
+  if (typeof widget.setBounds === 'function') {
+    widget.setBounds(bounds);
+    return;
+  }
+
+  widget.bounds.x = bounds.x;
+  widget.bounds.y = bounds.y;
+  widget.bounds.width = bounds.width;
+  widget.bounds.height = bounds.height;
+}
+
+function getWidget(name) {
+  return gui.get(name) || null;
+}
+
+function getNodeJsonEditor() {
+  return getWidget('nodeJson');
+}
+
+function getVolumeSlider() {
+  return getWidget('vol');
+}
+
+function getSeedFieldWidget() {
+  return getWidget('seedField');
+}
+
+function getNodeJsonSelection(editor) {
+  if (!editor) return { start: 0, end: 0 };
+  if (typeof editor.getSelectionRange === 'function') {
+    return editor.getSelectionRange();
+  }
+  return { start: 0, end: 0 };
+}
+
+function updateStoredNodeJsonSelection(selection) {
+  state.lastNodeJsonSelectionStart = selection.start;
+  state.lastNodeJsonSelectionEnd = selection.end;
+}
+
+function getNodeJsonText(editor) {
+  if (!editor) return '';
+  return String(editor.getValue() ?? '');
+}
+
+function setWidgetEnabled(widget, enabled) {
+  if (!widget || typeof widget.setEnabled !== 'function') return;
+  widget.setEnabled(!!enabled);
+}
+
+function setNodeJsonText(text) {
+  if (!getNodeJsonEditor()) return;
+  gui.value('nodeJson', String(text ?? ''));
+}
+
+function setSliderRange(widget, range) {
+  if (!widget || !range) return;
+  if (typeof range.min === 'number' && Number.isFinite(range.min)) {
+    widget.min = range.min;
+  }
+  if (typeof range.max === 'number' && Number.isFinite(range.max)) {
+    widget.max = range.max;
+  }
+  if (typeof range.step === 'number' && Number.isFinite(range.step) && range.step > 0) {
+    widget.step = range.step;
+  }
+}
+
+function syncNumericSliderWidget() {
+  const slider = getVolumeSlider();
+  if (!slider) return;
+
+  if (!state.numericBinding) {
+    const inspectorId = getInspectorId();
+    gui.text('vol', inspectorId === 'out' ? 'Volume' : 'Select Numeric Value');
+    setWidgetEnabled(slider, false);
+    state.lastSliderWidgetValue = gui.value('vol');
+    return;
+  }
+
+  const binding = state.numericBinding;
+  gui.text('vol', binding.label);
+  setSliderRange(slider, binding);
+  setWidgetEnabled(slider, true);
+  gui.value('vol', binding.value);
+  state.lastSliderWidgetValue = gui.value('vol');
+}
+
+function updateInspectorLayout() {
+  const b = graphBounds();
+  const x = b.right.x;
+  const y = b.right.y;
+  const w = b.right.w;
+  const h = b.right.h;
+
+  const gap = 8;
+  const labelH = 18;
+  const btnH = 42;
+  const statusH = 18;
+  const nodeEditorH = Math.max(120, h - labelH - gap - btnH - gap - statusH);
+  const nodeLabelY = y;
+
+  const nodeJsonLabel = getWidget('nodeJsonLabel');
+  const nodeJson = getNodeJsonEditor();
+  const btnUpdate = getWidget('btnUpdate');
+  const status = getWidget('status');
+  if (!nodeJsonLabel || !nodeJson || !btnUpdate || !status) return;
+
+  setWidgetBounds(nodeJsonLabel, {
+    x,
+    y: nodeLabelY,
+    width: w,
+    height: labelH
+  });
+
+  setWidgetBounds(nodeJson, {
+    x,
+    y: nodeLabelY + labelH + gap,
+    width: w,
+    height: nodeEditorH
+  });
+
+  const btnY = nodeLabelY + labelH + gap + nodeEditorH + gap;
+  setWidgetBounds(btnUpdate, {
+    x,
+    y: btnY,
+    width: 120,
+    height: btnH
+  });
+
+  setWidgetBounds(status, {
+    x,
+    y: btnY + btnH + gap,
+    width: w,
+    height: statusH
+  });
+}
+
+function refreshInspectorEditorFromSelection(forceOverwrite) {
+  const nodeJson = getNodeJsonEditor();
+  if (!nodeJson || !state.graph) return;
+
+  const canOverwrite = forceOverwrite || !state.nodeJsonDirty;
+  if (!canOverwrite) return;
+
+  setNodeJsonText(buildSelectedNodeJson(state.graph, state.selectedId));
+  state.nodeJsonDirty = false;
+  state.inspectorId = state.selectedId;
+  syncNumericBindingFromEditor();
+  updateStoredNodeJsonSelection(getNodeJsonSelection(nodeJson));
+}
+
+function updateNodeJsonLabel() {
+  if (!getWidget('nodeJsonLabel')) return;
+
+  const inspectorId = getInspectorId();
+  const id = inspectorId ? String(inspectorId) : '(none)';
+  gui.text('nodeJsonLabel', `Node JSON — ${id}`);
+}
+
+function syncSeedFromText() {
+  const raw = String(state.seedText ?? '').trim();
+  const asNum = Number(raw);
+  if (raw && Number.isFinite(asNum)) {
+    state.seed = asNum;
+    return;
+  }
+  state.seed = raw || 0;
+}
+
+function syncSelectionDrivenInspectorState() {
+  if (state.selectedId === state.lastSelectedId) return;
+  refreshInspectorEditorFromSelection(false);
+  state.lastSelectedId = state.selectedId;
+}
+
+function randomizeSeed() {
+  if (typeof random?.seed === 'function') {
+    state.seed = random.seed();
+  } else {
+    state.seed = Math.floor(Math.random() * 0x7fffffff);
+  }
+
+  state.seedText = String(state.seed);
+
+  const seedField = getSeedFieldWidget();
+  if (seedField) {
+    gui.value('seedField', state.seedText);
+  }
+}
+
+function syncNumericBindingForEditorState(nodeJsonChanged) {
+  const nodeJson = getNodeJsonEditor();
+  if (!nodeJson) return;
+
+  const selection = getNodeJsonSelection(nodeJson);
+  const selectionChanged = selection.start !== state.lastNodeJsonSelectionStart
+    || selection.end !== state.lastNodeJsonSelectionEnd;
+
+  if (nodeJsonChanged || selectionChanged) {
+    syncNumericBindingFromEditor();
+    updateStoredNodeJsonSelection(selection);
+  }
+}
+
+function applyPendingSliderBindingValue() {
+  if (!state.numericBinding) return;
+
+  const vol = getVolumeSlider();
+  if (!vol) return;
+
+  const sliderValue = vol.getValue();
+  const previousValue = state.lastSliderWidgetValue ?? sliderValue;
+  const minDelta = Math.max(1e-6, state.numericBinding.step * 0.25);
+  if (Math.abs(sliderValue - previousValue) > minDelta) {
+    applyNumericSliderValue(sliderValue);
+  }
+  state.lastSliderWidgetValue = vol.getValue();
+}
+
+function setStatusWidgetText() {
+  if (!getWidget('status')) return;
+  gui.text('status', state.statusText);
+}
+
+function routeRetainedGUIInput(event) {
+  if (!event) return;
+
+  if (event.type === 'keydown') {
+    gui.handleKey(event.key, {
+      shift: (event.mods || []).includes('shift'),
+      ctrl: (event.mods || []).includes('ctrl'),
+      alt: (event.mods || []).includes('alt'),
+      meta: (event.mods || []).includes('meta')
+    });
+    return;
+  }
+
+  if (event.type === 'text') {
+    gui.handleText(event.text);
+    return;
+  }
+
+  if (event.type === 'mouse') {
+    gui.handleMouse(event.x, event.y, state.mouseDownLeft);
+    return;
+  }
+
+  if (event.type === 'mouse_move') {
+    gui.handleMouse(event.x, event.y, state.mouseDownLeft);
+  }
+}
+
+function stepRetainedGUI() {
+  gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);
+}
+
+function beginSplitterDrag(event) {
+  state.drag = {
+    mode: 'split',
+    ox: event.x,
+    startRightW: state.rightW
+  };
+}
+
+function beginGraphDrag(event, graphBoundsRect) {
+  if (!state.graph) return;
+
+  const w = viewToWorld(event.x, event.y);
+  const hit = hitTest(state.layoutById, w.x, w.y);
+  state.hoveredId = hit;
+  state.selectedId = hit;
+
+  if (hit) {
+    const r = state.layoutById.get(hit);
+    state.drag = {
+      mode: 'node',
+      id: hit,
+      ox: w.x - r.x,
+      oy: w.y - r.y
+    };
+    state.layoutById.delete(hit);
+    state.layoutById.set(hit, r);
+    return;
+  }
+
+  state.drag = {
+    mode: 'pan',
+    ox: event.x,
+    oy: event.y,
+    startCamX: state.camX,
+    startCamY: state.camY
+  };
+}
+
+function handleGraphMousePress(event) {
+  const b = graphBounds();
+  const inSplitter = event.x >= b.splitter.x && event.x < (b.splitter.x + b.splitter.w) &&
+                     event.y >= b.splitter.y && event.y < (b.splitter.y + b.splitter.h);
+  const inGraph = event.x >= b.graph.x && event.x < (b.graph.x + b.graph.w) &&
+                  event.y >= b.graph.y && event.y < (b.graph.y + b.graph.h);
+
+  if (inSplitter) {
+    beginSplitterDrag(event);
+    return;
+  }
+
+  if (inGraph) {
+    beginGraphDrag(event, b.graph);
+  }
+}
+
+function updateHoveredGraphNode(event) {
+  const b = graphBounds();
+  const inGraph = event.x >= b.graph.x && event.x < (b.graph.x + b.graph.w) &&
+                  event.y >= b.graph.y && event.y < (b.graph.y + b.graph.h);
+
+  if (!inGraph || !state.graph) {
+    state.hoveredId = null;
+    return;
+  }
+
+  const w = viewToWorld(event.x, event.y);
+  state.hoveredId = hitTest(state.layoutById, w.x, w.y);
+}
+
+function updateActiveGraphDrag(event) {
+  if (!state.mouseDownLeft || !state.drag) return false;
+
+  if (state.drag.mode === 'split') {
+    const W = ui.metrics.canvasWidth || 1280;
+    const minRightW = 260;
+    const maxRightW = Math.max(minRightW, W - 220);
+    const dx = event.x - state.drag.ox;
+    state.rightW = clamp(state.drag.startRightW - dx, minRightW, maxRightW);
+    return true;
+  }
+
+  if (state.drag.mode === 'node') {
+    const id = state.drag.id;
+    const r = state.layoutById.get(id);
+    if (r) {
+      const w = viewToWorld(event.x, event.y);
+      r.x = w.x - state.drag.ox;
+      r.y = w.y - state.drag.oy;
+
+      const pn = getPresetNodeById(id);
+      if (pn) {
+        pn.x = r.x;
+        pn.y = r.y;
+      }
+    }
+    return false;
+  }
+
+  if (state.drag.mode === 'pan') {
+    const dx = event.x - state.drag.ox;
+    const dy = event.y - state.drag.oy;
+    state.camX = state.drag.startCamX + dx;
+    state.camY = state.drag.startCamY + dy;
+  }
+
+  return false;
+}
+
 
 ```
 
@@ -904,97 +1430,120 @@ term.clear();
 
 gui.init();
 
-// Bottom toolbar widgets
-const seedField = gui.createTextField({
-  bounds: { x: 20, y: 20, width: 240, height: 42 },
-  value: String(state.seed),
-  placeholder: 'Seed'
+gui.screen({
+  state,
+  group: 'stfxr-toolbar',
+  widgets: {
+    seedField: {
+      type: 'textField',
+      bounds: { x: 20, y: 20, width: 240, height: 42 },
+      value: state.seedText,
+      bind: 'seedText',
+      placeholder: 'Seed',
+      onChange() {
+        syncSeedFromText();
+      }
+    },
+    btnRand: {
+      type: 'button',
+      bounds: { x: 270, y: 20, width: 92, height: 42 },
+      label: 'Random',
+      onClick() {
+        randomizeSeed();
+      }
+    },
+    btnPlay: {
+      type: 'button',
+      bounds: { x: 372, y: 20, width: 92, height: 42 },
+      label: 'Play',
+      onClick() {
+        playCurrentPreset();
+      }
+    },
+    btnAuto: {
+      type: 'button',
+      bounds: { x: 474, y: 20, width: 92, height: 42 },
+      label: 'Auto',
+      onClick() {
+        applyAutoLayoutToGraph();
+      }
+    },
+    btnReset: {
+      type: 'button',
+      bounds: { x: 576, y: 20, width: 92, height: 42 },
+      label: 'Reset',
+      onClick() {
+        state.camX = 0;
+        state.camY = 0;
+      }
+    },
+    vol: {
+      type: 'slider',
+      bounds: { x: 690, y: 20, width: 320, height: 62 },
+      label: 'Volume',
+      min: 0,
+      max: 100,
+      value: Math.round(state.volume * 100)
+    }
+  }
 });
 
-const btnRand = gui.createButton({
-  bounds: { x: 270, y: 20, width: 92, height: 42 },
-  label: 'Random'
+gui.screen({
+  state,
+  group: 'stfxr-inspector',
+  widgets: {
+    nodeJsonLabel: {
+      type: 'label',
+      bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 48, width: 380, height: 18 },
+      text: 'Node JSON',
+      align: 'left'
+    },
+    nodeJson: {
+      type: 'editor',
+      bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 72, width: 380, height: 160 },
+      value: '',
+      placeholder: '{\n  "kind": "...",\n  ...\n}'
+    },
+    btnUpdate: {
+      type: 'button',
+      bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 240, width: 120, height: 42 },
+      label: 'Update',
+      onClick() {
+        const jsonText = gui.value('nodeJson');
+        const ok = applySelectedNodeJson(jsonText);
+        if (ok && state.graph) {
+          refreshInspectorEditorFromSelection(true);
+        }
+      }
+    },
+    status: {
+      type: 'label',
+      bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 288, width: 380, height: 18 },
+      text: '',
+      align: 'left'
+    }
+  }
 });
-
-const btnPlay = gui.createButton({
-  bounds: { x: 372, y: 20, width: 92, height: 42 },
-  label: 'Play'
-});
-
-const btnAuto = gui.createButton({
-  bounds: { x: 474, y: 20, width: 92, height: 42 },
-  label: 'Auto'
-});
-
-const btnReset = gui.createButton({
-  bounds: { x: 576, y: 20, width: 92, height: 42 },
-  label: 'Reset'
-});
-
-const vol = gui.createSlider({
-  bounds: { x: 690, y: 20, width: 320, height: 62 },
-  label: 'Volume',
-  min: 0,
-  max: 100,
-  value: Math.round(state.volume * 100)
-});
-
-const nodeJsonLabel = gui.createLabel({
-  bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 48, width: 380, height: 18 },
-  text: 'Node JSON',
-  align: 'left'
-});
-
-const nodeJson = gui.createTextEditor({
-  bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 72, width: 380, height: 160 },
-  value: '',
-  placeholder: '{\n  "kind": "...",\n  ...\n}'
-});
-
-const btnUpdate = gui.createButton({
-  bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 240, width: 120, height: 42 },
-  label: 'Update'
-});
-
-const status = gui.createLabel({
-  bounds: { x: ui.metrics.canvasWidth - 420 + 20, y: 288, width: 380, height: 18 },
-  text: '',
-  align: 'left'
-});
-
-state.widgets = {
-  seedField,
-  btnRand,
-  vol,
-  btnPlay,
-  btnAuto,
-  btnReset,
-  nodeJsonLabel,
-  nodeJson,
-  btnUpdate,
-  status
-};
 
 layoutToolbar();
+syncSeedFromText();
 
 // Load initial preset
 ensureGraphLoaded();
 
 // Populate initial layout (prefer preset node x/y if present)
 if (state.graph) {
-  const b = graphBounds();
-  state.layoutById = buildInitialLayout(state.graph, b.graph);
+  rebuildGraphLayout();
 }
 
 // Warm audio unlock
 audio.context.resume().catch(() => {});
 
 // Seed editor with selected node JSON
-if (state.graph && state.selectedId && state.widgets?.nodeJson) {
-  state.widgets.nodeJson.setValue(buildSelectedNodeJson(state.graph, state.selectedId));
+const nodeJson = getNodeJsonEditor();
+if (state.graph && state.selectedId && nodeJson) {
+  refreshInspectorEditorFromSelection(true);
   state.lastSelectedId = state.selectedId;
-  state.inspectorId = state.selectedId;
-  syncNumericBindingFromEditor();
 }
 ```
 
@@ -1002,268 +1551,51 @@ if (state.graph && state.selectedId && state.widgets?.nodeJson) {
 if (!event) return;
 if (!state) return;
 
-if (event.type === 'keydown') {
-  gui.handleKey(event.key, {
-    shift: (event.mods || []).includes('shift'),
-    ctrl: (event.mods || []).includes('ctrl'),
-    alt: (event.mods || []).includes('alt'),
-    meta: (event.mods || []).includes('meta')
-  });
-}
-
-if (event.type === 'text') {
-  gui.handleText(event.text);
-}
-
 if (event.type === 'mouse') {
   if (event.button === 'left') {
     state.mouseDownLeft = event.action === 'press' || event.action === 'repeat';
 
-    const b = graphBounds();
-    const inSplitter = event.x >= b.splitter.x && event.x < (b.splitter.x + b.splitter.w) &&
-                       event.y >= b.splitter.y && event.y < (b.splitter.y + b.splitter.h);
-    const inGraph = event.x >= b.graph.x && event.x < (b.graph.x + b.graph.w) &&
-                    event.y >= b.graph.y && event.y < (b.graph.y + b.graph.h);
-
-    if (state.mouseDownLeft && inSplitter) {
-      state.drag = {
-        mode: 'split',
-        ox: event.x,
-        startRightW: state.rightW
-      };
-    } else if (state.mouseDownLeft && inGraph && state.graph) {
-      const w = viewToWorld(event.x, event.y);
-      const hit = hitTest(state.layoutById, w.x, w.y);
-      state.hoveredId = hit;
-      state.selectedId = hit;
-
-      if (hit) {
-        const r = state.layoutById.get(hit);
-        state.drag = {
-          mode: 'node',
-          id: hit,
-          ox: w.x - r.x,
-          oy: w.y - r.y
-        };
-        // Bring to front
-        state.layoutById.delete(hit);
-        state.layoutById.set(hit, r);
-      } else {
-        state.drag = {
-          mode: 'pan',
-          ox: event.x,
-          oy: event.y,
-          startCamX: state.camX,
-          startCamY: state.camY
-        };
-      }
+    if (state.mouseDownLeft) {
+      handleGraphMousePress(event);
     }
 
     if (!state.mouseDownLeft) {
       state.drag = null;
     }
   }
-
-  gui.handleMouse(event.x, event.y, state.mouseDownLeft);
 }
 
+routeRetainedGUIInput(event);
+
 if (event.type === 'mouse_move') {
-  gui.handleMouse(event.x, event.y, state.mouseDownLeft);
-
-  const b = graphBounds();
-  const inGraph = event.x >= b.graph.x && event.x < (b.graph.x + b.graph.w) &&
-                  event.y >= b.graph.y && event.y < (b.graph.y + b.graph.h);
-
-  if (inGraph && state.graph) {
-    const w = viewToWorld(event.x, event.y);
-    state.hoveredId = hitTest(state.layoutById, w.x, w.y);
-  } else {
-    state.hoveredId = null;
-  }
-
-  if (state.mouseDownLeft && state.drag) {
-    if (state.drag.mode === 'split') {
-      const W = ui.metrics.canvasWidth || 1280;
-      const minRightW = 260;
-      const maxRightW = Math.max(minRightW, W - 220);
-      const dx = event.x - state.drag.ox;
-      state.rightW = clamp(state.drag.startRightW - dx, minRightW, maxRightW);
-      return;
-    }
-    if (state.drag.mode === 'node') {
-      const id = state.drag.id;
-      const r = state.layoutById.get(id);
-      if (r) {
-        const w = viewToWorld(event.x, event.y);
-        r.x = w.x - state.drag.ox;
-        r.y = w.y - state.drag.oy;
-
-        // Persist into preset node layout (optional metadata)
-        const pn = getPresetNodeById(id);
-        if (pn) {
-          pn.x = r.x;
-          pn.y = r.y;
-        }
-      }
-    }
-    if (state.drag.mode === 'pan') {
-      const dx = event.x - state.drag.ox;
-      const dy = event.y - state.drag.oy;
-      state.camX = state.drag.startCamX + dx;
-      state.camY = state.drag.startCamY + dy;
-    }
+  updateHoveredGraphNode(event);
+  if (updateActiveGraphDrag(event)) {
+    return;
   }
 }
 ```
 
 ```js on:update
-if (!state || !state.widgets) return;
+if (!state) return;
+if (!getSeedFieldWidget()) return;
 
-gui.update(getMouseX(), getMouseY(), state.mouseDownLeft);
+stepRetainedGUI();
 
 layoutToolbar();
+updateInspectorLayout();
 
-// Keep inspector bounds in sync with resize.
-{
-  const b = graphBounds();
-  const x = b.right.x;
-  const y = b.right.y;
-  const w = b.right.w;
-  const h = b.right.h;
-
-  const gap = 8;
-  const titleH = 22;
-  const labelH = 18;
-  const btnH = 42;
-  const statusH = 18;
-
-  // Single inspector: editable node JSON
-  const nodeEditorH = Math.max(120, h - labelH - gap - btnH - gap - statusH);
-
-  const nodeLabelY = y;
-  state.widgets.nodeJsonLabel.bounds.x = x;
-  state.widgets.nodeJsonLabel.bounds.y = nodeLabelY;
-  state.widgets.nodeJsonLabel.bounds.width = w;
-  state.widgets.nodeJsonLabel.bounds.height = labelH;
-
-  state.widgets.nodeJson.bounds.x = x;
-  state.widgets.nodeJson.bounds.y = nodeLabelY + labelH + gap;
-  state.widgets.nodeJson.bounds.width = w;
-  state.widgets.nodeJson.bounds.height = nodeEditorH;
-
-  const btnY = nodeLabelY + labelH + gap + nodeEditorH + gap;
-  state.widgets.btnUpdate.bounds.x = x;
-  state.widgets.btnUpdate.bounds.y = btnY;
-  state.widgets.btnUpdate.bounds.width = 120;
-  state.widgets.btnUpdate.bounds.height = btnH;
-
-  state.widgets.status.bounds.x = x;
-  state.widgets.status.bounds.y = btnY + btnH + gap;
-  state.widgets.status.bounds.width = w;
-  state.widgets.status.bounds.height = statusH;
-}
-
-// Seed handling
-if (state.widgets.seedField.wasChanged()) {
-  const raw = String(state.widgets.seedField.getValue() ?? '').trim();
-  const asNum = Number(raw);
-  state.seed = (raw && Number.isFinite(asNum)) ? asNum : (raw || 0);
-}
-
-if (state.widgets.btnRand.wasClicked()) {
-  // Prefer deterministic seed helper if present.
-  if (typeof random?.seed === 'function') {
-    state.seed = random.seed();
-  } else {
-    state.seed = Math.floor(Math.random() * 0x7fffffff);
-  }
-  state.widgets.seedField.setValue(String(state.seed));
-}
-
-const nodeJsonChanged = state.widgets.nodeJson.wasChanged();
+const nodeJsonEditor = getNodeJsonEditor();
+const nodeJsonChanged = !!(nodeJsonEditor && nodeJsonEditor.wasChanged());
 if (nodeJsonChanged) {
   state.nodeJsonDirty = true;
 }
-
-{
-  const selection = typeof state.widgets.nodeJson.getSelectionRange === 'function'
-    ? state.widgets.nodeJson.getSelectionRange()
-    : { start: 0, end: 0 };
-  const selectionChanged = selection.start !== state.lastNodeJsonSelectionStart
-    || selection.end !== state.lastNodeJsonSelectionEnd;
-  if (nodeJsonChanged || selectionChanged) {
-    syncNumericBindingFromEditor();
-    state.lastNodeJsonSelectionStart = selection.start;
-    state.lastNodeJsonSelectionEnd = selection.end;
-  }
-}
-
-if (state.numericBinding) {
-  const sliderValue = state.widgets.vol.getValue();
-  if (Math.abs(sliderValue - (state.lastSliderWidgetValue ?? sliderValue)) > Math.max(1e-6, state.numericBinding.step * 0.25)) {
-    applyNumericSliderValue(sliderValue);
-  }
-  state.lastSliderWidgetValue = state.widgets.vol.getValue();
-}
-
-if (state.widgets.btnAuto.wasClicked()) {
-  if (state.graph) {
-    const b = graphBounds();
-    state.layoutById = autoLayout(state.graph, b.graph);
-    writeLayoutToPreset(state.layoutById);
-    state.statusText = 'Auto layout applied (saved into node x/y).';
-  }
-}
-
-if (state.widgets.btnReset.wasClicked()) {
-  state.camX = 0;
-  state.camY = 0;
-}
-
-if (state.widgets.btnPlay.wasClicked()) {
-  if (state.preset) stfxr.playPreset(state.preset, state.seed, { volume: state.volume });
-}
+syncNumericBindingForEditorState(nodeJsonChanged);
+applyPendingSliderBindingValue();
 
 // If selection changed, refresh node JSON editor (unless user is mid-edit)
-if (state.selectedId !== state.lastSelectedId) {
-  const canOverwrite = !state.nodeJsonDirty;
-  if (canOverwrite && state.graph) {
-    state.widgets.nodeJson.setValue(buildSelectedNodeJson(state.graph, state.selectedId));
-    state.nodeJsonDirty = false;
-    state.inspectorId = state.selectedId;
-    syncNumericBindingFromEditor();
-    const selection = typeof state.widgets.nodeJson.getSelectionRange === 'function'
-      ? state.widgets.nodeJson.getSelectionRange()
-      : { start: 0, end: 0 };
-    state.lastNodeJsonSelectionStart = selection.start;
-    state.lastNodeJsonSelectionEnd = selection.end;
-  }
-  state.lastSelectedId = state.selectedId;
-}
-
-// Update label
-{
-  const id = getInspectorId() ? String(getInspectorId()) : '(none)';
-  state.widgets.nodeJsonLabel.setText(`Node JSON — ${id}`);
-}
-
-// Apply node JSON to preset + replay
-if (state.widgets.btnUpdate.wasClicked()) {
-  const ok = applySelectedNodeJson(state.widgets.nodeJson.getValue());
-  if (ok && state.graph) {
-    // Keep editor reflecting canonical applied JSON.
-    state.widgets.nodeJson.setValue(buildSelectedNodeJson(state.graph, state.selectedId));
-    state.inspectorId = state.selectedId;
-    syncNumericBindingFromEditor();
-    const selection = typeof state.widgets.nodeJson.getSelectionRange === 'function'
-      ? state.widgets.nodeJson.getSelectionRange()
-      : { start: 0, end: 0 };
-    state.lastNodeJsonSelectionStart = selection.start;
-    state.lastNodeJsonSelectionEnd = selection.end;
-  }
-}
-
-state.widgets.status.setText(state.statusText);
+syncSelectionDrivenInspectorState();
+updateNodeJsonLabel();
+setStatusWidgetText();
 ```
 
 ```js on:render

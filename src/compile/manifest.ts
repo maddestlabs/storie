@@ -18,6 +18,7 @@ export interface CompileManifestLifecycleUsage {
 
 export interface CompileManifestAssetSummary {
   timedBlocks: number;
+  logicBlocks: number;
   blobBlocks: number;
   shaderBlocks: number;
 }

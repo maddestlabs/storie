@@ -1,6 +1,7 @@
 ---
 name: "GUI Custom Widget Renderer Demo (Storie)"
 theme: "neonopia"
+authoringCheck: explicit-conditionals
 ---
 
 A minimal demo showing how to override retained-mode widget drawing with `gui.setWidgetRenderer`.
@@ -52,27 +53,96 @@ dOONzbqqrm1fQT3P9KXtc9tnwFlVPQF+13s/H4BLgAHs1sr21vYGvLZ5CVzJXmXEvu09wQIxg9e3
 ```
 
 ```js
-let widgets = null;
-let mouseDownLeft = false;
-let lastStatus = 'Ready';
+var state = {
+  lastStatus: 'Ready',
+  featureEnabled: true,
+  volume: 50,
+  iconId: null,
+  iconLoading: false
+};
 
-let iconId = null;
-let iconLoading = false;
+function rgb(r, g, b) {
+  return ((r & 255) << 24) | ((g & 255) << 16) | ((b & 255) << 8) | 255;
+}
+
+function setStatus(msg) {
+  var status = msg;
+  if (status == null) status = '';
+  state.lastStatus = String(status);
+  gui.text('status', `Status: ${state.lastStatus} | Slider=${Math.round(Number(state.volume) || 0)}`);
+}
 ```
 
 ```js on:init
 term.layerID = 'default';
-term.clear();
-
-gui.init();
 
 // Kick off a one-time icon load.
 // (We keep it promise-based so init doesn't need to be async.)
-iconLoading = true;
+state.iconLoading = true;
 ui.loadImageFromBlob('favicon')
-  .then((id) => { iconId = id; })
-  .catch(() => { iconId = null; })
-  .finally(() => { iconLoading = false; });
+  .then((id) => { state.iconId = id; })
+  .catch(() => { state.iconId = null; })
+  .finally(() => { state.iconLoading = false; });
+
+gui.screen({
+  input: 'auto',
+  update: 'auto',
+  state,
+  layout: {
+    type: 'panel',
+    insetX: 'lg',
+    insetTop: 'xl',
+    maxWidth: 760,
+    rowGap: 'md',
+    anchorX: 'start',
+    anchorY: 'start'
+  },
+  widgets: {
+    title: {
+      type: 'label',
+      bounds: { height: 30 },
+      text: 'Custom Widget Renderer Demo',
+      align: 'center'
+    },
+    button: {
+      type: 'button',
+      bounds: { height: 56 },
+      label: 'Custom-Drawn Button',
+      onClick() {
+        setStatus('Button clicked');
+      }
+    },
+    feature: {
+      type: 'checkbox',
+      bounds: { height: 30 },
+      label: 'Default checkbox renderer',
+      checked: state.featureEnabled,
+      bind: 'featureEnabled',
+      onToggle() {
+        var checkboxStatus = 'off';
+        if (state.featureEnabled) checkboxStatus = 'on';
+        setStatus(`Checkbox: ${checkboxStatus}`);
+      }
+    },
+    volume: {
+      type: 'slider',
+      bounds: { height: 50 },
+      label: 'Default slider renderer',
+      min: 0,
+      max: 100,
+      value: state.volume,
+      bind: 'volume',
+      onChange() {
+        setStatus('Slider changed');
+      }
+    },
+    status: {
+      type: 'label',
+      bounds: { height: 24 },
+      text: 'Status: Ready | Slider=50'
+    }
+  }
+});
 
 // Override drawing for *buttons* only.
 // Everything else (label/checkbox/slider/markdown) uses the built-in renderer.
@@ -89,14 +159,13 @@ gui.setWidgetRenderer((w, ui) => {
   const focused = !!w.state.focused;
 
   // Colors (simple, no new theme system):
-  const bg = pressed
-    ? ui.colors.rgb(60, 90, 255)
-    : hovered
-      ? ui.colors.rgb(100, 200, 255)
-      : ui.colors.rgb(255, 80, 140);
+  let bg = rgb(255, 80, 140);
+  if (pressed) bg = rgb(60, 90, 255);
+  else if (hovered) bg = rgb(100, 200, 255);
 
-  const border = focused ? ui.colors.rgb(255, 255, 255) : ui.colors.rgb(20, 20, 20);
-  const fg = ui.colors.rgb(10, 10, 10);
+  let border = rgb(20, 20, 20);
+  if (focused) border = rgb(255, 255, 255);
+  const fg = rgb(10, 10, 10);
 
   // Background
   ui.rect(x, y, width, height, bg);
@@ -108,103 +177,41 @@ gui.setWidgetRenderer((w, ui) => {
   ui.rect(x + width - 2, y, 2, height, border);
 
   // Optional icon (if loaded)
-  if (iconId && ui.image) {
+  if (state.iconId && ui.image) {
     const size = Math.max(16, Math.min(height - 12, 28));
     const ix = x + 10;
     const iy = y + Math.max(0, (height - size) / 2);
-    ui.image(iconId, ix, iy, size, size);
+    ui.image(state.iconId, ix, iy, size, size);
   }
 
   // Label centered using monospace metrics
-  const cw = (w.metrics && w.metrics.charWidth) ? w.metrics.charWidth : 10;
-  const ch = (w.metrics && w.metrics.charHeight) ? w.metrics.charHeight : 16;
+  let cw = 10;
+  if (w.metrics && w.metrics.charWidth) cw = w.metrics.charWidth;
+
+  let ch = 16;
+  if (w.metrics && w.metrics.charHeight) ch = w.metrics.charHeight;
+
   const label = w.label || '';
   const labelW = label.length * cw;
-  const hasIcon = !!(iconId && ui.image);
-  const leftPad = hasIcon ? 10 + Math.max(16, Math.min(height - 12, 28)) + 10 : 0;
+  const hasIcon = !!(state.iconId && ui.image);
+  let leftPad = 0;
+  if (hasIcon) {
+    leftPad = 10 + Math.max(16, Math.min(height - 12, 28)) + 10;
+  }
   const tx = x + leftPad + Math.max(0, (width - leftPad - labelW) / 2);
   const ty = y + Math.max(0, (height - ch) / 2);
   ui.text(label, tx, ty, fg);
 
   return true;
 });
-
-const title = gui.createLabel({
-  bounds: { x: 20, y: 30, width: 740, height: 30 },
-  text: 'Custom Widget Renderer Demo',
-  align: 'center'
-});
-
-const btn = gui.createButton({
-  bounds: { x: 20, y: 80, width: 320, height: 56 },
-  label: 'Custom-Drawn Button'
-});
-
-const chk = gui.createCheckbox({
-  bounds: { x: 20, y: 150, width: 360, height: 30 },
-  label: 'Default checkbox renderer',
-  checked: true
-});
-
-const sld = gui.createSlider({
-  bounds: { x: 20, y: 200, width: 420, height: 50 },
-  label: 'Default slider renderer',
-  min: 0,
-  max: 100,
-  value: 50
-});
-
-const status = gui.createLabel({
-  bounds: { x: 20, y: 270, width: 740, height: 24 },
-  text: 'Status: Ready'
-});
-
-widgets = { title, btn, chk, sld, status };
-```
-
-```js on:input
-if (!event || !widgets) return;
-
-if (event.type === 'keydown') {
-  gui.handleKey(event.key, {
-    shift: (event.mods || []).includes('shift'),
-    ctrl: (event.mods || []).includes('ctrl'),
-    alt: (event.mods || []).includes('alt')
-  });
-}
-
-if (event.type === 'mouse') {
-  if (event.button === 'left') {
-    mouseDownLeft = event.action === 'press' || event.action === 'repeat';
-  }
-  gui.handleMouse(event.x, event.y, mouseDownLeft);
-}
-
-if (event.type === 'mouse_move') {
-  gui.handleMouse(event.x, event.y, mouseDownLeft);
-}
-```
-
-```js on:update
-if (!widgets) return;
-
-gui.update(getMouseX(), getMouseY(), mouseDownLeft);
-
-if (widgets.btn.wasClicked()) {
-  lastStatus = 'Button clicked';
-}
-
-if (widgets.chk.wasToggled()) {
-  lastStatus = `Checkbox: ${widgets.chk.isChecked() ? 'on' : 'off'}`;
-}
-
-widgets.status.setText(`Status: ${lastStatus} | Slider=${Math.round(widgets.sld.getValue())}`);
 ```
 
 ```js on:render
 const base = getStyle('default');
 ui.clear(base.bg);
 term.clear();
+
+gui.render(ui);
 
 term.write(2, termHeight - 2, 'Tip: TAB focus changes the button border.');
 ```

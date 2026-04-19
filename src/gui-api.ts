@@ -23,6 +23,14 @@ export function createGUIAPI(
   getCurrentWorldSection?: () => number | null,
   resolveWorldSectionSelector?: (selector: number | string) => number | null
 ) {
+  const normalizeAutoMode = (value: any): boolean => {
+    if (value === true || value === 'auto') return true;
+    if (value === false || value === 'manual' || value === undefined || value === null) return false;
+    return !!value;
+  };
+
+  const valuesEqual = (a: any, b: any): boolean => Object.is(a, b);
+
   const defaultBreakpointThresholds = {
     sm: 480,
     md: 768,
@@ -44,10 +52,14 @@ export function createGUIAPI(
       // ignore
     }
 
-    const dpr = (typeof window !== 'undefined' && (window as any).devicePixelRatio)
-      ? Number((window as any).devicePixelRatio)
-      : 1;
-    const v = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+    let dpr = 1;
+    if (typeof window !== 'undefined' && (window as any).devicePixelRatio) {
+      dpr = Number((window as any).devicePixelRatio);
+    }
+    let v = 1;
+    if (Number.isFinite(dpr) && dpr > 0) {
+      v = dpr;
+    }
     return { scaleX: v, scaleY: v };
   };
 
@@ -262,18 +274,16 @@ export function createGUIAPI(
         const width = Number((rect as any)?.width ?? 0);
         const height = Number((rect as any)?.height ?? 0);
         if ([x, y, width, height].every(Number.isFinite)) {
-          return api._boundsSpace === 'device'
-            ? normalizeViewport({ x, y, width, height, boundsSpace: 'css' })
-            : { x, y, width, height };
+          if (api._boundsSpace === 'device') {
+            return normalizeViewport({ x, y, width, height, boundsSpace: 'css' });
+          }
+          return { x, y, width, height };
         }
       }
     } catch {
       // ignore
     }
-
-    return api._boundsSpace === 'device'
-      ? { x: 0, y: 0, width: 0, height: 0 }
-      : { x: 0, y: 0, width: 0, height: 0 };
+    return { x: 0, y: 0, width: 0, height: 0 };
   };
 
   const safeGetSafeAreaInsets = () => {
@@ -326,8 +336,14 @@ export function createGUIAPI(
 
   const safeGetCurrentWorldSection = (): number | null => {
     try {
-      const section = typeof getCurrentWorldSection === 'function' ? getCurrentWorldSection() : null;
-      return typeof section === 'number' && Number.isFinite(section) ? section : null;
+      let section: number | null = null;
+      if (typeof getCurrentWorldSection === 'function') {
+        section = getCurrentWorldSection();
+      }
+      if (typeof section === 'number' && Number.isFinite(section)) {
+        return section;
+      }
+      return null;
     } catch {
       return null;
     }
@@ -356,7 +372,10 @@ export function createGUIAPI(
     try {
       if (typeof resolveWorldSectionSelector === 'function') {
         const resolved = resolveWorldSectionSelector(raw);
-        return typeof resolved === 'number' && Number.isFinite(resolved) ? resolved : null;
+        if (typeof resolved === 'number' && Number.isFinite(resolved)) {
+          return resolved;
+        }
+        return null;
       }
     } catch {
       return null;
@@ -376,11 +395,87 @@ export function createGUIAPI(
     return resolved;
   };
 
+  const normalizeBindingPath = (path: any): string[] => {
+    if (Array.isArray(path)) {
+      return path.map((part) => String(part)).filter(Boolean);
+    }
+    if (typeof path === 'string') {
+      const parts = path.split('.').map((part) => part.trim()).filter(Boolean);
+      if (parts[0] === 'state' && parts.length > 1) {
+        return parts.slice(1);
+      }
+      return parts;
+    }
+    if (path === null || path === undefined || path === '') {
+      return [];
+    }
+    return [String(path)];
+  };
+
+  const resolveScreenWidgetType = (type: any): string => {
+    const raw = String(type ?? '').trim();
+    if (!raw) return 'label';
+    if (raw === 'editor') return 'textEditor';
+    if (raw === 'markdown') return 'markdownView';
+    if (raw === 'piano') return 'pianoKeyboard';
+    if (raw === 'text') return 'label';
+    return raw;
+  };
+
+  const resolveScreenLayoutMode = (type: any): 'stack' | 'row' | 'grid' => {
+    const raw = String(type ?? '').trim();
+    if (raw === 'row') return 'row';
+    if (raw === 'grid') return 'grid';
+    return 'stack';
+  };
+
+  const resolveSpacingTokenValue = (tokens: GUITokens | null, value: any): any => {
+    if (typeof value === 'number') return value;
+    if (typeof value !== 'string') return value;
+    const raw = value.trim();
+    if (!raw) return value;
+    if (tokens && Object.prototype.hasOwnProperty.call(tokens.spacing, raw)) {
+      return (tokens.spacing as any)[raw];
+    }
+    const numeric = Number(raw);
+    return Number.isFinite(numeric) ? numeric : value;
+  };
+
   // Store GUI system in the API object itself to avoid closure issues with SES
   const api: any = {
     _system: null as GUISystem | null,
     _boundsSpace: 'css' as 'css' | 'device',
+    _autoInput: false,
+    _autoUpdate: false,
     _nextSectionGroupId: 1,
+    _bindings: [] as Array<{
+      widget: any;
+      source: any;
+      path: string[];
+      mode: 'value' | 'checked' | 'text';
+      direction: 'both' | 'state-to-widget' | 'widget-to-state';
+      lastStateValue: any;
+      lastWidgetValue: any;
+      initialized: boolean;
+    }>,
+    _screenObservers: [] as Array<{
+      widget: any;
+      name: string;
+      state: any;
+      mode: 'value' | 'checked' | 'text';
+      callbackType: 'onToggle' | 'onChange';
+      callback: Function;
+      lastValue: any;
+      initialized: boolean;
+    }>,
+    _screenLayouts: [] as Array<{
+      container: any;
+      fit: any;
+      callback: Function | null;
+      state: any;
+      widgets: Record<string, any>;
+      layout: any;
+    }>,
     _sectionBindings: [] as Array<{
       group: string | number;
       sections: number[];
@@ -391,10 +486,24 @@ export function createGUIAPI(
      * Initialize GUI system
      * Call this in on:init
      */
-    init(options?: { boundsSpace?: 'css' | 'device' }) {
-      this._boundsSpace = (options && (options as any).boundsSpace === 'device') ? 'device' : 'css';
+    init(options?: {
+      boundsSpace?: 'css' | 'device';
+      input?: 'auto' | 'manual' | boolean;
+      update?: 'auto' | 'manual' | boolean;
+      autoInput?: boolean;
+      autoUpdate?: boolean;
+    }) {
+      this._boundsSpace = 'css';
+      if (options && (options as any).boundsSpace === 'device') {
+        this._boundsSpace = 'device';
+      }
+      this._autoInput = normalizeAutoMode((options as any)?.autoInput ?? (options as any)?.input);
+      this._autoUpdate = normalizeAutoMode((options as any)?.autoUpdate ?? (options as any)?.update);
       this._system = new GUISystem();
       this._nextSectionGroupId = 1;
+      this._bindings = [];
+      this._screenObservers = [];
+      this._screenLayouts = [];
       this._sectionBindings = [];
       if (getStyle) {
         try {
@@ -410,6 +519,14 @@ export function createGUIAPI(
       return this._system;
     },
 
+    isAutoInputEnabled() {
+      return !!this._autoInput;
+    },
+
+    isAutoUpdateEnabled() {
+      return !!this._autoUpdate;
+    },
+
     _allocateSectionGroup() {
       const group = `__storie_gui_section_${this._nextSectionGroupId++}`;
       return group;
@@ -421,9 +538,10 @@ export function createGUIAPI(
 
     _applySectionBinding(binding: { group: string | number; sections: number[]; clearFocusOnHide: boolean }, currentSection?: number | null) {
       if (!this._system) return false;
-      const activeSection = typeof currentSection === 'number' && Number.isFinite(currentSection)
-        ? currentSection
-        : safeGetCurrentWorldSection();
+      let activeSection = safeGetCurrentWorldSection();
+      if (typeof currentSection === 'number' && Number.isFinite(currentSection)) {
+        activeSection = currentSection;
+      }
       const visible = activeSection !== null && binding.sections.includes(activeSection);
 
       if (!visible && binding.clearFocusOnHide) {
@@ -439,9 +557,10 @@ export function createGUIAPI(
 
     syncSectionBindings(currentSection?: number | null) {
       if (!this._system) return;
-      const activeSection = typeof currentSection === 'number' && Number.isFinite(currentSection)
-        ? currentSection
-        : safeGetCurrentWorldSection();
+      let activeSection = safeGetCurrentWorldSection();
+      if (typeof currentSection === 'number' && Number.isFinite(currentSection)) {
+        activeSection = currentSection;
+      }
       for (const binding of this._sectionBindings) {
         this._applySectionBinding(binding, activeSection);
       }
@@ -552,6 +671,653 @@ export function createGUIAPI(
      */
     getSystem(): GUISystem | null {
       return this._system;
+    },
+
+    _resolveWidget(target: any) {
+      if (!this._system || target === null || target === undefined) return null;
+      if (typeof target === 'string') {
+        return this._system.getWidgetManager().get(target) ?? null;
+      }
+      if (typeof target === 'object' && typeof (target as any).id === 'string') {
+        return target;
+      }
+      return null;
+    },
+
+    _readBoundState(source: any, path: string[]) {
+      if (!source || !path.length) return undefined;
+      let current = source;
+      for (const key of path) {
+        if (current === null || current === undefined) return undefined;
+        current = current[key];
+      }
+      return current;
+    },
+
+    _writeBoundState(source: any, path: string[], value: any) {
+      if (!source || !path.length) return false;
+      let current = source;
+      for (let i = 0; i < path.length - 1; i++) {
+        const key = path[i];
+        if (current[key] === null || current[key] === undefined || typeof current[key] !== 'object') {
+          current[key] = {};
+        }
+        current = current[key];
+      }
+      current[path[path.length - 1]] = value;
+      return true;
+    },
+
+    _inferBindingMode(widget: any): 'value' | 'checked' | 'text' | null {
+      if (!widget) return null;
+      if (typeof widget.getValue === 'function' && typeof widget.setValue === 'function') return 'value';
+      if (typeof widget.isChecked === 'function' && typeof widget.setChecked === 'function') return 'checked';
+      if (typeof widget.setText === 'function' || typeof widget.setLabel === 'function') return 'text';
+      return null;
+    },
+
+    _readWidgetBindingValue(widget: any, mode: 'value' | 'checked' | 'text') {
+      if (!widget) return undefined;
+      if (mode === 'value') {
+        return typeof widget.getValue === 'function' ? widget.getValue() : undefined;
+      }
+      if (mode === 'checked') {
+        return typeof widget.isChecked === 'function' ? !!widget.isChecked() : undefined;
+      }
+      if (typeof widget.text === 'string') return widget.text;
+      if (typeof widget.label === 'string') return widget.label;
+      return undefined;
+    },
+
+    _writeWidgetBindingValue(widget: any, mode: 'value' | 'checked' | 'text', value: any) {
+      if (!widget) return;
+      if (mode === 'value') {
+        if (typeof widget.setValue === 'function') widget.setValue(value);
+        return;
+      }
+      if (mode === 'checked') {
+        if (typeof widget.setChecked === 'function') widget.setChecked(!!value);
+        return;
+      }
+      if (typeof widget.setText === 'function') {
+        widget.setText(value);
+      } else if (typeof widget.setLabel === 'function') {
+        widget.setLabel(value);
+      }
+    },
+
+    _syncBinding(binding: any) {
+      const widget = this._resolveWidget(binding.widget);
+      if (!widget) return;
+
+      const stateValue = this._readBoundState(binding.source, binding.path);
+      const widgetValue = this._readWidgetBindingValue(widget, binding.mode);
+      const canPush = binding.direction !== 'widget-to-state';
+      const canPull = binding.direction !== 'state-to-widget';
+
+      if (!binding.initialized) {
+        if (stateValue !== undefined && canPush && !valuesEqual(stateValue, widgetValue)) {
+          this._writeWidgetBindingValue(widget, binding.mode, stateValue);
+        } else if (stateValue === undefined && canPull && widgetValue !== undefined) {
+          this._writeBoundState(binding.source, binding.path, widgetValue);
+        }
+
+        binding.initialized = true;
+        binding.lastStateValue = this._readBoundState(binding.source, binding.path);
+        binding.lastWidgetValue = this._readWidgetBindingValue(widget, binding.mode);
+        return;
+      }
+
+      let nextStateValue = stateValue;
+      let nextWidgetValue = widgetValue;
+
+      if (canPush && !valuesEqual(nextStateValue, binding.lastStateValue) && !valuesEqual(nextStateValue, nextWidgetValue)) {
+        this._writeWidgetBindingValue(widget, binding.mode, nextStateValue);
+        nextWidgetValue = this._readWidgetBindingValue(widget, binding.mode);
+      } else if (canPull && !valuesEqual(nextWidgetValue, binding.lastWidgetValue) && !valuesEqual(nextWidgetValue, nextStateValue)) {
+        this._writeBoundState(binding.source, binding.path, nextWidgetValue);
+        nextStateValue = this._readBoundState(binding.source, binding.path);
+      }
+
+      binding.lastStateValue = nextStateValue;
+      binding.lastWidgetValue = nextWidgetValue;
+    },
+
+    _buildScreenCallbackContext(name: string, widget: any, state: any, extra?: any) {
+      const mode = this._inferBindingMode(widget) ?? 'text';
+      const value = this._readWidgetBindingValue(widget, mode);
+      let checked: any = undefined;
+      let text: any = undefined;
+      if (mode === 'checked') {
+        checked = value;
+      }
+      if (mode === 'text') {
+        text = value;
+      }
+
+      const context: any = {
+        name,
+        widget,
+        state,
+        value,
+        checked,
+        text,
+        gui: this,
+      };
+      if (extra && typeof extra === 'object') {
+        Object.assign(context, extra);
+      }
+      return context;
+    },
+
+    _registerScreenObserver(widget: any, name: string, state: any, callbackType: 'onToggle' | 'onChange', callback: Function, mode?: 'value' | 'checked' | 'text' | null) {
+      const resolvedMode = mode ?? this._inferBindingMode(widget);
+      if (!resolvedMode) return;
+      const initialValue = this._readWidgetBindingValue(widget, resolvedMode);
+      this._screenObservers.push({
+        widget,
+        name,
+        state,
+        mode: resolvedMode,
+        callbackType,
+        callback,
+        lastValue: initialValue,
+        initialized: true,
+      });
+    },
+
+    _syncScreenObservers() {
+      for (const observer of this._screenObservers) {
+        const widget = this._resolveWidget(observer.widget);
+        if (!widget) continue;
+        const value = this._readWidgetBindingValue(widget, observer.mode);
+
+        if (!observer.initialized) {
+          observer.initialized = true;
+          observer.lastValue = value;
+          continue;
+        }
+
+        if (valuesEqual(value, observer.lastValue)) {
+          continue;
+        }
+
+        observer.lastValue = value;
+        observer.callback(this._buildScreenCallbackContext(observer.name, widget, observer.state, {
+          type: observer.callbackType,
+          event: observer.callbackType,
+        }));
+      }
+    },
+
+    _syncScreenLayouts() {
+      for (const entry of this._screenLayouts) {
+        if (!entry?.container || typeof entry.container.fitToViewport !== 'function') continue;
+        const viewport = this.getViewportRect();
+        const fit = entry.fit && typeof entry.fit === 'object' ? { ...entry.fit } : {};
+
+        if (typeof entry.callback === 'function') {
+          const responsive = viewport ? this.getResponsiveInfo(viewport) : null;
+          const layout = entry.layout && typeof entry.layout === 'object' ? { ...entry.layout } : null;
+          const override = entry.callback({
+            gui: this,
+            root: entry.container,
+            widgets: entry.widgets,
+            state: entry.state,
+            viewport,
+            responsive,
+            tokens: this.getTokens(),
+            fit: { ...fit },
+            layout,
+          });
+
+          if (override && typeof override === 'object') {
+            let nextFit: any = override;
+            if ((override as any).fit && typeof (override as any).fit === 'object') {
+              nextFit = (override as any).fit;
+            }
+            Object.assign(fit, nextFit);
+          }
+        }
+
+        entry.container.fitToViewport(viewport, fit, true);
+      }
+    },
+
+    bind(target: any, source: any, path: string | string[], options?: { mode?: 'value' | 'checked' | 'text'; direction?: 'both' | 'state-to-widget' | 'widget-to-state' }) {
+      if (!this._system) {
+        throw new Error('GUI system not initialized. Call gui.init() first.');
+      }
+
+      const widget = this._resolveWidget(target);
+      if (!widget) {
+        throw new Error('gui.bind(target, source, path): widget could not be resolved');
+      }
+
+      const bindingPath = normalizeBindingPath(path);
+      if (!bindingPath.length) {
+        throw new Error('gui.bind(target, source, path): path is required');
+      }
+
+      const mode = options?.mode ?? this._inferBindingMode(widget);
+      if (!mode) {
+        throw new Error('gui.bind(target, source, path): widget does not support a bindable value mode');
+      }
+
+      const binding = {
+        widget,
+        source,
+        path: bindingPath,
+        mode,
+        direction: options?.direction ?? 'both',
+        lastStateValue: undefined,
+        lastWidgetValue: undefined,
+        initialized: false,
+      };
+
+      this._bindings.push(binding);
+      this._syncBinding(binding);
+      return widget;
+    },
+
+    screen(options?: {
+      boundsSpace?: 'css' | 'device';
+      input?: 'auto' | 'manual' | boolean;
+      update?: 'auto' | 'manual' | boolean;
+      autoInput?: boolean;
+      autoUpdate?: boolean;
+      state?: any;
+      group?: string | number;
+      layout?: any;
+      onLayout?: Function;
+      widgets?: Record<string, any>;
+    }) {
+      const nextOptions = options && typeof options === 'object' ? options : {};
+      if (!this._system) {
+        this.init(nextOptions);
+      }
+
+      const created: Record<string, any> = {};
+      let layoutConfig: any = null;
+      if (nextOptions.layout && typeof nextOptions.layout === 'object') {
+        layoutConfig = { ...nextOptions.layout };
+      }
+      let layoutCallback: Function | null = null;
+      if (typeof nextOptions.onLayout === 'function') {
+        layoutCallback = nextOptions.onLayout;
+      } else if (typeof layoutConfig?.onLayout === 'function') {
+        layoutCallback = layoutConfig.onLayout;
+      }
+      let rootLayout: any = null;
+      let rootLayoutEntry: any = null;
+
+      if (layoutConfig) {
+        delete layoutConfig.onLayout;
+        const tokens = this.getTokens();
+        layoutConfig.padding = resolveSpacingTokenValue(tokens, layoutConfig.padding);
+        layoutConfig.gap = resolveSpacingTokenValue(tokens, layoutConfig.gap);
+        layoutConfig.rowGap = resolveSpacingTokenValue(tokens, layoutConfig.rowGap);
+        layoutConfig.columnGap = resolveSpacingTokenValue(tokens, layoutConfig.columnGap);
+        layoutConfig.inset = resolveSpacingTokenValue(tokens, layoutConfig.inset);
+        layoutConfig.insetX = resolveSpacingTokenValue(tokens, layoutConfig.insetX);
+        layoutConfig.insetY = resolveSpacingTokenValue(tokens, layoutConfig.insetY);
+        layoutConfig.insetTop = resolveSpacingTokenValue(tokens, layoutConfig.insetTop);
+        layoutConfig.insetRight = resolveSpacingTokenValue(tokens, layoutConfig.insetRight);
+        layoutConfig.insetBottom = resolveSpacingTokenValue(tokens, layoutConfig.insetBottom);
+        layoutConfig.insetLeft = resolveSpacingTokenValue(tokens, layoutConfig.insetLeft);
+
+        const rawBounds = layoutConfig.bounds && typeof layoutConfig.bounds === 'object' ? layoutConfig.bounds : null;
+        const rootBounds = {
+          x: Number((rawBounds as any)?.x ?? 0),
+          y: Number((rawBounds as any)?.y ?? 0),
+          width: Number((rawBounds as any)?.width ?? layoutConfig.maxWidth ?? 640),
+          height: Number((rawBounds as any)?.height ?? 1),
+        };
+
+        rootLayout = this.createResponsivePanel({
+          bounds: rootBounds,
+          mode: resolveScreenLayoutMode(layoutConfig.type ?? layoutConfig.mode),
+          padding: layoutConfig.padding,
+          gap: layoutConfig.gap,
+          rowGap: layoutConfig.rowGap,
+          columnGap: layoutConfig.columnGap,
+          columns: layoutConfig.columns,
+          maxWidth: layoutConfig.maxWidth,
+          alignX: layoutConfig.alignX ?? 'stretch',
+          alignY: layoutConfig.alignY,
+          layout: layoutConfig.layout,
+          group: nextOptions.group,
+        });
+
+        rootLayoutEntry = {
+          container: rootLayout,
+          fit: {
+            inset: layoutConfig.inset,
+            insetX: layoutConfig.insetX,
+            insetY: layoutConfig.insetY,
+            insetTop: layoutConfig.insetTop,
+            insetRight: layoutConfig.insetRight,
+            insetBottom: layoutConfig.insetBottom,
+            insetLeft: layoutConfig.insetLeft,
+            width: layoutConfig.width,
+            height: layoutConfig.height,
+            maxWidth: layoutConfig.maxWidth,
+            maxHeight: layoutConfig.maxHeight,
+            anchorX: layoutConfig.anchorX,
+            anchorY: layoutConfig.anchorY,
+          },
+          callback: layoutCallback,
+          state: nextOptions.state,
+          widgets: created,
+          layout: layoutConfig,
+        };
+        this._screenLayouts.push(rootLayoutEntry);
+      }
+
+      const widgets = nextOptions.widgets && typeof nextOptions.widgets === 'object'
+        ? nextOptions.widgets
+        : {};
+
+      const createWidget = (name: string, spec: any, parentLayout?: any) => {
+        if (!spec || typeof spec !== 'object') {
+          throw new Error(`gui.screen(...): widget "${name}" must be an object spec`);
+        }
+
+        const nextSpec: any = { ...spec };
+        const type = resolveScreenWidgetType(nextSpec.type);
+        const bindSpec = nextSpec.bind;
+        let childSpecs: any = null;
+        if (nextSpec.widgets && typeof nextSpec.widgets === 'object') {
+          childSpecs = nextSpec.widgets;
+        } else if (nextSpec.children && typeof nextSpec.children === 'object') {
+          childSpecs = nextSpec.children;
+        }
+        const onClick = typeof nextSpec.onClick === 'function' ? nextSpec.onClick : null;
+        const onToggle = typeof nextSpec.onToggle === 'function' ? nextSpec.onToggle : null;
+        const onChange = typeof nextSpec.onChange === 'function' ? nextSpec.onChange : null;
+        delete nextSpec.type;
+        delete nextSpec.bind;
+        delete nextSpec.widgets;
+        delete nextSpec.children;
+        delete nextSpec.onClick;
+        delete nextSpec.onToggle;
+        delete nextSpec.onChange;
+
+        if (nextSpec.id === undefined) nextSpec.id = name;
+        if (nextOptions.group !== undefined && nextSpec.group === undefined) {
+          nextSpec.group = nextOptions.group;
+        }
+
+        if (layoutConfig) {
+          const rawBounds = nextSpec.bounds && typeof nextSpec.bounds === 'object' ? nextSpec.bounds : {};
+          nextSpec.bounds = {
+            x: Number((rawBounds as any).x ?? 0),
+            y: Number((rawBounds as any).y ?? 0),
+            width: Number((rawBounds as any).width ?? 1),
+            height: Number((rawBounds as any).height ?? 1),
+          };
+          nextSpec.layout = {
+            widthPolicy: 'fill',
+            heightPolicy: 'fit-content',
+            minWidth: 0,
+            ...(nextSpec.layout || {}),
+          };
+        }
+
+        let widget: any;
+        switch (type) {
+          case 'button':
+            widget = this.createButton(nextSpec);
+            break;
+          case 'label':
+            widget = this.createLabel(nextSpec);
+            break;
+          case 'checkbox':
+            widget = this.createCheckbox(nextSpec);
+            break;
+          case 'slider':
+            widget = this.createSlider(nextSpec);
+            break;
+          case 'pianoKeyboard':
+            widget = this.createPianoKeyboard(nextSpec);
+            break;
+          case 'textField':
+            widget = this.createTextField(nextSpec);
+            break;
+          case 'textEditor':
+            if (typeof this.createTextEditor === 'function') {
+              widget = this.createTextEditor(nextSpec);
+            } else {
+              widget = this.createTextField(nextSpec);
+            }
+            break;
+          case 'markdownView':
+            widget = this.createMarkdownView(nextSpec);
+            break;
+          case 'container':
+            widget = this.createContainer(nextSpec);
+            break;
+          case 'responsivePanel':
+            widget = this.createResponsivePanel(nextSpec);
+            break;
+          default:
+            throw new Error(`gui.screen(...): unsupported widget type "${type}" for "${name}"`);
+        }
+
+        created[name] = widget;
+
+        const hostLayout = parentLayout ?? rootLayout;
+        if (hostLayout && typeof hostLayout.add === 'function') {
+          hostLayout.add(widget);
+        }
+
+        if (onClick && typeof widget.on === 'function') {
+          widget.on('click', (event: any) => {
+            onClick(this._buildScreenCallbackContext(name, widget, nextOptions.state, {
+              type: 'onClick',
+              event,
+            }));
+          });
+        }
+
+        if (onToggle) {
+          this._registerScreenObserver(widget, name, nextOptions.state, 'onToggle', onToggle, 'checked');
+        }
+
+        if (onChange) {
+          this._registerScreenObserver(widget, name, nextOptions.state, 'onChange', onChange);
+        }
+
+        if (bindSpec !== undefined) {
+          if (typeof bindSpec === 'string' || Array.isArray(bindSpec)) {
+            if (!nextOptions.state) {
+              throw new Error(`gui.screen(...): widget "${name}" uses bind but no screen state was provided`);
+            }
+            this.bind(widget, nextOptions.state, bindSpec);
+          } else if (bindSpec && typeof bindSpec === 'object') {
+            let source = nextOptions.state;
+            if (Object.prototype.hasOwnProperty.call(bindSpec, 'source')) {
+              source = bindSpec.source;
+            }
+            const path = (bindSpec as any).path;
+            if (!source) {
+              throw new Error(`gui.screen(...): widget "${name}" binding requires a source object`);
+            }
+            this.bind(widget, source, path, {
+              mode: (bindSpec as any).mode,
+              direction: (bindSpec as any).direction,
+            });
+          }
+        }
+
+        if (childSpecs && (type === 'container' || type === 'responsivePanel')) {
+          for (const [childName, childSpec] of Object.entries(childSpecs)) {
+            createWidget(childName, childSpec, widget);
+          }
+          if (typeof widget.layout === 'function') {
+            widget.layout();
+          }
+        }
+
+        return widget;
+      };
+
+      for (const [name, spec] of Object.entries(widgets)) {
+        createWidget(name, spec);
+      }
+
+      if (rootLayout) {
+        this._syncScreenLayouts();
+      }
+
+      const screenAPI: any = {
+        widgets: created,
+        root: rootLayout,
+        get: (target: string) => created[target] ?? this.get(target),
+        onLayout: (callback: Function | null) => {
+          if (rootLayoutEntry) {
+            if (typeof callback === 'function') {
+              rootLayoutEntry.callback = callback;
+            } else {
+              rootLayoutEntry.callback = null;
+            }
+          }
+          return screenAPI;
+        },
+        bind: (target: any, source: any, path: string | string[], bindOptions?: { mode?: 'value' | 'checked' | 'text'; direction?: 'both' | 'state-to-widget' | 'widget-to-state' }) => {
+          const resolvedTarget = typeof target === 'string' && created[target] ? created[target] : target;
+          this.bind(resolvedTarget, source, path, bindOptions);
+          return screenAPI;
+        }
+      };
+
+      return screenAPI;
+    },
+
+    syncBindings() {
+      if (!this._system) return;
+      for (const binding of this._bindings) {
+        this._syncBinding(binding);
+      }
+    },
+
+    get(target: any) {
+      return this._resolveWidget(target);
+    },
+
+    label(text: any, config?: any) {
+      return {
+        ...(config && typeof config === 'object' ? config : {}),
+        type: 'label',
+        text,
+      };
+    },
+
+    button(label: any, config?: any) {
+      return {
+        ...(config && typeof config === 'object' ? config : {}),
+        type: 'button',
+        label,
+      };
+    },
+
+    checkbox(label: any, config?: any) {
+      return {
+        ...(config && typeof config === 'object' ? config : {}),
+        type: 'checkbox',
+        label,
+      };
+    },
+
+    slider(label: any, config?: any) {
+      return {
+        ...(config && typeof config === 'object' ? config : {}),
+        type: 'slider',
+        label,
+      };
+    },
+
+    input(config?: any) {
+      return {
+        ...(config && typeof config === 'object' ? config : {}),
+        type: 'textField',
+      };
+    },
+
+    editor(config?: any) {
+      return {
+        ...(config && typeof config === 'object' ? config : {}),
+        type: 'textEditor',
+      };
+    },
+
+    container(config?: any) {
+      return {
+        ...(config && typeof config === 'object' ? config : {}),
+        type: 'container',
+      };
+    },
+
+    panel(config?: any) {
+      return {
+        ...(config && typeof config === 'object' ? config : {}),
+        type: 'responsivePanel',
+      };
+    },
+
+    text(target: any, nextText?: unknown) {
+      const widget = this._resolveWidget(target);
+      if (!widget) return null;
+
+      if (arguments.length >= 2) {
+        if (typeof (widget as any).setText === 'function') {
+          (widget as any).setText(nextText);
+        } else if (typeof (widget as any).setLabel === 'function') {
+          (widget as any).setLabel(nextText);
+        } else {
+          throw new Error('gui.text(target, value): widget does not support text/label updates');
+        }
+      }
+
+      if (typeof (widget as any).text === 'string') return (widget as any).text;
+      if (typeof (widget as any).label === 'string') return (widget as any).label;
+      return null;
+    },
+
+    value(target: any, nextValue?: unknown) {
+      const widget = this._resolveWidget(target);
+      if (!widget) return null;
+
+      if (arguments.length >= 2) {
+        if (typeof (widget as any).setValue === 'function') {
+          (widget as any).setValue(nextValue);
+        } else {
+          throw new Error('gui.value(target, value): widget does not support setValue()');
+        }
+      }
+
+      if (typeof (widget as any).getValue === 'function') {
+        return (widget as any).getValue();
+      }
+      return null;
+    },
+
+    checked(target: any, nextChecked?: boolean) {
+      const widget = this._resolveWidget(target);
+      if (!widget) return null;
+
+      if (arguments.length >= 2) {
+        if (typeof (widget as any).setChecked === 'function') {
+          (widget as any).setChecked(!!nextChecked);
+        } else {
+          throw new Error('gui.checked(target, value): widget does not support setChecked()');
+        }
+      }
+
+      if (typeof (widget as any).isChecked === 'function') {
+        return !!(widget as any).isChecked();
+      }
+      return null;
     },
 
     syncTheme() {
@@ -860,8 +1626,11 @@ export function createGUIAPI(
      */
     update(mouseX: number, mouseY: number, mouseDown: boolean) {
       if (!this._system) return;
+      this._syncScreenLayouts();
       const { charWidth, charHeight } = getMetrics();
       this._system.update(mouseX, mouseY, mouseDown, charWidth, charHeight);
+      this.syncBindings();
+      this._syncScreenObservers();
     },
 
     /**
@@ -871,8 +1640,11 @@ export function createGUIAPI(
      */
     handleMouse(mouseX: number, mouseY: number, mouseDown: boolean) {
       if (!this._system) return;
+      this._syncScreenLayouts();
       const { charWidth, charHeight } = getMetrics();
       this._system.handleMouse(mouseX, mouseY, mouseDown, charWidth, charHeight);
+      this.syncBindings();
+      this._syncScreenObservers();
     },
     
     /**
@@ -935,6 +1707,8 @@ export function createGUIAPI(
       }
 
       this._system.handleKey(key, modifiers as any);
+      this.syncBindings();
+      this._syncScreenObservers();
     },
 
     /**
@@ -944,6 +1718,8 @@ export function createGUIAPI(
     handleText(text: string) {
       if (!this._system) return;
       this._system.handleText(text);
+      this.syncBindings();
+      this._syncScreenObservers();
     },
 
     /**
@@ -968,6 +1744,8 @@ export function createGUIAPI(
      */
     render(uiAPI: any) {
       if (!this._system) return;
+      this._syncScreenLayouts();
+      this.syncBindings();
       const { charWidth, charHeight } = getMetrics();
       this._system.render(uiAPI, charWidth, charHeight);
     },
@@ -981,10 +1759,12 @@ export function createGUIAPI(
      *
      * @example
      * ```js
+    * const rgb = (r, g, b) => ((r & 255) << 24) | ((g & 255) << 16) | ((b & 255) << 8) | 255;
+    *
     * gui.setWidgetRenderer((w, ui) => {
      *   if (w.kind === 'button') {
-     *     ui.rect(w.bounds.x, w.bounds.y, w.bounds.width, w.bounds.height, ui.colors.rgb(255, 80, 140));
-     *     ui.text(w.label, w.bounds.x + 10, w.bounds.y + 18, ui.colors.rgb(10, 10, 10));
+    *     ui.rect(w.bounds.x, w.bounds.y, w.bounds.width, w.bounds.height, rgb(255, 80, 140));
+    *     ui.text(w.label, w.bounds.x + 10, w.bounds.y + 18, rgb(10, 10, 10));
      *     return true;
      *   }
      *   return false;

@@ -99,9 +99,57 @@ term.write(playerX, playerY, '🚀');
 term.write(0, 0, `Score: ${Math.floor(score)}`);
 
 // Local variables for rendering calculations
-const color = score > 100 ? 'gold' : 'white';
+let color = 'white';
+if (score > 100) {
+  color = 'gold';
+}
 const x = Math.floor(playerX);
 ```
+
+## Conditional Style
+
+Prefer explicit `if` / `else` flow over ternary operators in authored Storie code.
+
+This is primarily a readability rule.
+
+Storie scripts are moving toward a smaller, clearer, more compilable authoring profile.
+Inline branching with `condition ? a : b` is easy to overuse, especially in status text, labels, layout decisions, and rendering logic.
+
+### Preferred
+
+```js
+let color = 'white';
+if (score > 100) {
+  color = 'gold';
+}
+```
+
+```js
+let stepSuffix = 's';
+if (stepCount === 1) {
+  stepSuffix = '';
+}
+status = 'Placed ' + String(stepCount) + ' step' + stepSuffix + '.';
+```
+
+### Avoid
+
+```js
+const color = score > 100 ? 'gold' : 'white';
+status = 'Placed ' + String(stepCount) + ' step' + (stepCount === 1 ? '' : 's') + '.';
+```
+
+### Practical Rule
+
+- Expand user-facing text decisions into named variables.
+- Expand layout and rendering branches into explicit control flow.
+- Keep author code biased toward one obvious path per line.
+- Only keep a ternary when it is genuinely clearer than the equivalent `if` block.
+
+Run `npm run check:authoring` to validate this rule across the migrated API-first demos and pilot examples.
+
+Opt a Markdown file into this check with frontmatter `authoringCheck: explicit-conditionals`.
+For non-frontmatter documentation notes, use `<!-- authoring-check: explicit-conditionals -->`.
 
 ### ❌ Avoid This Pattern (Unnecessary Boilerplate)
 
@@ -217,7 +265,10 @@ Runs every frame. Use for game logic:
 ```js on:update
 // Persistent: playerX, score
 // Local: velocity, newX
-const velocity = key.pressed('Shift') ? 2 : 1;
+let velocity = 1;
+if (key.pressed('Shift')) {
+  velocity = 2;
+}
 const newX = playerX + velocity;
 if (newX < termWidth) {
   playerX = newX;
@@ -234,7 +285,10 @@ term.clear();
 
 // Persistent: playerX, playerY, score
 // Local: color, displayText
-const color = health > 50 ? 'green' : 'red';
+let color = 'red';
+if (health > 50) {
+  color = 'green';
+}
 const displayText = `HP: ${health}`;
 
 term.write(playerX, playerY, '🚀');
@@ -269,7 +323,10 @@ let score = 0;
 **Usage in lifecycle blocks:**
 ```js on:update
 // Mix frontmatter config with runtime state
-const moveSpeed = debugMode ? playerSpeed * 2 : playerSpeed;
+let moveSpeed = playerSpeed;
+if (debugMode) {
+  moveSpeed = playerSpeed * 2;
+}
 playerX += moveSpeed;
 
 // Update runtime state

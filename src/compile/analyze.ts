@@ -77,6 +77,7 @@ export function analyzeMarkdownDocument(document: MarkdownDocument): CompileAnal
 
   if ((document.blobBlocks?.length ?? 0) > 0) capabilities.add('blobs');
   if ((document.timedBlocks?.length ?? 0) > 0) capabilities.add('timed');
+  if ((document.logicBlocks?.length ?? 0) > 0) capabilities.add('logic');
   if ((document.wgslShaders?.length ?? 0) > 0 || document.metadata.shaders) capabilities.add('shader');
 
   const modules = normalizeModules(document.metadata.modules);

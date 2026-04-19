@@ -1,7 +1,7 @@
 import type { DocNode, Inline, LayoutBox, LayoutResult, LinkRegion, MarkdownStyle, TextMetrics, DrawOp, WidgetPlacement, WidgetSpec, LayoutOptions } from './types.js';
 
 type Run =
-  | { kind: 'text' | 'link' | 'code'; text: string; url?: string; em?: boolean; strong?: boolean }
+  | { kind: 'text' | 'link' | 'code'; text: string; url?: string; title?: string; meta?: Record<string, any>; em?: boolean; strong?: boolean }
   | { kind: 'widget'; widget: WidgetSpec }
   | { kind: 'newline' };
 
@@ -23,7 +23,7 @@ function tokenizeInlines(inlines: Inline[], ctx?: { em?: boolean; strong?: boole
   const em = ctx?.em === true;
   const strong = ctx?.strong === true;
 
-  const pushText = (text: string, kind: 'text' | 'link' | 'code', url?: string) => {
+  const pushText = (text: string, kind: 'text' | 'link' | 'code', url?: string, title?: string, meta?: Record<string, any>) => {
     if (kind === 'text') {
       // preserve spaces by splitting with capture
       const parts = text.split(/(\s+)/);
@@ -33,7 +33,7 @@ function tokenizeInlines(inlines: Inline[], ctx?: { em?: boolean; strong?: boole
       }
       return;
     }
-    runs.push({ kind, text, ...(url ? { url } : {}), em, strong } as any);
+    runs.push({ kind, text, ...(url ? { url } : {}), ...(title ? { title } : {}), ...(meta ? { meta } : {}), em, strong } as any);
   };
 
   for (const inline of inlines) {
@@ -47,7 +47,7 @@ function tokenizeInlines(inlines: Inline[], ctx?: { em?: boolean; strong?: boole
       // Keep the link label as a single run so hit-testing + keyboard navigation
       // treat it as one link (not a separate link per word).
       // wrapRuns() will still hard-break extremely long labels if needed.
-      pushText(inline.text, 'link', inline.url);
+      pushText(inline.text, 'link', inline.url, inline.title, inline.meta);
     } else if (inline.kind === 'code') {
       pushText(inline.text, 'code');
     } else if (inline.kind === 'em') {
@@ -469,7 +469,16 @@ export function layoutMarkdownDocument(
 
       if (run.kind === 'link' && run.url && run.text.trim().length > 0) {
         const w = measure ? measure(run.text) : run.text.length * charW;
-        linkRegions.push({ x: cx, y: textY, w, h: charH, url: run.url, text: run.text });
+        linkRegions.push({
+          x: cx,
+          y: textY,
+          w,
+          h: charH,
+          url: run.url,
+          text: run.text,
+          ...(run.title ? { title: run.title } : {}),
+          ...(run.meta ? { meta: { ...run.meta } } : {}),
+        });
         if (linkUnderline) {
           ops.push({ kind: 'rect', x: cx, y: textY + charH - 2, w, h: 2, color });
           bumpMax(cx, textY + charH - 2, w, 2);

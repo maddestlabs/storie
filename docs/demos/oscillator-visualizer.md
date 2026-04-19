@@ -1,6 +1,7 @@
 ---
 title: "Oscillator Visualizer"
 theme: "neotopia"
+authoringCheck: explicit-conditionals
 
 # ── Oscillator config ──────────────────────────────────────────────
 # Waveform type: sine | square | sawtooth | triangle
@@ -44,14 +45,40 @@ Configure defaults via frontmatter: `oscFreq`, `oscType`, `oscVolume`,
 let oscState   = null;   // { osc, gain, analyser }
 let isPlaying  = false;
 
-let currentFreq  = typeof oscFreq  !== 'undefined' ? Number(oscFreq)  : 440;
-let currentType  = typeof oscType  !== 'undefined' ? String(oscType)  : 'sine';
-let currentStyle = typeof vizStyle !== 'undefined' ? String(vizStyle) : 'line';
+let currentFreq = 440;
+if (typeof oscFreq !== 'undefined') {
+  currentFreq = Number(oscFreq);
+}
 
-const VOL      = typeof oscVolume !== 'undefined' ? Number(oscVolume) : 0.04;
-const FG       = typeof vizFg    !== 'undefined' ? Number(vizFg)    : 0x00ff88ff;
-const VIZ_COLS = typeof vizCols  !== 'undefined' ? Math.max(8,  Math.min(200, Number(vizCols)))  : 72;
-const VIZ_ROWS = typeof vizRows  !== 'undefined' ? Math.max(3,  Math.min(40,  Number(vizRows)))  : 14;
+let currentType = 'sine';
+if (typeof oscType !== 'undefined') {
+  currentType = String(oscType);
+}
+
+let currentStyle = 'line';
+if (typeof vizStyle !== 'undefined') {
+  currentStyle = String(vizStyle);
+}
+
+let VOL = 0.04;
+if (typeof oscVolume !== 'undefined') {
+  VOL = Number(oscVolume);
+}
+
+let FG = 0x00ff88ff;
+if (typeof vizFg !== 'undefined') {
+  FG = Number(vizFg);
+}
+
+let VIZ_COLS = 72;
+if (typeof vizCols !== 'undefined') {
+  VIZ_COLS = Math.max(8, Math.min(200, Number(vizCols)));
+}
+
+let VIZ_ROWS = 14;
+if (typeof vizRows !== 'undefined') {
+  VIZ_ROWS = Math.max(3, Math.min(40, Number(vizRows)));
+}
 
 const WAVEFORMS = ['sine', 'square', 'sawtooth', 'triangle'];
 
@@ -74,10 +101,15 @@ function oscSetup() {
     try { oscState.osc.disconnect(); } catch {}
   }
 
-  const gain         = first ? audio.createGain() : oscState.gain;
-  const analyserHook = first
-    ? audio.fft.createAnalyser({ fftSize: 2048, smoothing: 0.85 })
-    : oscState.analyser;
+  let gain = oscState.gain;
+  if (first) {
+    gain = audio.createGain();
+  }
+
+  let analyserHook = oscState.analyser;
+  if (first) {
+    analyserHook = audio.fft.createAnalyser({ fftSize: 2048, smoothing: 0.85 });
+  }
 
   if (first) {
     gain.gain.value = 0;          // Start silent regardless of isPlaying
@@ -135,7 +167,11 @@ function drawOscilloscope(samples, opts) {
       const top = Math.min(pos[c], midR);
       const bot = Math.max(pos[c], midR);
       for (let r = 0; r < rows; r++) {
-        term.write(x0 + c, y0 + r, r >= top && r <= bot ? '█' : ' ', fg);
+        let cell = ' ';
+        if (r >= top && r <= bot) {
+          cell = '█';
+        }
+        term.write(x0 + c, y0 + r, cell, fg);
       }
     }
     return;
@@ -154,7 +190,10 @@ function drawOscilloscope(samples, opts) {
 
   for (let c = 0; c < cols; c++) {
     const yc = pos[c];
-    const yp = c > 0 ? pos[c - 1] : yc;
+    let yp = yc;
+    if (c > 0) {
+      yp = pos[c - 1];
+    }
     const dy = yc - yp;
 
     if (dy === 0) {
@@ -189,7 +228,10 @@ audio.startOnGesture(() => {
 
 ```js on:update
 // ── Frequency control ────────────────────────────────────────────
-const step = key.down('Shift') ? 100 : 10;
+let step = 10;
+if (key.down('Shift')) {
+  step = 100;
+}
 
 if (key.pressed(key.ARROW_UP)) {
   currentFreq = Math.min(8000, currentFreq + step);
@@ -217,7 +259,10 @@ if (key.pressed('b') || key.pressed('B')) currentStyle = 'bar';
 if (key.pressed(key.SPACE)) {
   isPlaying = !isPlaying;
   if (oscState) {
-    const targetVol = isPlaying ? VOL : 0;
+    let targetVol = 0;
+    if (isPlaying) {
+      targetVol = VOL;
+    }
     oscState.gain.gain.setTargetAtTime(targetVol, audio.currentTime, 0.05);
   }
 }
@@ -233,8 +278,12 @@ const vh = Math.min(VIZ_ROWS, H - 10);
 
 // ── Header ────────────────────────────────────────────────────────
 term.write(2, 1, '≋ OSCILLATOR VISUALIZER ≋', FG);
+let audioStatus = 'OFF';
+if (isPlaying) {
+  audioStatus = 'ON ♪';
+}
 term.write(2, 2,
-  `Freq: ${currentFreq.toFixed(0)} Hz  │  Wave: ${currentType}  │  Style: ${currentStyle}  │  Audio: ${isPlaying ? 'ON ♪' : 'OFF'}`,
+  `Freq: ${currentFreq.toFixed(0)} Hz  │  Wave: ${currentType}  │  Style: ${currentStyle}  │  Audio: ${audioStatus}`,
   0x888888ff
 );
 
@@ -272,6 +321,13 @@ const si = ((Math.round(semitones) % 12) + 12) % 12;
 const octave = 4 + Math.floor((Math.round(semitones) + 9) / 12);
 const noteName = `${noteNames[si]}${octave}`;
 const centsDiff = Math.round((semitones - Math.round(semitones)) * 100);
-const centsStr = centsDiff === 0 ? '' : ` ${centsDiff > 0 ? '+' : ''}${centsDiff}¢`;
+let centsStr = '';
+if (centsDiff !== 0) {
+  let centsPrefix = '';
+  if (centsDiff > 0) {
+    centsPrefix = '+';
+  }
+  centsStr = ` ${centsPrefix}${centsDiff}¢`;
+}
 term.write(2, cy + 3, `${currentFreq.toFixed(1)} Hz  ≈  ${noteName}${centsStr}`, FG);
 ```

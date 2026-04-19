@@ -201,6 +201,7 @@ function createManifest(app: CompileAppIR, sourcePath: string): CompileManifest 
     },
     assets: {
       timedBlocks: app.assets.timedBlockNames.length,
+      logicBlocks: app.assets.logicBlockNames.length,
       blobBlocks: app.assets.blobNames.length,
       shaderBlocks: app.assets.shaderNames.length,
     },
@@ -233,6 +234,7 @@ export async function compileMarkdownApp(markdown: string, options: CompileMarkd
     },
     assets: {
       timedBlockNames: (document.timedBlocks ?? []).map((block) => block.name),
+      logicBlockNames: (document.logicBlocks ?? []).map((block, index) => String(block.name ?? block.sectionId ?? `logic-${index + 1}`)),
       blobNames: (document.blobBlocks ?? []).map((block) => block.name),
       shaderNames: (document.wgslShaders ?? []).map((shader) => shader.name),
     },

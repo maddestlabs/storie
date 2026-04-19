@@ -3,9 +3,16 @@ name: "Klondike Solitaire"
 theme: "stonegarden"
 font: "Cutive+Mono"
 shaders: "vintage"
+authoringCheck: explicit-conditionals
 ---
 
 # Play {"x":"0","y":"0","z":"0"}
+
+```js on:enter
+if (typeof worlds.currentSection === 'number') {
+  state.sections.play = worlds.currentSection;
+}
+```
 
 # Settings {"x":"0","y":"-45","z":"0","width":"44","height":"28","sectionOverflow":"fit-y"}
 
@@ -76,6 +83,45 @@ var state = {
   preDragGS:        null,   // GS snapshot captured before each drag starts
 };
 
+function getReplaySeed() {
+  if (state.gs) return state.gs.seed;
+  return undefined;
+}
+
+function getDefaultJitterIndex() {
+  return 2;
+}
+
+function getCurrentJitterIndex() {
+  if (state.settings.jitterIndex !== undefined) {
+    return state.settings.jitterIndex;
+  }
+  return getDefaultJitterIndex();
+}
+
+function getJitterAmount(index) {
+  if (JITTER_STEPS[index] !== undefined) {
+    return JITTER_STEPS[index];
+  }
+  return 1.0;
+}
+
+function canUndoHistory() {
+  return !!(state.gameHistory && state.gameHistory.canUndo());
+}
+
+function canRedoHistory() {
+  return !!(state.gameHistory && state.gameHistory.canRedo());
+}
+
+function getDrawCountLabel() {
+  var suffix = 'cards';
+  if (state.stockDeal === 1) {
+    suffix = 'card';
+  }
+  return 'Draw: ' + state.stockDeal + ' ' + suffix;
+}
+
 // ─── Card helpers ─────────────────────────────────────────────────────────────
 function cardId(suit, rank) { return suit * 13 + rank; }         // 0-51
 function cardSuit(id)       { return Math.floor(id / 13); }      // 0-3
@@ -105,7 +151,10 @@ function shuffledDeck(rng) {
 function newGame(seed) {
   if (state.gameHistory) state.gameHistory.clear();
   state.preDragGS = null;
-  var useSeed = (seed !== undefined && seed !== null) ? (seed >>> 0) : random.seed();
+  var useSeed = random.seed();
+  if (seed !== undefined && seed !== null) {
+    useSeed = seed >>> 0;
+  }
   var rng = random.rng(useSeed);
   var deck = shuffledDeck(rng);
   var di = 0;
@@ -172,7 +221,9 @@ function autoToFoundation(card, fromPile, fromIndex) {
 function checkWin() {
   var g = state.gs;
   for (var s = 0; s < 4; s++) {
-    if (g.foundations[s].length < 13) return;
+    if (g.foundations[s].length < 13) {
+      return;
+    }
   }
   g.won = true;
 }
@@ -230,14 +281,24 @@ function computeLayout() {
 
   // Card dimensions: standard 2.5:3.5 ratio, scaled to fit.
   var cols   = NUM_TABLEAU;                                     // 7 tableau columns
-  var hPad   = portrait ? Math.floor(W * 0.025) : Math.floor(W * 0.022);
-  var vPad   = portrait ? Math.floor(H * 0.025) : Math.floor(H * 0.028);
+  var hPad   = Math.floor(W * 0.022);
+  var vPad   = Math.floor(H * 0.028);
+  if (portrait) {
+    hPad = Math.floor(W * 0.025);
+    vPad = Math.floor(H * 0.025);
+  }
   var colGap = Math.floor(hPad * 0.6);
   var cw     = Math.floor((W - hPad * 2 - colGap * (cols - 1)) / cols);
   var ch     = Math.round(cw * (3.5 / 2.5));
   // Clamp card size for very large or very small screens
-  var maxCH  = portrait ? Math.floor(H * 0.22) : Math.floor(H * 0.28);
-  if (ch > maxCH) { ch = maxCH; cw = Math.round(ch * (2.5 / 3.5)); }
+  var maxCH  = Math.floor(H * 0.28);
+  if (portrait) {
+    maxCH = Math.floor(H * 0.22);
+  }
+  if (ch > maxCH) {
+    ch = maxCH;
+    cw = Math.round(ch * (2.5 / 3.5));
+  }
 
   // Vertical card offset within a tableau column (how much of card is exposed).
   // Clamp to available height so the deepest initial column (col 7: 6 stacked
@@ -245,7 +306,10 @@ function computeLayout() {
   // tableauY = 2*vPad + ch, so available height = H - tableauY - vPad - ch
   //                                              = H - 3*vPad - 2*ch
   var tableauAvailH = H - 3 * vPad - 2 * ch;
-  var maxColOffset  = tableauAvailH > 0 ? Math.floor(tableauAvailH / 6) : 10;
+  var maxColOffset  = 10;
+  if (tableauAvailH > 0) {
+    maxColOffset = Math.floor(tableauAvailH / 6);
+  }
   var stackOffset   = Math.min(Math.max(Math.round(ch * 0.28), 18), maxColOffset);
   var faceUpOffset  = Math.min(Math.max(Math.round(ch * 0.38), 24), maxColOffset);
   faceUpOffset = Math.max(faceUpOffset, stackOffset); // never collapse below stack
@@ -310,7 +374,10 @@ function hitTest(px, py, layout) {
     for (var ci2 = cardRects.length - 1; ci2 >= 0; ci2--) {
       var r = cardRects[ci2];
       // Exposed height: to next card or full card if last
-      var expH = (ci2 === cardRects.length - 1) ? ch : cardRects[ci2 + 1].y - r.y;
+      var expH = ch;
+      if (ci2 !== cardRects.length - 1) {
+        expH = cardRects[ci2 + 1].y - r.y;
+      }
       expH = Math.max(expH, 14);
       if (px >= r.x && px < r.x + cw && py >= r.y && py < r.y + expH) {
         return { zone: 'tableau', pileKey: col, index: ci2 };
@@ -354,7 +421,11 @@ function tableauCardRects(pile, colX, L) {
   for (var i = 0; i < pile.length; i++) {
     rects.push({ x: colX, y: y });
     if (i < pile.length - 1) {
-      y += pile[i].faceUp ? offs.fo : offs.so;
+      if (pile[i].faceUp) {
+        y += offs.fo;
+      } else {
+        y += offs.so;
+      }
     }
   }
   return rects;
@@ -391,7 +462,238 @@ function getPlayPointerLocalPoint(preferSectionPointer) {
 }
 
 function draggedCardStep(L, index) {
-  return index === 0 ? Math.round(L.faceUpOffset * DRAG_SELECTED_SCALE) : L.faceUpOffset;
+  if (index === 0) {
+    return Math.round(L.faceUpOffset * DRAG_SELECTED_SCALE);
+  }
+  return L.faceUpOffset;
+}
+
+function getPrimaryPointerClicked() {
+  if (mouse && typeof mouse.clicked === 'function') {
+    return mouse.clicked(0);
+  }
+  return ui.pointer.clicked(0);
+}
+
+function getPrimaryPointerDown() {
+  if (mouse && typeof mouse.down === 'function') {
+    return mouse.down(0);
+  }
+  return ui.pointer.down(0);
+}
+
+function getDragInteractionPoint(dragPt, pressPt) {
+  if (dragPt && Number.isFinite(dragPt.x) && Number.isFinite(dragPt.y)) {
+    return dragPt;
+  }
+  return pressPt;
+}
+
+function createDragState(cards, fromPile, fromIndex, startX, startY, dragPt, pressPt) {
+  var anchorPt = getDragInteractionPoint(dragPt, pressPt);
+  var anchorX = anchorPt.x - startX;
+  var anchorY = anchorPt.y - startY;
+  return {
+    cards: cards,
+    fromPile: fromPile,
+    fromIndex: fromIndex,
+    ox: anchorX,
+    oy: anchorY,
+    anchorX: anchorX,
+    anchorY: anchorY,
+    scale: DRAG_SELECTED_SCALE,
+    x: startX,
+    y: startY,
+  };
+}
+
+function updateDraggedCardsPosition(mx, my) {
+  var g = state.gs;
+  if (!g || !g.drag) return;
+
+  var dragScale = g.drag.scale || 1;
+  g.drag.x = mx - g.drag.anchorX * dragScale;
+  g.drag.y = my - g.drag.anchorY * dragScale;
+}
+
+function tryDropDraggedCardsOnFoundation(L, mx, my) {
+  var g = state.gs;
+  if (!g || !g.drag) return false;
+
+  var dragCards = g.drag.cards;
+  if (dragCards.length !== 1) return false;
+
+  var topDragCard = dragCards[0];
+  for (var f = 0; f < 4; f++) {
+    var fx = L.topRowXs[3 + f];
+    var fy = L.topRowY;
+    var insideFoundation = mx >= fx && mx < fx + L.cw && my >= fy && my < fy + L.ch;
+    if (!insideFoundation) continue;
+
+    if (!canPlaceOnFoundation(topDragCard, state.gs.foundations[f])) {
+      return false;
+    }
+
+    g.drag.fromPile.splice(g.drag.fromIndex, dragCards.length);
+    flipTopIfNeeded(g.drag.fromPile);
+    g.foundations[f].push({ id: topDragCard.id, faceUp: true });
+    g.moveCount++;
+    checkWin();
+    return true;
+  }
+
+  return false;
+}
+
+function isWithinTableauDropZone(mx, my, colX, pile, L) {
+  var colTop = L.tableauY;
+  var offsets = colOffsets(pile, L);
+  var colBottom = colTop + L.ch + pile.length * offsets.fo + 40;
+  return mx >= colX && mx < colX + L.cw && my >= colTop - 20 && my < colBottom;
+}
+
+function tryDropDraggedCardsOnTableau(L, mx, my) {
+  var g = state.gs;
+  if (!g || !g.drag) return false;
+
+  var dragCards = g.drag.cards;
+  var topDragCard = dragCards[0];
+
+  for (var col = 0; col < NUM_TABLEAU; col++) {
+    var colX = L.topRowXs[col];
+    var colPile = g.tableau[col];
+    if (!isWithinTableauDropZone(mx, my, colX, colPile, L)) continue;
+    if (!canPlaceOnTableau(topDragCard, colPile)) return false;
+
+    g.drag.fromPile.splice(g.drag.fromIndex, dragCards.length);
+    flipTopIfNeeded(g.drag.fromPile);
+    for (var dc = 0; dc < dragCards.length; dc++) {
+      colPile.push({ id: dragCards[dc].id, faceUp: true });
+    }
+    g.moveCount++;
+    return true;
+  }
+
+  return false;
+}
+
+function finishDraggedCardRelease(dropped) {
+  var g = state.gs;
+  if (!g || !g.drag) return;
+
+  var dragCards = g.drag.cards;
+  if (dropped && state.preDragGS) {
+    recordMove('move', state.preDragGS, cloneGS());
+  }
+  state.preDragGS = null;
+
+  if (!dropped) {
+    for (var i = 0; i < dragCards.length; i++) {
+      g.drag.fromPile.splice(g.drag.fromIndex + i, 0, dragCards[i]);
+    }
+  }
+
+  g.drag = null;
+}
+
+function updateDoubleClickState(hit, now) {
+  var g = state.gs;
+  if (g.dblTap && g.dblTap.x === hit.pileKey && g.dblTap.z === hit.zone &&
+      now - g.dblTap.at < 420) {
+    g.dblTap = null;
+    return true;
+  }
+
+  g.dblTap = { x: hit.pileKey, z: hit.zone, at: now };
+  return false;
+}
+
+function handleStockClick() {
+  var g = state.gs;
+  var stockPre = cloneGS();
+  var stockLabel = 'reset stock';
+
+  if (g.stock.length > 0) {
+    stockLabel = 'deal';
+    for (var i = 0; i < state.stockDeal && g.stock.length > 0; i++) {
+      var card = g.stock.pop();
+      card.faceUp = true;
+      g.waste.push(card);
+    }
+  } else {
+    while (g.waste.length > 0) {
+      var wasteCard = g.waste.pop();
+      wasteCard.faceUp = false;
+      g.stock.push(wasteCard);
+    }
+  }
+
+  recordMove(stockLabel, stockPre, cloneGS());
+}
+
+function beginSingleCardDrag(card, fromPile, fromIndex, startX, startY, dragPt, pressPt) {
+  state.preDragGS = cloneGS();
+  state.gs.drag = createDragState([card], fromPile, fromIndex, startX, startY, dragPt, pressPt);
+  fromPile.splice(fromIndex, 1);
+}
+
+function beginTableauRunDrag(pile, fromIndex, startX, startY, dragPt, pressPt) {
+  state.preDragGS = cloneGS();
+  var runCards = pile.slice(fromIndex);
+  pile.splice(fromIndex, runCards.length);
+  state.gs.drag = createDragState(runCards, pile, fromIndex, startX, startY, dragPt, pressPt);
+}
+
+function handleWasteClick(L, isDblClick, dragPt, pressPt) {
+  var g = state.gs;
+  if (g.waste.length === 0) return;
+
+  var wasteTop = g.waste[g.waste.length - 1];
+  if (isDblClick) {
+    autoToFoundation(wasteTop, g.waste, g.waste.length - 1);
+    return;
+  }
+
+  beginSingleCardDrag(wasteTop, g.waste, g.waste.length - 1, L.topRowXs[1], L.topRowY, dragPt, pressPt);
+}
+
+function handleFoundationClick(L, hit, dragPt, pressPt) {
+  var g = state.gs;
+  if (hit.pileKey < 0) return;
+
+  var foundation = g.foundations[hit.pileKey];
+  if (foundation.length === 0) return;
+
+  var topCard = foundation[foundation.length - 1];
+  var startX = L.topRowXs[3 + hit.pileKey];
+  var startY = L.topRowY;
+  beginSingleCardDrag(topCard, foundation, foundation.length - 1, startX, startY, dragPt, pressPt);
+}
+
+function handleTableauClick(L, hit, isDblClick, dragPt, pressPt) {
+  var g = state.gs;
+  var pile = g.tableau[hit.pileKey];
+  var index = hit.index;
+  if (index < 0 || index >= pile.length) return;
+
+  var card = pile[index];
+  if (!card.faceUp) {
+    if (index === pile.length - 1) {
+      var flipPre = cloneGS();
+      card.faceUp = true;
+      recordMove('flip', flipPre, cloneGS());
+    }
+    return;
+  }
+
+  if (isDblClick && index === pile.length - 1) {
+    autoToFoundation(card, pile, index);
+    return;
+  }
+
+  var rects = tableauCardRects(pile, L.topRowXs[hit.pileKey], L);
+  var startRect = rects[index];
+  beginTableauRunDrag(pile, index, startRect.x, startRect.y, dragPt, pressPt);
 }
 
 // ─── Input handling ────────────────────────────────────────────────────────────
@@ -403,84 +705,30 @@ function handleInput(L) {
   //   when the cursor leaves the live section.
   var pressPt = getPlayPointerLocalPoint(true);
   var dragPt = getPlayPointerLocalPoint(false);
-  var mx = (g.drag && dragPt && Number.isFinite(dragPt.x)) ? dragPt.x : pressPt.x;
-  var my = (g.drag && dragPt && Number.isFinite(dragPt.y)) ? dragPt.y : pressPt.y;
-  var clicked = (mouse && typeof mouse.clicked === 'function') ? mouse.clicked(0) : ui.pointer.clicked(0);
-  var down = (mouse && typeof mouse.down === 'function') ? mouse.down(0) : ui.pointer.down(0);
+  var dragInteractionPt = getDragInteractionPoint(dragPt, pressPt);
+  var mx = pressPt.x;
+  var my = pressPt.y;
+  if (g.drag) {
+    mx = dragInteractionPt.x;
+    my = dragInteractionPt.y;
+  }
+  var clicked = getPrimaryPointerClicked();
+  var down = getPrimaryPointerDown();
   var now = Date.now();
 
   // ── Drag update ────────────────────────────────────────────────
   if (g.drag) {
-    var dragScale = g.drag.scale || 1;
-    g.drag.x = mx - g.drag.anchorX * dragScale;
-    g.drag.y = my - g.drag.anchorY * dragScale;
+    updateDraggedCardsPosition(mx, my);
   }
 
   // ── Release: try to drop dragged cards ─────────────────────────
   // Use !down while drag is active — matches the minesweeper pointer pattern.
   if (!down && g.drag) {
-    var dropped = false;
-    var dragCards = g.drag.cards;
-    var topDragCard = dragCards[0];
-
-    // Check foundations (single-card drops only)
-    if (dragCards.length === 1) {
-      for (var f = 0; f < 4; f++) {
-        var fx = L.topRowXs[3 + f];
-        var fy = L.topRowY;
-        if (mx >= fx && mx < fx + L.cw && my >= fy && my < fy + L.ch) {
-          if (canPlaceOnFoundation(topDragCard, g.foundations[f])) {
-            // Remove from source
-            g.drag.fromPile.splice(g.drag.fromIndex, dragCards.length);
-            flipTopIfNeeded(g.drag.fromPile);
-            g.foundations[f].push({ id: topDragCard.id, faceUp: true });
-            g.moveCount++;
-            checkWin();
-            dropped = true;
-          }
-          break;
-        }
-      }
-    }
-
-    // Check tableau columns
+    var dropped = tryDropDraggedCardsOnFoundation(L, mx, my);
     if (!dropped) {
-      for (var col = 0; col < NUM_TABLEAU; col++) {
-        var cx2 = L.topRowXs[col];
-        var colPile = g.tableau[col];
-        // Generous drop zone: anywhere over the column strip
-        var colTop = L.tableauY;
-        var _coffs = colOffsets(colPile, L);
-        var colBot = colTop + L.ch + colPile.length * _coffs.fo + 40;
-        if (mx >= cx2 && mx < cx2 + L.cw && my >= colTop - 20 && my < colBot) {
-          if (canPlaceOnTableau(topDragCard, colPile)) {
-            g.drag.fromPile.splice(g.drag.fromIndex, dragCards.length);
-            flipTopIfNeeded(g.drag.fromPile);
-            for (var dc = 0; dc < dragCards.length; dc++) {
-              colPile.push({ id: dragCards[dc].id, faceUp: true });
-            }
-            g.moveCount++;
-            dropped = true;
-          }
-          break;
-        }
-      }
+      dropped = tryDropDraggedCardsOnTableau(L, mx, my);
     }
-
-    // Record move or discard the pre-drag snapshot
-    if (dropped && state.preDragGS) {
-      recordMove('move', state.preDragGS, cloneGS());
-    }
-    state.preDragGS = null;
-
-    // Return cards to source if drop failed
-    if (!dropped) {
-      for (var dc2 = 0; dc2 < dragCards.length; dc2++) {
-        g.drag.fromPile.splice(g.drag.fromIndex + dc2, 0, dragCards[dc2]);
-      }
-    }
-
-    g.drag = null;
+    finishDraggedCardRelease(dropped);
     return;
   }
 
@@ -492,111 +740,29 @@ function handleInput(L) {
   if (!hit) return;
 
   // Double-click detection
-  var isDblClick = false;
-  if (g.dblTap && g.dblTap.x === hit.pileKey && g.dblTap.z === hit.zone &&
-      now - g.dblTap.at < 420) {
-    isDblClick = true;
-    g.dblTap = null;
-  } else {
-    g.dblTap = { x: hit.pileKey, z: hit.zone, at: now };
-  }
+  var isDblClick = updateDoubleClickState(hit, now);
 
   // Stock click
   if (hit.zone === 'stock') {
-    var _stockPre = cloneGS();
-    var _stockLabel = g.stock.length > 0 ? 'deal' : 'reset stock';
-    if (g.stock.length > 0) {
-      for (var s2 = 0; s2 < state.stockDeal && g.stock.length > 0; s2++) {
-        var card = g.stock.pop();
-        card.faceUp = true;
-        g.waste.push(card);
-      }
-    } else {
-      // Reset: flip waste back to stock
-      while (g.waste.length > 0) {
-        var wc = g.waste.pop();
-        wc.faceUp = false;
-        g.stock.push(wc);
-      }
-    }
-    recordMove(_stockLabel, _stockPre, cloneGS());
+    handleStockClick();
     return;
   }
 
   // Waste top card — start drag or double-click auto-move
-  if (hit.zone === 'waste' && g.waste.length > 0) {
-    var wTop = g.waste[g.waste.length - 1];
-    if (isDblClick) {
-      autoToFoundation(wTop, g.waste, g.waste.length - 1);
-      return;
-    }
-    // Start drag — snapshot state BEFORE cards leave the pile
-    state.preDragGS = cloneGS();
-    var wx = L.topRowXs[1]; var wy = L.topRowY;
-    var dmx = (dragPt && Number.isFinite(dragPt.x)) ? dragPt.x : pressPt.x;
-    var dmy = (dragPt && Number.isFinite(dragPt.y)) ? dragPt.y : pressPt.y;
-    g.drag = { cards: [wTop], fromPile: g.waste, fromIndex: g.waste.length - 1,
-               ox: dmx - wx, oy: dmy - wy,
-               anchorX: dmx - wx, anchorY: dmy - wy,
-               scale: DRAG_SELECTED_SCALE,
-               x: wx, y: wy };
-    g.waste.splice(g.waste.length - 1, 1);
+  if (hit.zone === 'waste') {
+    handleWasteClick(L, isDblClick, dragPt, pressPt);
     return;
   }
 
   // Foundation — start drag (move back to tableau)
-  if (hit.zone === 'foundation' && hit.pileKey >= 0) {
-    var fnd = g.foundations[hit.pileKey];
-    if (fnd.length === 0) return;
-    var fCard = fnd[fnd.length - 1];
-    // Snapshot BEFORE the card leaves the foundation
-    state.preDragGS = cloneGS();
-    var fCardX = L.topRowXs[3 + hit.pileKey]; var fCardY = L.topRowY;
-    var dmx2 = (dragPt && Number.isFinite(dragPt.x)) ? dragPt.x : pressPt.x;
-    var dmy2 = (dragPt && Number.isFinite(dragPt.y)) ? dragPt.y : pressPt.y;
-    g.drag = { cards: [fCard], fromPile: fnd, fromIndex: fnd.length - 1,
-               ox: dmx2 - fCardX, oy: dmy2 - fCardY,
-               anchorX: dmx2 - fCardX, anchorY: dmy2 - fCardY,
-               scale: DRAG_SELECTED_SCALE,
-               x: fCardX, y: fCardY };
-    fnd.splice(fnd.length - 1, 1);
+  if (hit.zone === 'foundation') {
+    handleFoundationClick(L, hit, dragPt, pressPt);
     return;
   }
 
   // Tableau card
   if (hit.zone === 'tableau') {
-    var tCol  = hit.pileKey;
-    var tPile = g.tableau[tCol];
-    var tIdx  = hit.index;
-    if (tIdx < 0 || tIdx >= tPile.length) return;
-    var tCard = tPile[tIdx];
-    if (!tCard.faceUp) {
-      // Flip face-down top card — undo-able
-      if (tIdx === tPile.length - 1) {
-        var _flipPre = cloneGS();
-        tCard.faceUp = true;
-        recordMove('flip', _flipPre, cloneGS());
-      }
-      return;
-    }
-    // Double-click: auto-move single top card to foundation
-    if (isDblClick && tIdx === tPile.length - 1) {
-      autoToFoundation(tCard, tPile, tIdx);
-      return;
-    }
-    // Drag the card and any cards below it — snapshot BEFORE cards leave the pile
-    state.preDragGS = cloneGS();
-    var runCards = tPile.slice(tIdx);
-    var rects2 = tableauCardRects(tPile, L.topRowXs[tCol], L);
-    var startX = rects2[tIdx].x; var startY = rects2[tIdx].y;
-    tPile.splice(tIdx, runCards.length);
-    var dmx3 = (dragPt && Number.isFinite(dragPt.x)) ? dragPt.x : pressPt.x;
-    var dmy3 = (dragPt && Number.isFinite(dragPt.y)) ? dragPt.y : pressPt.y;
-    g.drag = { cards: runCards, fromPile: tPile, fromIndex: tIdx,
-               ox: dmx3 - startX, oy: dmy3 - startY,
-               anchorX: dmx3 - startX, anchorY: dmy3 - startY,
-               scale: DRAG_SELECTED_SCALE,
-               x: startX, y: startY };
+    handleTableauClick(L, hit, isDblClick, dragPt, pressPt);
     return;
   }
 }
@@ -732,10 +898,130 @@ function drawCardAgeSpots(initHash, n, jx, jy, cw, ch, age,
     var _uy = jy + Math.round(_sy * (ch - 4));
     if (exclW > 0 && _ux >= exclX && _ux < exclX + exclW && _uy >= exclY && _uy < exclY + exclH) continue;
     var _rp = _rotPt(_ux, _uy, jcx, jcy, cosA, sinA);
-    ui.rect(_rp.x, _rp.y, _sw, _sth, twoColor
-      ? ((_hs / 4294967296) > 0.55 ? ui.colors.rgba(175, 135, 58, _sa) : ui.colors.rgba(110, 82, 48, _sa))
-      : ui.colors.rgba(140, 120, 90, _sa));
+    ui.rect(_rp.x, _rp.y, _sw, _sth, getCardAgeSpotColor(twoColor, _hs, _sa));
   }
+}
+
+function getCardAgeSpotColor(twoColor, hash, alpha) {
+  if (twoColor) {
+    if ((hash / 4294967296) > 0.55) {
+      return ui.colors.rgba(175, 135, 58, alpha);
+    }
+    return ui.colors.rgba(110, 82, 48, alpha);
+  }
+  return ui.colors.rgba(140, 120, 90, alpha);
+}
+
+function getCardRenderInfo(cardObj, age, drawScale) {
+  var id = -1;
+  var faceUp = false;
+  if (cardObj) {
+    id = cardObj.id;
+    faceUp = cardObj.faceUp;
+  }
+
+  var normalizedAge = 0;
+  if (age > 0) {
+    normalizedAge = Math.min(age, 1.0);
+  }
+
+  var normalizedScale = 1;
+  if (drawScale && drawScale > 0) {
+    normalizedScale = drawScale;
+  }
+
+  return {
+    id: id,
+    faceUp: faceUp,
+    age: normalizedAge,
+    drawScale: normalizedScale,
+  };
+}
+
+function getMeasureTextWidth() {
+  if (ui.metrics.measureTextWidth) {
+    return ui.metrics.measureTextWidth;
+  }
+  return function(s) {
+    return (ui.metrics.charWidth || 10) * s.length;
+  };
+}
+
+function getEffectiveTextScale(textScale) {
+  if (textScale) {
+    return textScale;
+  }
+  return 1;
+}
+
+function getCardInkColor(pal, suit) {
+  if (SUIT_RED[suit]) {
+    return pal.red;
+  }
+  return pal.black;
+}
+
+function getCardFaceTextLayout(id, cw, ch, textScale) {
+  var suit = cardSuit(id);
+  var rank = cardRank(id);
+  var rankStr = rankLabel(rank);
+  var suitStr = suitLabel(suit);
+  var charHeight = ui.metrics.charHeight || 14;
+  var effectiveScale = getEffectiveTextScale(textScale);
+  var measureWidth = getMeasureTextWidth();
+  var padX = Math.max(1, Math.round(4 * effectiveScale));
+  var padY = Math.max(1, Math.round(3 * effectiveScale));
+  var effectiveCharHeight = charHeight * effectiveScale;
+  var centerScale = 1.6 * effectiveScale;
+  var bottomPad = Math.max(1, Math.round(4 * effectiveScale));
+  var rankWidth = measureWidth(rankStr) * effectiveScale;
+  var suitWidth = measureWidth(suitStr) * effectiveScale;
+  var bottomY = ch - bottomPad - effectiveCharHeight * 2;
+
+  return {
+    suit: suit,
+    rankStr: rankStr,
+    suitStr: suitStr,
+    topRankX: padX,
+    topRankY: padY,
+    topSuitX: padX,
+    topSuitY: padY + effectiveCharHeight,
+    centerX: Math.floor((cw - measureWidth(suitStr) * centerScale) * 0.5),
+    centerY: Math.floor((ch - charHeight * centerScale) * 0.5) - 2,
+    centerScale: centerScale,
+    bottomRankX: cw - bottomPad - rankWidth,
+    bottomRankY: bottomY,
+    bottomSuitX: cw - bottomPad - suitWidth,
+    bottomSuitY: bottomY + effectiveCharHeight,
+  };
+}
+
+function getCardBackPanelLayout(x, y, cw, ch, drawScale) {
+  var measureWidth = getMeasureTextWidth();
+  var panelMarginX = Math.max(Math.round(5 * drawScale), Math.round(cw * 0.12));
+  var panelMarginY = Math.max(Math.round(5 * drawScale), Math.round(ch * 0.12));
+  var panelX = x + panelMarginX;
+  var panelY = y + panelMarginY;
+  var panelW = cw - panelMarginX * 2;
+  var panelH = ch - panelMarginY * 2;
+  var panelRadius = Math.max(1, Math.round(Math.min(panelW, panelH) * 0.03));
+  var glyph = '⚜';
+  var glyphHeight = ui.metrics.charHeight || 14;
+  var glyphWidth = measureWidth(glyph);
+  var fillScale = Math.min(panelW / glyphWidth, panelH / glyphHeight);
+  var glyphScale = fillScale * 0.95;
+
+  return {
+    panelX: panelX,
+    panelY: panelY,
+    panelW: panelW,
+    panelH: panelH,
+    panelRadius: panelRadius,
+    glyph: glyph,
+    glyphX: panelX + Math.floor((panelW - glyphWidth * glyphScale) * 0.5),
+    glyphY: panelY + Math.floor((panelH - glyphHeight * glyphScale) * 0.5),
+    glyphScale: glyphScale,
+  };
 }
 
 // Graduated edge vignette drawn against the axis-aligned bounding box of the card.
@@ -763,12 +1049,16 @@ function drawCardVignette(bbX, bbY, bbW, bbH, vDepth, vr, vg, vb) {
 // faceUp=true draws front; false draws back (double-border frame + crosshatch).
 // Optional jitter: { dx, dy, angleDeg } — positional + rotational deviation.
 function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age, drawScale) {
-  var id = cardObj ? cardObj.id : -1;
-  var faceUp = cardObj ? cardObj.faceUp : false;
-  var _age = (age > 0) ? Math.min(age, 1.0) : 0;
-  var _drawScale = (drawScale && drawScale > 0) ? drawScale : 1;
+  var renderInfo = getCardRenderInfo(cardObj, age, drawScale);
+  var id = renderInfo.id;
+  var faceUp = renderInfo.faceUp;
+  var _age = renderInfo.age;
+  var _drawScale = renderInfo.drawScale;
   var _s = _drawScale;
-  var _tScale = (_s !== 1) ? _s : undefined;
+  var _tScale = undefined;
+  if (_s !== 1) {
+    _tScale = _s;
+  }
 
   if (_drawScale !== 1) {
     cw = Math.round(cw * _drawScale);
@@ -777,9 +1067,16 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age, d
   }
 
   // Stable positional + rotational deviation (simulates human-dealt card placement).
-  var jx = jitter ? x + (jitter.dx || 0) : x;
-  var jy = jitter ? y + (jitter.dy || 0) : y;
-  var angDeg = (jitter && !isDragging) ? (jitter.angleDeg || 0) : 0;
+  var jx = x;
+  var jy = y;
+  var angDeg = 0;
+  if (jitter) {
+    jx = x + (jitter.dx || 0);
+    jy = y + (jitter.dy || 0);
+    if (!isDragging) {
+      angDeg = jitter.angleDeg || 0;
+    }
+  }
   var angRad = angDeg * Math.PI / 180;
   var cosA = Math.cos(angRad); var sinA = Math.sin(angRad);
   var jcx = jx + cw * 0.5; var jcy = jy + ch * 0.5;
@@ -838,40 +1135,24 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age, d
       ui.rect(bbX, bbY, bbW, bbH, ui.colors.rgba(200, 160, 80, Math.round(_age * _age * 36)));
     }
 
-    var suit = cardSuit(id);
-    var rank = cardRank(id);
-    var ink = SUIT_RED[suit] ? pal.red : pal.black;
-    var rankStr = rankLabel(rank);
-    var suitStr = suitLabel(suit);
+    var faceLayout = getCardFaceTextLayout(id, cw, ch, _tScale);
+    var ink = getCardInkColor(pal, faceLayout.suit);
 
     // Corner rank label (top-left) — positions rotated to sit on the tilted card.
-    var _chH = ui.metrics.charHeight || 14;
-    var _padX = Math.max(1, Math.round(4 * _s));
-    var _padY = Math.max(1, Math.round(3 * _s));
-    var _effChH = _chH * (_tScale ? _tScale : 1);
-    var _tlA = _rotPt(jx + _padX, jy + _padY,           jcx, jcy, cosA, sinA);
-    var _tlB = _rotPt(jx + _padX, jy + _padY + _effChH, jcx, jcy, cosA, sinA);
-    ui.text(rankStr, _tlA.x, _tlA.y, ink, _tScale);
-    ui.text(suitStr, _tlB.x, _tlB.y, ink, _tScale);
+    var topRankPoint = _rotPt(jx + faceLayout.topRankX, jy + faceLayout.topRankY, jcx, jcy, cosA, sinA);
+    var topSuitPoint = _rotPt(jx + faceLayout.topSuitX, jy + faceLayout.topSuitY, jcx, jcy, cosA, sinA);
+    ui.text(faceLayout.rankStr, topRankPoint.x, topRankPoint.y, ink, _tScale);
+    ui.text(faceLayout.suitStr, topSuitPoint.x, topSuitPoint.y, ink, _tScale);
 
     // Center suit symbol — scaled up; position rotated to the card's visual centre.
-    var _mw = ui.metrics.measureTextWidth ? ui.metrics.measureTextWidth : function(s) { return (ui.metrics.charWidth || 10) * s.length; };
-    var centerScale = 1.6 * (_tScale ? _tScale : 1);
-    var _cRaw = _rotPt(
-      jx + Math.floor((cw - _mw(suitStr) * centerScale) * 0.5),
-      jy + Math.floor((ch - _chH * centerScale) * 0.5) - 2,
-      jcx, jcy, cosA, sinA);
-    ui.text(suitStr, _cRaw.x, _cRaw.y, ink, centerScale);
+    var centerPoint = _rotPt(jx + faceLayout.centerX, jy + faceLayout.centerY, jcx, jcy, cosA, sinA);
+    ui.text(faceLayout.suitStr, centerPoint.x, centerPoint.y, ink, faceLayout.centerScale);
 
     // Bottom-right corner — positions rotated to the card-local bottom-right area.
-    var _brPad = Math.max(1, Math.round(4 * _s));
-    var _wRank = _mw(rankStr) * (_tScale ? _tScale : 1);
-    var _wSuit = _mw(suitStr) * (_tScale ? _tScale : 1);
-    var bry = jy + ch - _brPad - _effChH * 2;
-    var _brA = _rotPt(jx + cw - _brPad - _wRank, bry,           jcx, jcy, cosA, sinA);
-    var _brB = _rotPt(jx + cw - _brPad - _wSuit, bry + _effChH, jcx, jcy, cosA, sinA);
-    ui.text(rankStr, _brA.x, _brA.y, ink, _tScale);
-    ui.text(suitStr, _brB.x, _brB.y, ink, _tScale);
+    var bottomRankPoint = _rotPt(jx + faceLayout.bottomRankX, jy + faceLayout.bottomRankY, jcx, jcy, cosA, sinA);
+    var bottomSuitPoint = _rotPt(jx + faceLayout.bottomSuitX, jy + faceLayout.bottomSuitY, jcx, jcy, cosA, sinA);
+    ui.text(faceLayout.rankStr, bottomRankPoint.x, bottomRankPoint.y, ink, _tScale);
+    ui.text(faceLayout.suitStr, bottomSuitPoint.x, bottomSuitPoint.y, ink, _tScale);
 
     // Foxing / age spots — two-hue warm/cool scatter, drawn before the vignette so
     // edge marks are naturally darkened by it.
@@ -891,33 +1172,24 @@ function drawCard(pal, x, y, cw, ch, radius, cardObj, isDragging, jitter, age, d
       ui.rect(bbX, bbY, bbW, bbH, ui.colors.rgba(200, 160, 80, Math.round(_age * _age * 36)));
     }
     // Inset center panel
-    var bMarX = Math.max(5, Math.round(cw * 0.12));
-    var bMarY = Math.max(5, Math.round(ch * 0.12));
-    var bPanX = jx + bMarX;  var bPanY = jy + bMarY;
-    var bPanW = cw - bMarX * 2;  var bPanH = ch - bMarY * 2;
+    var backLayout = getCardBackPanelLayout(jx, jy, cw, ch, _s);
     // Panel fill via a nested rotated mask so it follows the card's jitter angle.
-    var _bPanR = Math.max(1, Math.round(Math.min(bPanW, bPanH) * 0.03));
-    ui.pushMaskPolygon(roundedRectPoly(bPanX, bPanY, bPanW, bPanH, _bPanR, jcx, jcy, cosA, sinA));
+    ui.pushMaskPolygon(roundedRectPoly(backLayout.panelX, backLayout.panelY, backLayout.panelW, backLayout.panelH, backLayout.panelRadius, jcx, jcy, cosA, sinA));
     ui.rect(bbX, bbY, bbW, bbH, pal.cardBackInv);
     ui.popMask();
     // Glyph centered in the panel at 25% of its panel-filling scale.
     // Use measureTextWidth for the actual emoji render width (may exceed charWidth),
     // which is why the old _bCw-based centering drifted rightward.
-    var _bCh = ui.metrics.charHeight || 14;
-    var char = '⚜';
-    var _bGW = ui.metrics.measureTextWidth(char) || (ui.metrics.charWidth || 10);
-    var _bFillScale = Math.min(bPanW / _bGW, bPanH / _bCh);
-    var _bScale = _bFillScale * 0.95;
-    var _gPt = _rotPt(bPanX + Math.floor((bPanW - _bGW * _bScale) * 0.5),
-                      bPanY + Math.floor((bPanH - _bCh * _bScale) * 0.5),
+    var _gPt = _rotPt(backLayout.glyphX,
+              backLayout.glyphY,
                       jcx, jcy, cosA, sinA);
-    ui.text(char, _gPt.x, _gPt.y, pal.cardBack, _bScale);
+    ui.text(backLayout.glyph, _gPt.x, _gPt.y, pal.cardBack, backLayout.glyphScale);
 
     // Age spots — border margin only, excludes the centre panel.
     if (_age > 0) {
       drawCardAgeSpots(((id * 2654435761 + 9999) >>> 0), Math.round(_age * _age * _age * 35),
         jx, jy, cw, ch, _age, jcx, jcy, cosA, sinA,
-        2.0 * _s, 0.06, 0.18, false, bPanX, bPanY, bPanW, bPanH);
+        2.0 * _s, 0.06, 0.18, false, backLayout.panelX, backLayout.panelY, backLayout.panelW, backLayout.panelH);
     }
 
     // Edge vignette — neutral tint, 40% depth on back (laminated surface).
@@ -951,7 +1223,10 @@ function drawDraggedCardsLocal(pal, L) {
 
   var dy2 = g.drag.y;
   for (var dc = 0; dc < g.drag.cards.length; dc++) {
-    var dragScale = dc === 0 ? (g.drag.scale || DRAG_SELECTED_SCALE) : 1;
+    var dragScale = 1;
+    if (dc === 0) {
+      dragScale = g.drag.scale || DRAG_SELECTED_SCALE;
+    }
     drawCard(pal, g.drag.x, dy2, L.cw, L.ch, L.radius, g.drag.cards[dc], dc === 0,
              null, cardAge(g.drag.cards[dc].id), dragScale);
     dy2 += draggedCardStep(L, dc);
@@ -1118,20 +1393,22 @@ function drawDraggedCardsOverlay(pal, L, sectionRef) {
       var _ux = lx + Math.round(_sx * (lw - 4));
       var _uy = ly + Math.round(_sy * (lh - 4));
       if (exclW > 0 && _ux >= exclX && _ux < exclX + exclW && _uy >= exclY && _uy < exclY + exclH) continue;
-      var col = twoColor
-        ? ((_hs / 4294967296) > 0.55 ? ui.colors.rgba(175, 135, 58, _sa) : ui.colors.rgba(110, 82, 48, _sa))
-        : ui.colors.rgba(140, 120, 90, _sa);
+      var col = getCardAgeSpotColor(twoColor, _hs, _sa);
       ovRect(_ux, _uy, _sw, _sth, col);
     }
   }
 
   function drawCardOverlay(pal2, x, y, cw, ch, radius, cardObj, isDragging, age, drawScale) {
-    var id = cardObj ? cardObj.id : -1;
-    var faceUp = cardObj ? cardObj.faceUp : false;
-    var _age = (age > 0) ? Math.min(age, 1.0) : 0;
-    var _drawScale = (drawScale && drawScale > 0) ? drawScale : 1;
+    var renderInfo = getCardRenderInfo(cardObj, age, drawScale);
+    var id = renderInfo.id;
+    var faceUp = renderInfo.faceUp;
+    var _age = renderInfo.age;
+    var _drawScale = renderInfo.drawScale;
     var _s = _drawScale;
-    var _tScale = (_s !== 1) ? _s : undefined;
+    var _tScale = undefined;
+    if (_s !== 1) {
+      _tScale = _s;
+    }
     if (_drawScale !== 1) {
       cw = Math.round(cw * _drawScale);
       ch = Math.round(ch * _drawScale);
@@ -1156,34 +1433,21 @@ function drawDraggedCardsOverlay(pal, L, sectionRef) {
       ovRect(x, y, cw, ch, pal2.cardFace);
       if (_age > 0) ovRect(x, y, cw, ch, ui.colors.rgba(200, 160, 80, Math.round(_age * _age * 36)));
 
-      var suit = cardSuit(id);
-      var rank = cardRank(id);
-      var ink = SUIT_RED[suit] ? pal2.red : pal2.black;
-      var rankStr = rankLabel(rank);
-      var suitStr = suitLabel(suit);
-      var _chH = ui.metrics.charHeight || 14;
-      var _padX = Math.max(1, Math.round(4 * _s));
-      var _padY = Math.max(1, Math.round(3 * _s));
-      var _effChH = _chH * (_tScale ? _tScale : 1);
-      ovText(rankStr, x + _padX, y + _padY, ink, _tScale);
-      ovText(suitStr, x + _padX, y + _padY + _effChH, ink, _tScale);
+      var faceLayout = getCardFaceTextLayout(id, cw, ch, _tScale);
+      var ink = getCardInkColor(pal2, faceLayout.suit);
+      ovText(faceLayout.rankStr, x + faceLayout.topRankX, y + faceLayout.topRankY, ink, _tScale);
+      ovText(faceLayout.suitStr, x + faceLayout.topSuitX, y + faceLayout.topSuitY, ink, _tScale);
 
-      var _mw = ui.metrics.measureTextWidth ? ui.metrics.measureTextWidth : function(s) { return (ui.metrics.charWidth || 10) * s.length; };
-      var centerScale = 1.6 * (_tScale ? _tScale : 1);
       ovText(
-        suitStr,
-        x + Math.floor((cw - _mw(suitStr) * centerScale) * 0.5),
-        y + Math.floor((ch - _chH * centerScale) * 0.5) - 2,
+        faceLayout.suitStr,
+        x + faceLayout.centerX,
+        y + faceLayout.centerY,
         ink,
-        centerScale
+        faceLayout.centerScale
       );
 
-      var _brPad = Math.max(1, Math.round(4 * _s));
-      var _wRank = _mw(rankStr) * (_tScale ? _tScale : 1);
-      var _wSuit = _mw(suitStr) * (_tScale ? _tScale : 1);
-      var bry = y + ch - _brPad - _effChH * 2;
-      ovText(rankStr, x + cw - _brPad - _wRank, bry, ink, _tScale);
-      ovText(suitStr, x + cw - _brPad - _wSuit, bry + _effChH, ink, _tScale);
+      ovText(faceLayout.rankStr, x + faceLayout.bottomRankX, y + faceLayout.bottomRankY, ink, _tScale);
+      ovText(faceLayout.suitStr, x + faceLayout.bottomSuitX, y + faceLayout.bottomSuitY, ink, _tScale);
 
       if (_age > 0) {
         drawCardAgeSpotsOverlay(((id * 2654435761) >>> 0), Math.round(_age * _age * _age * 50),
@@ -1196,33 +1460,24 @@ function drawDraggedCardsOverlay(pal, L, sectionRef) {
       ovRect(x, y, cw, ch, pal2.cardBack);
       if (_age > 0) ovRect(x, y, cw, ch, ui.colors.rgba(200, 160, 80, Math.round(_age * _age * 36)));
 
-      var bMarX = Math.max(Math.round(5 * _s), Math.round(cw * 0.12));
-      var bMarY = Math.max(Math.round(5 * _s), Math.round(ch * 0.12));
-      var bPanX = x + bMarX;  var bPanY = y + bMarY;
-      var bPanW = cw - bMarX * 2;  var bPanH = ch - bMarY * 2;
-      var _bPanR = Math.max(1, Math.round(Math.min(bPanW, bPanH) * 0.03));
-      ovPushMaskPolygonLocal(_roundedRectLocalPoly(bPanX, bPanY, bPanW, bPanH, _bPanR));
+      var backLayout = getCardBackPanelLayout(x, y, cw, ch, _s);
+      ovPushMaskPolygonLocal(_roundedRectLocalPoly(backLayout.panelX, backLayout.panelY, backLayout.panelW, backLayout.panelH, backLayout.panelRadius));
       ovRect(x, y, cw, ch, pal2.cardBackInv);
       ovPopMask();
 
-      var _bCh = ui.metrics.charHeight || 14;
-      var char = '⚜';
-      var _bGW = ui.metrics.measureTextWidth(char) || (ui.metrics.charWidth || 10);
-      var _bFillScale = Math.min(bPanW / _bGW, bPanH / _bCh);
-      var _bScale = _bFillScale * 0.95;
       ovText(
-        char,
-        bPanX + Math.floor((bPanW - _bGW * _bScale) * 0.5),
-        bPanY + Math.floor((bPanH - _bCh * _bScale) * 0.5),
+        backLayout.glyph,
+        backLayout.glyphX,
+        backLayout.glyphY,
         pal2.cardBack,
-        _bScale
+        backLayout.glyphScale
       );
 
       if (_age > 0) {
         drawCardAgeSpotsOverlay(((id * 2654435761 + 9999) >>> 0), Math.round(_age * _age * _age * 35),
           x, y, cw, ch, _age, false,
           2.0 * _s, 0.06, 0.18,
-          bPanX, bPanY, bPanW, bPanH);
+          backLayout.panelX, backLayout.panelY, backLayout.panelW, backLayout.panelH);
       }
       drawCardVignetteOverlay(x, y, cw, ch, Math.max(5, Math.round(Math.min(cw, ch) * 0.40)), 0, 0, 0);
     }
@@ -1232,7 +1487,10 @@ function drawDraggedCardsOverlay(pal, L, sectionRef) {
 
   var localY = g.drag.y;
   for (var dc = 0; dc < g.drag.cards.length; dc++) {
-    var dragScale = dc === 0 ? (g.drag.scale || DRAG_SELECTED_SCALE) : 1;
+    var dragScale = 1;
+    if (dc === 0) {
+      dragScale = g.drag.scale || DRAG_SELECTED_SCALE;
+    }
     var localW = L.cw * dragScale;
     var localH = L.ch * dragScale;
     drawCardOverlay(pal, g.drag.x, localY, L.cw, L.ch, L.radius, g.drag.cards[dc], dc === 0,
@@ -1310,11 +1568,14 @@ function drawGame(L, pal, includeDraggedCards) {
   }
 
   // ── Status bar ──────────────────────────────────────────────────────────────
-  var _canUndo = state.gameHistory && state.gameHistory.canUndo();
-  var _canRedo = state.gameHistory && state.gameHistory.canRedo();
+  var _canUndo = canUndoHistory();
+  var _canRedo = canRedoHistory();
   var statStr = 'Moves: ' + g.moveCount;
   if (g.won) statStr = '✓ You won! (' + g.moveCount + ' moves)';
-  var sColor = g.won ? pal.wonBanner : pal.dimText;
+  var sColor = pal.dimText;
+  if (g.won) {
+    sColor = pal.wonBanner;
+  }
   var _chH = ui.metrics.charHeight || 14;
   var _bH  = _chH * 2 + 4;
   var _bW  = Math.max(90, (ui.metrics.charWidth || 10) * 10);
@@ -1327,7 +1588,7 @@ function drawGame(L, pal, includeDraggedCards) {
 
   // Seed display (bottom-center)
   var seedStr = 'Seed: ' + g.seed;
-  var _mwFn = ui.metrics.measureTextWidth ? ui.metrics.measureTextWidth : function(s) { return (ui.metrics.charWidth || 10) * s.length; };
+  var _mwFn = getMeasureTextWidth();
   ui.text(seedStr,
     Math.floor((L.W - _mwFn(seedStr)) * 0.5),
     L.H - _chH - 4,
@@ -1376,17 +1637,31 @@ function syncThemeSelectorState() {
   var names = getThemeNames();
   var currentName = getCurrentThemeName();
   var index = names.indexOf(currentName);
-  state.settings.themeIndex = index >= 0 ? index : 0;
+  state.settings.themeIndex = 0;
+  if (index >= 0) {
+    state.settings.themeIndex = index;
+  }
 }
 
 function focusWorldSection(target) {
   if (!worlds || !worlds.camera || typeof worlds.camera.focusOnSectionFit !== 'function') return;
-  var fill = target === 'Play' ? PLAY_SECTION_FIT : CARD_SECTION_FIT;
+  var fill = CARD_SECTION_FIT;
+  if (target === 'Play') {
+    fill = PLAY_SECTION_FIT;
+  }
   worlds.camera.focusOnSectionFit(target, fill, { keepRotation: true });
 }
 
 function currentSectionIndex() {
-  return worlds && typeof worlds.currentSection === 'number' ? worlds.currentSection : null;
+  if (worlds && typeof worlds.currentSection === 'number') {
+    return worlds.currentSection;
+  }
+  return null;
+}
+
+function isPlaySection(sectionIndex) {
+  if (typeof sectionIndex !== 'number') return false;
+  return sectionIndex === state.sections.play;
 }
 
 function getNavigationSourceSection(activated) {
@@ -1407,7 +1682,12 @@ function navigateToSectionWithHistory(target, fromSectionIndex) {
 }
 
 function goBackInHistory(fallbackTarget) {
-  if (!_navBackStack.length) { if (fallbackTarget) focusWorldSection(fallbackTarget); return; }
+  if (!_navBackStack.length) {
+    if (fallbackTarget) {
+      focusWorldSection(fallbackTarget);
+    }
+    return;
+  }
   focusWorldSection(_navBackStack.pop());
 }
 
@@ -1416,7 +1696,10 @@ function syncSettingsWidgets() {
   syncThemeSelectorState();
   var _jSteps = JITTER_STEPS;
   var _jNames = JITTER_NAMES;
-  var sectionRef = (typeof state.sections.settings === 'number') ? state.sections.settings : undefined;
+  var sectionRef = undefined;
+  if (typeof state.sections.settings === 'number') {
+    sectionRef = state.sections.settings;
+  }
   if (typeof worlds.widgets.configure === 'function') {
     var themeCount = getThemeNames().length;
     worlds.widgets.configure(SETTINGS_THEME_SLIDER_ID, {
@@ -1432,13 +1715,9 @@ function syncSettingsWidgets() {
     }, sectionRef);
   }
   if (typeof worlds.widgets.setValue === 'function') {
-    worlds.widgets.setValue(
-      SETTINGS_DRAW_LABEL_ID,
-      'Draw: ' + state.stockDeal + (state.stockDeal === 1 ? ' card' : ' cards'),
-      sectionRef
-    );
+    worlds.widgets.setValue(SETTINGS_DRAW_LABEL_ID, getDrawCountLabel(), sectionRef);
     worlds.widgets.setValue(SETTINGS_THEME_SLIDER_ID, state.settings.themeIndex, sectionRef);
-    var _jIdx = state.settings.jitterIndex !== undefined ? state.settings.jitterIndex : 2;
+    var _jIdx = getCurrentJitterIndex();
     worlds.widgets.setValue(SETTINGS_JITTER_SLIDER_ID, _jIdx, sectionRef);
     worlds.widgets.setValue(SETTINGS_JITTER_LABEL_ID, _jNames[_jIdx] || 'Normal', sectionRef);
   }
@@ -1465,7 +1744,7 @@ function handleSettingsWorldWidgetEvents() {
     } else if (widgetEvent.id === SETTINGS_JITTER_SLIDER_ID && widgetEvent.action === 'change' && typeof widgetEvent.value === 'number') {
       var jIdx = Math.max(0, Math.min(_jSteps.length - 1, Math.round(widgetEvent.value)));
       state.settings.jitterIndex = jIdx;
-      JITTER = (_jSteps[jIdx] !== undefined) ? _jSteps[jIdx] : 1.0;
+      JITTER = getJitterAmount(jIdx);
       syncSettingsWidgets();
     }
     widgetEvent = worlds.widgets.popEvent();
@@ -1481,7 +1760,7 @@ function handleWorldLinkActions() {
       newGame();
       focusWorldSection('Play');
     } else if (activated.url === 'action:replay-game') {
-      newGame(state.gs ? state.gs.seed : undefined);
+      newGame(getReplaySeed());
       focusWorldSection('Play');
     } else if (activated.url === 'action:draw-1') {
       state.stockDeal = 1;
@@ -1500,10 +1779,10 @@ function handleWorldLinkActions() {
 ```js on:init
 term.layerID = 'default';
 state.sections = {};
-if (state.settings.jitterIndex === undefined) state.settings.jitterIndex = 2;
-JITTER = JITTER_STEPS[state.settings.jitterIndex] !== undefined
-  ? JITTER_STEPS[state.settings.jitterIndex]
-  : 1.0;
+if (state.settings.jitterIndex === undefined) {
+  state.settings.jitterIndex = getDefaultJitterIndex();
+}
+JITTER = getJitterAmount(state.settings.jitterIndex);
 state.gameHistory = sys.history.create({ maxDepth: 64 });
 
 worlds.enable();
@@ -1562,26 +1841,37 @@ worlds.camera.focusOnSectionFit('Play', PLAY_SECTION_FIT, { keepRotation: true }
 ```
 
 ```js on:input
-if (!event) return;
-if (event.type !== 'keydown') return;
+if (!event) {
+  return;
+}
+if (event.type !== 'keydown') {
+  return;
+}
 var k  = event.key;
 var ctrl = event.mods && event.mods.includes('ctrl');
 var cs = currentSectionIndex();
-var onPlay = cs === currentSectionIndex();
+var onPlay = isPlaySection(cs);
 
 // Undo / Redo
 if (ctrl && (k === 'z' || k === 'Z') && !(event.mods && event.mods.includes('shift'))) {
-  if (state.gameHistory) state.gameHistory.undo();
+  if (state.gameHistory) {
+    state.gameHistory.undo();
+  }
   return;
 }
 if (ctrl && ((k === 'y' || k === 'Y') || ((k === 'z' || k === 'Z') && event.mods && event.mods.includes('shift')))) {
-  if (state.gameHistory) state.gameHistory.redo();
+  if (state.gameHistory) {
+    state.gameHistory.redo();
+  }
   return;
 }
 
 if (k === 'Escape') {
-  if (onPlay) navigateToSectionWithHistory('Settings', cs);
-  else goBackInHistory('Play');
+  if (onPlay) {
+    navigateToSectionWithHistory('Settings', cs);
+  } else {
+    goBackInHistory('Play');
+  }
 } else if ((k === 's' || k === 'S') && onPlay) {
   navigateToSectionWithHistory('Settings', cs);
 } else if ((k === 'h' || k === 'H' || k === '?') && onPlay) {
@@ -1590,17 +1880,24 @@ if (k === 'Escape') {
   newGame();
   focusWorldSection('Play');
 } else if (k === 'r' || k === 'R') {
-  newGame(state.gs ? state.gs.seed : undefined);
+  newGame(getReplaySeed());
   focusWorldSection('Play');
 }
 ```
 
 ```js on:update
-if (typeof handleWorldLinkActions === 'function') handleWorldLinkActions();
-if (typeof handleSettingsWorldWidgetEvents === 'function') handleSettingsWorldWidgetEvents();
+if (typeof handleWorldLinkActions === 'function') {
+  handleWorldLinkActions();
+}
+if (typeof handleSettingsWorldWidgetEvents === 'function') {
+  handleSettingsWorldWidgetEvents();
+}
 ```
 ```js on:update section:play
-if (!state.gs) { newGame(); return; }
+if (!state.gs) {
+  newGame();
+  return;
+}
 
 var L = computeLayout();
 state.layout = L;
@@ -1625,7 +1922,7 @@ var _click2 = ui.pointer.clicked(0);
 var _replayX2 = L.W - L.hPad - (_bW2 * 2 + _gap2);
 var _newX2    = L.W - L.hPad - _bW2;
 if (_click2 && _mx2 >= _replayX2 && _mx2 < _replayX2 + _bW2 && _my2 >= _bY2 && _my2 < _bY2 + _bH2) {
-  newGame(state.gs ? state.gs.seed : undefined);
+  newGame(getReplaySeed());
   state.layout = null;
   return;
 }
@@ -1650,12 +1947,12 @@ if (_click2 && _mx2 >= L.hPad && _mx2 < L.hPad + _nbW && _my2 >= _nbY && _my2 < 
 if (_click2 && _mx2 >= L.hPad + (_nbW + _nbGap) && _mx2 < L.hPad + (_nbW + _nbGap) + _nbW && _my2 >= _nbY && _my2 < _nbY + _nbH) {
   navigateToSectionWithHistory('Help', currentSectionIndex());
 }
-if (state.gameHistory && state.gameHistory.canUndo() && _click2 &&
+if (canUndoHistory() && _click2 &&
     _mx2 >= L.hPad + (_nbW + _nbGap) * 2 && _mx2 < L.hPad + (_nbW + _nbGap) * 2 + _nbW &&
     _my2 >= _nbY && _my2 < _nbY + _nbH) {
   state.gameHistory.undo();
 }
-if (state.gameHistory && state.gameHistory.canRedo() && _click2 &&
+if (canRedoHistory() && _click2 &&
     _mx2 >= L.hPad + (_nbW + _nbGap) * 3 && _mx2 < L.hPad + (_nbW + _nbGap) * 3 + _nbW &&
     _my2 >= _nbY && _my2 < _nbY + _nbH) {
   state.gameHistory.redo();

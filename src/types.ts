@@ -227,6 +227,8 @@ export interface Section {
   contentFramesRelative?: boolean;
   /** Same as `contentFramesRelative` but for `titleFrames`. */
   titleFramesRelative?: boolean;
+  /** Optional structured logic blocks authored within this section. */
+  logicBlocks?: LogicBlock[];
 }
 
 export interface CodeBlock {
@@ -258,6 +260,24 @@ export interface WGSLShader {
 export interface TimedEntry {
   ms: number;
   text: string;
+}
+
+export interface LogicStatement {
+  source: string;
+  target: string;
+  rel?: string;
+  meta?: Record<string, any>;
+  line: number;
+}
+
+export interface LogicBlock {
+  name?: string;
+  sectionId?: string | null;
+  sectionTitle?: string | null;
+  metadata?: Record<string, string>;
+  statements: LogicStatement[];
+  startLine: number;
+  endLine: number;
 }
 
 /**
@@ -301,6 +321,7 @@ export interface MarkdownDocument {
   wgslShaders?: WGSLShader[];  // Parsed WGSL shaders from ```wgsl blocks
   blobBlocks?: BlobBlock[];    // Parsed binary blobs from ```blob blocks
   timedBlocks?: TimedBlock[];  // Parsed timed lyric/transcript blocks from ```timed blocks
+  logicBlocks?: LogicBlock[];  // Parsed structured logic relation blocks from ```logic blocks
 }
 
 export interface InputEvent {

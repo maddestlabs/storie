@@ -2,6 +2,7 @@
 title: "ASCII Art Demo"
 theme: "alleycat"
 shaders: "invert+ruledlines+paper"
+authoringCheck: explicit-conditionals
 ---
 
 # ASCII Art Demo
@@ -17,6 +18,15 @@ let robotArt = [];
 let bannerArt = [];
 let frameArt = [];
 let status = 'Loading…';
+
+function loadAsciiLines(name) {
+  let lines = [];
+  const loaded = ascii.lines(name);
+  if (Array.isArray(loaded)) {
+    lines = loaded;
+  }
+  return lines;
+}
 ```
 
 ```js on:init
@@ -25,11 +35,12 @@ term.clear();
 
 // Pull named ASCII assets from the document.
 // (These are sourced from fenced blocks like ```ascii name:robot.)
-robotArt = ascii.lines('robot') ?? [];
-bannerArt = ascii.lines('banner') ?? [];
-frameArt = ascii.lines('frame') ?? [];
+robotArt = loadAsciiLines('robot');
+bannerArt = loadAsciiLines('banner');
+frameArt = loadAsciiLines('frame');
 
-status = `Found ${ascii.list().length} ascii block(s): ${ascii.list().join(', ')}`;
+const asciiAssetNames = ascii.list();
+status = `Found ${asciiAssetNames.length} ascii block(s): ${asciiAssetNames.join(', ')}`;
 ```
 
 ```js on:render
@@ -49,18 +60,21 @@ drawAscii(2, 17, 'banner', 0x00ff88ff);
 
 // Manual processing (pre-loaded globals)
 term.write(42, 5, 'Manual (using cached arrays):', 0xccccccff);
-let y = 6;
+let frameY = 6;
 for (const line of frameArt) {
-  term.write(42, y, line, 0xffffffff);
-  y++;
+  term.write(42, frameY, line, 0xffffffff);
+  frameY += 1;
 }
-term.write(42, y + 1, `Lines: ${frameArt.length}`, 0xaaaaaaff);
+
+const frameInfoY = frameY + 1;
+term.write(42, frameInfoY, `Lines: ${frameArt.length}`, 0xaaaaaaff);
 
 // Show loaded art info
-term.write(42, y + 3, 'Loaded art pieces:', 0xccccccff);
-term.write(42, y + 4, `  robot: ${robotArt.length} lines`, 0xaaaaaaff);
-term.write(42, y + 5, `  banner: ${bannerArt.length} lines`, 0xaaaaaaff);
-term.write(42, y + 6, `  frame: ${frameArt.length} lines`, 0xaaaaaaff);
+const infoY = frameInfoY + 2;
+term.write(42, infoY, 'Loaded art pieces:', 0xccccccff);
+term.write(42, infoY + 1, `  robot: ${robotArt.length} lines`, 0xaaaaaaff);
+term.write(42, infoY + 2, `  banner: ${bannerArt.length} lines`, 0xaaaaaaff);
+term.write(42, infoY + 3, `  frame: ${frameArt.length} lines`, 0xaaaaaaff);
 ```
 
 ```ascii name:robot

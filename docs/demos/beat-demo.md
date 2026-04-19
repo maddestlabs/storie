@@ -2,6 +2,7 @@
 name: "Beat Clock: Groove Sync"
 theme: "neonopia"
 fontsize: 20
+authoringCheck: explicit-conditionals
 ---
 
 A demo of **`sys.beat`** — BPM-synced automation that uses beat numbers instead
@@ -63,13 +64,23 @@ return true;
 term.clear();
 
 const t = getTime() - startT;
-const beatF  = clock ? sys.beat.beatAt(clock, t) : 0;
-const barF   = clock ? sys.beat.barAt(clock, t) : 0;
-const bphase = clock ? sys.beat.beatPhase(clock, t) : 0;
-const rphase = clock ? sys.beat.barPhase(clock, t) : 0;
+let beatF = 0;
+let barF = 0;
+let bphase = 0;
+let rphase = 0;
+if (clock) {
+  beatF = sys.beat.beatAt(clock, t);
+  barF = sys.beat.barAt(clock, t);
+  bphase = sys.beat.beatPhase(clock, t);
+  rphase = sys.beat.barPhase(clock, t);
+}
 
-const kick   = track ? sys.automation.valueAt(track, 'kick',   t, 0) : 0;
-const filter = track ? sys.automation.valueAt(track, 'filter', t, 0.1) : 0.1;
+let kick = 0;
+let filter = 0.1;
+if (track) {
+  kick = sys.automation.valueAt(track, 'kick', t, 0);
+  filter = sys.automation.valueAt(track, 'filter', t, 0.1);
+}
 
 // ── Beat grid ──────────────────────────────────────────────────────────────
 const gridW = termWidth - 4;
@@ -80,11 +91,22 @@ const gridY = 4;
 for (let b = 0; b < barLen; b++) {
   const bx = 2 + b * barPx;
   const isActive = Math.floor(beatF) % barLen === b;
-  const brightness = isActive ? 0xffff44ff : 0x334455ff;
+  let brightness = 0x334455ff;
+  if (isActive) {
+    brightness = 0xffff44ff;
+  }
   term.write(bx, gridY,     '┌' + '─'.repeat(barPx - 2) + '┐', brightness);
-  term.write(bx, gridY + 1, '│' + (isActive ? '█'.repeat(barPx - 2) : ' '.repeat(barPx - 2)) + '│', brightness);
+  let fillChars = ' '.repeat(barPx - 2);
+  if (isActive) {
+    fillChars = '█'.repeat(barPx - 2);
+  }
+  term.write(bx, gridY + 1, '│' + fillChars + '│', brightness);
   term.write(bx, gridY + 2, '└' + '─'.repeat(barPx - 2) + '┘', brightness);
-  term.write(bx + Math.floor(barPx / 2) - 1, gridY + 1, ` ${b + 1} `, isActive ? 0x000000ff : 0x667788ff);
+  let beatLabelColor = 0x667788ff;
+  if (isActive) {
+    beatLabelColor = 0x000000ff;
+  }
+  term.write(bx + Math.floor(barPx / 2) - 1, gridY + 1, ` ${b + 1} `, beatLabelColor);
 }
 
 // ── Beat phase bar ─────────────────────────────────────────────────────────
@@ -101,7 +123,13 @@ term.write(2, filterY + 1, '█'.repeat(filterFill) + '░'.repeat(termWidth - 4
 
 // ── Kick indicator ─────────────────────────────────────────────────────────
 const kickY = filterY + 3;
-term.write(2, kickY, kick > 0.5 ? '◉ KICK' : '○     ', kick > 0.5 ? 0xff8844ff : 0x444444ff);
+let kickLabel = '○     ';
+let kickColor = 0x444444ff;
+if (kick > 0.5) {
+  kickLabel = '◉ KICK';
+  kickColor = 0xff8844ff;
+}
+term.write(2, kickY, kickLabel, kickColor);
 
 // ── HUD ────────────────────────────────────────────────────────────────────
 const hud = `BPM:${bpm}  beat:${beatF.toFixed(2)}  bar:${barF}  ↑↓ adjust BPM  Space reset`;

@@ -2,7 +2,7 @@ import type { Color } from '../../types.js';
 
 export type Inline =
   | { kind: 'text'; text: string }
-  | { kind: 'link'; text: string; url: string }
+  | { kind: 'link'; text: string; url: string; title?: string; meta?: Record<string, any> }
   | { kind: 'code'; text: string }
   | { kind: 'widget'; widget: WidgetSpec }
   | { kind: 'em'; inlines: Inline[] }
@@ -90,6 +90,8 @@ export interface LinkRegion {
   h: number;
   url: string;
   text: string;
+  title?: string;
+  meta?: Record<string, any>;
 }
 
 export interface WidgetPlacement {

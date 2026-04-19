@@ -11,6 +11,7 @@ export type CompileCapabilityName =
   | 'shader'
   | 'blobs'
   | 'timed'
+  | 'logic'
   | 'random'
   | 'themes'
   | 'modules'
@@ -65,6 +66,7 @@ export interface CompileCapabilityIR {
 
 export interface CompileAssetIR {
   timedBlockNames: string[];
+  logicBlockNames: string[];
   blobNames: string[];
   shaderNames: string[];
 }

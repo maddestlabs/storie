@@ -157,6 +157,15 @@ export interface SandboxAPI {
      * Returns the names of every ```timed block in the current document.
      */
     timedBlocks: () => string[];
+    logicBlocks: () => Array<{
+      name?: string;
+      sectionId?: string | null;
+      sectionTitle?: string | null;
+      startLine: number;
+      endLine: number;
+      statements: Array<{ source: string; target: string; rel?: string; meta?: Record<string, any>; line: number }>;
+    }>;
+    logicForSection: (section?: 'current' | number | string | null) => Array<{ source: string; target: string; rel?: string; meta?: Record<string, any>; line: number }>;
     /**
      * Returns the last entry whose `ms` timestamp is ≤ `timeSec * 1000`,
      * i.e. the lyric line that should be showing at the given audio position.
@@ -862,7 +871,7 @@ export interface SandboxAPI {
     links: {
       setKeyHandlingEnabled: (enabled: boolean) => void;
       keyHandlingEnabled: boolean;
-      popActivated: () => { url: string; sectionIndex: number | null; linkIndex: number | null } | null;
+      popActivated: () => { url: string; text: string | null; title: string | null; meta: Record<string, any> | null; relation: string | null; sectionIndex: number | null; linkIndex: number | null } | null;
       setRenderOverlay: (options?: {
         enabled?: boolean;
         section?: number | string | null;
@@ -881,6 +890,9 @@ export interface SandboxAPI {
         linkIndex: number;
         url: string;
         text: string;
+        title: string | null;
+        meta: Record<string, any> | null;
+        relation: string | null;
         internal: boolean;
         targetSectionId: string | null;
         targetSectionIndex: number | null;
