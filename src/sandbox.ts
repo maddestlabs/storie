@@ -55,6 +55,8 @@
  * ============================================================================
  */
 
+import type { DecorativeBorderSpec } from './decorative-borders.js';
+
 // Import SES shims (side-effects only - adds to globalThis)
 import 'ses';
 
@@ -680,6 +682,7 @@ export interface SandboxAPI {
     drawCircle: (x: number, y: number, radius: number, color: string, filled?: boolean) => void;
     drawLine: (x1: number, y1: number, x2: number, y2: number, color: string, lineWidth?: number) => void;
     drawImage: (image: HTMLImageElement | ImageBitmap | HTMLCanvasElement, x: number, y: number, w?: number, h?: number) => void;
+    drawBorder: (spec: DecorativeBorderSpec, x: number, y: number, w: number, h: number) => boolean;
     text: (text: string, x: number, y: number, color: string, font?: string) => void;
     // Properties
     width: number;

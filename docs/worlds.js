@@ -5,6 +5,7 @@
  * Sections are rendered as textured quads in 3D space using WebGPU.
  */
 import { parseHeadingDirectiveObject } from './markdown.js';
+import { normalizeDecorativeBorderSpec } from './decorative-borders.js';
 // ============================================================================
 // 3D Math Utilities
 // ============================================================================
@@ -852,6 +853,10 @@ export function parseTransform3D(section, sectionIndex, config) {
                 return 'all';
         }
     })();
+    const sectionBorder = (() => {
+        const value = rawMetadata.sectionBorder ?? rawMetadata.border;
+        return normalizeDecorativeBorderSpec(value) ?? undefined;
+    })();
     const sectionArt = (() => {
         const artUrl = metaStr('art', metaStr('artUrl', metaStr('artSrc', ''))).trim();
         if (!artUrl)
@@ -889,6 +894,7 @@ export function parseTransform3D(section, sectionIndex, config) {
         contentAlign,
         textAlign,
         ...(sectionArt ? { sectionArt } : {}),
+        ...(sectionBorder ? { sectionBorder } : {}),
         transform: {
             position: vec3(x, y, z),
             rotation: vec3(rotX, rotY, rotZ),
@@ -974,6 +980,7 @@ export function getDefaultWorldsConfig() {
         sectionTextAlign: 'left',
         sectionBorderEnabled: true,
         sectionBorderWidth: 2,
+        sectionBorder: undefined,
         sectionLinkUnderline: false,
         sectionListMarker: undefined,
         // Use the theme surface by default (typically bgAlt / elevated panel color)

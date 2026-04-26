@@ -3,6 +3,7 @@
  */
 
 import type { Color } from './types.js';
+import type { DecorativeBorderSpec } from './decorative-borders.js';
 
 export interface Vec3 {
   x: number;
@@ -101,6 +102,7 @@ export interface Section3DLayout {
   contentAlign: 'start' | 'center';
   textAlign: 'left' | 'center' | 'right';
   sectionArt?: SectionArtLayout;
+  sectionBorder?: DecorativeBorderSpec;
   transform: Transform3D;
   /** True when x/y was assigned by Worlds auto-layout (no explicit metadata). */
   autoPositioned?: boolean;
@@ -285,6 +287,7 @@ export interface WorldsConfig {
    */
   sectionBorderEnabled?: boolean;
   sectionBorderWidth?: number;
+  sectionBorder?: DecorativeBorderSpec | null;
 
   /**
    * Background color used when rendering each section card texture.

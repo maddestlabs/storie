@@ -432,6 +432,55 @@ export function parseHeadingDirectiveObject(raw) {
         return null;
     return _tryParseJsonObject(trimmed) ?? _parseLooseDirectiveObject(trimmed);
 }
+function _findTrailingDirectiveStart(rawTitle) {
+    let quote = null;
+    let escape = false;
+    let braceDepth = 0;
+    const topLevelStarts = [];
+    for (let i = 0; i < rawTitle.length; i++) {
+        const ch = rawTitle[i];
+        if (quote) {
+            if (escape) {
+                escape = false;
+                continue;
+            }
+            if (ch === '\\') {
+                escape = true;
+                continue;
+            }
+            if (ch === quote) {
+                quote = null;
+            }
+            continue;
+        }
+        if (ch === '"' || ch === "'") {
+            quote = ch;
+            continue;
+        }
+        if (ch === '{') {
+            if (braceDepth === 0)
+                topLevelStarts.push(i);
+            braceDepth++;
+            continue;
+        }
+        if (ch === '}') {
+            if (braceDepth === 0)
+                return -1;
+            braceDepth--;
+        }
+    }
+    if (quote || braceDepth !== 0)
+        return -1;
+    if (!rawTitle.trimEnd().endsWith('}'))
+        return -1;
+    for (let i = topLevelStarts.length - 1; i >= 0; i--) {
+        const start = topLevelStarts[i];
+        if (parseHeadingDirectiveObject(rawTitle.slice(start))) {
+            return start;
+        }
+    }
+    return -1;
+}
 /**
  * Look for a trailing directive object at the end of a heading title, e.g.
  *   `# First Verse {timed: 4000ms, x: 400}`
@@ -443,12 +492,12 @@ export function parseHeadingDirectiveObject(raw) {
  * with null directive and undefined timedMs.
  */
 function _parseHeadingDirective(rawTitle) {
-    const lastBrace = rawTitle.lastIndexOf('{');
-    if (lastBrace >= 0) {
-        const directivePart = rawTitle.slice(lastBrace);
+    const directiveStart = _findTrailingDirectiveStart(rawTitle);
+    if (directiveStart >= 0) {
+        const directivePart = rawTitle.slice(directiveStart);
         const obj = parseHeadingDirectiveObject(directivePart);
         if (obj) {
-            const displayTitle = rawTitle.slice(0, lastBrace).trim();
+            const displayTitle = rawTitle.slice(0, directiveStart).trim();
             const timedMs = _parseTimedMs(obj['timed']);
             return { displayTitle, directive: obj, timedMs };
         }

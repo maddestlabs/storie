@@ -337,6 +337,29 @@ body.storie-orientation-gated {
 
 #storie-overlay-panel.hidden { display: none; }
 
+@media (pointer: coarse) {
+  #storie-overlay {
+    top: auto;
+    right: calc(var(--safe-area-inset-right) + 8px);
+    bottom: calc(var(--safe-area-inset-bottom) + 8px);
+  }
+
+  #storie-overlay-btn {
+    margin-left: auto;
+    border-bottom-left-radius: 0;
+    border-top-left-radius: 4px;
+  }
+
+  #storie-overlay-panel {
+    border-top: 1px solid #2a2a2a;
+    border-right: 1px solid #2a2a2a;
+    border-bottom: none;
+    border-bottom-left-radius: 0;
+    border-top-left-radius: 5px;
+    margin-bottom: 4px;
+  }
+}
+
 .sov-row {
   display: flex;
   align-items: center;

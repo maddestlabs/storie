@@ -19,6 +19,8 @@ worlds.config.setDefaults({
 	sectionRender: 'content',
 	sectionLinkUnderline: true,
 	sectionClickFocusEnabled: true,
+	sectionBorderEnabled: true,
+	sectionBorderWidth: 2,
 	defaultSectionWidth: 360,
 	defaultSectionHeight: 180,
 	  sectionBackground: 'texture:assets/img/paper_crumpled.jpg;tilePx=400;contentDistort=0.01;paperPlaneZ=focus;overlay=assets/img/saintbilly-west-texas.svg;overlayBlend=multiply;overlayOpacity=0.45;overlayFit=cover',
@@ -29,7 +31,7 @@ worlds.camera.setEaseSpeed(0.07, 0.11);
 worlds.camera.focusOnSectionFit('Ephesians 2:8', 0.9, { keepRotation: true });
 ```
 
-## Ephesians 2:8 {"x":"0","y":"0","width":"507","height":"100","render":"all"}
+## Ephesians 2:8 {"x":"0","y":"0","width":"507","height":"100","render":"all","border":{"kind":"image9","source":"assets/img/borders/2479760.svg","cuts":{"left":128,"right":1152,"top":102,"bottom":922},"edgeMode":{"top":"tile","right":"stretch","bottom":"tile","left":"stretch"},"scale":0.12,"opacity":0.34}}
 
 For by [grace](#grace-and-faith){rel:"lexical"} are ye [saved](#saved){rel:"lexical"} through [faith](#grace-and-faith){rel:"lexical"}; and [that](#that "pronoun") not of yourselves: it is the gift of God:  
 
@@ -46,7 +48,7 @@ that -> #saved {rel: excludes}
 worlds.camera.focusOnSectionFit('Ephesians 2:8', 0.9, { keepRotation: true });
 ```
 
-## Grace and Faith {"x":"-20","y":"15","width":"332","height":"119"}
+## Grace and Faith {"x":"-20","y":"15","width":"332","height":"119","border":{"kind":"image9","source":"assets/img/borders/1210506.svg","cuts":{"left":86,"right":767,"top":128,"bottom":1152},"edgeMode":"tile","scale":0.085,"opacity":0.38}}
 
 *   Grace χάρις (charis) | Faith πίστις (pistis)
 
@@ -56,7 +58,7 @@ In Greek, ‘grace’ and ‘faith’ are both feminine nouns.
 worlds.camera.focusOnSectionFit('Grace and Faith', 0.92, { keepRotation: true });
 ```
 
-## Saved {"x":"30","y":"10","width":"228","height":"132"}
+## Saved {"x":"30","y":"10","width":"228","height":"132","border":{"kind":"image9","source":"assets/img/borders/147322.svg","cuts":{"left":83,"right":748,"top":128,"bottom":1152},"edgeMode":"tile","scale":0.08,"opacity":0.42}}
 
 *   σώζω (sózó)
 
@@ -66,7 +68,7 @@ In the Greek text, ‘saved’ is a masculine participle.
 worlds.camera.focusOnSectionFit('Saved', 0.94, { keepRotation: true });
 ```
 
-## That {"x":"-30","y":"-5","width":"216","height":"348"}
+## That {"x":"-30","y":"-5","width":"216","height":"348","sectionBorder":{"kind":"image9","source":"assets/img/borders/1297485.svg","cuts":{"left":105,"right":942,"top":128,"bottom":1152},"edgeMode":{"top":"tile","right":"stretch","bottom":"tile","left":"stretch"},"scale":0.07,"opacity":0.36}}
 
 *   οὗτος, (houtos, hauté, touto)
 
@@ -76,7 +78,7 @@ In Greek, a pronoun must match the gender of the word it refers to. In this vers
 worlds.camera.focusOnSectionFit('That', 0.88, { keepRotation: true });
 ```
 
-## For by grace are ye saved through faith {"x":"-10","y":"-20","width":"670","height":"205"}
+## For by grace are ye saved through faith {"x":"-10","y":"-20","width":"670","height":"205","border":{"kind":"image9","source":"assets/img/borders/156626.svg","cuts":{"left":128,"right":1151,"top":128,"bottom":1152},"edgeMode":"stretch","scale":0.05,"opacity":0.28}}
 
 The neuter pronoun ‘that’ (or ‘this’) because of its masculine gender, can only refer to the entire preceding clause. It isn’t just grace, faith or even salvation by grace that is the gift of God, but the entirety of salvation by grace through faith.  
 

@@ -1184,13 +1184,58 @@ function parseHeadingDirectiveObject(raw) {
   if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
   return _tryParseJsonObject(trimmed) ?? _parseLooseDirectiveObject(trimmed);
 }
+function _findTrailingDirectiveStart(rawTitle) {
+  let quote2 = null;
+  let escape = false;
+  let braceDepth = 0;
+  const topLevelStarts = [];
+  for (let i = 0; i < rawTitle.length; i++) {
+    const ch = rawTitle[i];
+    if (quote2) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escape = true;
+        continue;
+      }
+      if (ch === quote2) {
+        quote2 = null;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote2 = ch;
+      continue;
+    }
+    if (ch === "{") {
+      if (braceDepth === 0) topLevelStarts.push(i);
+      braceDepth++;
+      continue;
+    }
+    if (ch === "}") {
+      if (braceDepth === 0) return -1;
+      braceDepth--;
+    }
+  }
+  if (quote2 || braceDepth !== 0) return -1;
+  if (!rawTitle.trimEnd().endsWith("}")) return -1;
+  for (let i = topLevelStarts.length - 1; i >= 0; i--) {
+    const start = topLevelStarts[i];
+    if (parseHeadingDirectiveObject(rawTitle.slice(start))) {
+      return start;
+    }
+  }
+  return -1;
+}
 function _parseHeadingDirective(rawTitle) {
-  const lastBrace = rawTitle.lastIndexOf("{");
-  if (lastBrace >= 0) {
-    const directivePart = rawTitle.slice(lastBrace);
+  const directiveStart = _findTrailingDirectiveStart(rawTitle);
+  if (directiveStart >= 0) {
+    const directivePart = rawTitle.slice(directiveStart);
     const obj = parseHeadingDirectiveObject(directivePart);
     if (obj) {
-      const displayTitle = rawTitle.slice(0, lastBrace).trim();
+      const displayTitle = rawTitle.slice(0, directiveStart).trim();
       const timedMs = _parseTimedMs(obj["timed"]);
       return { displayTitle, directive: obj, timedMs };
     }
@@ -14539,6 +14584,165 @@ function createTUIAPI(renderer, getCellBuffer, getStyle, isTrustedUserInput) {
     }
   };
 }
+function normalizeDecorativeBorderSpec(value) {
+  if (!value || typeof value !== "object") return null;
+  const spec = value;
+  if (spec.kind !== "image9") return null;
+  if (typeof spec.source !== "string" || !spec.source.trim()) return null;
+  const cuts = spec.cuts;
+  if (!cuts || typeof cuts !== "object") return null;
+  const left = Number(cuts.left);
+  const right = Number(cuts.right);
+  const top = Number(cuts.top);
+  const bottom = Number(cuts.bottom);
+  if (!(Number.isFinite(left) && Number.isFinite(right) && Number.isFinite(top) && Number.isFinite(bottom))) return null;
+  return {
+    kind: "image9",
+    source: spec.source,
+    cuts: { left, right, top, bottom },
+    edgeMode: spec.edgeMode,
+    opacity: Number.isFinite(spec.opacity) ? spec.opacity : void 0,
+    scale: Number.isFinite(spec.scale) ? spec.scale : void 0,
+    inset: Number.isFinite(spec.inset) ? spec.inset : void 0
+  };
+}
+function clamp$1(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+function getRenderableImageSize(image) {
+  return {
+    width: Math.max(1, Math.round(image.width ?? image.naturalWidth ?? 1)),
+    height: Math.max(1, Math.round(image.height ?? image.naturalHeight ?? 1))
+  };
+}
+function resolveEdgeMode(edgeMode, side) {
+  if (edgeMode === "tile" || edgeMode === "stretch") return edgeMode;
+  const value = edgeMode == null ? void 0 : edgeMode[side];
+  return value === "stretch" ? "stretch" : "tile";
+}
+function drawHorizontalEdge(ctx, image, source, dest, mode, scale) {
+  if (!(source.width > 0 && source.height > 0 && dest.width > 0 && dest.height > 0)) return;
+  if (mode === "stretch") {
+    ctx.drawImage(image, source.x, source.y, source.width, source.height, dest.x, dest.y, dest.width, dest.height);
+    return;
+  }
+  const tileWidth = Math.max(1, source.width * Math.max(0.01, scale));
+  let cursor = dest.x;
+  const end = dest.x + dest.width;
+  while (cursor < end - 1e-3) {
+    const drawWidth = Math.min(tileWidth, end - cursor);
+    const sourceWidth = source.width * (drawWidth / tileWidth);
+    ctx.drawImage(image, source.x, source.y, sourceWidth, source.height, cursor, dest.y, drawWidth, dest.height);
+    cursor += drawWidth;
+  }
+}
+function drawVerticalEdge(ctx, image, source, dest, mode, scale) {
+  if (!(source.width > 0 && source.height > 0 && dest.width > 0 && dest.height > 0)) return;
+  if (mode === "stretch") {
+    ctx.drawImage(image, source.x, source.y, source.width, source.height, dest.x, dest.y, dest.width, dest.height);
+    return;
+  }
+  const tileHeight = Math.max(1, source.height * Math.max(0.01, scale));
+  let cursor = dest.y;
+  const end = dest.y + dest.height;
+  while (cursor < end - 1e-3) {
+    const drawHeight = Math.min(tileHeight, end - cursor);
+    const sourceHeight = source.height * (drawHeight / tileHeight);
+    ctx.drawImage(image, source.x, source.y, source.width, sourceHeight, dest.x, cursor, dest.width, drawHeight);
+    cursor += drawHeight;
+  }
+}
+function drawDecorativeBorder(ctx, image, spec, width, height) {
+  if (spec.kind !== "image9") return false;
+  const imageSize = getRenderableImageSize(image);
+  const leftCut = clamp$1(Math.round(spec.cuts.left), 0, imageSize.width - 1);
+  const rightCut = clamp$1(Math.round(spec.cuts.right), leftCut + 1, imageSize.width);
+  const topCut = clamp$1(Math.round(spec.cuts.top), 0, imageSize.height - 1);
+  const bottomCut = clamp$1(Math.round(spec.cuts.bottom), topCut + 1, imageSize.height);
+  const sourceLeft = leftCut;
+  const sourceRight = imageSize.width - rightCut;
+  const sourceTop = topCut;
+  const sourceBottom = imageSize.height - bottomCut;
+  const edgeSourceWidth = Math.max(0, rightCut - leftCut);
+  const edgeSourceHeight = Math.max(0, bottomCut - topCut);
+  if (!(sourceLeft > 0 || sourceRight > 0 || sourceTop > 0 || sourceBottom > 0)) return false;
+  const scale = Number.isFinite(spec.scale) && spec.scale > 0 ? spec.scale : 1;
+  const inset = Number.isFinite(spec.inset) ? Math.max(0, spec.inset) : 0;
+  const innerWidth = Math.max(0, width - inset * 2);
+  const innerHeight = Math.max(0, height - inset * 2);
+  if (!(innerWidth > 0 && innerHeight > 0)) return false;
+  let leftWidth = sourceLeft * scale;
+  let rightWidth = sourceRight * scale;
+  let topHeight = sourceTop * scale;
+  let bottomHeight = sourceBottom * scale;
+  if (leftWidth + rightWidth > innerWidth && leftWidth + rightWidth > 0) {
+    const fit = innerWidth / (leftWidth + rightWidth);
+    leftWidth *= fit;
+    rightWidth *= fit;
+  }
+  if (topHeight + bottomHeight > innerHeight && topHeight + bottomHeight > 0) {
+    const fit = innerHeight / (topHeight + bottomHeight);
+    topHeight *= fit;
+    bottomHeight *= fit;
+  }
+  const x0 = inset;
+  const x1 = x0 + leftWidth;
+  const x2 = x0 + innerWidth - rightWidth;
+  const y0 = inset;
+  const y1 = y0 + topHeight;
+  const y2 = y0 + innerHeight - bottomHeight;
+  const prevAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = prevAlpha * clamp$1(Number(spec.opacity ?? 1), 0, 1);
+  try {
+    if (sourceLeft > 0 && sourceTop > 0 && leftWidth > 0 && topHeight > 0) {
+      ctx.drawImage(image, 0, 0, sourceLeft, sourceTop, x0, y0, leftWidth, topHeight);
+    }
+    if (sourceRight > 0 && sourceTop > 0 && rightWidth > 0 && topHeight > 0) {
+      ctx.drawImage(image, rightCut, 0, sourceRight, sourceTop, x2, y0, rightWidth, topHeight);
+    }
+    if (sourceLeft > 0 && sourceBottom > 0 && leftWidth > 0 && bottomHeight > 0) {
+      ctx.drawImage(image, 0, bottomCut, sourceLeft, sourceBottom, x0, y2, leftWidth, bottomHeight);
+    }
+    if (sourceRight > 0 && sourceBottom > 0 && rightWidth > 0 && bottomHeight > 0) {
+      ctx.drawImage(image, rightCut, bottomCut, sourceRight, sourceBottom, x2, y2, rightWidth, bottomHeight);
+    }
+    drawHorizontalEdge(
+      ctx,
+      image,
+      { x: leftCut, y: 0, width: edgeSourceWidth, height: sourceTop },
+      { x: x1, y: y0, width: Math.max(0, x2 - x1), height: topHeight },
+      resolveEdgeMode(spec.edgeMode, "top"),
+      scale
+    );
+    drawHorizontalEdge(
+      ctx,
+      image,
+      { x: leftCut, y: bottomCut, width: edgeSourceWidth, height: sourceBottom },
+      { x: x1, y: y2, width: Math.max(0, x2 - x1), height: bottomHeight },
+      resolveEdgeMode(spec.edgeMode, "bottom"),
+      scale
+    );
+    drawVerticalEdge(
+      ctx,
+      image,
+      { x: 0, y: topCut, width: sourceLeft, height: edgeSourceHeight },
+      { x: x0, y: y1, width: leftWidth, height: Math.max(0, y2 - y1) },
+      resolveEdgeMode(spec.edgeMode, "left"),
+      scale
+    );
+    drawVerticalEdge(
+      ctx,
+      image,
+      { x: rightCut, y: topCut, width: sourceRight, height: edgeSourceHeight },
+      { x: x2, y: y1, width: rightWidth, height: Math.max(0, y2 - y1) },
+      resolveEdgeMode(spec.edgeMode, "right"),
+      scale
+    );
+  } finally {
+    ctx.globalAlpha = prevAlpha;
+  }
+  return true;
+}
 function vec3(x = 0, y = 0, z = 0) {
   return { x, y, z };
 }
@@ -15192,6 +15396,10 @@ function parseTransform3D(section, sectionIndex, config) {
         return "all";
     }
   })();
+  const sectionBorder = (() => {
+    const value = rawMetadata.sectionBorder ?? rawMetadata.border;
+    return normalizeDecorativeBorderSpec(value) ?? void 0;
+  })();
   const sectionArt = (() => {
     const artUrl = metaStr("art", metaStr("artUrl", metaStr("artSrc", ""))).trim();
     if (!artUrl) return void 0;
@@ -15222,6 +15430,7 @@ function parseTransform3D(section, sectionIndex, config) {
     contentAlign,
     textAlign,
     ...sectionArt ? { sectionArt } : {},
+    ...sectionBorder ? { sectionBorder } : {},
     transform: {
       position: vec3(x, y, z),
       rotation: vec3(rotX, rotY, rotZ),
@@ -15297,6 +15506,7 @@ function getDefaultWorldsConfig() {
     sectionTextAlign: "left",
     sectionBorderEnabled: true,
     sectionBorderWidth: 2,
+    sectionBorder: void 0,
     sectionLinkUnderline: false,
     sectionListMarker: void 0,
     // Use the theme surface by default (typically bgAlt / elevated panel color)
@@ -15531,6 +15741,102 @@ function getWorldsPreset(name) {
   const key = String(name ?? "").trim().toLowerCase();
   const preset = PRESETS[key];
   return preset ? clonePreset(preset) : null;
+}
+async function decodeRenderableImageFromBytes(bytes, mime) {
+  const blob = new Blob([new Uint8Array(bytes)], { type: mime || "application/octet-stream" });
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(blob);
+      return bitmap;
+    } catch {
+    }
+  }
+  if (typeof Image === "undefined" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
+    return null;
+  }
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => {
+        try {
+          URL.revokeObjectURL(objectUrl);
+        } catch {
+        }
+        reject(new Error("Image element failed to decode"));
+      };
+      element.src = objectUrl;
+    });
+    return image;
+  } catch (error) {
+    try {
+      URL.revokeObjectURL(objectUrl);
+    } catch {
+    }
+    throw error;
+  }
+}
+function resolveRenderableImageUrl(rawUrl, options) {
+  var _a2, _b2;
+  const trimmed = String(rawUrl ?? "").trim();
+  if (!trimmed) {
+    throw new Error(`${options.errorPrefix} Missing URL`);
+  }
+  if (options.untrustedContent) {
+    const allowedPrefix = options.allowedPrefix ?? /^(?:\.\/)?assets\/img\//;
+    if (!allowedPrefix.test(trimmed) || trimmed.includes("..") || trimmed.startsWith("/") || trimmed.startsWith("\\")) {
+      throw new Error(`${options.errorPrefix} Untrusted mode allows only relative URLs under "assets/img/"`);
+    }
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
+      throw new Error(`${options.errorPrefix} Untrusted mode blocks URL schemes`);
+    }
+  }
+  let resolved;
+  try {
+    resolved = new URL(trimmed, ((_a2 = globalThis.location) == null ? void 0 : _a2.href) ?? "http://localhost/");
+  } catch (error) {
+    throw new Error(`${options.errorPrefix} Invalid URL: ${String((error == null ? void 0 : error.message) ?? error)}`);
+  }
+  const protocol = resolved.protocol.toLowerCase();
+  if (protocol === "data:" || protocol === "blob:" || protocol === "javascript:" || protocol === "file:") {
+    throw new Error(`${options.errorPrefix} Unsupported URL scheme: ${protocol}`);
+  }
+  if (resolved.username || resolved.password) {
+    throw new Error(`${options.errorPrefix} Credentials in URLs are not supported`);
+  }
+  const origin = (_b2 = globalThis.location) == null ? void 0 : _b2.origin;
+  if (origin && origin !== "null" && resolved.origin !== origin) {
+    throw new Error(`${options.errorPrefix} Cross-origin images blocked: ${resolved.origin}`);
+  }
+  return resolved.toString();
+}
+async function loadRenderableImageFromResolvedUrl(resolvedUrl, options) {
+  try {
+    const response = await fetch(resolvedUrl, {
+      mode: "same-origin",
+      credentials: "same-origin"
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    }
+    const contentLength = Number(response.headers.get("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > options.maxBytes) {
+      throw new Error(`Refusing image larger than ${options.maxBytes} bytes (server reported ${contentLength})`);
+    }
+    const mime = String(response.headers.get("content-type") ?? "").split(";")[0].toLowerCase().trim();
+    if (!mime.startsWith("image/")) {
+      throw new Error(`Unsupported content type: ${mime || "unknown"}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength > options.maxBytes) {
+      throw new Error(`Refusing image larger than ${options.maxBytes} bytes (downloaded ${arrayBuffer.byteLength})`);
+    }
+    return await decodeRenderableImageFromBytes(new Uint8Array(arrayBuffer), mime);
+  } catch (error) {
+    console.warn(`${options.errorPrefix} Failed to load image from "${resolvedUrl}":`, error);
+    return null;
+  }
 }
 function randomId(bytes) {
   try {
@@ -16604,39 +16910,7 @@ class StorieEngine {
     return entry.encoding === "hex" ? this.decodeMarkdownHexToBytes(entry.data) : this.decodeMarkdownBase64ToBytes(entry.data);
   }
   async decodeRenderableImageFromBytes(bytes, mime) {
-    const blob = new Blob([new Uint8Array(bytes)], { type: mime || "application/octet-stream" });
-    if (typeof createImageBitmap === "function") {
-      try {
-        const bitmap = await createImageBitmap(blob);
-        return bitmap;
-      } catch {
-      }
-    }
-    if (typeof Image === "undefined" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
-      return null;
-    }
-    const objectUrl = URL.createObjectURL(blob);
-    try {
-      const image = await new Promise((resolve, reject) => {
-        const element = new Image();
-        element.onload = () => resolve(element);
-        element.onerror = () => {
-          try {
-            URL.revokeObjectURL(objectUrl);
-          } catch {
-          }
-          reject(new Error("Image element failed to decode"));
-        };
-        element.src = objectUrl;
-      });
-      return image;
-    } catch (error) {
-      try {
-        URL.revokeObjectURL(objectUrl);
-      } catch {
-      }
-      throw error;
-    }
+    return await decodeRenderableImageFromBytes(bytes, mime);
   }
   resolveSandboxAudioUrl(rawUrl) {
     var _a2, _b2;
@@ -16673,38 +16947,10 @@ class StorieEngine {
     return resolved.toString();
   }
   resolveSandboxImageUrl(rawUrl) {
-    var _a2, _b2;
-    const trimmed = String(rawUrl ?? "").trim();
-    if (!trimmed) {
-      throw new Error("[ui.loadImageFromURL] Missing URL");
-    }
-    if (this.untrustedContent) {
-      const allowedPrefix = /^(?:\.\/)?assets\/img\//;
-      if (!allowedPrefix.test(trimmed) || trimmed.includes("..") || trimmed.startsWith("/") || trimmed.startsWith("\\")) {
-        throw new Error('[ui.loadImageFromURL] Untrusted mode allows only relative URLs under "assets/img/"');
-      }
-      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
-        throw new Error("[ui.loadImageFromURL] Untrusted mode blocks URL schemes");
-      }
-    }
-    let resolved;
-    try {
-      resolved = new URL(trimmed, ((_a2 = globalThis.location) == null ? void 0 : _a2.href) ?? "http://localhost/");
-    } catch (error) {
-      throw new Error(`[ui.loadImageFromURL] Invalid URL: ${String((error == null ? void 0 : error.message) ?? error)}`);
-    }
-    const protocol = resolved.protocol.toLowerCase();
-    if (protocol === "data:" || protocol === "blob:" || protocol === "javascript:" || protocol === "file:") {
-      throw new Error(`[ui.loadImageFromURL] Unsupported URL scheme: ${protocol}`);
-    }
-    if (resolved.username || resolved.password) {
-      throw new Error("[ui.loadImageFromURL] Credentials in URLs are not supported");
-    }
-    const origin = (_b2 = globalThis.location) == null ? void 0 : _b2.origin;
-    if (origin && origin !== "null" && resolved.origin !== origin) {
-      throw new Error(`[ui.loadImageFromURL] Cross-origin images blocked: ${resolved.origin}`);
-    }
-    return resolved.toString();
+    return resolveRenderableImageUrl(rawUrl, {
+      errorPrefix: "[ui.loadImageFromURL]",
+      untrustedContent: this.untrustedContent
+    });
   }
   async loadUIImageFromUrl(rawUrl, alloc) {
     const MAX_IMAGE_URL_BYTES = 32 * 1024 * 1024;
@@ -16721,26 +16967,10 @@ class StorieEngine {
     if (inFlight) return await inFlight;
     const promise = (async () => {
       try {
-        const response = await fetch(resolvedUrl, {
-          mode: "same-origin",
-          credentials: "same-origin"
+        const image = await loadRenderableImageFromResolvedUrl(resolvedUrl, {
+          errorPrefix: "[ui.loadImageFromURL]",
+          maxBytes: MAX_IMAGE_URL_BYTES
         });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status} ${response.statusText}`);
-        }
-        const contentLength = Number(response.headers.get("content-length"));
-        if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_URL_BYTES) {
-          throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (server reported ${contentLength})`);
-        }
-        const mime = String(response.headers.get("content-type") ?? "").split(";")[0].toLowerCase().trim();
-        if (!mime.startsWith("image/")) {
-          throw new Error(`Unsupported content type: ${mime || "unknown"}`);
-        }
-        const arrayBuffer = await response.arrayBuffer();
-        if (arrayBuffer.byteLength > MAX_IMAGE_URL_BYTES) {
-          throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (downloaded ${arrayBuffer.byteLength})`);
-        }
-        const image = await this.decodeRenderableImageFromBytes(new Uint8Array(arrayBuffer), mime);
         if (!image) return null;
         const id = alloc();
         const ui = this.ensureWebGPUUI();
@@ -16806,68 +17036,37 @@ class StorieEngine {
     return await promise;
   }
   resolveWorldsImageUrl(rawUrl) {
-    var _a2, _b2;
-    const trimmed = String(rawUrl ?? "").trim();
-    if (!trimmed) {
-      throw new Error("[worlds.background] Missing texture URL");
-    }
-    if (this.untrustedContent) {
-      const allowedPrefix = /^(?:\.\/)?assets\/img\//;
-      if (!allowedPrefix.test(trimmed) || trimmed.includes("..") || trimmed.startsWith("/") || trimmed.startsWith("\\")) {
-        throw new Error('[worlds.background] Untrusted mode allows only relative URLs under "assets/img/"');
-      }
-      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
-        throw new Error("[worlds.background] Untrusted mode blocks URL schemes");
-      }
-    }
-    let resolved;
-    try {
-      resolved = new URL(trimmed, ((_a2 = globalThis.location) == null ? void 0 : _a2.href) ?? "http://localhost/");
-    } catch (error) {
-      throw new Error(`[worlds.background] Invalid URL: ${String((error == null ? void 0 : error.message) ?? error)}`);
-    }
-    const protocol = resolved.protocol.toLowerCase();
-    if (protocol === "data:" || protocol === "blob:" || protocol === "javascript:" || protocol === "file:") {
-      throw new Error(`[worlds.background] Unsupported URL scheme: ${protocol}`);
-    }
-    if (resolved.username || resolved.password) {
-      throw new Error("[worlds.background] Credentials in URLs are not supported");
-    }
-    const origin = (_b2 = globalThis.location) == null ? void 0 : _b2.origin;
-    if (origin && origin !== "null" && resolved.origin !== origin) {
-      throw new Error(`[worlds.background] Cross-origin images blocked: ${resolved.origin}`);
-    }
-    return resolved.toString();
+    return resolveRenderableImageUrl(rawUrl, {
+      errorPrefix: "[worlds.background]",
+      untrustedContent: this.untrustedContent
+    });
   }
   async loadWorldsImageFromResolvedUrl(resolvedUrl) {
-    const MAX_IMAGE_URL_BYTES = 128 * 1024 * 1024;
-    try {
-      const response = await fetch(resolvedUrl, {
-        mode: "same-origin",
-        credentials: "same-origin"
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} ${response.statusText}`);
-      }
-      const contentLength = Number(response.headers.get("content-length"));
-      if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_URL_BYTES) {
-        throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (server reported ${contentLength})`);
-      }
-      const mime = String(response.headers.get("content-type") ?? "").toLowerCase();
-      if (!mime.startsWith("image/")) {
-        throw new Error(`Unsupported content type: ${mime || "unknown"}`);
-      }
-      const arrayBuffer = await response.arrayBuffer();
-      if (arrayBuffer.byteLength > MAX_IMAGE_URL_BYTES) {
-        throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (downloaded ${arrayBuffer.byteLength})`);
-      }
-      return await this.decodeRenderableImageFromBytes(new Uint8Array(arrayBuffer), mime);
-    } catch (error) {
-      console.warn(`[worlds.background] Failed to load image from "${resolvedUrl}":`, error);
-      return null;
-    }
+    return await loadRenderableImageFromResolvedUrl(resolvedUrl, {
+      errorPrefix: "[worlds.background]",
+      maxBytes: 128 * 1024 * 1024
+    });
   }
-  ensureWorldsImageLoaded(rawUrl) {
+  getWorldsSectionBorderSpec(value = this.worldsConfig.sectionBorder) {
+    return normalizeDecorativeBorderSpec(value);
+  }
+  drawWorldsCardBorder(ctx, widthPx, heightPx, borderColor, sectionBorder) {
+    const borderEnabled = this.worldsConfig.sectionBorderEnabled !== false;
+    const borderWidth = Math.max(0, Math.round(this.worldsConfig.sectionBorderWidth ?? 2));
+    if (!borderEnabled || borderWidth <= 0) return;
+    const decorativeBorder = this.getWorldsSectionBorderSpec(sectionBorder) ?? this.getWorldsSectionBorderSpec();
+    if (decorativeBorder) {
+      const image = this.ensureRenderableImageLoaded(decorativeBorder.source);
+      if (image && drawDecorativeBorder(ctx, image, decorativeBorder, widthPx, heightPx)) {
+        return;
+      }
+    }
+    ctx.strokeStyle = ColorUtils.toCss(borderColor);
+    ctx.lineWidth = borderWidth;
+    const inset = borderWidth / 2;
+    ctx.strokeRect(inset, inset, widthPx - borderWidth, heightPx - borderWidth);
+  }
+  ensureRenderableImageLoaded(rawUrl) {
     const rawKey = String(rawUrl ?? "").trim();
     if (!rawKey || this.backgroundImageUrlFailures.has(rawKey)) return null;
     let resolvedUrl;
@@ -16899,8 +17098,11 @@ class StorieEngine {
     }
     return null;
   }
+  ensureWorldsImageLoaded(rawUrl) {
+    return this.ensureRenderableImageLoaded(rawUrl);
+  }
   ensureWorldsBackgroundImageLoaded(rawUrl) {
-    return this.ensureWorldsImageLoaded(rawUrl);
+    return this.ensureRenderableImageLoaded(rawUrl);
   }
   composeWorldsBackgroundOverlay(cacheKey, baseImage, overlayImage, options) {
     const cached = this.worldsBackgroundCompositeCache.get(cacheKey);
@@ -17753,6 +17955,13 @@ class StorieEngine {
         const prev = engine.worldsConfig.sectionBorderWidth;
         engine.worldsConfig.sectionBorderWidth = config.sectionBorderWidth;
         if (prev !== config.sectionBorderWidth) {
+          engine.clear3DSectionTextures();
+        }
+      }
+      if (config.sectionBorder !== void 0) {
+        const prev = engine.worldsConfig.sectionBorder;
+        engine.worldsConfig.sectionBorder = config.sectionBorder;
+        if (prev !== config.sectionBorder) {
           engine.clear3DSectionTextures();
         }
       }
@@ -20645,6 +20854,20 @@ class StorieEngine {
             ctx.drawImage(image, x, y, w, h);
           } else {
             ctx.drawImage(image, x, y);
+          }
+        },
+        drawBorder: (spec, x, y, w, h) => {
+          const ctx = engine.ensureCanvas2D();
+          if (!ctx || !spec || typeof spec !== "object") return false;
+          if (spec.kind !== "image9") return false;
+          const image = engine.ensureRenderableImageLoaded(spec.source);
+          if (!image) return false;
+          ctx.save();
+          ctx.translate(x, y);
+          try {
+            return drawDecorativeBorder(ctx, image, spec, w, h);
+          } finally {
+            ctx.restore();
           }
         },
         text: (text, x, y, color, font = "16px sans-serif") => {
@@ -25966,14 +26189,7 @@ ${exportVars}
           }
         }
       }
-      const borderEnabled = this.worldsConfig.sectionBorderEnabled !== false;
-      const borderWidth = Math.max(0, Math.round(this.worldsConfig.sectionBorderWidth ?? 2));
-      if (borderEnabled && borderWidth > 0) {
-        ctx.strokeStyle = ColorUtils.toCss(borderStyle.fg);
-        ctx.lineWidth = borderWidth;
-        const inset = borderWidth / 2;
-        ctx.strokeRect(inset, inset, widthPx - borderWidth, heightPx - borderWidth);
-      }
+      this.drawWorldsCardBorder(ctx, widthPx, heightPx, borderStyle.fg, layout.sectionBorder);
       const texture = device.createTexture({
         size: { width: textureWidthPx, height: textureHeightPx },
         format: "rgba8unorm",

@@ -240,6 +240,7 @@ worlds.config.setDefaults({
   sectionBackground: 'surface',   // Section background: 'surface' | 'bg' | 'bgAlt' | 'accent1' | '#RRGGBB' | 0xRRGGBBAA
   sectionBorderEnabled: true,     // Draw a border around each section
   sectionBorderWidth: 2,          // Border thickness (pixels)
+  sectionBorder: undefined,       // Optional decorative border spec (e.g. 9-slice SVG/image border)
   sectionLinkUnderline: false,    // Underline markdown links rendered into Worlds cards
   sectionListMarker: '> ',        // Optional list marker string for Worlds card markdown
   sectionListMarkerGapPx: 0,      // Optional extra gap between marker and list text

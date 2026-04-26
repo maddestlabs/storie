@@ -48,6 +48,29 @@ describe('heading directives', () => {
     expect(layout.renderMode).toBe('content');
   });
 
+  it('parses nested strict JSON heading directives and strips them from section titles', async () => {
+    const doc = await parseMarkdown([
+      '# Card One {"x":"0","border":{"kind":"image9","source":"assets/img/borders/2479760.svg","cuts":{"left":128,"right":12672,"top":102,"bottom":10138},"edgeMode":{"top":"tile","right":"stretch","bottom":"tile","left":"stretch"},"scale":0.12,"opacity":0.34}}',
+      '',
+      'Body'
+    ].join('\n'));
+
+    expect(doc.sections).toHaveLength(1);
+    expect(doc.sections[0]?.title).toBe('Card One');
+    expect(doc.sections[0]?.directive).toMatchObject({
+      x: '0',
+      border: {
+        kind: 'image9',
+        source: 'assets/img/borders/2479760.svg',
+        cuts: { left: 128, right: 12672, top: 102, bottom: 10138 },
+        edgeMode: { top: 'tile', right: 'stretch', bottom: 'tile', left: 'stretch' },
+        scale: 0.12,
+        opacity: 0.34,
+      },
+    });
+    expect(doc.sections[0]?.content).toBe('Body');
+  });
+
   it('uses config sectionRender as the default render mode', async () => {
     const doc = await parseMarkdown([
       '# Card One',

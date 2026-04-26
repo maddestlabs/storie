@@ -74,6 +74,17 @@ import type { ModuleResolverConfig } from './modules/types.js';
 import type { UserScript, UserHandlers, Section, Color, InputEvent, ThemeColors, ThemeStyleSheet, NamedStyle, DroppedFile, SafeAreaInsets, AudioAssetHandle, AudioVoiceHandle, MarkdownDocument } from './types.js';
 import { KEY } from './types.js';
 import { ColorUtils } from './types.js';
+import {
+  drawDecorativeBorder,
+  normalizeDecorativeBorderSpec,
+  type DecorativeBorderSpec,
+} from './decorative-borders.js';
+import {
+  decodeRenderableImageFromBytes,
+  loadRenderableImageFromResolvedUrl,
+  resolveRenderableImageUrl,
+  type RenderableImageSource,
+} from './renderable-image.js';
 import type { SandboxAPI } from './sandbox.js';
 import type { PeakDetectionOptions, PeakDetectionResult } from './audio/peaks.js';
 import type { BeatAnalysisResult, BeatDetectionOptions, BeatState } from './audio/beats.js';
@@ -388,8 +399,6 @@ type CompiledAppModuleLike = {
   };
   createCompiledAppRuntime?: (api: SandboxAPI, options?: Record<string, any>) => CompiledRuntimeLike;
 };
-
-type RenderableImageSource = ImageBitmap | HTMLImageElement;
 
 type MarkdownImageCacheEntry = {
   image: RenderableImageSource | null;
@@ -1473,49 +1482,7 @@ export class StorieEngine {
   }
 
   private async decodeRenderableImageFromBytes(bytes: Uint8Array, mime: string): Promise<RenderableImageSource | null> {
-    const blob = new Blob([new Uint8Array(bytes)], { type: mime || 'application/octet-stream' });
-
-    if (typeof createImageBitmap === 'function') {
-      try {
-        const bitmap = await createImageBitmap(blob);
-        return bitmap as RenderableImageSource;
-      } catch {
-        // Fall through to HTMLImageElement decoding for environments where
-        // createImageBitmap rejects otherwise valid image blobs.
-      }
-    }
-
-    if (typeof Image === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
-      return null;
-    }
-
-    const objectUrl = URL.createObjectURL(blob);
-    try {
-      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const element = new Image();
-        element.onload = () => resolve(element);
-        element.onerror = () => {
-          try {
-            URL.revokeObjectURL(objectUrl);
-          } catch {
-            // Ignore URL cleanup failures.
-          }
-          reject(new Error('Image element failed to decode'));
-        };
-        element.src = objectUrl;
-      });
-      // Keep the object URL alive for the lifetime of the cached image. Canvas2D
-      // and WebGPU uploads may happen after onload returns, and revoking here can
-      // leave a fully measured image that no longer draws any pixels.
-      return image as RenderableImageSource;
-    } catch (error) {
-      try {
-        URL.revokeObjectURL(objectUrl);
-      } catch {
-        // Ignore URL cleanup failures.
-      }
-      throw error;
-    }
+    return await decodeRenderableImageFromBytes(bytes, mime);
   }
 
   private resolveSandboxAudioUrl(rawUrl: string): string {
@@ -1558,42 +1525,10 @@ export class StorieEngine {
   }
 
   private resolveSandboxImageUrl(rawUrl: string): string {
-    const trimmed = String(rawUrl ?? '').trim();
-    if (!trimmed) {
-      throw new Error('[ui.loadImageFromURL] Missing URL');
-    }
-
-    if (this.untrustedContent) {
-      const allowedPrefix = /^(?:\.\/)?assets\/img\//;
-      if (!allowedPrefix.test(trimmed) || trimmed.includes('..') || trimmed.startsWith('/') || trimmed.startsWith('\\')) {
-        throw new Error('[ui.loadImageFromURL] Untrusted mode allows only relative URLs under "assets/img/"');
-      }
-      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
-        throw new Error('[ui.loadImageFromURL] Untrusted mode blocks URL schemes');
-      }
-    }
-
-    let resolved: URL;
-    try {
-      resolved = new URL(trimmed, globalThis.location?.href ?? 'http://localhost/');
-    } catch (error: any) {
-      throw new Error(`[ui.loadImageFromURL] Invalid URL: ${String(error?.message ?? error)}`);
-    }
-
-    const protocol = resolved.protocol.toLowerCase();
-    if (protocol === 'data:' || protocol === 'blob:' || protocol === 'javascript:' || protocol === 'file:') {
-      throw new Error(`[ui.loadImageFromURL] Unsupported URL scheme: ${protocol}`);
-    }
-    if (resolved.username || resolved.password) {
-      throw new Error('[ui.loadImageFromURL] Credentials in URLs are not supported');
-    }
-
-    const origin = globalThis.location?.origin;
-    if (origin && origin !== 'null' && resolved.origin !== origin) {
-      throw new Error(`[ui.loadImageFromURL] Cross-origin images blocked: ${resolved.origin}`);
-    }
-
-    return resolved.toString();
+    return resolveRenderableImageUrl(rawUrl, {
+      errorPrefix: '[ui.loadImageFromURL]',
+      untrustedContent: this.untrustedContent,
+    });
   }
 
   private async loadUIImageFromUrl(rawUrl: string, alloc: () => string): Promise<string | null> {
@@ -1615,31 +1550,10 @@ export class StorieEngine {
 
     const promise = (async () => {
       try {
-        const response = await fetch(resolvedUrl, {
-          mode: 'same-origin',
-          credentials: 'same-origin',
+        const image = await loadRenderableImageFromResolvedUrl(resolvedUrl, {
+          errorPrefix: '[ui.loadImageFromURL]',
+          maxBytes: MAX_IMAGE_URL_BYTES,
         });
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status} ${response.statusText}`);
-        }
-
-        const contentLength = Number(response.headers.get('content-length'));
-        if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_URL_BYTES) {
-          throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (server reported ${contentLength})`);
-        }
-
-        const mime = String(response.headers.get('content-type') ?? '').split(';')[0].toLowerCase().trim();
-        if (!mime.startsWith('image/')) {
-          throw new Error(`Unsupported content type: ${mime || 'unknown'}`);
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        if (arrayBuffer.byteLength > MAX_IMAGE_URL_BYTES) {
-          throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (downloaded ${arrayBuffer.byteLength})`);
-        }
-
-        const image = await this.decodeRenderableImageFromBytes(new Uint8Array(arrayBuffer), mime);
         if (!image) return null;
 
         const id = alloc();
@@ -1720,80 +1634,49 @@ export class StorieEngine {
   }
 
   private resolveWorldsImageUrl(rawUrl: string): string {
-    const trimmed = String(rawUrl ?? '').trim();
-    if (!trimmed) {
-      throw new Error('[worlds.background] Missing texture URL');
-    }
-
-    if (this.untrustedContent) {
-      const allowedPrefix = /^(?:\.\/)?assets\/img\//;
-      if (!allowedPrefix.test(trimmed) || trimmed.includes('..') || trimmed.startsWith('/') || trimmed.startsWith('\\')) {
-        throw new Error('[worlds.background] Untrusted mode allows only relative URLs under "assets/img/"');
-      }
-      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
-        throw new Error('[worlds.background] Untrusted mode blocks URL schemes');
-      }
-    }
-
-    let resolved: URL;
-    try {
-      resolved = new URL(trimmed, globalThis.location?.href ?? 'http://localhost/');
-    } catch (error: any) {
-      throw new Error(`[worlds.background] Invalid URL: ${String(error?.message ?? error)}`);
-    }
-
-    const protocol = resolved.protocol.toLowerCase();
-    if (protocol === 'data:' || protocol === 'blob:' || protocol === 'javascript:' || protocol === 'file:') {
-      throw new Error(`[worlds.background] Unsupported URL scheme: ${protocol}`);
-    }
-    if (resolved.username || resolved.password) {
-      throw new Error('[worlds.background] Credentials in URLs are not supported');
-    }
-
-    const origin = globalThis.location?.origin;
-    if (origin && origin !== 'null' && resolved.origin !== origin) {
-      throw new Error(`[worlds.background] Cross-origin images blocked: ${resolved.origin}`);
-    }
-
-    return resolved.toString();
+    return resolveRenderableImageUrl(rawUrl, {
+      errorPrefix: '[worlds.background]',
+      untrustedContent: this.untrustedContent,
+    });
   }
 
   private async loadWorldsImageFromResolvedUrl(resolvedUrl: string): Promise<RenderableImageSource | null> {
-    const MAX_IMAGE_URL_BYTES = 128 * 1024 * 1024;
-
-    try {
-      const response = await fetch(resolvedUrl, {
-        mode: 'same-origin',
-        credentials: 'same-origin',
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} ${response.statusText}`);
-      }
-
-      const contentLength = Number(response.headers.get('content-length'));
-      if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_URL_BYTES) {
-        throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (server reported ${contentLength})`);
-      }
-
-      const mime = String(response.headers.get('content-type') ?? '').toLowerCase();
-      if (!mime.startsWith('image/')) {
-        throw new Error(`Unsupported content type: ${mime || 'unknown'}`);
-      }
-
-      const arrayBuffer = await response.arrayBuffer();
-      if (arrayBuffer.byteLength > MAX_IMAGE_URL_BYTES) {
-        throw new Error(`Refusing image larger than ${MAX_IMAGE_URL_BYTES} bytes (downloaded ${arrayBuffer.byteLength})`);
-      }
-
-      return await this.decodeRenderableImageFromBytes(new Uint8Array(arrayBuffer), mime);
-    } catch (error) {
-      console.warn(`[worlds.background] Failed to load image from "${resolvedUrl}":`, error);
-      return null;
-    }
+    return await loadRenderableImageFromResolvedUrl(resolvedUrl, {
+      errorPrefix: '[worlds.background]',
+      maxBytes: 128 * 1024 * 1024,
+    });
   }
 
-  private ensureWorldsImageLoaded(rawUrl: string): RenderableImageSource | null {
+  private getWorldsSectionBorderSpec(value: unknown = (this.worldsConfig as any).sectionBorder): DecorativeBorderSpec | null {
+    return normalizeDecorativeBorderSpec(value);
+  }
+
+  private drawWorldsCardBorder(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    widthPx: number,
+    heightPx: number,
+    borderColor: Color,
+    sectionBorder?: DecorativeBorderSpec | null,
+  ): void {
+    const borderEnabled = this.worldsConfig.sectionBorderEnabled !== false;
+    const borderWidth = Math.max(0, Math.round(this.worldsConfig.sectionBorderWidth ?? 2));
+    if (!borderEnabled || borderWidth <= 0) return;
+
+    const decorativeBorder = this.getWorldsSectionBorderSpec(sectionBorder) ?? this.getWorldsSectionBorderSpec();
+    if (decorativeBorder) {
+      const image = this.ensureRenderableImageLoaded(decorativeBorder.source);
+      if (image && drawDecorativeBorder(ctx, image, decorativeBorder, widthPx, heightPx)) {
+        return;
+      }
+    }
+
+    ctx.strokeStyle = ColorUtils.toCss(borderColor);
+    ctx.lineWidth = borderWidth;
+    const inset = borderWidth / 2;
+    ctx.strokeRect(inset, inset, widthPx - borderWidth, heightPx - borderWidth);
+  }
+
+  private ensureRenderableImageLoaded(rawUrl: string): RenderableImageSource | null {
     const rawKey = String(rawUrl ?? '').trim();
     if (!rawKey || this.backgroundImageUrlFailures.has(rawKey)) return null;
 
@@ -1833,8 +1716,12 @@ export class StorieEngine {
     return null;
   }
 
+  private ensureWorldsImageLoaded(rawUrl: string): RenderableImageSource | null {
+    return this.ensureRenderableImageLoaded(rawUrl);
+  }
+
   private ensureWorldsBackgroundImageLoaded(rawUrl: string): RenderableImageSource | null {
-    return this.ensureWorldsImageLoaded(rawUrl);
+    return this.ensureRenderableImageLoaded(rawUrl);
   }
 
   private composeWorldsBackgroundOverlay(
@@ -2831,6 +2718,13 @@ export class StorieEngine {
         const prev = engine.worldsConfig.sectionBorderWidth;
         engine.worldsConfig.sectionBorderWidth = config.sectionBorderWidth;
         if (prev !== config.sectionBorderWidth) {
+          engine.clear3DSectionTextures();
+        }
+      }
+      if ((config as any).sectionBorder !== undefined) {
+        const prev = (engine.worldsConfig as any).sectionBorder;
+        (engine.worldsConfig as any).sectionBorder = (config as any).sectionBorder;
+        if (prev !== (config as any).sectionBorder) {
           engine.clear3DSectionTextures();
         }
       }
@@ -5950,6 +5844,21 @@ export class StorieEngine {
             ctx.drawImage(image, x, y, w, h);
           } else {
             ctx.drawImage(image, x, y);
+          }
+        },
+
+        drawBorder: (spec: DecorativeBorderSpec, x: number, y: number, w: number, h: number) => {
+          const ctx = engine.ensureCanvas2D();
+          if (!ctx || !spec || typeof spec !== 'object') return false;
+          if (spec.kind !== 'image9') return false;
+          const image = engine.ensureRenderableImageLoaded(spec.source);
+          if (!image) return false;
+          ctx.save();
+          ctx.translate(x, y);
+          try {
+            return drawDecorativeBorder(ctx, image, spec, w, h);
+          } finally {
+            ctx.restore();
           }
         },
         
@@ -12656,14 +12565,7 @@ ${exportVars}
       }
 
       // Border on top (matches previous Canvas2D look)
-      const borderEnabled = this.worldsConfig.sectionBorderEnabled !== false;
-      const borderWidth = Math.max(0, Math.round(this.worldsConfig.sectionBorderWidth ?? 2));
-      if (borderEnabled && borderWidth > 0) {
-        ctx.strokeStyle = ColorUtils.toCss(borderStyle.fg);
-        ctx.lineWidth = borderWidth;
-        const inset = borderWidth / 2;
-        ctx.strokeRect(inset, inset, widthPx - borderWidth, heightPx - borderWidth);
-      }
+      this.drawWorldsCardBorder(ctx, widthPx, heightPx, borderStyle.fg, layout.sectionBorder);
 
       // Create GPU texture + upload
       const texture = device.createTexture({

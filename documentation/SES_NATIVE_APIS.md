@@ -248,6 +248,14 @@ ctx.restore();
 canvas2d.drawRect(0, 0, 50, 50, '#0000ff');
 canvas2d.context.globalAlpha = 0.5; // Raw API
 canvas2d.drawRect(25, 25, 50, 50, '#ff00ff'); // Helper with alpha
+
+// Decorative image9 border (returns false until the source image is loaded)
+canvas2d.drawBorder({
+  kind: 'image9',
+  source: 'assets/img/borders/1210514.svg',
+  cuts: { left: 96, right: 928, top: 96, bottom: 928 },
+  edgeMode: 'tile',
+}, 40, 40, 320, 180);
 ```
 
 ### WebGL API - Selective Exposure ⚠️

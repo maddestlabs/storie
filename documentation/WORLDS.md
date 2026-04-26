@@ -346,6 +346,40 @@ Useful overlay params:
 - `overlayOpacity=`: `0..1`
 - `overlayFit=`: `cover`, `contain`, or `stretch`
 
+### Decorative Borders
+
+Worlds cards can also use an optional decorative border spec on top of the regular `sectionBorderEnabled` and `sectionBorderWidth` settings. The first supported format is `image9`, which uses 9-slice cuts from a source image or SVG so corners stay fixed while edges tile or stretch.
+
+```js
+worlds.config.setDefaults({
+  sectionBorderEnabled: true,
+  sectionBorder: {
+    kind: 'image9',
+    source: 'assets/img/borders/1210514.svg',
+    cuts: { left: 96, right: 928, top: 96, bottom: 928 },
+    edgeMode: 'tile',
+    scale: 1,
+    opacity: 1,
+  }
+});
+```
+
+Useful border params:
+- `source`: image or SVG URL, resolved through the shared image/SVG asset loader
+- `cuts`: source-space 9-slice guides; `left` and `top` are the inner corner edges, `right` and `bottom` are the far-side inner edges
+- `edgeMode`: `tile` or `stretch`, globally or per edge
+- `scale`: multiplies source corner and edge thickness in destination pixels
+- `opacity`: border alpha multiplier
+- `inset`: optional inward offset in pixels before the border is drawn
+
+Borders can also be overridden per section in heading metadata:
+
+```markdown
+# saloon {border: {kind: "image9", source: "assets/img/borders/1210514.svg", cuts: {left: 34, right: 1103, top: 34, bottom: 1673}, edgeMode: "tile", scale: 0.22, opacity: 0.46}}
+```
+
+Use `border:` or `sectionBorder:` in heading metadata. Per-section border specs override the document-level `worlds.config.setDefaults({ sectionBorder: ... })` value for that card only.
+
 ### Section Art
 
 Sections can also declare a separate art plate in heading metadata. This is rendered as its own quad, so it is not clipped by markdown flow layout and can sit under or over the text card.
