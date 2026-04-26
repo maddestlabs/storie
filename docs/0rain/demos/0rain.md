@@ -7,7 +7,15 @@ height: 2400
 shaders: "bloom+zerorain+zerocrt"
 font: "AnomalyMono"
 fontsize: 28
+orientation: portrait
 ---
+
+```
+TODO:
+- font size is inconsistent. changing window size doesn't change font size, it stays same and works incorrectly at varying resolutions. MUST BE consistent.
+- enforce landscape
+- maybe enforce specific resolution?
+```
 
 # 0RAIN {"x": "0", "y": "0", "render": "content"}
 

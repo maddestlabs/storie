@@ -3,7 +3,6 @@ name: "Ballad of Saint Billy"
 title: "Ballad of Saint Billy"
 author: "Maddest Labs"
 requiresAudioGesture: true
-orientation: landscape
 theme: "saintbilly"
 shaders: "audioshake+vintage"
 font: "Rye"
