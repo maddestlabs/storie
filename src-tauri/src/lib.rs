@@ -1,4 +1,12 @@
 use tauri::Manager as _;
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveMarkdownDocumentRequest {
+    suggested_filename: String,
+    markdown: String,
+}
 
 /// Read a file dropped onto the window from its filesystem path.
 /// Called by the frontend Tauri D&D bridge when a native file drop occurs.
@@ -16,6 +24,32 @@ fn read_dropped_file_bytes(path: String) -> Result<String, String> {
     let bytes =
         std::fs::read(&path).map_err(|e| format!("Failed to read \"{path}\": {e}"))?;
     Ok(base64_encode(&bytes))
+}
+
+/// Open a native save dialog and write markdown to the chosen path.
+/// Returns the saved path, or None when the dialog is cancelled.
+#[tauri::command]
+fn save_markdown_document(payload: SaveMarkdownDocumentRequest) -> Result<Option<String>, String> {
+    let suggested_filename = payload.suggested_filename.trim();
+    let default_filename = if suggested_filename.is_empty() {
+        "storie-document.md"
+    } else {
+        suggested_filename
+    };
+
+    let path = rfd::FileDialog::new()
+        .add_filter("Markdown Document", &["md"])
+        .set_file_name(default_filename)
+        .save_file();
+
+    let Some(path) = path else {
+        return Ok(None);
+    };
+
+    std::fs::write(&path, payload.markdown)
+        .map_err(|e| format!("Failed to write \"{}\": {e}", path.display()))?;
+
+    Ok(Some(path.display().to_string()))
 }
 
 /// Minimal base64 encoder — avoids pulling in a crate just for this.
@@ -40,6 +74,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             read_dropped_file,
             read_dropped_file_bytes,
+            save_markdown_document,
         ])
         .setup(|app| {
             // Always open devtools for now so we can debug white/blank screens

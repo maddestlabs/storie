@@ -70,6 +70,7 @@
       </div>
       <div class="sov-divider"></div>
       <a class="sov-link" id="storie-overlay-export" href="#" title="Ctrl+Shift+E">Export Video…</a>
+      <a class="sov-link" id="storie-overlay-save-markdown" href="#">Save Markdown…</a>
       <a class="sov-link" href="https://github.com/maddestlabs/storie" target="_blank" rel="noopener noreferrer">GitHub →</a>
     </div>
   </div>
@@ -147,7 +148,8 @@
     import { startStorieApp } from './bootstrap.js?v=__BUILD_ID__';
 
     startStorieApp({
-      engineModuleUrl: './storie.es.js?v=__BUILD_ID__',
+      engineModuleUrl: './storie-site.js?v=__BUILD_ID__',
+      contentSourceModuleUrl: './content-source.js?v=__BUILD_ID__',
       buildId: '__BUILD_ID__',
       serviceWorker: { url: './sw.js' },
       demoBaseUrl: 'demos/',

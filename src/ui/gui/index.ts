@@ -107,6 +107,28 @@ export class GUISystem {
     this.widgetRenderer = renderer;
   }
 
+  private withTemporarilyHiddenGroups<T>(groupIds: Iterable<string | number> | undefined, callback: () => T): T {
+    const previousStates: Array<{ groupId: string | number; visible: boolean }> = [];
+    const seen = new Set<string | number>();
+
+    if (groupIds) {
+      for (const groupId of groupIds) {
+        if (seen.has(groupId)) continue;
+        seen.add(groupId);
+        previousStates.push({ groupId, visible: this.widgetManager.isGroupVisible(groupId) });
+        this.widgetManager.setGroupVisible(groupId, false);
+      }
+    }
+
+    try {
+      return callback();
+    } finally {
+      for (const { groupId, visible } of previousStates) {
+        this.widgetManager.setGroupVisible(groupId, visible);
+      }
+    }
+  }
+
   private getWidgetGroup(widget: any): WidgetGroup {
     return this.widgetManager.getGroupState(widget.group);
   }
@@ -383,11 +405,37 @@ export class GUISystem {
     }
   }
 
+  updateExcludingGroups(
+    mouseX: number,
+    mouseY: number,
+    mouseDown: boolean,
+    charWidth: number,
+    charHeight: number,
+    excludedGroups: Iterable<string | number>
+  ): void {
+    this.withTemporarilyHiddenGroups(excludedGroups, () => {
+      this.update(mouseX, mouseY, mouseDown, charWidth, charHeight);
+    });
+  }
+
   /**
    * Handle a mouse update immediately (for use in on:input)
    */
   handleMouse(mouseX: number, mouseY: number, mouseDown: boolean, charWidth: number, charHeight: number): void {
     this.update(mouseX, mouseY, mouseDown, charWidth, charHeight);
+  }
+
+  handleMouseExcludingGroups(
+    mouseX: number,
+    mouseY: number,
+    mouseDown: boolean,
+    charWidth: number,
+    charHeight: number,
+    excludedGroups: Iterable<string | number>
+  ): void {
+    this.withTemporarilyHiddenGroups(excludedGroups, () => {
+      this.handleMouse(mouseX, mouseY, mouseDown, charWidth, charHeight);
+    });
   }
 
   /**
@@ -494,6 +542,17 @@ export class GUISystem {
 
       if (handled === true) continue;
     }
+  }
+
+  renderExcludingGroups(
+    excludedGroups: Iterable<string | number>,
+    uiAPI: Draw2D,
+    charWidth: number,
+    charHeight: number
+  ): void {
+    this.withTemporarilyHiddenGroups(excludedGroups, () => {
+      this.render(uiAPI, charWidth, charHeight);
+    });
   }
 
   /**

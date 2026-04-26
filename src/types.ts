@@ -181,6 +181,26 @@ export interface Style {
   underline?: boolean;
 }
 
+export interface AudioAssetHandle {
+  id: string;
+  source: 'url' | 'blob' | 'drop';
+  durationSec: number;
+  sampleRate: number;
+  channels: number;
+  origin?: string;
+}
+
+export interface AudioVoiceHandle {
+  id: string;
+  assetId: string;
+  state: 'playing' | 'stopped';
+  loop: boolean;
+  gain: number;
+  playbackRate: number;
+  offsetSec: number;
+  startedAtSec: number | null;
+}
+
 export interface Section {
   /**
    * Stable identifier for this section within the currently loaded document.
@@ -318,6 +338,7 @@ export interface MarkdownDocument {
   sections: Section[];
   codeBlocks: CodeBlock[];
   metadata: Record<string, any>;
+  sourceMarkdown?: string;
   wgslShaders?: WGSLShader[];  // Parsed WGSL shaders from ```wgsl blocks
   blobBlocks?: BlobBlock[];    // Parsed binary blobs from ```blob blocks
   timedBlocks?: TimedBlock[];  // Parsed timed lyric/transcript blocks from ```timed blocks
@@ -367,6 +388,7 @@ export interface UserScript {
   handlers: UserHandlers;
   sections: Section[];
   metadata?: Record<string, any>;
+  sourceMarkdown?: string;
 }
 
 export interface InputState {

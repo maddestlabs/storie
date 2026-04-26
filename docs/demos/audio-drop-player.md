@@ -1,12 +1,12 @@
 ---
-name: "Dropped MP3 Player"
+name: "Dropped Audio Player"
 theme: "neonopia"
 dropTarget: true
 ---
 
-A minimal drag-and-drop music player demo.
+A minimal drag-and-drop music player demo built on the portable audio handle layer.
 
-- Drop an `.mp3` file onto the canvas.
+- Drop an audio file onto the canvas.
 - Use **Play / Pause** and the **Position** slider to seek.
 
 ## Game Code
@@ -22,12 +22,9 @@ function state() {
       widgets: null,
       mouseDownLeft: false,
 
-      audioBuffer: null,
-      source: null,
-      gain: null,
-
-      isPlaying: false,
-      startTime: 0,       // audio.currentTime - offset
+      clip: null,
+      clipInfo: null,
+      voice: null,
       pauseOffset: 0,     // seconds
       lastSeekDragging: false
     };
@@ -47,71 +44,73 @@ function fmtTime(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function stopSource({ keepOffset } = { keepOffset: true }) {
+function getDurationSec() {
   const st = state();
-  if (!st.source) return;
-  try {
-    if (keepOffset) {
-      const pos = audio.currentTime - st.startTime;
-      st.pauseOffset = clamp(pos, 0, st.audioBuffer?.duration ?? pos);
-    } else {
-      st.pauseOffset = 0;
-    }
-    st.source.onended = null;
-    st.source.stop();
-  } catch {
-    // ignore
-  }
-  try { st.source.disconnect(); } catch { /* ignore */ }
-  st.source = null;
-  st.isPlaying = false;
+  return st.clipInfo?.durationSec ?? 0;
 }
 
-function playFrom(offsetSec) {
+function syncVoice() {
   const st = state();
-  if (!st.audioBuffer) return;
+  if (!st.voice) return null;
 
-  // WebAudio sources are one-shot; recreate each play/seek.
-  stopSource({ keepOffset: false });
-
-  const offset = clamp(offsetSec, 0, st.audioBuffer.duration);
-  st.pauseOffset = offset;
-
-  const s = audio.createBufferSource();
-  s.buffer = st.audioBuffer;
-  s.connect(st.gain ?? audio.destination);
-
-  st.startTime = audio.currentTime - offset;
-  st.isPlaying = true;
-
-  s.onended = () => {
-    // Natural end (or stop) ends playback; we treat both as "not playing".
-    // pauseOffset is maintained by stopSource() when we stop explicitly.
-    if (st.source === s) {
-      st.source = null;
-      st.isPlaying = false;
-      // Clamp at end if we ran to completion.
-      const pos = audio.currentTime - st.startTime;
-      if (st.audioBuffer) st.pauseOffset = clamp(pos, 0, st.audioBuffer.duration);
-    }
-  };
-
-  st.source = s;
-  try {
-    s.start(0, offset);
-  } catch (e) {
-    // If start fails, reset state.
-    st.source = null;
-    st.isPlaying = false;
-    console.warn('[audio] start failed:', e);
+  const voice = audio.voiceInfo(st.voice);
+  if (!voice) {
+    st.voice = null;
+    return null;
   }
+
+  if (voice.state === 'stopped') {
+    st.pauseOffset = clamp(voice.offsetSec, 0, getDurationSec());
+    st.voice = null;
+    return null;
+  }
+
+  return voice;
 }
 
 function getPositionSec() {
   const st = state();
-  if (!st.audioBuffer) return 0;
-  if (!st.isPlaying) return clamp(st.pauseOffset, 0, st.audioBuffer.duration);
-  return clamp(audio.currentTime - st.startTime, 0, st.audioBuffer.duration);
+  const duration = getDurationSec();
+  if (!duration) return 0;
+
+  const voice = syncVoice();
+  if (!voice || voice.startedAtSec == null) {
+    return clamp(st.pauseOffset, 0, duration);
+  }
+
+  const elapsed = Math.max(0, audio.currentTime - voice.startedAtSec);
+  return clamp(voice.offsetSec + elapsed * voice.playbackRate, 0, duration);
+}
+
+function stopVoice({ keepOffset } = { keepOffset: true }) {
+  const st = state();
+  const voice = syncVoice();
+  if (keepOffset) {
+    st.pauseOffset = getPositionSec();
+  } else {
+    st.pauseOffset = 0;
+  }
+
+  if (!voice) return;
+  audio.stop(voice);
+  st.voice = null;
+}
+
+function playFrom(offsetSec) {
+  const st = state();
+  if (!st.clip || !st.clipInfo) return;
+
+  stopVoice({ keepOffset: false });
+
+  const offset = clamp(offsetSec, 0, st.clipInfo.durationSec);
+  st.pauseOffset = offset;
+
+  const voice = audio.play(st.clip, { gain: 1, offsetSec: offset });
+  if (!voice) {
+    console.warn('[audio] play failed');
+    return;
+  }
+  st.voice = voice;
 }
 
 function setStatus(text) {
@@ -130,13 +129,13 @@ gui.init();
 
 const title = gui.createLabel({
   bounds: { x: 20, y: 20, width: 800, height: 30 },
-  text: 'Dropped MP3 Player',
+  text: 'Dropped Audio Player',
   align: 'left'
 });
 
 const hint = gui.createLabel({
   bounds: { x: 20, y: 52, width: 1000, height: 24 },
-  text: 'Drop an .mp3 file onto the canvas to load it.',
+  text: 'Drop an audio file onto the canvas to load it.',
   align: 'left'
 });
 
@@ -178,14 +177,6 @@ const time = gui.createLabel({
 });
 
 st.widgets = { title, hint, file, status, btnPlay, btnPause, seek, time };
-
-// Gain node for clean reconnects (volume left at 100% for this minimal demo)
-st.gain = audio.createGain();
-st.gain.gain.value = 1;
-st.gain.connect(audio.destination);
-
-// Try to pre-warm the context; browsers may still require a gesture.
-audio.context.resume().catch(() => {});
 ```
 
 ```js on:drop
@@ -194,45 +185,34 @@ audio.context.resume().catch(() => {});
 const st = state();
 
 // Stop current playback if any
-stopSource({ keepOffset: false });
-st.audioBuffer = null;
+stopVoice({ keepOffset: false });
+st.clip = null;
+st.clipInfo = null;
 st.pauseOffset = 0;
 
 st.widgets.file.setText(`File: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`);
 st.widgets.time.setText('Time: --:-- / --:--');
 setStatus('Status: decoding...');
 
-const lowerName = String(file.name || '').toLowerCase();
-const looksLikeMp3 = lowerName.endsWith('.mp3') || String(file.mime || '').includes('mpeg');
-if (!looksLikeMp3) {
-  setStatus('Status: please drop an .mp3 file');
+const clip = await audio.asset.fromDrop();
+if (!clip) {
+  setStatus('Status: decode failed (try a different audio file)');
+  return;
 }
 
-void (async () => {
-  try {
-    await audio.context.resume().catch(() => {});
+st.clip = clip;
+st.clipInfo = audio.asset.info(clip);
+st.pauseOffset = 0;
 
-    // Copy into an exact, standalone ArrayBuffer for decodeAudioData
-    const ab = new ArrayBuffer(file.bytes.byteLength);
-    new Uint8Array(ab).set(file.bytes);
+const duration = st.clipInfo?.durationSec ?? 0;
 
-    const buf = await audio.context.decodeAudioData(ab);
-    st.audioBuffer = buf;
-    st.pauseOffset = 0;
+st.widgets.seek.min = 0;
+st.widgets.seek.max = Math.max(0.01, duration);
+st.widgets.seek.step = 0.01;
+st.widgets.seek.setValue(0);
 
-    // Configure seek slider to match duration
-    st.widgets.seek.min = 0;
-    st.widgets.seek.max = Math.max(0.01, buf.duration);
-    st.widgets.seek.step = 0.01;
-    st.widgets.seek.setValue(0);
-
-    st.widgets.time.setText(`Time: 0:00 / ${fmtTime(buf.duration)}`);
-    setStatus(`Status: ready (${fmtTime(buf.duration)})`);
-  } catch (e) {
-    console.warn('[drop] audio decode failed:', e);
-    setStatus('Status: decode failed (try a different mp3)');
-  }
-})();
+st.widgets.time.setText(`Time: 0:00 / ${fmtTime(duration)}`);
+setStatus(`Status: ready (${fmtTime(duration)}) via portable audio handles`);
 ```
 
 ```js on:input
@@ -272,26 +252,29 @@ gui.update(getMouseX(), getMouseY(), st.mouseDownLeft);
 
 // Buttons
 if (st.widgets.btnPlay.wasClicked()) {
-  if (!st.audioBuffer) {
-    setStatus('Status: drop an .mp3 first');
+  if (!st.clip || !st.clipInfo) {
+    setStatus('Status: drop an audio file first');
   } else {
-    audio.context.resume().catch(() => {});
     playFrom(st.pauseOffset);
+    setStatus('Status: playing');
   }
 }
 
 if (st.widgets.btnPause.wasClicked()) {
-  stopSource({ keepOffset: true });
+  stopVoice({ keepOffset: true });
+  setStatus('Status: paused');
 }
 
 // Seek behavior: apply seek when the user releases the knob
-if (st.audioBuffer) {
+if (st.clipInfo) {
+  syncVoice();
   const dragging = st.widgets.seek.isDragging();
   if (!dragging && st.lastSeekDragging) {
-    const target = clamp(st.widgets.seek.getValue(), 0, st.audioBuffer.duration);
+    const target = clamp(st.widgets.seek.getValue(), 0, st.clipInfo.durationSec);
     st.pauseOffset = target;
-    if (st.isPlaying) {
+    if (st.voice) {
       playFrom(target);
+      setStatus(`Status: seeked to ${fmtTime(target)}`);
     }
   }
   st.lastSeekDragging = dragging;
@@ -303,7 +286,7 @@ if (st.audioBuffer) {
 
   // Update time display
   const pos = getPositionSec();
-  st.widgets.time.setText(`Time: ${fmtTime(pos)} / ${fmtTime(st.audioBuffer.duration)}`);
+  st.widgets.time.setText(`Time: ${fmtTime(pos)} / ${fmtTime(st.clipInfo.durationSec)}`);
 }
 ```
 

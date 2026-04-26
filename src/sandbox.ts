@@ -58,7 +58,9 @@
 // Import SES shims (side-effects only - adds to globalThis)
 import 'ses';
 
-import type { UserHandlers, InputEvent } from './types.js';
+import { getAllKnownCapabilityPacks, installDocumentCapabilityApiGlobals } from './runtime/capability-api.js';
+
+import type { UserHandlers, InputEvent, AudioAssetHandle, AudioVoiceHandle } from './types.js';
 import type { ThemeColors, NamedStyle } from './types.js';
 import type { CompiledAutomation, EaseSpec, AutomationImpulseEvent } from './automation.js';
 import type {
@@ -148,6 +150,10 @@ export interface SandboxAPI {
       firstChildIndex: number | null;
       lastDescendantIndex: number;
     }>;
+    /**
+     * Returns the active document's canonical markdown source string.
+     */
+    sourceMarkdown: () => string;
     /**
      * Returns all entries for a named ```timed block, sorted ascending by ms.
      * Returns [] when the block does not exist.
@@ -287,6 +293,10 @@ export interface SandboxAPI {
    * Safe to use for file I/O that must touch the browser environment.
    */
   sys: {
+    /** Backend-neutral parameter lookup for host-provided launch/query state. */
+    params: {
+      get: (name: string, defaultValue?: string | number | boolean | null) => string | number | boolean | null | undefined;
+    };
     /**
      * Trigger a browser "Save As" download with the supplied bytes.
      * The operation is invisible to the sandbox; no URL or DOM handle is returned.
@@ -435,6 +445,84 @@ export interface SandboxAPI {
 
   // Native Browser APIs
   audio: {
+    asset: {
+      load: (url: string) => Promise<AudioAssetHandle | null>;
+      fromDrop: () => Promise<AudioAssetHandle | null>;
+      fromBlob: (name: string, documentId?: string) => Promise<AudioAssetHandle | null>;
+      info: (handleOrId: string | AudioAssetHandle) => AudioAssetHandle | null;
+    };
+    analysis: {
+      peaks: (
+        handleOrId: string | AudioAssetHandle,
+        options?: {
+          windowMs?: number;
+          smoothMs?: number;
+          minGapMs?: number;
+          thresholdMul?: number;
+          minThreshold?: number;
+          compressPow?: number;
+          minProminence?: number;
+        }
+      ) => {
+        peaks: number[];
+        envelopeHz: number;
+        envelope: Float32Array;
+        threshold: number;
+      } | null;
+      beats: (
+        handleOrId: string | AudioAssetHandle,
+        options?: {
+          bpmMin?: number;
+          bpmMax?: number;
+          envelopeHz?: number;
+          smoothMs?: number;
+          meter?: number;
+          onsetMode?: 'energy' | 'spectralFlux';
+          fftSize?: number;
+          fftWindow?: 'hann' | 'none';
+        }
+      ) => {
+        bpm: number;
+        confidence: number;
+        meter: number;
+        periodSec: number;
+        offsetSec: number;
+        beats: number[];
+        downbeats: number[];
+        envelopeHz: number;
+        envelope: Float32Array;
+      } | null;
+    };
+    play: (handleOrId: string | AudioAssetHandle, options?: { loop?: boolean; gain?: number; playbackRate?: number; when?: number; offsetSec?: number }) => AudioVoiceHandle | null;
+    stop: (voiceOrId: string | AudioVoiceHandle, when?: number) => boolean;
+    setGain: (voiceOrId: string | AudioVoiceHandle, gain: number) => boolean;
+    setPlaybackRate: (voiceOrId: string | AudioVoiceHandle, playbackRate: number) => boolean;
+    voiceInfo: (voiceOrId: string | AudioVoiceHandle) => AudioVoiceHandle | null;
+    resume: () => Promise<boolean>;
+    buffer: {
+      create: (channels: number, frameCount: number, sampleRate?: number) => AudioBuffer;
+    };
+    ambient: {
+      createLayeredBed: (config: {
+        masterGain?: number;
+        dryGain?: number;
+        wetGain?: number;
+        impulse?: { seconds?: number; decay?: number; buffer?: AudioBuffer | null } | null;
+        compressor?: { threshold?: number; knee?: number; ratio?: number; attack?: number; release?: number } | null;
+        lfo?: { type?: OscillatorType; frequencyHz?: number; depth?: number } | null;
+        layers: Array<{
+          buffer: AudioBuffer;
+          offsetSec?: number;
+          loop?: boolean;
+          routes: Array<{ hp: number; lp: number; hpQ?: number; lpQ?: number; gain: number; bus: 'dry' | 'wet' }>;
+        }>;
+      }) => {
+        start: () => Promise<boolean>;
+        stop: (when?: number) => void;
+        setLevel: (level: number, rampSeconds?: number, lfoDepth?: number) => void;
+        isStarted: () => boolean;
+      };
+    };
     // Shared AudioContext instance
     context: AudioContext;
     startOnGesture: (start: () => void) => boolean;
@@ -1219,9 +1307,6 @@ export class ScriptSandbox {
       };
       this.scopes.set(documentId, scope);
       
-      // Capture API reference for use in compartment globals
-      const apiRef = this.api;
-      
       // Build compartment globals - start with frontmatter variables exposed directly
       // This matches tstorie's exposeFrontMatterVariables() behavior
       const compartmentGlobals: Record<string, any> = {
@@ -1237,236 +1322,6 @@ export class ScriptSandbox {
         
         // Expose frontmatter variables as direct globals (for convenient access)
         ...frontmatter,
-        
-        // Engine API (capability-based)
-        term: this.api.term,
-        termCanvas: this.api.termCanvas,
-        layer: this.api.layer,
-        key: this.api.key,
-        // Polling key-state map: keys.has('ArrowLeft'), keys.isDown('Space')
-        keys: {
-          has:      (k: string) => apiRef.key.down(k),
-          isDown:   (k: string) => apiRef.key.down(k),
-          pressed:  (k: string) => apiRef.key.pressed(k),
-          released: (k: string) => apiRef.key.released(k),
-        },
-        mouse: this.api.mouse,
-
-        // Dropped file API (binary-safe)
-        drop: this.api.drop,
-
-        // Document metadata (read-only)
-        doc: (this.api as any).doc,
-
-        // Host Sync info (read-only)
-        host: (this.api as any).host,
-
-        // Shared scene state (synced host -> client)
-        scene: (this.api as any).scene,
-        
-        // Theme API
-        getStyle: this.api.getStyle,
-        theme: this.api.theme,
-        themes: this.api.themes,
-        
-        // Module API
-        modules: this.api.modules,
-        
-        // Native Browser APIs
-        // Note: SES Compartments do not automatically inherit host globals.
-        // Explicitly endow safe built-ins needed by user docs/demos.
-        CompressionStream: (globalThis as any).CompressionStream,
-        DecompressionStream: (globalThis as any).DecompressionStream,
-        TextEncoder: (globalThis as any).TextEncoder,
-        TextDecoder: (globalThis as any).TextDecoder,
-        Response: (globalThis as any).Response,
-        // Bind to the host global to avoid "Illegal invocation" in some runtimes.
-        atob: (s: string) => (globalThis as any).atob(s),
-        btoa: (s: string) => (globalThis as any).btoa(s),
-
-          audio: (() => {
-            const audioRef: any = (this.api as any).audio;
-            if (!audioRef || typeof audioRef !== 'object') return audioRef;
-            const audio = Object.create(audioRef);
-            if (typeof audioRef.loadSoundFromBlob === 'function') {
-              audio.loadSoundFromBlob = (name: string) => audioRef.loadSoundFromBlob(name, documentId);
-            }
-            if (typeof audioRef.playBlob === 'function') {
-              audio.playBlob = (name: string, options?: any) => audioRef.playBlob(name, options, documentId);
-            }
-            // captureForExport must be an own-property so SES-hardened prototypes
-            // don't block access from inside the Compartment.
-            if (typeof audioRef.captureForExport === 'function') {
-              audio.captureForExport = (buffer: any, offsetSec?: number) =>
-                audioRef.captureForExport(buffer, offsetSec);
-            }
-            if (typeof audioRef.getCapturedForExport === 'function') {
-              audio.getCapturedForExport = () => audioRef.getCapturedForExport();
-            }
-            return audio;
-          })(),
-        canvas2d: this.api.canvas2d,
-        webgl: this.api.webgl,
-        webgpu: this.api.webgpu,
-
-        // WGSL Shader API (high-level shader management)
-        shader: this.api.shader,
-        
-        // Compositor API (Phase 1-5)
-        compositor: this.api.compositor,
-
-        // Retained-mode TUI API
-        tui: this.api.tui,
-        
-        // Retained-mode GUI API
-        gui: this.api.gui,
-
-        // Embedded blobs (document-scoped)
-        blob: (this.api as any).blob?.forDocument ? (this.api as any).blob.forDocument(documentId) : (this.api as any).blob,
-
-        // Embedded ASCII blocks (document-scoped)
-        ascii: (this.api as any).ascii?.forDocument ? (this.api as any).ascii.forDocument(documentId) : (this.api as any).ascii,
-
-        // Convenience drawing helper (document-aware)
-        drawAscii: (x: number, y: number, name: string, fg?: any, bg?: any) => {
-          const asciiRef: any = (this.api as any).ascii;
-          const ascii = asciiRef?.forDocument ? asciiRef.forDocument(documentId) : asciiRef;
-          if (!ascii || typeof ascii.lines !== 'function') return;
-          const lines = ascii.lines(name) as string[] | null;
-          if (!lines || !Array.isArray(lines)) return;
-          for (let i = 0; i < lines.length; i++) {
-            this.api.term.write(x, y + i, lines[i] ?? '', fg, bg);
-          }
-        },
-
-        // Embedded FIGlet fonts (document-scoped)
-        figlet: (this.api as any).figlet?.forDocument ? (this.api as any).figlet.forDocument(documentId) : (this.api as any).figlet,
-
-        // Embedded STFXR presets (document-scoped)
-        stfxr: (this.api as any).stfxr?.forDocument ? (this.api as any).stfxr.forDocument(documentId) : (this.api as any).stfxr,
-
-        // Convenience drawing helper (document-aware)
-        drawFiglet: (x: number, y: number, fontName: string, text: string, fg?: any, bg?: any, options?: { vertical?: boolean; letterSpacing?: number }) => {
-          const figletRef: any = (this.api as any).figlet;
-          const figlet = figletRef?.forDocument ? figletRef.forDocument(documentId) : figletRef;
-          if (!figlet) return;
-
-          const vertical = !!options?.vertical;
-          const letterSpacing = Math.max(0, options?.letterSpacing ?? 0);
-
-          if (vertical) {
-            let currentY = y;
-            for (const ch of Array.from(String(text ?? ''))) {
-              const lines = typeof figlet.renderChar === 'function' ? (figlet.renderChar(fontName, ch) as string[]) : [];
-              for (let i = 0; i < (lines?.length ?? 0); i++) {
-                this.api.term.write(x, currentY + i, lines[i] ?? '', fg, bg);
-              }
-              currentY += (typeof figlet.height === 'function' ? figlet.height(fontName) : (lines?.length ?? 0)) + letterSpacing;
-            }
-            return;
-          }
-
-          if (letterSpacing > 0 && typeof figlet.renderChar === 'function') {
-            let currentX = x;
-            const height = (typeof figlet.height === 'function') ? figlet.height(fontName) : 0;
-            for (const ch of Array.from(String(text ?? ''))) {
-              const lines = figlet.renderChar(fontName, ch) as string[];
-              for (let i = 0; i < (lines?.length ?? height); i++) {
-                this.api.term.write(currentX, y + i, (lines?.[i] ?? ''), fg, bg);
-              }
-              const w = Math.max(0, ...(lines ?? []).map((l: string) => (l ?? '').length));
-              currentX += w + letterSpacing;
-            }
-            return;
-          }
-
-          const lines = (typeof figlet.render === 'function') ? (figlet.render(fontName, text) as string[]) : [];
-          if (!lines || !Array.isArray(lines)) return;
-          for (let i = 0; i < lines.length; i++) {
-            this.api.term.write(x, y + i, lines[i] ?? '', fg, bg);
-          }
-        },
-
-        // Embedded ANSI art (document-scoped)
-        ansi: (this.api as any).ansi?.forDocument ? (this.api as any).ansi.forDocument(documentId) : (this.api as any).ansi,
-
-        // Convenience drawing helper (document-aware)
-        drawAnsi: (x: number, y: number, name: string) => {
-          const ansiRef: any = (this.api as any).ansi;
-          const ansi = ansiRef?.forDocument ? ansiRef.forDocument(documentId) : ansiRef;
-          if (!ansi || typeof ansi.runs !== 'function') return;
-          const lines = ansi.runs(name) as any[] | null;
-          if (!lines || !Array.isArray(lines)) return;
-          for (let row = 0; row < lines.length; row++) {
-            const runs = lines[row] as any[];
-            if (!runs || !Array.isArray(runs)) continue;
-            let cx = x;
-            for (const run of runs) {
-              const text = String(run?.text ?? '');
-              if (!text) continue;
-              this.api.term.write(cx, y + row, text, run?.fg, run?.bg);
-              cx += text.length;
-            }
-          }
-        },
-
-        // WebGPU UI API (document-aware wrapper for helpers that need doc context)
-        ui: (() => {
-          const uiRef: any = (this.api as any).ui;
-          if (!uiRef || typeof uiRef !== 'object') return uiRef;
-          if (typeof uiRef.loadImageFromBlob !== 'function') return uiRef;
-          const ui = Object.create(uiRef);
-          ui.loadImageFromBlob = (name: string) => uiRef.loadImageFromBlob(name, documentId);
-          // These must be own-properties so SES-hardened prototypes don't block
-          // access from inside the Compartment (same pattern as audio.captureForExport).
-          if (typeof uiRef.loadImageFromURL === 'function') {
-            ui.loadImageFromURL = (url: string) => uiRef.loadImageFromURL(url);
-          }
-          if (typeof uiRef.getImageSize === 'function') {
-            ui.getImageSize = (imageId: string) => uiRef.getImageSize(imageId);
-          }
-          return ui;
-        })(),
-        
-        // 3D Canvas API
-        worlds: this.api.worlds,
-        
-        // Mouse/terminal accessors - provide BOTH properties (getters) and functions
-        // Use captured apiRef to avoid this binding issues in SES
-        get mouseX() { return apiRef.mouseX; },
-        get mouseY() { return apiRef.mouseY; },
-        get mouseCellX() { return apiRef.mouseCellX; },
-        get mouseCellY() { return apiRef.mouseCellY; },
-        get mousePixelX() { return apiRef.mousePixelX; },
-        get mousePixelY() { return apiRef.mousePixelY; },
-        get termWidth() { return apiRef.termWidth; },
-        get termHeight() { return apiRef.termHeight; },
-        
-        // Function versions - same as getters but explicit
-        getMouseX: () => apiRef.mouseX,
-        getMouseY: () => apiRef.mouseY,
-        getMouseCellX: () => apiRef.mouseCellX,
-        getMouseCellY: () => apiRef.mouseCellY,
-        getMousePixelX: () => apiRef.mousePixelX,
-        getMousePixelY: () => apiRef.mousePixelY,
-        getTermWidth: () => apiRef.termWidth,
-        getTermHeight: () => apiRef.termHeight,
-        
-        // Read-only state accessors
-        getFrame: this.api.getFrame,
-        getTime: this.api.getTime,
-        getDelta: this.api.getDelta,
-        get isExporting() { return apiRef.isExporting; },
-        getIsExporting: this.api.getIsExporting,
-
-        // URL parameter helper (safe — resolved in host context before entering SES)
-        getParam: this.api.getParam,
-
-        // Seeded / random utilities (same PRNG as the engine)
-        random: this.api.random,
-
-        // Host system utilities (download, etc.) — run in trusted context
-        sys: this.api.sys,
 
         // NO ACCESS TO:
         // - fetch (network)
@@ -1477,6 +1332,17 @@ export class ScriptSandbox {
         // - Function constructor
         // - XMLHttpRequest
       };
+
+      installDocumentCapabilityApiGlobals(
+        compartmentGlobals,
+        this.api as Record<string, any>,
+        getAllKnownCapabilityPacks(),
+        {
+          documentId,
+          globalObject: globalThis,
+          includeCompatibilityAliases: true,
+        },
+      );
       
       const compartment = new Compartment(compartmentGlobals);
 

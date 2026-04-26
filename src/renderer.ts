@@ -4,6 +4,7 @@
  */
 
 import type { Cell, Color } from './types.js';
+import type { Draw2D } from './ui/draw2d.js';
 import { ColorUtils, COLORS } from './types.js';
 import { getPrimaryFontFamily, measureMonospaceCellWidth, tryLoadGoogleFontFamily } from './font-loading.js';
 
@@ -163,5 +164,44 @@ export class Canvas2DRenderer {
   clear(color: Color = COLORS.BLACK): void {
     this.ctx.fillStyle = ColorUtils.toCss(color);
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+  }
+
+  createDraw2D(): Draw2D {
+    return {
+      rect: (x, y, w, h, color) => {
+        this.ctx.fillStyle = ColorUtils.toCss(color);
+        this.ctx.fillRect(x, y, w, h);
+      },
+      text: (text, x, y, color, scale = 1) => {
+        const nextScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+        const prevFont = this.ctx.font;
+        const prevBaseline = this.ctx.textBaseline;
+        const prevAlign = this.ctx.textAlign;
+        this.ctx.font = `${Math.max(1, this.fontSize * nextScale)}px ${this.fontFamily}`;
+        this.ctx.textBaseline = 'top';
+        this.ctx.textAlign = 'left';
+        this.ctx.fillStyle = ColorUtils.toCss(color);
+        this.ctx.fillText(text, x, y);
+        this.ctx.font = prevFont;
+        this.ctx.textBaseline = prevBaseline;
+        this.ctx.textAlign = prevAlign;
+      },
+      measureTextWidth: (text, scale = 1) => {
+        const nextScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+        const prevFont = this.ctx.font;
+        this.ctx.font = `${Math.max(1, this.fontSize * nextScale)}px ${this.fontFamily}`;
+        const width = this.ctx.measureText(text).width;
+        this.ctx.font = prevFont;
+        return width;
+      },
+      clear: (color) => {
+        this.ctx.fillStyle = ColorUtils.toCss(color);
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      },
+      metrics: {
+        charWidth: this.cellWidth,
+        charHeight: this.cellHeight,
+      },
+    };
   }
 }

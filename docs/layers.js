@@ -1,0 +1,225 @@
+/**
+ * Layer system for compositing multiple drawing surfaces
+ */
+import { COLORS, ColorUtils } from './types.js';
+export class Layer {
+    id;
+    buffer;
+    visible = true;
+    alpha = 1.0;
+    width;
+    height;
+    defaultBg;
+    constructor(id, width, height) {
+        this.id = id;
+        this.width = width;
+        this.height = height;
+        this.defaultBg = COLORS.BLACK;
+        this.buffer = this.createBuffer(width, height);
+    }
+    createBuffer(width, height) {
+        const buffer = [];
+        for (let y = 0; y < height; y++) {
+            const row = [];
+            for (let x = 0; x < width; x++) {
+                row.push({
+                    char: ' ',
+                    fg: COLORS.WHITE,
+                    bg: this.defaultBg
+                });
+            }
+            buffer.push(row);
+        }
+        return buffer;
+    }
+    write(x, y, text, fg, bg) {
+        if (y < 0 || y >= this.height)
+            return;
+        for (let i = 0; i < text.length; i++) {
+            const px = x + i;
+            if (px < 0 || px >= this.width)
+                continue;
+            const cell = this.buffer[y][px];
+            cell.char = text[i];
+            if (fg !== undefined)
+                cell.fg = ColorUtils.from(fg);
+            if (bg !== undefined)
+                cell.bg = ColorUtils.from(bg);
+        }
+    }
+    plot(x, y, char, fg, bg) {
+        if (x < 0 || x >= this.width || y < 0 || y >= this.height)
+            return;
+        const cell = this.buffer[y][x];
+        cell.char = char;
+        if (fg !== undefined)
+            cell.fg = ColorUtils.from(fg);
+        if (bg !== undefined)
+            cell.bg = ColorUtils.from(bg);
+    }
+    /**
+     * Fill a rectangular region with a character and optional colors.
+     * Clamps to the layer bounds automatically.
+     */
+    fill(x, y, w, h, char = ' ', fg, bg) {
+        const fgColor = fg !== undefined ? ColorUtils.from(fg) : undefined;
+        const bgColor = bg !== undefined ? ColorUtils.from(bg) : undefined;
+        const x1 = Math.max(0, x);
+        const y1 = Math.max(0, y);
+        const x2 = Math.min(this.width, x + w);
+        const y2 = Math.min(this.height, y + h);
+        for (let row = y1; row < y2; row++) {
+            for (let col = x1; col < x2; col++) {
+                const cell = this.buffer[row][col];
+                cell.char = char;
+                if (fgColor !== undefined)
+                    cell.fg = fgColor;
+                if (bgColor !== undefined)
+                    cell.bg = bgColor;
+            }
+        }
+    }
+    clear(bgColor) {
+        const bg = bgColor || COLORS.BLACK;
+        this.defaultBg = bg;
+        for (let y = 0; y < this.height; y++) {
+            for (let x = 0; x < this.width; x++) {
+                this.buffer[y][x] = {
+                    char: ' ',
+                    fg: COLORS.WHITE,
+                    bg: bg
+                };
+            }
+        }
+    }
+    resize(width, height) {
+        const oldBuffer = this.buffer;
+        const oldW = this.width;
+        const oldH = this.height;
+        this.width = width;
+        this.height = height;
+        const next = this.createBuffer(width, height);
+        const copyW = Math.min(oldW, width);
+        const copyH = Math.min(oldH, height);
+        for (let y = 0; y < copyH; y++) {
+            for (let x = 0; x < copyW; x++) {
+                next[y][x] = oldBuffer[y][x];
+            }
+        }
+        this.buffer = next;
+    }
+}
+export class LayerStack {
+    layers = new Map();
+    layerOrder = [];
+    activeLayerId = 'default';
+    width;
+    height;
+    constructor(width, height) {
+        this.width = width;
+        this.height = height;
+        // Create default layer
+        this.create('default', width, height);
+    }
+    create(id, width, height) {
+        const w = width || this.width;
+        const h = height || this.height;
+        const layer = new Layer(id, w, h);
+        this.layers.set(id, layer);
+        if (!this.layerOrder.includes(id)) {
+            this.layerOrder.push(id);
+        }
+        return layer;
+    }
+    get(id) {
+        return this.layers.get(id);
+    }
+    getActive() {
+        return this.layers.get(this.activeLayerId) || this.layers.get('default');
+    }
+    show(id) {
+        const layer = this.layers.get(id);
+        if (layer)
+            layer.visible = true;
+    }
+    hide(id) {
+        const layer = this.layers.get(id);
+        if (layer)
+            layer.visible = false;
+    }
+    setAlpha(id, alpha) {
+        const layer = this.layers.get(id);
+        if (layer)
+            layer.alpha = Math.max(0, Math.min(1, alpha));
+    }
+    remove(id) {
+        if (id === 'default')
+            return; // Can't remove default layer
+        this.layers.delete(id);
+        const index = this.layerOrder.indexOf(id);
+        if (index !== -1) {
+            this.layerOrder.splice(index, 1);
+        }
+    }
+    /**
+     * Composite all visible layers into a single buffer
+     * Layers are composited in order with alpha blending
+     */
+    composite() {
+        const result = [];
+        // Initialize with transparent cells
+        for (let y = 0; y < this.height; y++) {
+            const row = [];
+            for (let x = 0; x < this.width; x++) {
+                row.push({
+                    char: ' ',
+                    fg: COLORS.WHITE,
+                    bg: COLORS.BLACK
+                });
+            }
+            result.push(row);
+        }
+        // Composite each visible layer
+        for (const layerId of this.layerOrder) {
+            const layer = this.layers.get(layerId);
+            if (!layer || !layer.visible)
+                continue;
+            for (let y = 0; y < Math.min(layer.height, this.height); y++) {
+                for (let x = 0; x < Math.min(layer.width, this.width); x++) {
+                    const srcCell = layer.buffer[y][x];
+                    const dstCell = result[y][x];
+                    if (layer.alpha >= 1.0) {
+                        // Fully opaque - direct copy
+                        dstCell.char = srcCell.char;
+                        dstCell.fg = srcCell.fg;
+                        dstCell.bg = srcCell.bg;
+                    }
+                    else {
+                        // Alpha blend
+                        const alpha = layer.alpha;
+                        // Only blend if not space
+                        if (srcCell.char !== ' ') {
+                            dstCell.char = srcCell.char;
+                            dstCell.fg = ColorUtils.blend(srcCell.fg, dstCell.fg, alpha);
+                        }
+                        dstCell.bg = ColorUtils.blend(srcCell.bg, dstCell.bg, alpha);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+    resize(width, height) {
+        this.width = width;
+        this.height = height;
+        for (const layer of this.layers.values()) {
+            layer.resize(width, height);
+        }
+    }
+    clearAll(bgColor) {
+        for (const layer of this.layers.values()) {
+            layer.clear(bgColor);
+        }
+    }
+}
+//# sourceMappingURL=layers.js.map

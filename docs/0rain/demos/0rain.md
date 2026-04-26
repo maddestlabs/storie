@@ -602,6 +602,7 @@ var SETTINGS_AUDIO_LABEL_ID = 'settings-audio-state';
 var NAV_HISTORY_MAX = 24;
 var BGM_AUDIO_URL = 'assets/audio/01-dreams-of-her.ogg';
 var BGM_VOLUME = 0.34;
+var GUI_DEBUG = sys.params.get('debugGui', '') === '1' || sys.params.get('content', '') === '0rain';
 
 var guiWidgets = null;
 var g = {
@@ -620,10 +621,12 @@ var g = {
   audioEnabled: true,
   audioUnlocked: false,
   audioUnlockPending: false,
-  bgmBuffer: null,
+  bgmAsset: null,
   bgmLoadPromise: null,
-  bgmSource: null,
+  bgmVoice: null,
   bgmStartToken: 0,
+  blobAudioAssets: {},
+  blobAudioLoadPromises: {},
   guiMouseDown: false,
   titleSectionIndex: null,
   playSectionIndex: null,
@@ -633,9 +636,15 @@ var g = {
   themeNames: [],
   themeIndex: 0,
   themeName: 'zerorain',
+  guiDebugLastLogAt: -1,
   playHintClearTimer: -1,
   gameOverReturnTimer: -1
   };
+
+function debugGuiLog(tag, data) {
+  if (!GUI_DEBUG) return;
+  console.log('[debugGui][0rain]', tag, data || {});
+}
 
 // ── PRNG helpers (take the raw ()=>number from random.rng) ────────────────
 function rInt(r, min, max)   { return Math.floor(r() * (max - min + 1)) + min; }
@@ -680,14 +689,14 @@ function showPlaySectionGameOverContent() {
   });
 }
 
-function ensureBackgroundMusicBuffer() {
-  if (g.bgmBuffer) return Promise.resolve(g.bgmBuffer);
+function ensureBackgroundMusicAsset() {
+  if (g.bgmAsset) return Promise.resolve(g.bgmAsset);
   if (g.bgmLoadPromise) return g.bgmLoadPromise;
 
-  g.bgmLoadPromise = audio.loadSound(BGM_AUDIO_URL).then(function (buffer) {
+  g.bgmLoadPromise = audio.asset.load(BGM_AUDIO_URL).then(function (asset) {
     g.bgmLoadPromise = null;
-    if (buffer) g.bgmBuffer = buffer;
-    return buffer || null;
+    if (asset) g.bgmAsset = asset;
+    return asset || null;
   }).catch(function () {
     g.bgmLoadPromise = null;
     return null;
@@ -696,13 +705,28 @@ function ensureBackgroundMusicBuffer() {
   return g.bgmLoadPromise;
 }
 
+function ensureBlobAudioAsset(name) {
+  if (g.blobAudioAssets[name]) return Promise.resolve(g.blobAudioAssets[name]);
+  if (g.blobAudioLoadPromises[name]) return g.blobAudioLoadPromises[name];
+
+  g.blobAudioLoadPromises[name] = audio.asset.fromBlob(name).then(function (asset) {
+    delete g.blobAudioLoadPromises[name];
+    if (asset) g.blobAudioAssets[name] = asset;
+    return asset || null;
+  }).catch(function () {
+    delete g.blobAudioLoadPromises[name];
+    return null;
+  });
+
+  return g.blobAudioLoadPromises[name];
+}
+
 function stopBackgroundMusic() {
   g.bgmStartToken++;
-  var source = g.bgmSource;
-  g.bgmSource = null;
-  if (!source) return;
-  source.onended = null;
-  try { source.stop(); } catch (e) {}
+  var voice = g.bgmVoice;
+  g.bgmVoice = null;
+  if (!voice) return;
+  audio.stop(voice);
 }
 
 function shouldPlayBackgroundMusic() {
@@ -714,27 +738,24 @@ function startBackgroundMusicFromTop() {
 
   stopBackgroundMusic();
   var startToken = g.bgmStartToken;
-  audio.context.resume().catch(function () {});
-
-  ensureBackgroundMusicBuffer().then(function (buffer) {
-    if (!buffer) return;
+  ensureBackgroundMusicAsset().then(function (asset) {
+    if (!asset) return;
     if (startToken !== g.bgmStartToken) return;
     if (!shouldPlayBackgroundMusic()) return;
 
-    var source = audio.playBuffer(buffer, {
+    var voice = audio.play(asset, {
       loop: true,
-      volume: BGM_VOLUME
+      gain: BGM_VOLUME,
+      offsetSec: 0
     });
+    if (!voice) return;
 
     if (startToken !== g.bgmStartToken) {
-      try { source.stop(); } catch (e) {}
+      audio.stop(voice);
       return;
     }
 
-    g.bgmSource = source;
-    source.onended = function () {
-      if (g.bgmSource === source) g.bgmSource = null;
-    };
+    g.bgmVoice = voice;
   }).catch(function () {});
 }
 
@@ -743,7 +764,16 @@ function syncBackgroundMusic() {
     stopBackgroundMusic();
     return;
   }
-  if (!g.bgmSource) startBackgroundMusicFromTop();
+  if (!g.bgmVoice) {
+    startBackgroundMusicFromTop();
+    return;
+  }
+
+  var voice = audio.voiceInfo(g.bgmVoice);
+  if (!voice || voice.state === 'stopped') {
+    g.bgmVoice = null;
+    startBackgroundMusicFromTop();
+  }
 }
 
 function setAudioEnabled(enabled) {
@@ -1020,6 +1050,14 @@ function syncSettingsWorldWidgets() {
   }
   worlds.widgets.setValue(SETTINGS_THEME_SLIDER_ID, g.themeIndex, sectionRef);
   worlds.widgets.setValue(SETTINGS_AUDIO_LABEL_ID, 'Audio: ' + (g.audioEnabled ? 'On' : 'Off'), sectionRef);
+  debugGuiLog('settings-world-widgets', {
+    currentSection: worlds && typeof worlds.currentSection === 'number' ? worlds.currentSection : null,
+    settingsSectionIndex: g.settingsSectionIndex,
+    sectionRef: sectionRef,
+    themeIndex: g.themeIndex,
+    themeCount: g.themeNames.length,
+    audioEnabled: g.audioEnabled
+  });
 }
 
 function handleSettingsWorldWidgetEvents() {
@@ -1080,7 +1118,7 @@ function unlockExperienceAudio() {
   g.audioUnlockPending = true;
   startRainAudio().then(function (started) {
     g.audioUnlockPending = false;
-    if (!started || !g.audioEnabled || audio.context.state !== 'running') return;
+    if (!started || !g.audioEnabled || audio.state !== 'running') return;
     g.audioUnlocked = true;
     setRainLevel(g.gameMode === 'play' ? RAIN_PLAY_GAIN : RAIN_IDLE_GAIN, 0.35);
   }).catch(function () {
@@ -1162,6 +1200,12 @@ function initOverlayGui() {
 
   gui.setGroupVisible(GUI_GROUP_HUD, true);
   gui.setGroupVisible(GUI_GROUP_KEYPAD, false);
+  debugGuiLog('overlay-init', {
+    hudGroup: GUI_GROUP_HUD,
+    keypadGroup: GUI_GROUP_KEYPAD,
+    keypadButtons: guiWidgets.keypadButtons.length,
+    seedValue: guiWidgets.seedInput ? guiWidgets.seedInput.getValue() : null
+  });
 }
 
 function layoutOverlayGui() {
@@ -1249,6 +1293,36 @@ function updateOverlayHud() {
 
   ensureThemeSelectorState();
   syncSettingsWorldWidgets();
+
+  if (GUI_DEBUG) {
+    var now = getTime();
+    if (!(typeof g.guiDebugLastLogAt === 'number') || now - g.guiDebugLastLogAt >= 0.75) {
+      g.guiDebugLastLogAt = now;
+      debugGuiLog('overlay-state', {
+        currentSection: worlds && typeof worlds.currentSection === 'number' ? worlds.currentSection : null,
+        titleSectionIndex: g.titleSectionIndex,
+        settingsSectionIndex: g.settingsSectionIndex,
+        playSectionIndex: g.playSectionIndex,
+        canEditSeed: canEditSeed,
+        seedFocused: seedFocused,
+        keypadVisible: showKeypad,
+        seedBounds: guiWidgets.seedInput && guiWidgets.seedInput.bounds ? {
+          x: guiWidgets.seedInput.bounds.x,
+          y: guiWidgets.seedInput.bounds.y,
+          width: guiWidgets.seedInput.bounds.width,
+          height: guiWidgets.seedInput.bounds.height
+        } : null,
+        scoreBounds: guiWidgets.scoreLabel && guiWidgets.scoreLabel.bounds ? {
+          x: guiWidgets.scoreLabel.bounds.x,
+          y: guiWidgets.scoreLabel.bounds.y,
+          width: guiWidgets.scoreLabel.bounds.width,
+          height: guiWidgets.scoreLabel.bounds.height
+        } : null,
+        gameMode: g.gameMode,
+        score: g.score
+      });
+    }
+  }
 }
 
 function getDigitColor(s, i, alpha) {
@@ -1378,44 +1452,47 @@ function playGameSfx(name, vol) {
 function playGameBlobSfx(name, blobName, vol) {
   if (!g.audioEnabled) return;
   stopGameSfx(name);
-  audio.context.resume().catch(function () {});
 
   var handle = {
-    source: null,
+    voice: null,
     stopped: false,
     stop: function () {
       handle.stopped = true;
-      if (handle.source) {
-        try { handle.source.stop(); } catch (e) {}
-      }
+      if (handle.voice) audio.stop(handle.voice);
     }
   };
 
   g.gameSfx[name] = handle;
 
-  audio.playBlob(blobName, { volume: vol }).then(function (source) {
+  ensureBlobAudioAsset(blobName).then(function (asset) {
     if (g.gameSfx[name] !== handle) {
-      if (source) {
-        try { source.stop(); } catch (e) {}
-      }
       return;
     }
 
-    if (!source || handle.stopped) {
-      if (source && handle.stopped) {
-        try { source.stop(); } catch (e) {}
-      }
+    if (!asset || handle.stopped) {
       delete g.gameSfx[name];
       return;
     }
 
-    handle.source = source;
-    source.onended = function () {
+    var voice = audio.play(asset, { gain: vol });
+    if (!voice) {
       if (g.gameSfx[name] === handle) delete g.gameSfx[name];
-    };
+      return;
+    }
+
+    handle.voice = voice;
   }).catch(function () {
     if (g.gameSfx[name] === handle) delete g.gameSfx[name];
   });
+}
+
+function syncGameSfxHandles() {
+  for (var name in g.gameSfx) {
+    var active = g.gameSfx[name];
+    if (!active || !active.voice) continue;
+    var voice = audio.voiceInfo(active.voice);
+    if (!voice || voice.state === 'stopped') delete g.gameSfx[name];
+  }
 }
 
 function maybePlayRainDrop(drop, r) {
@@ -1441,9 +1518,9 @@ function maybePlayRainDrop(drop, r) {
 }
 
 function makeRainImpulseBuffer(seconds, decay) {
-  var ctx = audio.context;
-  var length = Math.max(1, Math.floor(ctx.sampleRate * seconds));
-  var impulse = ctx.createBuffer(2, length, ctx.sampleRate);
+  var sampleRate = audio.sampleRate;
+  var length = Math.max(1, Math.floor(sampleRate * seconds));
+  var impulse = audio.buffer.create(2, length, sampleRate);
 
   for (var channel = 0; channel < impulse.numberOfChannels; channel++) {
     var data = impulse.getChannelData(channel);
@@ -1457,9 +1534,9 @@ function makeRainImpulseBuffer(seconds, decay) {
 }
 
 function makeRainNoiseBuffer(seconds, kind) {
-  var ctx = audio.context;
-  var length = Math.max(1, Math.floor(ctx.sampleRate * seconds));
-  var buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+  var sampleRate = audio.sampleRate;
+  var length = Math.max(1, Math.floor(sampleRate * seconds));
+  var buffer = audio.buffer.create(1, length, sampleRate);
   var data = buffer.getChannelData(0);
   var brown = 0;
   var low = 0;
@@ -1505,170 +1582,77 @@ function makeRainNoiseBuffer(seconds, kind) {
   return buffer;
 }
 
-function wireRainLayer(source, options) {
-  var highpass = audio.createBiquadFilter();
-  var lowpass = audio.createBiquadFilter();
-  var layerGain = audio.createGain();
-
-  highpass.type = 'highpass';
-  highpass.frequency.value = options.hp;
-  highpass.Q.value = options.hpQ || 0.0001;
-
-  lowpass.type = 'lowpass';
-  lowpass.frequency.value = options.lp;
-  lowpass.Q.value = options.lpQ || 0.0001;
-
-  layerGain.gain.value = options.gain;
-
-  source.connect(highpass);
-  highpass.connect(lowpass);
-  lowpass.connect(layerGain);
-  layerGain.connect(options.bus);
-  return layerGain;
-}
-
 function ensureRainAudio() {
   if (g.rain) return g.rain;
 
-  var ctx = audio.context;
-  var rain = {
-    started: false,
-    master: audio.createGain(),
-    dry: audio.createGain(),
-    wet: audio.createGain(),
-    convolver: audio.createConvolver(),
-    compressor: ctx.createDynamicsCompressor(),
-    lfo: audio.createOscillator(),
-    lfoDepth: audio.createGain(),
-    sources: []
-  };
-
-  rain.master.gain.value = 0;
-  rain.dry.gain.value = 0.82;
-  rain.wet.gain.value = 0.48;
-  rain.convolver.buffer = makeRainImpulseBuffer(1.8, 2.7);
-
-  rain.compressor.threshold.value = -26;
-  rain.compressor.knee.value = 18;
-  rain.compressor.ratio.value = 2.4;
-  rain.compressor.attack.value = 0.02;
-  rain.compressor.release.value = 0.25;
-
-  rain.dry.connect(rain.compressor);
-  rain.wet.connect(rain.convolver);
-  rain.convolver.connect(rain.compressor);
-  rain.compressor.connect(rain.master);
-  rain.master.connect(audio.destination);
-
-  rain.lfo.type = 'sine';
-  rain.lfo.frequency.value = 0.07;
-  rain.lfoDepth.gain.value = 0.018;
-  rain.lfo.connect(rain.lfoDepth);
-  rain.lfoDepth.connect(rain.master.gain);
-
-  rain.sources.push({
-    source: ctx.createBufferSource(),
-    offset: Math.random() * 11.17,
-    duration: 11.17,
-    route: function (src) {
-      src.buffer = makeRainNoiseBuffer(11.17, 'body');
-      src.loop = true;
-      wireRainLayer(src, { hp: 180, lp: 1800, gain: 0.18, bus: rain.dry });
-      wireRainLayer(src, { hp: 260, lp: 2200, gain: 0.11, bus: rain.wet });
-    }
+  g.rain = audio.ambient.createLayeredBed({
+    masterGain: 0,
+    dryGain: 0.82,
+    wetGain: 0.48,
+    impulse: { buffer: makeRainImpulseBuffer(1.8, 2.7) },
+    compressor: {
+      threshold: -26,
+      knee: 18,
+      ratio: 2.4,
+      attack: 0.02,
+      release: 0.25
+    },
+    lfo: {
+      type: 'sine',
+      frequencyHz: 0.07,
+      depth: 0.018
+    },
+    layers: [
+      {
+        buffer: makeRainNoiseBuffer(11.17, 'body'),
+        offsetSec: Math.random() * 11.17,
+        loop: true,
+        routes: [
+          { hp: 180, lp: 1800, gain: 0.18, bus: 'dry' },
+          { hp: 260, lp: 2200, gain: 0.11, bus: 'wet' }
+        ]
+      },
+      {
+        buffer: makeRainNoiseBuffer(7.31, 'detail'),
+        offsetSec: Math.random() * 7.31,
+        loop: true,
+        routes: [
+          { hp: 2400, lp: 9800, gain: 0.09, bus: 'dry' },
+          { hp: 3200, lp: 9000, gain: 0.08, bus: 'wet' }
+        ]
+      },
+      {
+        buffer: makeRainNoiseBuffer(5.13, 'drops'),
+        offsetSec: Math.random() * 5.13,
+        loop: true,
+        routes: [
+          { hp: 900, lp: 4200, hpQ: 0.5, lpQ: 0.7, gain: 0.06, bus: 'wet' }
+        ]
+      },
+      {
+        buffer: makeRainNoiseBuffer(3.87, 'crackle'),
+        offsetSec: Math.random() * 3.87,
+        loop: true,
+        routes: [
+          { hp: 1800, lp: 7800, hpQ: 0.9, lpQ: 0.7, gain: 0.055, bus: 'dry' },
+          { hp: 2400, lp: 7200, hpQ: 1.0, lpQ: 0.75, gain: 0.065, bus: 'wet' }
+        ]
+      }
+    ]
   });
 
-  rain.sources.push({
-    source: ctx.createBufferSource(),
-    offset: Math.random() * 7.31,
-    duration: 7.31,
-    route: function (src) {
-      src.buffer = makeRainNoiseBuffer(7.31, 'detail');
-      src.loop = true;
-      wireRainLayer(src, { hp: 2400, lp: 9800, gain: 0.09, bus: rain.dry });
-      wireRainLayer(src, { hp: 3200, lp: 9000, gain: 0.08, bus: rain.wet });
-    }
-  });
-
-  rain.sources.push({
-    source: ctx.createBufferSource(),
-    offset: Math.random() * 5.13,
-    duration: 5.13,
-    route: function (src) {
-      src.buffer = makeRainNoiseBuffer(5.13, 'drops');
-      src.loop = true;
-      wireRainLayer(src, { hp: 900, lp: 4200, hpQ: 0.5, lpQ: 0.7, gain: 0.06, bus: rain.wet });
-    }
-  });
-
-  rain.sources.push({
-    source: ctx.createBufferSource(),
-    offset: Math.random() * 3.87,
-    duration: 3.87,
-    route: function (src) {
-      src.buffer = makeRainNoiseBuffer(3.87, 'crackle');
-      src.loop = true;
-      wireRainLayer(src, { hp: 1800, lp: 7800, hpQ: 0.9, lpQ: 0.7, gain: 0.055, bus: rain.dry });
-      wireRainLayer(src, { hp: 2400, lp: 7200, hpQ: 1.0, lpQ: 0.75, gain: 0.065, bus: rain.wet });
-    }
-  });
-
-  g.rain = rain;
-  return rain;
+  return g.rain;
 }
 
 function setRainLevel(level, rampSeconds) {
-  var rain = ensureRainAudio();
-  var now = audio.currentTime;
   var target = g.audioEnabled ? clamp(level, 0, 0.25) : 0;
-  var current = rain.master.gain.value;
   var modDepth = target > 0 ? 0.018 : 0;
-
-  rain.master.gain.cancelScheduledValues(now);
-  rain.master.gain.setValueAtTime(current, now);
-  rain.master.gain.linearRampToValueAtTime(target, now + Math.max(0.01, rampSeconds || 0.6));
-
-  rain.lfoDepth.gain.cancelScheduledValues(now);
-  rain.lfoDepth.gain.setValueAtTime(rain.lfoDepth.gain.value, now);
-  rain.lfoDepth.gain.linearRampToValueAtTime(modDepth, now + Math.max(0.01, rampSeconds || 0.6));
+  ensureRainAudio().setLevel(target, Math.max(0.01, rampSeconds || 0.6), modDepth);
 }
 
 function startRainAudio() {
   if (!g.audioEnabled) return Promise.resolve(false);
-  var rain = ensureRainAudio();
-
-  function beginPlayback() {
-    if (rain.started) return true;
-    for (var i = 0; i < rain.sources.length; i++) {
-      var layer = rain.sources[i];
-      layer.route(layer.source);
-      layer.source.start(audio.currentTime, layer.offset % layer.duration);
-    }
-    rain.lfo.start();
-    rain.started = true;
-    return true;
-  }
-
-  audio.startOnGesture(beginPlayback);
-
-  if (rain.started) {
-    audio.context.resume().catch(function () {
-      return false;
-    });
-    return Promise.resolve(true);
-  }
-
-  if (audio.context.state === 'running') {
-    return Promise.resolve(beginPlayback());
-  }
-
-  return audio.context.resume().then(function () {
-    if (rain.started) return true;
-    if (audio.context.state !== 'running') return false;
-    return beginPlayback();
-  }).catch(function () {
-    return rain.started;
-  });
+  return ensureRainAudio().start();
 }
 
 // ── Input ─────────────────────────────────────────────────────────────────
@@ -1815,7 +1799,7 @@ worlds.camera.setRotation(-0.06, 0.09, 0);
 worlds.camera.setEaseSpeed(0.12, 0.14);
 
 // Apply URL seed override on first load only
-var urlSeed = getParam('seed', '');
+var urlSeed = sys.params.get('seed', '');
 var parsedUrlSeed = Math.floor(Number(urlSeed));
 if (urlSeed !== '' && isFinite(parsedUrlSeed) && g.gameMode === 'start') {
   g.urlSeed = parsedUrlSeed;
@@ -1825,8 +1809,8 @@ if (urlSeed !== '' && isFinite(parsedUrlSeed) && g.gameMode === 'start') {
 // SES compartment rather than a stale reference from a previous reload.
 g.rng = random.rng(g.seed);
 ensureRainAudio();
-audio.loadSoundFromBlob('rain_over_huh').catch(function () {});
-ensureBackgroundMusicBuffer().catch(function () {});
+ensureBlobAudioAsset('rain_over_huh').catch(function () {});
+ensureBackgroundMusicAsset().catch(function () {});
 setAudioEnabled(g.audioEnabled);
 setRainLevel(RAIN_IDLE_GAIN, 0.01);
 worlds.camera.focusOnSectionFit('0RAIN', WORLDS_SECTION_FIT, { keepRotation: true });
@@ -1962,6 +1946,7 @@ if (g.gameMode === 'gameover' && g.gameOverReturnTimer >= 0) {
 
 handleWorldLinkActions();
 handleSettingsWorldWidgetEvents();
+syncGameSfxHandles();
 gui.update(getMouseX(), getMouseY(), !!g.guiMouseDown);
 layoutOverlayGui();
 updateOverlayHud();

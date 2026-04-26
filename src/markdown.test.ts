@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { parseMarkdown } from './markdown.js';
+import { parseMarkdown, serializeMarkdownDocumentSource } from './markdown.js';
 import { getDefaultWorldsConfig, parseSectionMetadata, parseTransform3D } from './worlds.js';
 
 describe('heading directives', () => {
@@ -185,5 +186,30 @@ describe('heading directives', () => {
     expect(doc.sections[0]?.logicBlocks).toHaveLength(1);
     expect(doc.sections[0]?.logicBlocks?.[0]?.statements).toHaveLength(2);
     expect(doc.sections[1]?.logicBlocks).toBeUndefined();
+  });
+
+  it('serializes metadata and section trees back to markdown', async () => {
+    const source = [
+      '---',
+      'theme: zerorain',
+      'width: 1080',
+      'flags: ["a", "b"]',
+      '---',
+      '',
+      '# Intro {"x":10,"timed":"2500ms"}',
+      '',
+      'Hello',
+      '',
+      '## Child',
+      '',
+      'World',
+    ].join('\n');
+
+    const parsed = await parseMarkdown(source);
+    const serialized = serializeMarkdownDocumentSource(parsed);
+    const roundTrip = await parseMarkdown(serialized);
+
+    expect(roundTrip.metadata).toEqual(parsed.metadata);
+    expect(roundTrip.sections).toEqual(parsed.sections);
   });
 });

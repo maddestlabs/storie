@@ -52,11 +52,30 @@ execSync('npm run generate-favicons', { stdio: 'inherit' });
 console.log('Copying site files to docs/...');
 copyDir(siteDir, docsDir);
 
+console.log('Copying compiled runtime modules to docs/...');
+copyCompiledModules(join(rootDir, 'dist'), docsDir);
+
 function copyFileIfExists(src, dest) {
   if (!existsSync(src)) return false;
   mkdirSync(dirname(dest), { recursive: true });
   copyFileSync(src, dest);
   return true;
+}
+
+function copyCompiledModules(src, dest) {
+  if (!existsSync(src)) return;
+  const stat = statSync(src);
+  if (stat.isDirectory()) {
+    mkdirSync(dest, { recursive: true });
+    for (const entry of readdirSync(src)) {
+      copyCompiledModules(join(src, entry), join(dest, entry));
+    }
+    return;
+  }
+
+  if (!src.endsWith('.js') && !src.endsWith('.js.map')) return;
+  mkdirSync(dirname(dest), { recursive: true });
+  copyFileSync(src, dest);
 }
 
 function parseFrontmatterName(markdown) {
@@ -89,6 +108,7 @@ function makeVariantSelfContained(variant) {
   // Copy runtime dependencies into the variant folder so it can be hosted standalone.
   const runtimeFiles = [
     'bootstrap.js',
+    'storie-site.js',
     'storie.es.js',
     'style.css',
     'video-exporter.js',
@@ -107,6 +127,8 @@ function makeVariantSelfContained(variant) {
   for (const { src, dest } of folders) {
     if (existsSync(src)) copyDir(src, dest);
   }
+
+  copyCompiledModules(join(rootDir, 'dist'), variantDir);
 
   // Copy the demo markdown into the variant so default content works.
   const demosDir = join(variantDir, 'demos');
@@ -135,6 +157,8 @@ function makeVariantSelfContained(variant) {
       .replaceAll('href="../style.css"', 'href="./style.css"')
       .replaceAll("href='../style.css'", "href='./style.css'")
       .replace("import { startStorieApp } from '../bootstrap.js", "import { startStorieApp } from './bootstrap.js")
+      .replace("engineModuleUrl: '../storie-site.js", "engineModuleUrl: './storie-site.js")
+      .replace("contentSourceModuleUrl: '../content-source.js", "contentSourceModuleUrl: './content-source.js")
       .replace("engineModuleUrl: '../storie.es.js", "engineModuleUrl: './storie.es.js")
       .replace("demoBaseUrl: '../demos/'", "demoBaseUrl: './demos/'")
       .replace("indexMdUrl: '../index.md'", `indexMdUrl: './demos/${variant}.md'`)

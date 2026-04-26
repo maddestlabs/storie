@@ -8,7 +8,8 @@
 
 /**
  * @typedef {Object} StorieBootstrapConfig
- * @property {string} engineModuleUrl - URL to storie.es.js (may include cache-buster query).
+ * @property {string} engineModuleUrl - URL to the browser runtime bundle (may include cache-buster query).
+ * @property {string=} contentSourceModuleUrl - URL to the markdown source resolver module.
  * @property {string=} buildId - Used only for cache-busting demo fetches when no query string exists.
  * @property {{url: string, scope?: string}=} serviceWorker - Optional SW registration.
  * @property {string=} demoBaseUrl - Base URL for demo markdown when ?content points at a demo name.
@@ -25,7 +26,8 @@
  */
 export function startStorieApp(userConfig = /** @type {any} */ ({})) {
   const config = {
-    engineModuleUrl: './storie.es.js',
+    engineModuleUrl: './storie-site.js',
+    contentSourceModuleUrl: './content-source.js',
     buildId: '__BUILD_ID__',
     serviceWorker: null,
     demoBaseUrl: 'demos/',
@@ -60,10 +62,17 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
 
   (async () => {
     // Import the built engine (dynamic so entrypoints can vary path)
-    const engineMod = await import(/* @vite-ignore */ config.engineModuleUrl);
+    const [engineMod, contentSourceMod] = await Promise.all([
+      import(/* @vite-ignore */ config.engineModuleUrl),
+      import(/* @vite-ignore */ config.contentSourceModuleUrl),
+    ]);
     const StorieEngine = engineMod?.StorieEngine;
+    const resolveMarkdownSource = contentSourceMod?.resolveMarkdownSource;
     if (typeof StorieEngine !== 'function') {
       throw new Error('Failed to import StorieEngine from ' + config.engineModuleUrl);
+    }
+    if (typeof resolveMarkdownSource !== 'function') {
+      throw new Error('Failed to import resolveMarkdownSource from ' + config.contentSourceModuleUrl);
     }
 
     const audioGate = document.getElementById('audio-gate');
@@ -155,6 +164,51 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
       }
     })();
 
+    const demoFetchSuffix = (() => {
+      const seed = window.location.search
+        ? window.location.search.slice(1)
+        : (config.buildId || '__BUILD_ID__');
+      if (!seed) return '';
+      return '?v=' + encodeURIComponent(seed);
+    })();
+
+    const fetchMarkdownText = async (path) => {
+      const suffix = path.includes('?') ? '&' + demoFetchSuffix.slice(1) : demoFetchSuffix;
+      const response = await fetch(path + suffix, { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error('Failed to load markdown from ' + path + ' (HTTP ' + response.status + ')');
+      }
+      return response.text();
+    };
+
+    const fetchJson = async (url) => {
+      const response = await fetch(url, { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error('Failed to load JSON from ' + url + ' (HTTP ' + response.status + ')');
+      }
+      return response.json();
+    };
+
+    async function loadResolvedSource(contentRef, demoPaths, logLabel = null) {
+      const label = logLabel || contentRef;
+      console.log('Content parameter detected:', label);
+
+      const resolved = await resolveMarkdownSource(contentRef, {
+        demoPaths,
+        fetchText: fetchMarkdownText,
+        fetchJson,
+        getStoredText: (key) => localStorage.getItem(key),
+      });
+
+      console.log('Loaded ' + resolved.kind + ' source (' + resolved.markdown.length + ' chars)');
+      return {
+        source: resolved.sourcePath || resolved.kind,
+        sourceKind: resolved.kind,
+        sourcePath: resolved.sourcePath,
+        content: resolved.markdown,
+      };
+    }
+
     /**
      * Parse URL parameters to load content from various sources
      * Supports: ?content=gist:ID, ?content=demo:name, ?content=browser:key,
@@ -169,163 +223,7 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
       }
 
       console.log('Content parameter detected:', contentParam);
-
-      // 1. Compressed content: ?content=decode:xxx
-      if (contentParam.startsWith('decode:')) {
-        const compressed = contentParam.substring(7);
-        console.log('Decompressing content...');
-        try {
-          const decompressed = await decompressContent(compressed);
-          console.log('Successfully decompressed (' + decompressed.length + ' chars)');
-          return { source: 'decode', content: decompressed };
-        } catch (e) {
-          console.error('Failed to decompress:', e);
-          throw new Error('Failed to decompress content');
-        }
-      }
-
-      // 2. localStorage: ?content=browser:key or ?content=local:key
-      if (contentParam.startsWith('browser:') || contentParam.startsWith('local:')) {
-        const prefix = contentParam.startsWith('browser:') ? 'browser:' : 'local:';
-        const key = contentParam.substring(prefix.length);
-        console.log('Loading from localStorage:', key);
-
-        try {
-          // Try with storie_ prefix first
-          let content = localStorage.getItem('storie_' + key);
-          if (!content) {
-            content = localStorage.getItem(key);
-          }
-
-          if (content) {
-            console.log('Found content in localStorage (' + content.length + ' chars)');
-            return { source: 'localStorage', content };
-          } else {
-            throw new Error('No content found in localStorage for key: ' + key);
-          }
-        } catch (e) {
-          console.error('Error reading localStorage:', e);
-          throw e;
-        }
-      }
-
-      // 3. GitHub Gist: ?content=gist:ID or full URL or just ID
-      let gistId = null;
-
-      if (contentParam.startsWith('gist:')) {
-        gistId = contentParam.substring(5);
-      }
-      // Check for full GitHub gist URL
-      else if (contentParam.includes('gist.github.com/')) {
-        const gistMatch = contentParam.match(/gist\.github\.com\/(?:[^\/]+\/)?([a-f0-9]+)/);
-        if (gistMatch) {
-          gistId = gistMatch[1];
-        }
-      }
-      // Check if it looks like a 32-char hex gist ID
-      else if (/^[a-f0-9]{32}$/i.test(contentParam)) {
-        gistId = contentParam;
-      }
-
-      if (gistId) {
-        console.log('Loading gist:', gistId);
-        try {
-          const content = await loadGist(gistId);
-          return { source: 'gist', content };
-        } catch (e) {
-          console.error('Failed to load gist:', e);
-          throw e;
-        }
-      }
-
-      // 4. Demo file: ?content=demo:name or just name
-      let demoName = null;
-      if (contentParam.startsWith('demo:')) {
-        demoName = contentParam.substring(5);
-      } else {
-        // Default to demo if no prefix matched
-        demoName = contentParam;
-      }
-
-      console.log('Loading demo:', demoName);
-      try {
-        // Add .md extension if not present
-        const demoFile = demoName.endsWith('.md') ? demoName : demoName + '.md';
-        const demoFetchSuffix = (() => {
-          const seed = window.location.search
-            ? window.location.search.slice(1)
-            : (config.buildId || '__BUILD_ID__');
-          if (!seed) return '';
-          return (demoFile.includes('?') ? '&' : '?') + 'v=' + encodeURIComponent(seed);
-        })();
-        const fetchDemo = (path) => fetch(path + demoFetchSuffix, { cache: 'no-store' });
-
-        // Try loading from demos/ subfolder first if not already a path
-        let response;
-        if (!demoFile.includes('/')) {
-          response = await fetchDemo(joinUrl(config.demoBaseUrl, demoFile));
-          if (!response.ok) {
-            // Fallback to root level
-            response = await fetchDemo(demoFile);
-          }
-        } else {
-          response = await fetchDemo(demoFile);
-        }
-
-        if (!response.ok) {
-          throw new Error('Demo not found: ' + demoFile);
-        }
-
-        const content = await response.text();
-        console.log('Loaded demo (' + content.length + ' chars)');
-        return { source: 'demo', content };
-      } catch (e) {
-        console.error('Failed to load demo:', e);
-        throw e;
-      }
-    }
-
-    /**
-     * Load content from a GitHub Gist
-     */
-    async function loadGist(gistId) {
-      const response = await fetch('https://api.github.com/gists/' + gistId);
-
-      if (!response.ok) {
-        throw new Error('Gist not found (HTTP ' + response.status + ')');
-      }
-
-      const gist = await response.json();
-
-      // Find first .md file in gist
-      for (const filename in gist.files) {
-        if (filename.endsWith('.md')) {
-          const mdFile = gist.files[filename];
-          console.log('Found markdown in gist:', filename, '(' + mdFile.content.length + ' chars)');
-          return mdFile.content;
-        }
-      }
-
-      throw new Error('No .md file found in gist');
-    }
-
-    /**
-     * Decompress base64-encoded content
-     */
-    async function decompressContent(compressed) {
-      // Decode base64
-      const binaryString = atob(compressed);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
-      // Decompress using DecompressionStream API
-      const stream = new Response(bytes).body
-        .pipeThrough(new DecompressionStream('gzip'));
-
-      const decompressed = await new Response(stream).text();
-      return decompressed;
+      return await loadResolvedSource(contentParam, [joinUrl(config.demoBaseUrl, '{name}'), '{name}']);
     }
 
     /**
@@ -480,6 +378,57 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
           return false;
         };
 
+        const normalizeOrientationRequirement = (value) => {
+          const v = String(value ?? '').trim().toLowerCase();
+          if (!v || v === 'none' || v === 'auto' || v === 'any') return null;
+          if (v === 'false' || v === 'off') return null;
+          if (v.startsWith('landscape')) return 'landscape';
+          if (v.startsWith('portrait')) return 'portrait';
+          return null;
+        };
+
+        const getHostViewportSize = () => {
+          const vv = window.visualViewport;
+          const innerW = (typeof window.innerWidth === 'number') ? window.innerWidth : 0;
+          const innerH = (typeof window.innerHeight === 'number') ? window.innerHeight : 0;
+          const vvW = (vv && typeof vv.width === 'number') ? vv.width : 0;
+          const vvH = (vv && typeof vv.height === 'number') ? vv.height : 0;
+          const docW = (document.documentElement && typeof document.documentElement.clientWidth === 'number')
+            ? document.documentElement.clientWidth
+            : 0;
+          const docH = (document.documentElement && typeof document.documentElement.clientHeight === 'number')
+            ? document.documentElement.clientHeight
+            : 0;
+          const width = innerW > 0 ? innerW : (vvW > 0 ? vvW : docW);
+          const height = innerH > 0 ? innerH : (vvH > 0 ? vvH : docH);
+          return { width, height };
+        };
+
+        const ensureOrientationGate = () => {
+          let gate = document.getElementById('orientation-gate');
+          if (gate) return gate;
+
+          gate = document.createElement('div');
+          gate.id = 'orientation-gate';
+          gate.setAttribute('aria-hidden', 'true');
+
+          const card = document.createElement('div');
+          card.id = 'orientation-gate-card';
+
+          const title = document.createElement('div');
+          title.className = 'orientation-gate-title';
+          title.textContent = 'Rotate device';
+
+          const message = document.createElement('div');
+          message.id = 'orientation-gate-message';
+
+          card.appendChild(title);
+          card.appendChild(message);
+          gate.appendChild(card);
+          document.body.appendChild(gate);
+          return gate;
+        };
+
         // Optional: stretch the canvas' *CSS size* to fit the viewport even when
         // the backing buffer is cell-aligned. This trades some crispness for
         // zero wasted screen space at the edges.
@@ -513,36 +462,36 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
         // If no content from URL params, try to load index.md
         if (!markdown) {
           try {
-            const response = await fetch(config.indexMdUrl);
-            if (response.ok) {
-              markdown = await response.text();
-              source = 'index.md';
+            const defaultSource = await loadResolvedSource(
+              config.indexMdUrl,
+              ['{name}'],
+              `default:${config.indexMdUrl}`
+            );
+            markdown = defaultSource.content;
+            source = defaultSource.source;
 
-              // Diagnostics: help detect when the request returned something
-              // unexpected (e.g. HTML fallback) and why section parsing might
-              // be empty.
-              const firstLine = (markdown.split('\n')[0] || '').slice(0, 120);
-              const headingLines = markdown
-                .split('\n')
-                .filter(l => l.trimStart().startsWith('#'))
-                .length;
-              console.log(`✓ index.md first line: ${firstLine}`);
-              console.log(`✓ index.md heading lines: ${headingLines}`);
+            // Diagnostics: help detect when the request returned something
+            // unexpected (e.g. HTML fallback) and why section parsing might
+            // be empty.
+            const firstLine = (markdown.split('\n')[0] || '').slice(0, 120);
+            const headingLines = markdown
+              .split('\n')
+              .filter(l => l.trimStart().startsWith('#'))
+              .length;
+            console.log(`✓ ${source} first line: ${firstLine}`);
+            console.log(`✓ ${source} heading lines: ${headingLines}`);
 
-              // Extra diagnostic: print the first heading's codepoints so we
-              // can spot invisible characters between '#' and the title.
-              const firstHeading = markdown.split('\n').find(l => l.trimStart().startsWith('#'));
-              if (firstHeading) {
-                const raw = firstHeading.slice(0, 80);
-                const cps = Array.from(raw).slice(0, 24).map(ch => '0x' + ch.codePointAt(0).toString(16));
-                console.log('✓ index.md first heading (raw):', raw);
-                console.log('✓ index.md first heading codepoints:', cps.join(' '));
-              }
-
-              console.log('✓ Loaded index.md');
-            } else {
-              throw new Error('index.md not found');
+            // Extra diagnostic: print the first heading's codepoints so we
+            // can spot invisible characters between '#' and the title.
+            const firstHeading = markdown.split('\n').find(l => l.trimStart().startsWith('#'));
+            if (firstHeading) {
+              const raw = firstHeading.slice(0, 80);
+              const cps = Array.from(raw).slice(0, 24).map(ch => '0x' + ch.codePointAt(0).toString(16));
+              console.log(`✓ ${source} first heading (raw):`, raw);
+              console.log(`✓ ${source} first heading codepoints:`, cps.join(' '));
             }
+
+            console.log(`✓ Loaded ${source}`);
           } catch (error) {
             console.log('⚠ index.md not found, using embedded demo');
             const embedded = document.getElementById('markdown');
@@ -576,12 +525,85 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
 
         const fm = parseFrontmatterLite(markdown);
         const requiresAudioGesture = parseBoolish(fm.requiresAudioGesture) === true;
+        const requestedOrientation = fm.orientation ?? fm.orientationLock ?? fm.requireOrientation ?? fm.requiredOrientation;
+        const requiredOrientation = normalizeOrientationRequirement(requestedOrientation);
+
+        if (requestedOrientation != null && !requiredOrientation) {
+          console.warn('[host-orientation] Ignoring unsupported frontmatter orientation:', requestedOrientation);
+        }
 
         // Frontmatter keys used by demos:
         // - font: "Rye"
         // - fontsize: 22
         // - stretch: true
+        // - orientation: landscape
         const normalizeFontName = (s) => String(s || '').replace(/\+/g, ' ').trim();
+
+        let orientationGate = null;
+        const setOrientationGateVisible = (visible) => {
+          if (!visible && !orientationGate) {
+            document.body.classList.remove('storie-orientation-gated');
+            return;
+          }
+
+          if (!orientationGate) {
+            orientationGate = ensureOrientationGate();
+          }
+
+          const message = orientationGate.querySelector('#orientation-gate-message');
+          if (message) {
+            const targetLabel = requiredOrientation === 'portrait' ? 'portrait' : 'landscape';
+            message.textContent = `This story is authored for ${targetLabel} viewing. Rotate your device to continue.`;
+          }
+
+          orientationGate.classList.toggle('visible', visible);
+          orientationGate.setAttribute('aria-hidden', visible ? 'false' : 'true');
+          document.body.classList.toggle('storie-orientation-gated', visible);
+        };
+
+        const matchesRequiredOrientation = () => {
+          if (!requiredOrientation) return true;
+          const { width, height } = getHostViewportSize();
+          if (!(width > 0) || !(height > 0)) return true;
+          const currentOrientation = width >= height ? 'landscape' : 'portrait';
+          return currentOrientation === requiredOrientation;
+        };
+
+        const syncOrientationRequirement = () => {
+          if (!requiredOrientation || !isTouchLikeDevice) {
+            setOrientationGateVisible(false);
+            return true;
+          }
+
+          const matches = matchesRequiredOrientation();
+          setOrientationGateVisible(!matches);
+          return matches;
+        };
+
+        let orientationLockAttempted = false;
+        const maybeLockRequiredOrientation = async () => {
+          if (!requiredOrientation || !isTouchLikeDevice || orientationLockAttempted) return false;
+          orientationLockAttempted = true;
+
+          const orientationApi = window.screen && window.screen.orientation;
+          if (!orientationApi || typeof orientationApi.lock !== 'function') return false;
+
+          try {
+            await orientationApi.lock(requiredOrientation);
+            console.log(`[host-orientation] locked ${requiredOrientation}`);
+            return true;
+          } catch (error) {
+            const name = String(error?.name || '');
+            if (!['AbortError', 'NotAllowedError', 'NotSupportedError', 'SecurityError', 'TypeError'].includes(name)) {
+              console.warn(`[host-orientation] failed to lock ${requiredOrientation}:`, error);
+            }
+            return false;
+          } finally {
+            syncOrientationRequirement();
+          }
+        };
+
+        syncOrientationRequirement();
 
         // Frontmatter-driven stretch, unless the URL param is explicitly set.
         if (stretchFromUrl === null && Object.prototype.hasOwnProperty.call(fm, 'stretch')) {
@@ -911,6 +933,7 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
               hostUnlockAudio.currentTime = 0;
               await hostUnlockAudio.play();
               const unlocked = engine.unlockAudioFromHostGesture();
+              await maybeLockRequiredOrientation();
               audioGateHandled = true;
               console.log(`[host-audio-gate] audio unlock ${unlocked ? 'succeeded' : 'attempted'}`);
               dismissAudioGate();
@@ -927,6 +950,15 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
           window.addEventListener('keydown', unlockFromGate, { once: true });
         } else {
           dismissAudioGate();
+        }
+
+        if (requiredOrientation && isTouchLikeDevice) {
+          window.addEventListener('pointerdown', () => {
+            void maybeLockRequiredOrientation();
+          }, { once: true });
+          window.addEventListener('keydown', () => {
+            void maybeLockRequiredOrientation();
+          }, { once: true });
         }
 
         if (IS_TAURI) {
@@ -994,11 +1026,15 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
           if (!resizeRaf) {
             resizeRaf = requestAnimationFrame(() => {
               resizeRaf = 0;
+              syncOrientationRequirement();
               applyDocumentViewport();
             });
           }
           clearTimeout(resizeTimeout);
-          resizeTimeout = setTimeout(applyDocumentViewport, 120);
+          resizeTimeout = setTimeout(() => {
+            syncOrientationRequirement();
+            applyDocumentViewport();
+          }, 120);
         };
 
         window.addEventListener('resize', handleResize);
@@ -1086,7 +1122,10 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
         if (loadingEl) loadingEl.style.display = 'none';
 
         installExportPanel(engine);
-        installStorieOverlay(engine, fm);
+        installStorieOverlay(engine, fm, {
+          source,
+          sourcePath: typeof source === 'string' ? source : null,
+        });
 
         const shaderChain = parseShaderChain();
         if (shaderChain) {
@@ -1101,10 +1140,115 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
       }
     }
 
+    function sanitizeSuggestedFilename(value) {
+      const raw = String(value ?? '').trim();
+      if (!raw) return 'storie-document.md';
+      const leaf = raw.split('/').pop().split('\\').pop();
+      const safe = leaf.replace(/[<>:"|?*]+/g, '-').replace(/\s+/g, ' ').trim();
+      if (!safe) return 'storie-document.md';
+      return safe.toLowerCase().endsWith('.md') ? safe : `${safe}.md`;
+    }
+
+    function getSuggestedMarkdownFilename(engine, sourceInfo = {}) {
+      if (typeof sourceInfo.sourcePath === 'string' && sourceInfo.sourcePath.trim()) {
+        return sanitizeSuggestedFilename(sourceInfo.sourcePath);
+      }
+      if (typeof sourceInfo.source === 'string' && sourceInfo.source.trim()) {
+        return sanitizeSuggestedFilename(sourceInfo.source);
+      }
+      try {
+        if (typeof engine.getCurrentDocumentName === 'function') {
+          const documentName = engine.getCurrentDocumentName();
+          if (documentName) return sanitizeSuggestedFilename(documentName);
+        }
+      } catch {
+        // ignore
+      }
+      return 'storie-document.md';
+    }
+
+    function downloadMarkdownBlob(markdown, filename) {
+      const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+
+    async function saveMarkdownViaTauri(markdown, filename) {
+      if (!IS_TAURI) return null;
+
+      const invoke = window.__TAURI__?.core?.invoke;
+      if (typeof invoke !== 'function') return null;
+
+      try {
+        const savedPath = await invoke('save_markdown_document', {
+          payload: {
+            suggestedFilename: filename,
+            markdown,
+          },
+        });
+        if (!savedPath) return false;
+        console.log(`✓ Saved markdown via Tauri: ${savedPath}`);
+        return true;
+      } catch (error) {
+        console.error('Failed to save markdown document via Tauri:', error);
+        return false;
+      }
+    }
+
+    async function saveActiveMarkdownDocument(engine, sourceInfo = {}) {
+      const markdown = typeof engine.getActiveDocumentSourceMarkdown === 'function'
+        ? engine.getActiveDocumentSourceMarkdown()
+        : null;
+
+      if (typeof markdown !== 'string') {
+        console.warn('No active markdown document is available to save');
+        return false;
+      }
+
+      const filename = getSuggestedMarkdownFilename(engine, sourceInfo);
+
+      const tauriResult = await saveMarkdownViaTauri(markdown, filename);
+      if (tauriResult !== null) return tauriResult;
+
+      if (typeof window.showSaveFilePicker === 'function') {
+        try {
+          const fileHandle = await window.showSaveFilePicker({
+            suggestedName: filename,
+            types: [{
+              description: 'Markdown Document',
+              accept: {
+                'text/markdown': ['.md'],
+                'text/plain': ['.md'],
+              },
+            }],
+          });
+          const writable = await fileHandle.createWritable();
+          await writable.write(markdown);
+          await writable.close();
+          console.log(`✓ Saved markdown as ${filename}`);
+          return true;
+        } catch (error) {
+          if (error && error.name === 'AbortError') return false;
+          console.error('Failed to save markdown document:', error);
+          return false;
+        }
+      }
+
+      downloadMarkdownBlob(markdown, filename);
+      console.log(`✓ Downloaded markdown as ${filename}`);
+      return true;
+    }
+
     // ── S|torie Overlay ────────────────────────────────────────────────────────
     // A small top-right corner widget with FPS counter, theme switcher, and links.
     // Opt out in frontmatter with: storieOverlay: false
-    function installStorieOverlay(engine, fm) {
+    function installStorieOverlay(engine, fm, sourceInfo = {}) {
       const parseFmBool = (val) => {
         const v = String(val ?? '').trim().toLowerCase();
         return v === '0' || v === 'false' || v === 'no' || v === 'off';
@@ -1121,6 +1265,7 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
       const fpsEl     = document.getElementById('storie-overlay-fps');
       const themeEl   = document.getElementById('storie-overlay-theme');
       const exportLnk = document.getElementById('storie-overlay-export');
+      const saveMarkdownLnk = document.getElementById('storie-overlay-save-markdown');
 
       if (!wrap || !btn || !panel || !fpsEl || !themeEl) return;
 
@@ -1178,6 +1323,14 @@ export function startStorieApp(userConfig = /** @type {any} */ ({})) {
               key: 'E', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true
             }));
           } catch {}
+        });
+      }
+
+      if (saveMarkdownLnk) {
+        saveMarkdownLnk.addEventListener('click', async (e) => {
+          e.preventDefault();
+          closePanel();
+          await saveActiveMarkdownDocument(engine, sourceInfo);
         });
       }
 

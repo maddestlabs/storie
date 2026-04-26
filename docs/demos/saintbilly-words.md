@@ -3,6 +3,7 @@ name: "Ballad of Saint Billy"
 title: "Ballad of Saint Billy"
 author: "Maddest Labs"
 requiresAudioGesture: true
+orientation: landscape
 theme: "saintbilly"
 shaders: "audioshake+vintage"
 font: "Rye"
@@ -14,7 +15,25 @@ This Saint Billy variant turns the demo into a song board instead of a dungeon c
 # start {x: 0, y: 300, scale: 0.0, timed: "0ms"}
 ...
 
-# start-0 {x: 0, y: 200, scale: 1.0, timed: "100ms"}
+# start-c {x: 0, y: 212, scale: 0.25, timed: "10ms"}
+●
+
+# start-d {x: 0, y: 210, scale: 0.5, timed: "500ms"}
+⠀.
+
+# start-e {x: 0, y: 208, scale: 0.5, timed: "1000ms"}
+⠀⬤
+
+# start-f {x: 0, y: 206, scale: 0.75, timed: "1500ms"}
+●
+
+# start-g {x: 0, y: 204, scale: 1.0, timed: "2000ms"}
+⠀.
+
+# start-h {x: 0, y: 202, scale: 1.0, timed: "2500ms"}
+⠀●
+
+# start-0 {x: 0, y: 200, scale: 1.0, timed: "3000ms"}
 
 ```timed animate:content relative
 0ms
@@ -34,57 +53,57 @@ This Saint Billy variant turns the demo into a song board instead of a dungeon c
 ---
 ```
 
-# start-0a {x: 0, y: 198, scale: 1.0, timed: "1000ms"}
+# start-0a {x: 0, y: 198, scale: 1.0, timed: "3500ms"}
 in the
 
-# start-0b {x: 0, y: 196, scale: 1.0, timed: "2000ms"}
+# start-0b {x: 0, y: 196, scale: 1.0, timed: "4000ms"}
 New West
 
-# start-0c {x: 0, y: 194, scale: 1.0, timed: "6000ms"}
+# start-0c {x: 0, y: 194, scale: 0.75, timed: "8000ms"}
 ●
 
-# start-0d {x: 0, y: 192, scale: 1.0, timed: "6500ms"}
+# start-0d {x: 0, y: 192, scale: 1.0, timed: "8500ms"}
 ⠀.
 
-# start-0e {x: 0, y: 190, scale: 1.0, timed: "7000ms"}
+# start-0e {x: 0, y: 190, scale: 0.5, timed: "9000ms"}
 ⠀⬤
 
-# start-0f {x: 0, y: 188, scale: 1.0, timed: "7500ms"}
+# start-0f {x: 0, y: 188, scale: 1.0, timed: "9500ms"}
 ●
 
-# start-0g {x: 0, y: 186, scale: 1.0, timed: "8000ms"}
+# start-0g {x: 0, y: 186, scale: 1.0, timed: "10000ms"}
 ⠀.
 
-# start-0h {x: 0, y: 184, scale: 1.0, timed: "8500ms"}
+# start-0h {x: 0, y: 184, scale: 0.75, timed: "10500ms"}
 ⠀●
 
-# start-1 {x: 0, y: 150, scale: 1.0, timed: "9100ms"}
+# start-1 {x: 0, y: 150, scale: 1.0, timed: "11100ms"}
 
 ```timed animate:content relative
 0ms
 ⠀⠀Ballad⠀⠀
 ---
-100ms
+500ms
 𝅘𝅥𝅮⠀Ballad 𝅝
 ---
-200ms
+1000ms
 𝅗𝅥⠀Ballad⠀𝅘𝅥𝅮
 ---
-300ms
+1500ms
 𝅘𝅥𝅯⠀Ballad⠀𝅘𝅥
 ---
 ```
 
-# start-2 {x: 0, y: 148, scale: 1.0, timed: "9200ms"}
+# start-2 {x: 0, y: 148, scale: 1.0, timed: "11200ms"}
 of
 
-# start-3 {x: 0, y: 146, scale: 1.0, timed: "9300ms"}
+# start-3 {x: 0, y: 146, scale: 1.0, timed: "11300ms"}
 Saint Billy
 
-# start-4 {x: 0, y: 144, scale: 1.0, timed: "9400ms"}
+# start-4 {x: 0, y: 144, scale: 1.0, timed: "11400ms"}
 »»──────«»──────««
 
-# start-5 {x: 0, y: 147, scale: 1.0, timed: "9450ms"}
+# start-5 {x: 0, y: 147, scale: 1.0, timed: "11450ms"}
 ⠀
 
 # cross-0 {x: -17, y: 99, scale: 1.037, timed: "25000ms"}
@@ -108,9 +127,9 @@ in
 the
 
 # cross-5 {x: -17, y: 94.5, scale: 1.182, timed: "27600ms"}
-
-Texas
-
+⠀e
+Txa
+⠀⠀s
 # cross-6 {x: -13.6, y: 94.5, scale: 0.962, timed: "27800ms"}
 
 ⠀◠
@@ -157,15 +176,15 @@ outgun⠀⠀•⠀⠀⠀⠀⠀
 ▐┘⠀⠀⠀⠀⠀
 ---
 300ms
-outgun⠀⠀⠀⠀•⠀⠀⠀
+outgun⠀⠀⠀⠀⠀•⠀⠀⠀
 ▐┘⠀⠀⠀
 ---
 400ms
-outgun⠀⠀⠀⠀⠀⠀•⠀
+outgun⠀⠀⠀⠀⠀⠀⠀⠀•⠀
 ▐┘⠀⠀⠀
 ---
 500ms
-outgun⠀⠀⠀⠀⠀⠀⠀⠀•
+outgun⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀•
 ▐┘⠀⠀⠀
 ---
 600ms
@@ -185,6 +204,10 @@ to
 # cross-13 {x: -1.7, y: 90, scale: 1.15, timed: "32560ms"}
 
 kill
+
+# cross-13 {x: -1.7, y: 90, scale: 1.15, timed: "32660ms"}
+
+────
 
 # cross-14 {x: 1.7, y: 90, scale: 1.112, timed: "32940ms"}
 
@@ -290,16 +313,32 @@ standing
 
 # cross-31 {x: -13.6, y: 72, scale: 1.197, timed: "40720ms"}
 
+```timed animate:content relative
+0ms
+t⠀
+---
+100ms
+t
+a
+---
+200ms
 t
 a
 l
+---
+300ms
+t
+a
 l
+l⠀
+---
+```
 
-# cross-32 {x: 0, y: 72, scale: 1.255, timed: "41400ms"}
+# cross-32 {x: 0, y: 72, scale: 1.0, timed: "41400ms"}
 
-Mighty
+❚█═Mighty═█❚
 
-# cross-33 {x: 3.4, y: 72, scale: 1.093, timed: "41800ms"}
+# cross-33 {x: 3.4, y: 72, rotate-z: -90, scale: 1.0, timed: "41800ms"}
 
 and
 
@@ -438,14 +477,14 @@ a
 # cross-67 {x: -5.1, y: 49.5, scale: 1.031, timed: "58900ms"}
 
 gun
-▛⠀⠀⠀⠀⠀-
+▛▘
 # cross-68 {x: 34, y: 49.5, scale: 0.921, timed: "59900ms"}
 
 Does
 
 # cross-69 {x: 37.4, y: 49.5, scale: 0.992, timed: "60600ms"}
 
-hurt
+h̶u̶r̶t̶
 
 # cross-70 {x: 40.8, y: 49.5, scale: 1.148, timed: "61200ms"}
 
@@ -461,7 +500,7 @@ And
 
 # cross-73 {x: 71.4, y: 49.5, scale: 1.268, timed: "62600ms"}
 
-hurt
+h̶u̶r̶t̶
 
 # cross-74 {x: -76.5, y: 45, scale: 1.219, timed: "63000ms"}
 
@@ -545,77 +584,82 @@ do
 
 your
 
-# cross-94 {x: -73.1, y: 40.5, scale: 1.186, timed: "73200ms"}
+# cross-94 {x: -73.1, y: 40.5, scale: 1.186, timed: "73900ms"}
 
 thing
 
-# cross-95 {x: -59.5, y: 40.5, scale: 0.858, timed: "74800ms"}
+# cross-95 {x: -59.5, y: 40.5, scale: 0.858, timed: "76000ms"}
 
 Go
 
-# cross-96 {x: -56.1, y: 40.5, scale: 1.061, timed: "75200ms"}
+# cross-96 {x: -56.1, y: 40.5, scale: 1.061, timed: "76300ms"}
 
 on
 
-# cross-97 {x: -52.7, y: 40.5, scale: 1.205, timed: "75600ms"}
+# cross-97 {x: -52.7, y: 40.5, scale: 1.205, timed: "76800ms"}
 
 Saint
 
-# cross-98 {x: -49.3, y: 40.5, scale: 1.304, timed: "76600ms"}
+# cross-98 {x: -49.3, y: 40.5, scale: 1.304, timed: "77000ms"}
 
 Billy
 
-# cross-99 {x: -45.9, y: 40.5, scale: 1.156, timed: "77200ms"}
+# cross-99 {x: -45.9, y: 40.5, scale: 1.156, timed: "78200ms"}
 
 go
 
-# cross-100 {x: -42.5, y: 40.5, scale: 1.31, timed: "77800ms"}
+# cross-100 {x: -42.5, y: 40.5, scale: 1.31, timed: "78600ms"}
 
 and
 
-# cross-101 {x: -8.5, y: 40.5, scale: 0.969, timed: "78100ms"}
+# cross-101 {x: -8.5, y: 40.5, scale: 0.969, timed: "79000ms"}
 
 Bring
 
-# cross-102 {x: -5.1, y: 40.5, scale: 1.075, timed: "78400ms"}
+# cross-102 {x: -5.1, y: 40.5, scale: 1.075, timed: "79600ms"}
 
 the
 
-# cross-103 {x: 1, y: 40.5, scale: 1.0, timed: "79000ms"}
+# cross-103 {x: 1, y: 40.5, scale: 1.2, timed: "81000ms"}
 
 𝕻𝖆𝖎𝖓
 
-# cross-103a {x: 6, y: 40.5, scale: 1.5, timed: "79100ms"}
+# leadin-1a {x: 4, y: 40.5, scale: 1.0, timed: "82000ms"}
+●
 
-```timed animate:content relative
-0ms
+# leadin-1b {x: 5, y: 40.5, scale: 1.10, timed: "83000ms"}
+⠀.
+
+# leadin-1c {x: 6, y: 40.5, scale: 0.75, timed: "84000ms"}
+⠀⬤
+
+# leadin-1d {x: 7, y: 40.5, scale: 1.0, timed: "85000ms"}
 ⠀
----
-1000ms
-.
----
-2000ms
-..
----
-3000ms
-...
----
-```
+●
 
-# cross-104 {x: 17, y: 40.5, scale: 1.382, timed: "88000ms"}
+# leadin-1e {x: 8, y: 40.5, scale: 0.8, timed: "86000ms"}
+⠀.
+
+# leadin-1f {x: 9, y: 40.5, scale: 1.5, timed: "87000ms"}
+⠀.
+
+# leadin-1g {x: 10, y: 40.5, scale: 0.5, timed: "88000ms"}
+⠀⬤
+
+# cross-104 {x: 17, y: 40.5, scale: 1.382, timed: "89000ms"}
 
 Word
 
-# cross-105 {x: 20.4, y: 40.5, scale: 1.275, timed: "88800ms"}
+# cross-105 {x: 20.4, y: 40.5, scale: 1.275, timed: "89400ms"}
 
 got
 
-# cross-106 {x: 23.8, y: 40.5, rotate-z: 90, scale: 1.281, timed: "89245ms"}
+# cross-106 {x: 23.8, y: 40.5, rotate-z: 90, scale: 1.281, timed: "89745ms"}
 
 ⠀oun⠀
 r⠀⠀⠀d
 
-# cross-107 {x: 27.2, y: 40.5, scale: 0.855, timed: "89448ms"}
+# cross-107 {x: 27.2, y: 40.5, scale: 0.855, timed: "89948ms"}
 
 bout
 
@@ -896,15 +940,22 @@ two
 
 # cross-174 {x: -34, y: 22.5, scale: 0.884, timed: "117500ms"}
 
-kicking
+ki
+cking
 
 # cross-175 {x: -30.6, y: 22.5, scale: 1.338, timed: "117556ms"}
 
 in
 
-# cross-176 {x: -27.2, y: 22.5, scale: 1.093, timed: "118111ms"}
+# cross-176 {x: -27.2, y: 22.5, scale: 1.0, timed: "118111ms"}
 
-doors
+┌──┐
+│-d│
+│-o│
+│-o│
+│-r│
+│-s│
+└──┘
 
 # cross-177 {x: -23.8, y: 22.5, scale: 1.217, timed: "118667ms"}
 
@@ -912,9 +963,7 @@ and
 
 # cross-178 {x: -20.4, y: 22.5, scale: 0.5, timed: "119222ms"}
 
-▝▝▛▘
- teeth
- ▟▙▙
+▝▛eeth
 
 # cross-179 {x: -17, y: 22.5, scale: 1, timed: "119778ms"}
 
@@ -928,9 +977,11 @@ more...
 
 But
 
-# cross-182 {x: -6.8, y: 22.5, scale: 1.5, timed: "121444ms"}
+# cross-182 {x: -6.8, y: 22.5, scale: 1.15, timed: "121444ms"}
 
-YOU
+Y
+O
+U
 
 # cross-183 {x: 42.5, y: 22.5, scale: 1.111, timed: "122000ms"}
 
@@ -1101,42 +1152,47 @@ the
 
 𝕻𝖆𝖎𝖓
 
-# cross-223a {x: 16, y: 13.5, scale: 1.303, timed: "147000ms"}
+# leadin-2a {x: 20, y: 13.5, scale: 1.0, timed: "147000ms"}
+●
 
-```timed animate:content relative
-0ms
-_
----
-150ms
-.
----
-300ms
-..
----
-450ms
-...
----
-```
+# leadin-2b {x: 21, y: 13.5, scale: 1.10, timed: "148000ms"}
+⠀.
 
-# cross-224 {x: 68, y: 13.5, scale: 1.258, timed: "151000ms"}
+# leadin-2c {x: 22, y: 13.5, scale: 0.75, timed: "149000ms"}
+⠀⬤
+
+# leadin-2d {x: 23, y: 13.5, scale: 1.0, timed: "150000ms"}
+⠀
+●
+
+# leadin-2e {x: 24, y: 13.5, scale: 0.8, timed: "151000ms"}
+⠀.
+
+# leadin-2f {x: 25, y: 13.5, scale: 1.5, timed: "152000ms"}
+⠀.
+
+# leadin-2g {x: 26, y: 13.5, scale: 0.5, timed: "153000ms"}
+⠀⬤
+
+# cross-224 {x: 68, y: 13.5, scale: 1.258, timed: "153100ms"}
 
 High
 
-# cross-225 {x: 71.4, y: 13.5, scale: 0.913, timed: "152600ms"}
+# cross-225 {x: 71.4, y: 13.5, scale: 0.913, timed: "153500ms"}
 
 noon
 
-# cross-226 {x: -76.5, y: 9, scale: 0.998, timed: "153300ms"}
+# cross-226 {x: -76.5, y: 9, scale: 0.998, timed: "153900ms"}
 
 and
 
-# cross-227 {x: -73.1, y: 9, scale: 1.069, timed: "153900ms"}
+# cross-227 {x: -73.1, y: 9, scale: 1.069, timed: "154100ms"}
 
 high
 
 # cross-228 {x: -69.7, y: 9, scale: 1.02, timed: "154300ms"}
 
-👁yed
+eyed
 
 # cross-229 {x: -66.3, y: 9, scale: 0.836, timed: "154800ms"}
 
@@ -1272,9 +1328,9 @@ a
 
 # cross-260 {x: 35.7, y: 4.5, scale: 1.138, timed: "168600ms"}
 
-p
-i
-n
+ᵖ
+ᶦ
+ⁿ
 
 # cross-261 {x: 39.1, y: 4.5, scale: 1.356, timed: "168920ms"}
 

@@ -58,6 +58,27 @@ Create your own project:
 - Update index.md with your content and commit the change
 - See your content running live in moments
 
+### Package Entry Points
+
+The root package entry still exists for convenience:
+
+```ts
+import { StorieEngine, resolveMarkdownSource, createCamera3D } from 'storie';
+```
+
+For optional-heavy surfaces, prefer subpath imports so consumers do not enter the broad root module unless they need it:
+
+```ts
+import { resolveMarkdownSource } from 'storie/content-source';
+import { compileMarkdownApp } from 'storie/compile';
+import { analyzeMarkdownDocument } from 'storie/analyze';
+import { createCamera3D } from 'storie/worlds';
+import { compileWorldsTimeline } from 'storie/worlds-timeline';
+import { createSequencerDocument } from 'storie/sequencer/document';
+```
+
+Available subpaths currently include `storie/content-source`, `storie/compile`, `storie/analyze`, `storie/worlds`, `storie/worlds-content`, `storie/worlds-timeline`, `storie/audio/sfx-graph-document`, `storie/sequencer/document`, `storie/modules/loader`, and `storie/modules/types`.
+
 ### Web Usage
 
 **Quick Start with Content Parameter:**

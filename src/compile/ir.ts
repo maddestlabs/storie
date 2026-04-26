@@ -2,6 +2,8 @@ import type { MarkdownDocument, Section } from '../types.js';
 
 export type CompileTarget = 'web' | 'tauri' | 'os';
 
+export type CompilePortabilityProfile = 'js' | 'portable' | 'nim';
+
 export type CompileCapabilityName =
   | 'terminal'
   | 'ui'
@@ -21,6 +23,17 @@ export type CompileCapabilityName =
   | 'export';
 
 export type CompileLifecycleHook = 'global' | 'init' | 'update' | 'render' | 'input' | 'drop' | 'export' | 'enter';
+
+export type CompileWarningSeverity = 'info' | 'warning' | 'error';
+
+export type CompileWarningCategory = 'dynamic-behavior' | 'portability' | 'capability' | 'security';
+
+export interface CompileWarning {
+  code: string;
+  severity: CompileWarningSeverity;
+  category: CompileWarningCategory;
+  message: string;
+}
 
 export interface CompileSectionNode {
   id: string;
@@ -61,7 +74,7 @@ export interface CompileBehaviorIR {
 export interface CompileCapabilityIR {
   capabilities: CompileCapabilityName[];
   modules: string[];
-  warnings: string[];
+  warnings: CompileWarning[];
 }
 
 export interface CompileAssetIR {

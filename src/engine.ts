@@ -1,3 +1,4 @@
+import { parseMarkdown, flattenSections, ensureSectionIds, serializeMarkdownDocumentSource } from './markdown.js';
 /**
  * Main S|torie engine
  * Manages main loop, document loading, and user script execution
@@ -9,29 +10,11 @@ import { Canvas2DRenderer } from './renderer.js';
 import { WebGPURenderer } from './webgpu-renderer.js';
 import { Compositor } from './compositor.js';
 import { ScriptSandbox } from './sandbox.js';
-import { parseMarkdown, flattenSections, ensureSectionIds } from './markdown.js';
 import { parseTimedFormat, type TimedFormat } from './timed-parsers.js';
-import {
-  compileAutomation,
-  valueAt as automationValueAt,
-  impulsesBetween as automationImpulsesBetween,
-  ease as automationEase,
-  parseEaseSpec as automationParseEaseSpec,
-  entryAt as automationEntryAt,
-  entriesBetween as automationEntriesBetween,
-  type CompiledAutomation,
-  type EaseSpec,
-  type AutomationImpulseEvent,
-} from './automation.js';
-import { createHistory, type HistoryStack, type HistoryAction } from './history.js';
-import { createInputRecorder, type InputRecorder, type RecordedTape } from './recorder.js';
-import {
-  createBeatClock,
-  beatToTimedEntries,
-  parseBeatTimedBlock,
-  type BeatClock,
-  type BeatClockOptions,
-} from './beat-clock.js';
+import type { CompiledAutomation, EaseSpec, AutomationImpulseEvent } from './automation.js';
+import type { HistoryStack, HistoryAction } from './history.js';
+import type { InputRecorder, RecordedTape } from './recorder.js';
+import type { BeatClock, BeatClockOptions } from './beat-clock.js';
 import {
   compileWorldsTimeline,
   stateAtWorldsTimeline,
@@ -52,21 +35,13 @@ import {
 import { getTheme, applyTheme, THEMES } from './themes.js';
 import { ModuleLoader } from './modules/loader.js';
 import { createTUIAPI } from './tui-api.js';
-import { createGUIAPI } from './gui-api.js';
 import { setTUIThemeFromStyles } from './ui/tui/theme.js';
-import { WebGPUUIRenderer } from './ui/webgpu-ui-renderer.js';
-import { parseMarkdownLite } from './ui/document/markdown-lite.js';
-import { layoutMarkdownDocument } from './ui/document/layout.js';
 import type { DrawOp, LinkRegion, MarkdownStyle, WidgetPlacement, LayoutOptions } from './ui/document/types.js';
 import type { Draw2D } from './ui/draw2d.js';
-import { createTransformedDraw2D, invertAffine, type Draw2DAffine } from './ui/draw2d-transform.js';
-import { getHiddenTextInputBridgeAttributes, normalizeSingleLineText } from './ui/core/text-input.js';
+import type { Draw2DAffine } from './ui/draw2d-transform.js';
 import type { TextInputCapable } from './ui/core/types.js';
-import { ShaderManager } from './shader-manager.js';
-import { ShaderChainManager } from './shader-chain.js';
-import { WorldsRenderer, type WorldsSectionArtRenderState } from './worlds-renderer.js';
-import { parseFIGfont, renderFigletCharLines, renderFigletLines, measureFigletLinesWidth, type FigletFont } from './figlet.js';
-import { parseAnsiToRuns, type AnsiParsed, type AnsiRun } from './ansi.js';
+import type { FigletFont } from './figlet.js';
+import type { AnsiParsed, AnsiRun } from './ansi.js';
 import {
   createCamera3D,
   updateCamera3D,
@@ -96,23 +71,14 @@ import {
 } from './worlds.js';
 import { getWorldsPreset, listWorldsPresetNames } from './worlds-presets.js';
 import type { ModuleResolverConfig } from './modules/types.js';
-import type { UserScript, Section, Color, InputEvent, ThemeColors, ThemeStyleSheet, NamedStyle, DroppedFile, SafeAreaInsets } from './types.js';
-import { detectPeaksFromAudioBuffer, type PeakDetectionOptions, type PeakDetectionResult } from './audio/peaks.js';
-import { analyzeBeatsFromAudioBuffer, getBeatState, type BeatAnalysisResult, type BeatDetectionOptions, type BeatState } from './audio/beats.js';
+import type { UserScript, UserHandlers, Section, Color, InputEvent, ThemeColors, ThemeStyleSheet, NamedStyle, DroppedFile, SafeAreaInsets, AudioAssetHandle, AudioVoiceHandle, MarkdownDocument } from './types.js';
 import { KEY } from './types.js';
 import { ColorUtils } from './types.js';
 import type { SandboxAPI } from './sandbox.js';
-import { getSfxPresetNames, playSfx, sfxSnippet, toSfxSeed } from './audio/sfx.js';
-import {
-  bakeSfxGraphBuffer,
-  createSfxGraphVoice,
-  mulberry32,
-  parseSfxGraphPreset,
-  parseStfxrDefinitionJson,
-  playSfxGraph,
-  type SfxGraphPreset
-} from './audio/sfx-graph.js';
-import { SFX_PRESETS, type SfxPresetName } from './audio/sfx-presets.js';
+import type { PeakDetectionOptions, PeakDetectionResult } from './audio/peaks.js';
+import type { BeatAnalysisResult, BeatDetectionOptions, BeatState } from './audio/beats.js';
+import type { SfxGraphPreset } from './audio/sfx-graph.js';
+import type { SfxPresetName } from './audio/sfx-presets.js';
 import {
   HostSync,
   parseHostParams,
@@ -128,6 +94,17 @@ import {
   isProbablyMonospaceFontStack,
   tryLoadGoogleFontFamily
 } from './font-loading.js';
+import type { WebGPUUIRenderer } from './ui/webgpu-ui-renderer.js';
+import type { ShaderManager } from './shader-manager.js';
+import type { ShaderChainManager } from './shader-chain.js';
+import type { WorldsRenderer, WorldsSectionArtRenderState } from './worlds-renderer.js';
+
+type WebGPUFeaturePack = typeof import('./runtime/webgpu-pack.js');
+type UIDocumentPack = typeof import('./runtime/ui-document-pack.js');
+type GUIRuntimePack = typeof import('./runtime/gui-pack.js');
+type AudioRuntimePack = typeof import('./runtime/audio-pack.js');
+type TextRuntimePack = typeof import('./runtime/text-pack.js');
+type AuthoredToolsRuntimePack = typeof import('./runtime/authored-tools-pack.js');
 
 type ThemeOverride = { theme: ThemeColors; label: string };
 type RuntimeSectionRef = {
@@ -354,6 +331,64 @@ type BlobStoreEntry = {
   bytes?: Uint8Array;
 };
 
+type TimedStoreEntry = {
+  name: string;
+  entries: Array<{ ms: number; text: string }>;
+};
+
+type AsciiStoreEntry = {
+  name: string;
+  text: string;
+  lines?: string[];
+};
+
+type FigletStoreEntry = {
+  name: string;
+  text: string;
+  font?: FigletFont;
+};
+
+type AnsiStoreEntry = {
+  name: string;
+  text: string;
+  tabSize: number;
+  parsed?: AnsiParsed;
+};
+
+type StfxrStoreEntry = {
+  name: string;
+  preset: SfxGraphPreset;
+  defaultSeed?: number | string;
+};
+
+type DocumentAssetStores = {
+  blobStore: Map<string, BlobStoreEntry>;
+  timedStore: Map<string, TimedStoreEntry>;
+  logicStore: Array<any>;
+  asciiStore: Map<string, AsciiStoreEntry>;
+  figletStore: Map<string, FigletStoreEntry>;
+  ansiStore: Map<string, AnsiStoreEntry>;
+  stfxrStore: Map<string, StfxrStoreEntry>;
+};
+
+type CompiledRuntimeLike = {
+  scope?: Record<string, any>;
+  init?: (extra?: Record<string, any>) => void;
+  update?: (delta: number, extra?: Record<string, any>) => void;
+  render?: (extra?: Record<string, any>) => void;
+  input?: (event: InputEvent, extra?: Record<string, any>) => void;
+  drop?: (file: DroppedFile, extra?: Record<string, any>) => void;
+  export?: (extra?: Record<string, any>) => void;
+  enter?: (sectionId: string, extra?: Record<string, any>) => void;
+};
+
+type CompiledAppModuleLike = {
+  content?: {
+    rawDocument?: MarkdownDocument | null;
+  };
+  createCompiledAppRuntime?: (api: SandboxAPI, options?: Record<string, any>) => CompiledRuntimeLike;
+};
+
 type RenderableImageSource = ImageBitmap | HTMLImageElement;
 
 type MarkdownImageCacheEntry = {
@@ -415,6 +450,28 @@ export class StorieEngine {
   // WebGPU UI (optional)
   private webgpuUIRenderer: WebGPUUIRenderer | null = null;
   private sectionWebGPUUIRenderer: WebGPUUIRenderer | null = null;
+  private webgpuFeaturePack: WebGPUFeaturePack | null = null;
+  private webgpuFeaturePackPromise: Promise<WebGPUFeaturePack> | null = null;
+  private uiDocumentPack: UIDocumentPack | null = null;
+  private uiDocumentPackPromise: Promise<UIDocumentPack> | null = null;
+  private guiRuntimePack: GUIRuntimePack | null = null;
+  private guiRuntimePackPromise: Promise<GUIRuntimePack> | null = null;
+  private guiRuntimeInstallPromise: Promise<void> | null = null;
+  private guiRuntimeInstalled: boolean = false;
+  private installGUIAPIImpl: ((impl: any) => void) | null = null;
+  private audioRuntimePack: AudioRuntimePack | null = null;
+  private audioRuntimePackPromise: Promise<AudioRuntimePack> | null = null;
+  private audioRuntimeInstalled: boolean = false;
+  private audioRuntimeInstallPromise: Promise<void> | null = null;
+  private textRuntimePack: TextRuntimePack | null = null;
+  private textRuntimePackPromise: Promise<TextRuntimePack> | null = null;
+  private textRuntimeInstalled: boolean = false;
+  private textRuntimeInstallPromise: Promise<void> | null = null;
+  private authoredToolsRuntimePack: AuthoredToolsRuntimePack | null = null;
+  private authoredToolsRuntimePackPromise: Promise<AuthoredToolsRuntimePack> | null = null;
+  private authoredToolsRuntimeInstalled: boolean = false;
+  private authoredToolsRuntimeInstallPromise: Promise<void> | null = null;
+  private worldsInitializationPromise: Promise<boolean> | null = null;
 
   // Live section rendering: user on:render callbacks draw into 3D section textures.
   private _liveSections: Set<number> = new Set();
@@ -624,6 +681,8 @@ export class StorieEngine {
     knobColor?: number;
     knobHoverColor?: number;
   }> = new Map();
+  private debugGuiLastInlineWidgetState: string | null = null;
+  private debugGuiLastOverlayRenderState: string | null = null;
   private nextMarkdownImageId: number = 1;
 
   // Host sync (engine-level, transport pluggable)
@@ -796,6 +855,34 @@ export class StorieEngine {
     } catch {
       return null;
     }
+  }
+
+  private isUrlFlagEnabled(name: string): boolean {
+    if (typeof window === 'undefined' || typeof URLSearchParams === 'undefined') return false;
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (name === 'debugGui' && urlParams.get('content') === '0rain') return true;
+      const value = String(urlParams.get(name) ?? '').trim().toLowerCase();
+      return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+    } catch {
+      return false;
+    }
+  }
+
+  private debugGuiLogInlineWidgets(state: string, detail: Record<string, any>): void {
+    if (!this.isUrlFlagEnabled('debugGui')) return;
+    const serialized = `${state}:${JSON.stringify(detail)}`;
+    if (serialized === this.debugGuiLastInlineWidgetState) return;
+    this.debugGuiLastInlineWidgetState = serialized;
+    console.log('[debugGui][inlineWidgets]', state, detail);
+  }
+
+  private debugGuiLogOverlayRender(state: string, detail: Record<string, any>): void {
+    if (!this.isUrlFlagEnabled('debugGui')) return;
+    const serialized = `${state}:${JSON.stringify(detail)}`;
+    if (serialized === this.debugGuiLastOverlayRenderState) return;
+    this.debugGuiLastOverlayRenderState = serialized;
+    console.log('[debugGui][overlayRender]', state, detail);
   }
 
   private updateAudienceViewLayers(): void {
@@ -2001,12 +2088,18 @@ export class StorieEngine {
 
     if (this.webgpuUIRenderer) return this.webgpuUIRenderer;
 
+    const webgpuPack = this.getWebGPUFeaturePack();
+    if (!webgpuPack) {
+      this.requestWebGPUFeaturePack();
+      return null;
+    }
+
     const device = this.renderer.getContext().getDevice();
     if (!device) return null;
 
     const atlas = this.renderer.getAtlas();
 
-    const ui = new WebGPUUIRenderer(device, atlas, this.canvas.width, this.canvas.height);
+    const ui = new webgpuPack.WebGPUUIRenderer(device, atlas, this.canvas.width, this.canvas.height);
     this.webgpuUIRenderer = ui;
 
     this.compositor.registerLayer('ui', {
@@ -2017,6 +2110,471 @@ export class StorieEngine {
     });
 
     return ui;
+  }
+
+  private async loadWebGPUFeaturePack(): Promise<WebGPUFeaturePack> {
+    if (this.webgpuFeaturePack) return this.webgpuFeaturePack;
+    if (this.webgpuFeaturePackPromise) return this.webgpuFeaturePackPromise;
+
+    const runtimeBaseUrl = import.meta.url.replace(/[^/]*$/, '');
+    const runtimeUrl = `${runtimeBaseUrl}runtime/webgpu-pack.js`;
+    this.webgpuFeaturePackPromise = import(/* @vite-ignore */ runtimeUrl)
+      .then((pack) => {
+        this.webgpuFeaturePack = pack;
+        return pack;
+      })
+      .finally(() => {
+        this.webgpuFeaturePackPromise = null;
+      });
+
+    return this.webgpuFeaturePackPromise;
+  }
+
+  private getWebGPUFeaturePack(): WebGPUFeaturePack | null {
+    return this.webgpuFeaturePack;
+  }
+
+  private async loadUIDocumentPack(): Promise<UIDocumentPack> {
+    if (this.uiDocumentPack) return this.uiDocumentPack;
+    if (this.uiDocumentPackPromise) return this.uiDocumentPackPromise;
+
+    const runtimeBaseUrl = import.meta.url.replace(/[^/]*$/, '');
+    const runtimeUrl = `${runtimeBaseUrl}runtime/ui-document-pack.js`;
+    this.uiDocumentPackPromise = import(/* @vite-ignore */ runtimeUrl)
+      .then((pack) => {
+        this.uiDocumentPack = pack;
+        return pack;
+      })
+      .finally(() => {
+        this.uiDocumentPackPromise = null;
+      });
+
+    return this.uiDocumentPackPromise;
+  }
+
+  private getUIDocumentPack(): UIDocumentPack | null {
+    return this.uiDocumentPack;
+  }
+
+  private async loadGUIRuntimePack(): Promise<GUIRuntimePack> {
+    if (this.guiRuntimePack) return this.guiRuntimePack;
+    if (this.guiRuntimePackPromise) return this.guiRuntimePackPromise;
+
+    const runtimeBaseUrl = import.meta.url.replace(/[^/]*$/, '');
+    const runtimeUrl = `${runtimeBaseUrl}runtime/gui-pack.js`;
+    this.guiRuntimePackPromise = import(/* @vite-ignore */ runtimeUrl)
+      .then((pack) => {
+        this.guiRuntimePack = pack;
+        return pack;
+      })
+      .finally(() => {
+        this.guiRuntimePackPromise = null;
+      });
+
+    return this.guiRuntimePackPromise;
+  }
+
+  private getGUIRuntimePack(): GUIRuntimePack | null {
+    return this.guiRuntimePack;
+  }
+
+  private async loadAudioRuntimePack(): Promise<AudioRuntimePack> {
+    if (this.audioRuntimePack) return this.audioRuntimePack;
+    if (this.audioRuntimePackPromise) return this.audioRuntimePackPromise;
+
+    const runtimeBaseUrl = import.meta.url.replace(/[^/]*$/, '');
+    const runtimeUrl = `${runtimeBaseUrl}runtime/audio-pack.js`;
+    this.audioRuntimePackPromise = import(/* @vite-ignore */ runtimeUrl)
+      .then((pack) => {
+        this.audioRuntimePack = pack;
+        return pack;
+      })
+      .finally(() => {
+        this.audioRuntimePackPromise = null;
+      });
+
+    return this.audioRuntimePackPromise;
+  }
+
+  private getAudioRuntimePack(): AudioRuntimePack | null {
+    return this.audioRuntimePack;
+  }
+
+  private async loadTextRuntimePack(): Promise<TextRuntimePack> {
+    if (this.textRuntimePack) return this.textRuntimePack;
+    if (this.textRuntimePackPromise) return this.textRuntimePackPromise;
+
+    const runtimeBaseUrl = import.meta.url.replace(/[^/]*$/, '');
+    const runtimeUrl = `${runtimeBaseUrl}runtime/text-pack.js`;
+    this.textRuntimePackPromise = import(/* @vite-ignore */ runtimeUrl)
+      .then((pack) => {
+        this.textRuntimePack = pack;
+        return pack;
+      })
+      .finally(() => {
+        this.textRuntimePackPromise = null;
+      });
+
+    return this.textRuntimePackPromise;
+  }
+
+  private getTextRuntimePack(): TextRuntimePack | null {
+    return this.textRuntimePack;
+  }
+
+  private async loadAuthoredToolsRuntimePack(): Promise<AuthoredToolsRuntimePack> {
+    if (this.authoredToolsRuntimePack) return this.authoredToolsRuntimePack;
+    if (this.authoredToolsRuntimePackPromise) return this.authoredToolsRuntimePackPromise;
+
+    const runtimeBaseUrl = import.meta.url.replace(/[^/]*$/, '');
+    const runtimeUrl = `${runtimeBaseUrl}runtime/authored-tools-pack.js`;
+    this.authoredToolsRuntimePackPromise = import(/* @vite-ignore */ runtimeUrl)
+      .then((pack) => {
+        this.authoredToolsRuntimePack = pack;
+        return pack;
+      })
+      .finally(() => {
+        this.authoredToolsRuntimePackPromise = null;
+      });
+
+    return this.authoredToolsRuntimePackPromise;
+  }
+
+  private getAuthoredToolsRuntimePack(): AuthoredToolsRuntimePack | null {
+    return this.authoredToolsRuntimePack;
+  }
+
+  private requestTextRuntimePack(): void {
+    if (this.textRuntimePack || this.textRuntimePackPromise) return;
+    void this.loadTextRuntimePack().catch((error) => {
+      console.warn('Failed to load text runtime pack:', error);
+    });
+  }
+
+  private async ensureTextRuntimeInstalled(): Promise<void> {
+    if (this.textRuntimeInstalled) return;
+    if (this.textRuntimeInstallPromise) return await this.textRuntimeInstallPromise;
+
+    this.textRuntimeInstallPromise = (async () => {
+      await this.loadTextRuntimePack();
+      this.textRuntimeInstalled = true;
+    })().finally(() => {
+      this.textRuntimeInstallPromise = null;
+    });
+
+    return await this.textRuntimeInstallPromise;
+  }
+
+  private requestAuthoredToolsRuntimePack(): void {
+    if (this.authoredToolsRuntimePack || this.authoredToolsRuntimePackPromise) return;
+    void this.loadAuthoredToolsRuntimePack().catch((error) => {
+      console.warn('Failed to load authored tools runtime pack:', error);
+    });
+  }
+
+  private async ensureAuthoredToolsRuntimeInstalled(): Promise<void> {
+    if (this.authoredToolsRuntimeInstalled) return;
+    if (this.authoredToolsRuntimeInstallPromise) return await this.authoredToolsRuntimeInstallPromise;
+
+    this.authoredToolsRuntimeInstallPromise = (async () => {
+      await this.loadAuthoredToolsRuntimePack();
+      this.authoredToolsRuntimeInstalled = true;
+    })().finally(() => {
+      this.authoredToolsRuntimeInstallPromise = null;
+    });
+
+    return await this.authoredToolsRuntimeInstallPromise;
+  }
+
+  private requestAudioRuntimePack(): void {
+    if (this.audioRuntimePack || this.audioRuntimePackPromise) return;
+    void this.loadAudioRuntimePack().catch((error) => {
+      console.warn('Failed to load audio runtime pack:', error);
+    });
+  }
+
+  private async ensureAudioRuntimeInstalled(): Promise<void> {
+    if (this.audioRuntimeInstalled) return;
+    if (this.audioRuntimeInstallPromise) return await this.audioRuntimeInstallPromise;
+
+    this.audioRuntimeInstallPromise = (async () => {
+      await this.loadAudioRuntimePack();
+      this.audioRuntimeInstalled = true;
+    })().finally(() => {
+      this.audioRuntimeInstallPromise = null;
+    });
+
+    return await this.audioRuntimeInstallPromise;
+  }
+
+  private requestGUIRuntimePack(): void {
+    if (this.guiRuntimePack || this.guiRuntimePackPromise) return;
+    void this.loadGUIRuntimePack().catch((error) => {
+      console.warn('Failed to load GUI runtime pack:', error);
+    });
+  }
+
+  private createDeferredGUIAPI(): any {
+    const state: { impl: any | null } = { impl: null };
+    return new Proxy(state as any, {
+      get: (target, prop) => {
+        if (prop === '__setImpl') {
+          return (impl: any) => {
+            target.impl = impl;
+          };
+        }
+
+        const impl = target.impl;
+        if (impl) {
+          const value = impl[prop as keyof typeof impl];
+          return typeof value === 'function' ? value.bind(impl) : value;
+        }
+
+        if (prop === '_sectionBindings') return [];
+        if (prop === 'getSystem') return () => null;
+        if (prop === 'isAutoInputEnabled' || prop === 'isAutoUpdateEnabled') return () => false;
+        if (prop === 'render' || prop === 'update' || prop === 'syncBindings' || prop === 'syncSectionBindings') {
+          return () => {};
+        }
+
+        return undefined;
+      },
+      set: (target, prop, value) => {
+        if (target.impl) {
+          target.impl[prop as keyof typeof target.impl] = value;
+          return true;
+        }
+        target[prop as keyof typeof target] = value;
+        return true;
+      },
+      has: (target, prop) => {
+        if (target.impl) {
+          return prop in target.impl;
+        }
+        return prop in target;
+      }
+    });
+  }
+
+  private buildGUIAPI(createGUIAPI: GUIRuntimePack['createGUIAPI']): any {
+    return createGUIAPI(
+      () => {
+        const atlas = (this.renderer instanceof WebGPURenderer) ? this.renderer.getAtlas() : null;
+        return {
+          charWidth: atlas?.getCharWidth() ?? 10,
+          charHeight: atlas?.getCharHeight() ?? 16
+        };
+      },
+      (name: string) => this.getStyle(name),
+      () => this.inputDispatchDepth > 0,
+      () => {
+        try {
+          const sw = this.canvas?.style?.width;
+          const sh = this.canvas?.style?.height;
+          if (typeof sw === 'string' && typeof sh === 'string' && sw.endsWith('px') && sh.endsWith('px')) {
+            const cssW = Number.parseFloat(sw);
+            const cssH = Number.parseFloat(sh);
+            if (Number.isFinite(cssW) && cssW > 0 && Number.isFinite(cssH) && cssH > 0) {
+              const scaleX = this.canvas.width / cssW;
+              const scaleY = this.canvas.height / cssH;
+              if (Number.isFinite(scaleX) && scaleX > 0 && Number.isFinite(scaleY) && scaleY > 0) {
+                return { scaleX, scaleY };
+              }
+            }
+          }
+
+          const rect = this.canvas.getBoundingClientRect();
+          const scaleX = rect.width > 0 ? (this.canvas.width / rect.width) : 0;
+          const scaleY = rect.height > 0 ? (this.canvas.height / rect.height) : 0;
+          if (Number.isFinite(scaleX) && scaleX > 0 && Number.isFinite(scaleY) && scaleY > 0) {
+            return { scaleX, scaleY };
+          }
+        } catch {
+          // ignore
+        }
+        const dpr = (typeof window !== 'undefined' && (window as any).devicePixelRatio)
+          ? Number((window as any).devicePixelRatio)
+          : 1;
+        const v = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+        return { scaleX: v, scaleY: v };
+      },
+      () => this.getCanvasViewportRectCss(),
+      () => this.getSafeAreaInsetsCss(),
+      () => this.getResolvedCurrent3DSectionIndex(),
+      (selector: number | string) => this.resolve3DSectionIndex(selector)
+    );
+  }
+
+  private async ensureGUIRuntimeInstalled(): Promise<void> {
+    if (this.guiRuntimeInstalled) return;
+    if (this.guiRuntimeInstallPromise) return await this.guiRuntimeInstallPromise;
+
+    this.guiRuntimeInstallPromise = (async () => {
+      const pack = await this.loadGUIRuntimePack();
+      const guiAPI = this.buildGUIAPI(pack.createGUIAPI);
+      this.installGUIAPIImpl?.(guiAPI);
+      this.guiRuntimeInstalled = true;
+    })().finally(() => {
+      this.guiRuntimeInstallPromise = null;
+    });
+
+    return await this.guiRuntimeInstallPromise;
+  }
+
+  private requestUIDocumentPack(): void {
+    if (this.uiDocumentPack || this.uiDocumentPackPromise) return;
+    void this.loadUIDocumentPack().catch((error) => {
+      console.warn('Failed to load UI document pack:', error);
+    });
+  }
+
+  private documentNeedsTextRuntime(parsed: MarkdownDocument): boolean {
+    return parsed.codeBlocks.some((block) => block.lang === 'ansi' || block.lang === 'figlet');
+  }
+
+  private createFallbackBeatClock(opts?: Partial<BeatClockOptions>): BeatClock {
+    const bpm = Math.max(0.01, Number(opts?.bpm) || 120);
+    const offsetMs = Number(opts?.offsetMs ?? 0) || 0;
+    const beatsPerBar = Math.max(1, (opts?.beatsPerBar ?? 4) | 0);
+    const msPerBeat = 60000 / bpm;
+
+    return {
+      get bpm() { return bpm; },
+      get offsetMs() { return offsetMs; },
+      get beatsPerBar() { return beatsPerBar; },
+      beatToMs(beat: number): number {
+        return offsetMs + beat * msPerBeat;
+      },
+      msToBeat(ms: number): number {
+        return (ms - offsetMs) / msPerBeat;
+      },
+      beatAt(timeSec: number): number {
+        const ms = timeSec * 1000;
+        return Math.max(0, (ms - offsetMs) / msPerBeat);
+      },
+      barAt(timeSec: number): number {
+        return Math.floor(Math.max(0, (timeSec * 1000 - offsetMs) / msPerBeat) / beatsPerBar);
+      },
+      beatPhase(timeSec: number): number {
+        const beat = Math.max(0, (timeSec * 1000 - offsetMs) / msPerBeat);
+        return beat - Math.floor(beat);
+      },
+      barPhase(timeSec: number): number {
+        const beat = Math.max(0, (timeSec * 1000 - offsetMs) / msPerBeat);
+        const beatInBar = beat % beatsPerBar;
+        return beatInBar / beatsPerBar;
+      },
+    };
+  }
+
+  private requestWebGPUFeaturePack(): void {
+    if (this.webgpuFeaturePack || this.webgpuFeaturePackPromise) return;
+    void this.loadWebGPUFeaturePack().catch((error) => {
+      console.warn('Failed to load WebGPU feature pack:', error);
+    });
+  }
+
+  private hasPendingDocumentShaders(): boolean {
+    for (const [, doc] of this.documents) {
+      const parsed = (doc as any)?._parsedMarkdown;
+      if (Array.isArray(parsed?.wgslShaders) && parsed.wgslShaders.length > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private async ensureShaderSupport(device: GPUDevice): Promise<boolean> {
+    const webgpuPack = await this.loadWebGPUFeaturePack();
+
+    let createdShaderManager = false;
+    if (!this.shaderManager) {
+      this.shaderManager = new webgpuPack.ShaderManager(device);
+      createdShaderManager = true;
+      console.log('✓ ShaderManager initialized (feature pack)');
+    }
+
+    if (!this.shaderChainManager && this.shaderManager) {
+      this.shaderChainManager = new webgpuPack.ShaderChainManager(this.shaderManager, device);
+      console.log('✓ ShaderChainManager initialized (feature pack)');
+    }
+
+    if (this.compositor) {
+      this.compositor.setShaderManager(this.shaderManager);
+      this.compositor.setShaderChainManager(this.shaderChainManager);
+    }
+
+    if (createdShaderManager) {
+      await this.registerPendingShaders();
+    }
+
+    return true;
+  }
+
+  private async ensureWorldsRendererInitialized(device: GPUDevice): Promise<boolean> {
+    if (this.worldsRenderer) return true;
+    if (this.worldsInitializationPromise) return await this.worldsInitializationPromise;
+
+    this.worldsInitializationPromise = (async () => {
+      try {
+        const webgpuPack = await this.loadWebGPUFeaturePack();
+        await this.loadUIDocumentPack();
+        await this.ensureShaderSupport(device);
+
+        const renderer = new webgpuPack.WorldsRenderer(device, this.canvas.width, this.canvas.height, this.shaderManager ?? undefined);
+        await renderer.init();
+        this.worldsRenderer = renderer;
+
+        if (!this.camera3D) {
+          this.camera3D = createCamera3D();
+        }
+
+        const renderTexture = renderer.getRenderTexture();
+        if (renderTexture && this.compositor) {
+          this.compositor.registerLayer('3d', {
+            texture: renderTexture,
+            width: this.canvas.width,
+            height: this.canvas.height,
+            zIndex: 5,
+            enabled: this.worldsEnabled,
+            opacity: 1.0,
+            blendMode: 'normal'
+          });
+          this.updateAudienceViewLayers();
+        } else {
+          console.warn('✗ Failed to register 3D layer');
+        }
+
+        for (const [docId, docData] of this.documents.entries()) {
+          const anyDocData = docData as any;
+          if (anyDocData._parsedMarkdown?.sections) {
+            if (this.runtimeSectionStore.order.length === 0) {
+              this.initializeRuntimeSectionStore(anyDocData._parsedMarkdown.sections);
+            }
+            this.compileWorldsLayoutsFromRuntimeSectionStore(`deferred init for document ${docId}`);
+          }
+        }
+
+        return true;
+      } catch (error) {
+        console.warn('Failed to initialize WorldsRenderer:', error);
+        return false;
+      } finally {
+        this.worldsInitializationPromise = null;
+      }
+    })();
+
+    return await this.worldsInitializationPromise;
+  }
+
+  private requestWorldsRendererInitialization(): void {
+    if (!this.worldsEnabled || this.worldsRenderer || this.worldsInitializationPromise) return;
+    if (!(this.renderer instanceof WebGPURenderer)) return;
+
+    const device = this.renderer.getContext().getDevice();
+    if (!device) return;
+
+    void this.ensureWorldsRendererInitialized(device);
   }
   
   /**
@@ -2055,14 +2613,8 @@ export class StorieEngine {
       
       this.webgpuDevice = await adapter.requestDevice();
       console.log('✓ WebGPU device created for user API');
-      
-      // Initialize shader manager
-      this.shaderManager = new ShaderManager(this.webgpuDevice);
-      console.log('✓ ShaderManager initialized');
-      
-      // Initialize shader chain manager
-      this.shaderChainManager = new ShaderChainManager(this.shaderManager, this.webgpuDevice);
-      console.log('✓ ShaderChainManager initialized');
+
+      await this.ensureShaderSupport(this.webgpuDevice);
       
       return true;
     } catch (error) {
@@ -2078,8 +2630,11 @@ export class StorieEngine {
     const layers = this.layers;
     const engine = this; // Capture for use in getters
     let nextUIImageId = 1;
+    const deferredGUIAPI = this.createDeferredGUIAPI();
+    this.installGUIAPIImpl = (deferredGUIAPI as any).__setImpl;
 
     const MAX_BLOB_BYTES = 8 * 1024 * 1024;
+    const getAuthoredToolsPack = (): AuthoredToolsRuntimePack | null => engine.getAuthoredToolsRuntimePack();
 
     const getBlobStore = (documentId?: string): Map<string, { name: string; mime: string; encoding: 'base64' | 'hex'; data: string; bytes?: Uint8Array }> | null => {
       const docId = documentId ?? engine.activeDocumentId;
@@ -2517,10 +3072,57 @@ export class StorieEngine {
       return out;
     };
 
+    const getAudioPack = (): AudioRuntimePack | null => {
+      const pack = engine.getAudioRuntimePack();
+      if (!pack) engine.requestAudioRuntimePack();
+      return pack;
+    };
+
+    const getTextPack = (): TextRuntimePack | null => {
+      const pack = engine.getTextRuntimePack();
+      if (!pack) engine.requestTextRuntimePack();
+      return pack;
+    };
+
+    const ensureFigletFont = (entry: FigletStoreEntry, fallbackName: string): FigletFont | null => {
+      if (entry.font) return entry.font;
+
+      const textPack = getTextPack();
+      if (!textPack) return null;
+
+      try {
+        entry.font = textPack.parseFIGfont(String(entry.text ?? ''), String(entry.name ?? fallbackName));
+      } catch (error) {
+        console.warn('[figlet] Failed to parse font:', fallbackName, error);
+        return null;
+      }
+
+      return entry.font ?? null;
+    };
+
+    const ensureAnsiParsed = (entry: AnsiStoreEntry): AnsiParsed | null => {
+      if (entry.parsed) return entry.parsed;
+
+      const textPack = getTextPack();
+      if (!textPack) return null;
+
+      const defaultStyle = engine.getStyle('default');
+      entry.parsed = textPack.parseAnsiToRuns(String(entry.text ?? ''), {
+        defaultFg: ColorUtils.from(defaultStyle.fg),
+        defaultBg: engine.currentTheme.bg,
+        tabSize: entry.tabSize ?? 4,
+        bracketSGR: true
+      });
+      return entry.parsed;
+    };
+
     const playPresetInternal = (presetIn: unknown, seed?: number | string, options?: { volume?: number; when?: number; output?: AudioNode }) => {
+      const audioPack = getAudioPack();
+      if (!audioPack) return { stop: () => {} };
+
       let preset: SfxGraphPreset;
       try {
-        preset = parseSfxGraphPreset(presetIn);
+        preset = audioPack.parseSfxGraphPreset(presetIn);
       } catch (e) {
         console.warn('[stfxr.playPreset] Invalid preset:', e);
         return { stop: () => {} };
@@ -2540,14 +3142,25 @@ export class StorieEngine {
       }
 
       engine.audioContext.resume().catch(() => {});
-      const resolvedSeed = toSfxSeed(seed);
-      return playSfxGraph(engine.audioContext, preset, resolvedSeed, sanitizePlayOptions(options));
+      const resolvedSeed = audioPack.toSfxSeed(seed);
+      return audioPack.playSfxGraph(engine.audioContext, preset, resolvedSeed, sanitizePlayOptions(options));
     };
 
     const voicePresetInternal = (presetIn: unknown, seed?: number | string, options?: any) => {
+      const audioPack = getAudioPack();
+      if (!audioPack) {
+        return {
+          params: {},
+          setHz: () => {},
+          noteOn: () => {},
+          noteOff: () => {},
+          stop: () => {}
+        };
+      }
+
       let preset: SfxGraphPreset;
       try {
-        preset = parseSfxGraphPreset(presetIn);
+        preset = audioPack.parseSfxGraphPreset(presetIn);
       } catch (e) {
         console.warn('[stfxr.voicePreset] Invalid preset:', e);
         return {
@@ -2579,8 +3192,8 @@ export class StorieEngine {
       }
 
       engine.audioContext.resume().catch(() => {});
-      const resolvedSeed = toSfxSeed(seed);
-      return createSfxGraphVoice(engine.audioContext, preset, resolvedSeed, sanitizeVoiceOptions(options));
+      const resolvedSeed = audioPack.toSfxSeed(seed);
+      return audioPack.createSfxGraphVoice(engine.audioContext, preset, resolvedSeed, sanitizeVoiceOptions(options));
     };
 
     const evictStfxrBakedIfNeeded = (store: Map<string, StfxrBakedEntry>) => {
@@ -2598,7 +3211,6 @@ export class StorieEngine {
 
     const clonePreset = (preset: SfxGraphPreset): SfxGraphPreset => {
       try {
-        // @ts-ignore - structuredClone exists in modern browsers.
         if (typeof structuredClone === 'function') return structuredClone(preset);
       } catch {
         // ignore
@@ -2766,6 +3378,122 @@ export class StorieEngine {
 
       cache.inFlight.set(key, promise);
       return await promise;
+    };
+
+    type PortableAudioAssetEntry = {
+      handle: AudioAssetHandle;
+      buffer: AudioBuffer;
+    };
+
+    type PortableAudioVoiceEntry = {
+      handle: AudioVoiceHandle;
+      source: AudioBufferSourceNode;
+      gainNode: GainNode;
+      assetDurationSec: number;
+    };
+
+    const portableAudioAssets = new Map<string, PortableAudioAssetEntry>();
+    const portableAudioVoices = new Map<string, PortableAudioVoiceEntry>();
+    let nextPortableAudioAssetId = 1;
+    let nextPortableAudioVoiceId = 1;
+
+    const cloneAudioAssetHandle = (handle: AudioAssetHandle): AudioAssetHandle => ({ ...handle });
+    const cloneAudioVoiceHandle = (handle: AudioVoiceHandle): AudioVoiceHandle => ({ ...handle });
+
+    const registerPortableAudioAsset = (
+      buffer: AudioBuffer,
+      source: AudioAssetHandle['source'],
+      origin?: string,
+    ): AudioAssetHandle => {
+      const handle: AudioAssetHandle = {
+        id: `audio_asset_${nextPortableAudioAssetId++}`,
+        source,
+        durationSec: buffer.duration,
+        sampleRate: buffer.sampleRate,
+        channels: buffer.numberOfChannels,
+        ...(origin ? { origin } : {}),
+      };
+      portableAudioAssets.set(handle.id, { handle, buffer });
+      return cloneAudioAssetHandle(handle);
+    };
+
+    const resolvePortableAudioAsset = (handleOrId: string | AudioAssetHandle): PortableAudioAssetEntry | null => {
+      const id = typeof handleOrId === 'string'
+        ? handleOrId
+        : (handleOrId && typeof handleOrId === 'object' ? String(handleOrId.id ?? '') : '');
+      if (!id) return null;
+      return portableAudioAssets.get(id) ?? null;
+    };
+
+    const resolvePortableAudioVoice = (voiceOrId: string | AudioVoiceHandle): PortableAudioVoiceEntry | null => {
+      const id = typeof voiceOrId === 'string'
+        ? voiceOrId
+        : (voiceOrId && typeof voiceOrId === 'object' ? String(voiceOrId.id ?? '') : '');
+      if (!id) return null;
+      return portableAudioVoices.get(id) ?? null;
+    };
+
+    const createPortableAudioVoice = (
+      assetEntry: PortableAudioAssetEntry,
+      options: { loop?: boolean; gain?: number; playbackRate?: number; when?: number; offsetSec?: number } = {},
+    ): AudioVoiceHandle => {
+      const source = engine.audioContext.createBufferSource();
+      const gainNode = engine.audioContext.createGain();
+      const requestedOffsetSec = Number.isFinite(options.offsetSec) ? Number(options.offsetSec) : 0;
+      const offsetSec = Math.max(0, Math.min(assetEntry.handle.durationSec, requestedOffsetSec));
+      const handle: AudioVoiceHandle = {
+        id: `audio_voice_${nextPortableAudioVoiceId++}`,
+        assetId: assetEntry.handle.id,
+        state: 'playing',
+        loop: !!options.loop,
+        gain: Number.isFinite(options.gain) ? Math.max(0, Number(options.gain)) : 1,
+        playbackRate: Number.isFinite(options.playbackRate) ? Math.max(0.01, Number(options.playbackRate)) : 1,
+        offsetSec,
+        startedAtSec: null,
+      };
+
+      source.buffer = assetEntry.buffer;
+      source.loop = handle.loop;
+      source.playbackRate.value = handle.playbackRate;
+      gainNode.gain.value = handle.gain;
+      source.connect(gainNode);
+      gainNode.connect(engine.audioContext.destination);
+
+      const voiceEntry: PortableAudioVoiceEntry = {
+        handle,
+        source,
+        gainNode,
+        assetDurationSec: assetEntry.handle.durationSec,
+      };
+      portableAudioVoices.set(handle.id, voiceEntry);
+
+      source.onended = () => {
+        if (voiceEntry.handle.startedAtSec !== null) {
+          const elapsed = Math.max(0, engine.audioContext.currentTime - voiceEntry.handle.startedAtSec);
+          const advanced = elapsed * Math.max(0.01, voiceEntry.handle.playbackRate);
+          voiceEntry.handle.offsetSec = voiceEntry.handle.loop
+            ? ((voiceEntry.handle.offsetSec + advanced) % Math.max(voiceEntry.assetDurationSec, 0.000001))
+            : Math.min(voiceEntry.assetDurationSec, voiceEntry.handle.offsetSec + advanced);
+        }
+        voiceEntry.handle.state = 'stopped';
+        voiceEntry.handle.startedAtSec = null;
+      };
+
+      engine.runOrQueueGestureAudioStart(() => {
+        const when = (typeof options.when === 'number' && Number.isFinite(options.when))
+          ? options.when
+          : engine.audioContext.currentTime;
+        voiceEntry.handle.startedAtSec = when;
+        try {
+          source.start(when, offsetSec);
+        } catch {
+          source.start();
+          voiceEntry.handle.startedAtSec = engine.audioContext.currentTime;
+        }
+      });
+      engine.audioContext.resume().catch(() => {});
+
+      return cloneAudioVoiceHandle(handle);
     };
 
     type UIBlobImageCache = {
@@ -2954,6 +3682,9 @@ export class StorieEngine {
         },
         outline: () => {
           return engine.getOutlineNodes();
+        },
+        sourceMarkdown: () => {
+          return engine.getActiveDocumentSourceMarkdown() ?? '';
         },
         timedBlock: (name: string) => {
           const store = getTimedStore();
@@ -3144,55 +3875,7 @@ export class StorieEngine {
       ),
       
       // Retained-mode GUI API
-      gui: createGUIAPI(
-        () => {
-          const atlas = (this.renderer instanceof WebGPURenderer) ? this.renderer.getAtlas() : null;
-          return {
-            charWidth: atlas?.getCharWidth() ?? 10,
-            charHeight: atlas?.getCharHeight() ?? 16
-          };
-        },
-        (name: string) => this.getStyle(name),
-        () => this.inputDispatchDepth > 0,
-        () => {
-          try {
-            // Prefer the host-controlled CSS px size if explicitly set.
-            // This avoids stale `getBoundingClientRect()` values in some
-            // hosted preview environments.
-            const sw = this.canvas?.style?.width;
-            const sh = this.canvas?.style?.height;
-            if (typeof sw === 'string' && typeof sh === 'string' && sw.endsWith('px') && sh.endsWith('px')) {
-              const cssW = Number.parseFloat(sw);
-              const cssH = Number.parseFloat(sh);
-              if (Number.isFinite(cssW) && cssW > 0 && Number.isFinite(cssH) && cssH > 0) {
-                const scaleX = this.canvas.width / cssW;
-                const scaleY = this.canvas.height / cssH;
-                if (Number.isFinite(scaleX) && scaleX > 0 && Number.isFinite(scaleY) && scaleY > 0) {
-                  return { scaleX, scaleY };
-                }
-              }
-            }
-
-            const rect = this.canvas.getBoundingClientRect();
-            const scaleX = rect.width > 0 ? (this.canvas.width / rect.width) : 0;
-            const scaleY = rect.height > 0 ? (this.canvas.height / rect.height) : 0;
-            if (Number.isFinite(scaleX) && scaleX > 0 && Number.isFinite(scaleY) && scaleY > 0) {
-              return { scaleX, scaleY };
-            }
-          } catch {
-            // ignore
-          }
-          const dpr = (typeof window !== 'undefined' && (window as any).devicePixelRatio)
-            ? Number((window as any).devicePixelRatio)
-            : 1;
-          const v = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
-          return { scaleX: v, scaleY: v };
-        },
-        () => this.getCanvasViewportRectCss(),
-        () => this.getSafeAreaInsetsCss(),
-        () => this.current3DSectionIndex,
-        (selector: number | string) => this.resolve3DSectionIndex(selector)
-      ),
+      gui: deferredGUIAPI,
       
       // Theme API
       getStyle: (name: string) => this.getStyle(name),
@@ -3515,9 +4198,11 @@ export class StorieEngine {
               const store = getStfxrStore(docId);
               const entry = store?.get(String(name));
               if (!entry) return { stop: () => {} };
+              const audioPack = getAudioPack();
+              if (!audioPack) return { stop: () => {} };
               engine.audioContext.resume().catch(() => {});
-              const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
-              return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, sanitizePlayOptions(options));
+              const resolvedSeed = audioPack.toSfxSeed(seed ?? entry.defaultSeed);
+              return audioPack.playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, sanitizePlayOptions(options));
             },
             playPreset: (preset: any, seed?: number | string, options?: { volume?: number; when?: number; output?: AudioNode }) => {
               return playPresetInternal(preset, seed, options);
@@ -3534,9 +4219,19 @@ export class StorieEngine {
                   stop: () => {}
                 };
               }
+              const audioPack = getAudioPack();
+              if (!audioPack) {
+                return {
+                  params: {},
+                  setHz: () => {},
+                  noteOn: () => {},
+                  noteOff: () => {},
+                  stop: () => {}
+                };
+              }
               engine.audioContext.resume().catch(() => {});
-              const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
-              return createSfxGraphVoice(engine.audioContext, entry.preset, resolvedSeed, sanitizeVoiceOptions(options));
+              const resolvedSeed = audioPack.toSfxSeed(seed ?? entry.defaultSeed);
+              return audioPack.createSfxGraphVoice(engine.audioContext, entry.preset, resolvedSeed, sanitizeVoiceOptions(options));
             },
             voicePreset: (preset: any, seed?: number | string, options?: any) => {
               return voicePresetInternal(preset, seed, options);
@@ -3549,7 +4244,9 @@ export class StorieEngine {
               const store = getStfxrStore(docId);
               const entry = store?.get(String(name));
               if (!entry) return '';
-              const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
+              const audioPack = getAudioPack();
+              if (!audioPack) return '';
+              const resolvedSeed = audioPack.toSfxSeed(seed ?? entry.defaultSeed);
               const sampleRate = engine.audioContext.sampleRate;
               const id = String(options?.id ?? `stfxr:${String(name)}:${resolvedSeed >>> 0}:${sampleRate}`);
 
@@ -3557,7 +4254,7 @@ export class StorieEngine {
               if (!bakedStore) return '';
               if (bakedStore.has(id)) return id;
 
-              const buffer = await bakeSfxGraphBuffer(engine.audioContext, entry.preset, resolvedSeed, {
+              const buffer = await audioPack.bakeSfxGraphBuffer(engine.audioContext, entry.preset, resolvedSeed, {
                 seconds: options?.seconds,
                 maxSeconds: options?.maxSeconds
               });
@@ -3644,9 +4341,11 @@ export class StorieEngine {
           const store = getStfxrStore();
           const entry = store?.get(String(name));
           if (!entry) return { stop: () => {} };
+          const audioPack = getAudioPack();
+          if (!audioPack) return { stop: () => {} };
           engine.audioContext.resume().catch(() => {});
-          const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
-          return playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, sanitizePlayOptions(options));
+          const resolvedSeed = audioPack.toSfxSeed(seed ?? entry.defaultSeed);
+          return audioPack.playSfxGraph(engine.audioContext, entry.preset, resolvedSeed, sanitizePlayOptions(options));
         },
         playPreset: (preset: any, seed?: number | string, options?: { volume?: number; when?: number; output?: AudioNode }) => {
           return playPresetInternal(preset, seed, options);
@@ -3663,9 +4362,19 @@ export class StorieEngine {
               stop: () => {}
             };
           }
+          const audioPack = getAudioPack();
+          if (!audioPack) {
+            return {
+              params: {},
+              setHz: () => {},
+              noteOn: () => {},
+              noteOff: () => {},
+              stop: () => {}
+            };
+          }
           engine.audioContext.resume().catch(() => {});
-          const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
-          return createSfxGraphVoice(engine.audioContext, entry.preset, resolvedSeed, sanitizeVoiceOptions(options));
+          const resolvedSeed = audioPack.toSfxSeed(seed ?? entry.defaultSeed);
+          return audioPack.createSfxGraphVoice(engine.audioContext, entry.preset, resolvedSeed, sanitizeVoiceOptions(options));
         },
         voicePreset: (preset: any, seed?: number | string, options?: any) => {
           return voicePresetInternal(preset, seed, options);
@@ -3674,7 +4383,9 @@ export class StorieEngine {
           const store = getStfxrStore();
           const entry = store?.get(String(name));
           if (!entry) return '';
-          const resolvedSeed = toSfxSeed(seed ?? entry.defaultSeed);
+          const audioPack = getAudioPack();
+          if (!audioPack) return '';
+          const resolvedSeed = audioPack.toSfxSeed(seed ?? entry.defaultSeed);
           const sampleRate = engine.audioContext.sampleRate;
           const id = String(options?.id ?? `stfxr:${String(name)}:${resolvedSeed >>> 0}:${sampleRate}`);
 
@@ -3682,7 +4393,7 @@ export class StorieEngine {
           if (!bakedStore) return '';
           if (bakedStore.has(id)) return id;
 
-          const buffer = await bakeSfxGraphBuffer(engine.audioContext, entry.preset, resolvedSeed, {
+          const buffer = await audioPack.bakeSfxGraphBuffer(engine.audioContext, entry.preset, resolvedSeed, {
             seconds: options?.seconds,
             maxSeconds: options?.maxSeconds
           });
@@ -3756,15 +4467,7 @@ export class StorieEngine {
             if (!store) return null;
             const entry = store.get(String(name));
             if (!entry) return null;
-            if (!entry.font) {
-              try {
-                entry.font = parseFIGfont(String(entry.text ?? ''), String(entry.name ?? name));
-              } catch (e) {
-                console.warn('[figlet] Failed to parse font:', name, e);
-                return null;
-              }
-            }
-            return entry.font ?? null;
+            return ensureFigletFont(entry, String(name));
           };
 
           return {
@@ -3791,13 +4494,13 @@ export class StorieEngine {
             },
             render: (fontName: string, text: string) => {
               const font = ensureFont(String(fontName));
-              if (!font) return [];
-              return renderFigletLines(font, String(text ?? ''));
+              const textPack = getTextPack();
+              return font && textPack ? textPack.renderFigletLines(font, String(text ?? '')) : [];
             },
             renderChar: (fontName: string, ch: string) => {
               const font = ensureFont(String(fontName));
-              if (!font) return [];
-              return renderFigletCharLines(font, String(ch ?? ' '));
+              const textPack = getTextPack();
+              return font && textPack ? textPack.renderFigletCharLines(font, String(ch ?? ' ')) : [];
             }
           };
         },
@@ -3823,44 +4526,26 @@ export class StorieEngine {
           if (!store) return 0;
           const entry = store.get(String(name));
           if (!entry) return 0;
-          if (!entry.font) {
-            try {
-              entry.font = parseFIGfont(String(entry.text ?? ''), String(entry.name ?? name));
-            } catch {
-              return 0;
-            }
-          }
-          return entry.font ? Math.max(0, entry.font.height | 0) : 0;
+          const font = ensureFigletFont(entry, String(name));
+          return font ? Math.max(0, font.height | 0) : 0;
         },
         render: (fontName: string, text: string) => {
           const store = getFigletStore();
           if (!store) return [];
           const entry = store.get(String(fontName));
           if (!entry) return [];
-          if (!entry.font) {
-            try {
-              entry.font = parseFIGfont(String(entry.text ?? ''), String(entry.name ?? fontName));
-            } catch (e) {
-              console.warn('[figlet] Failed to parse font:', fontName, e);
-              return [];
-            }
-          }
-          return entry.font ? renderFigletLines(entry.font, String(text ?? '')) : [];
+          const font = ensureFigletFont(entry, String(fontName));
+          const textPack = getTextPack();
+          return font && textPack ? textPack.renderFigletLines(font, String(text ?? '')) : [];
         },
         renderChar: (fontName: string, ch: string) => {
           const store = getFigletStore();
           if (!store) return [];
           const entry = store.get(String(fontName));
           if (!entry) return [];
-          if (!entry.font) {
-            try {
-              entry.font = parseFIGfont(String(entry.text ?? ''), String(entry.name ?? fontName));
-            } catch (e) {
-              console.warn('[figlet] Failed to parse font:', fontName, e);
-              return [];
-            }
-          }
-          return entry.font ? renderFigletCharLines(entry.font, String(ch ?? ' ')) : [];
+          const font = ensureFigletFont(entry, String(fontName));
+          const textPack = getTextPack();
+          return font && textPack ? textPack.renderFigletCharLines(font, String(ch ?? ' ')) : [];
         }
       },
 
@@ -3892,48 +4577,22 @@ export class StorieEngine {
               if (!store) return null;
               const entry = store.get(String(name));
               if (!entry) return null;
-              if (!entry.parsed) {
-                const defaultStyle = engine.getStyle('default');
-                entry.parsed = parseAnsiToRuns(String(entry.text ?? ''), {
-                  defaultFg: ColorUtils.from(defaultStyle.fg),
-                  defaultBg: engine.currentTheme.bg,
-                  tabSize: entry.tabSize ?? 4,
-                  bracketSGR: true
-                });
-              }
-              return entry.parsed.lines;
+              const parsed = ensureAnsiParsed(entry);
+              return parsed ? parsed.lines : null;
             },
             width: (name: string) => {
               const store = getStore();
               if (!store) return 0;
               const entry = store.get(String(name));
               if (!entry) return 0;
-              if (!entry.parsed) {
-                const defaultStyle = engine.getStyle('default');
-                entry.parsed = parseAnsiToRuns(String(entry.text ?? ''), {
-                  defaultFg: ColorUtils.from(defaultStyle.fg),
-                  defaultBg: engine.currentTheme.bg,
-                  tabSize: entry.tabSize ?? 4,
-                  bracketSGR: true
-                });
-              }
-              return entry.parsed.width;
+              return ensureAnsiParsed(entry)?.width ?? 0;
             },
             height: (name: string) => {
               const store = getStore();
               if (!store) return 0;
               const entry = store.get(String(name));
               if (!entry) return 0;
-              if (!entry.parsed) {
-                const defaultStyle = engine.getStyle('default');
-                entry.parsed = parseAnsiToRuns(String(entry.text ?? ''), {
-                  defaultFg: ColorUtils.from(defaultStyle.fg),
-                  defaultBg: engine.currentTheme.bg,
-                  tabSize: entry.tabSize ?? 4,
-                  bracketSGR: true
-                });
-              }
-              return entry.parsed.height;
+              return ensureAnsiParsed(entry)?.height ?? 0;
             }
           };
         },
@@ -3959,48 +4618,22 @@ export class StorieEngine {
           if (!store) return null;
           const entry = store.get(String(name));
           if (!entry) return null;
-          if (!entry.parsed) {
-            const defaultStyle = engine.getStyle('default');
-            entry.parsed = parseAnsiToRuns(String(entry.text ?? ''), {
-              defaultFg: ColorUtils.from(defaultStyle.fg),
-              defaultBg: engine.currentTheme.bg,
-              tabSize: entry.tabSize ?? 4,
-              bracketSGR: true
-            });
-          }
-          return entry.parsed.lines;
+          const parsed = ensureAnsiParsed(entry);
+          return parsed ? parsed.lines : null;
         },
         width: (name: string) => {
           const store = getAnsiStore();
           if (!store) return 0;
           const entry = store.get(String(name));
           if (!entry) return 0;
-          if (!entry.parsed) {
-            const defaultStyle = engine.getStyle('default');
-            entry.parsed = parseAnsiToRuns(String(entry.text ?? ''), {
-              defaultFg: ColorUtils.from(defaultStyle.fg),
-              defaultBg: engine.currentTheme.bg,
-              tabSize: entry.tabSize ?? 4,
-              bracketSGR: true
-            });
-          }
-          return entry.parsed.width;
+          return ensureAnsiParsed(entry)?.width ?? 0;
         },
         height: (name: string) => {
           const store = getAnsiStore();
           if (!store) return 0;
           const entry = store.get(String(name));
           if (!entry) return 0;
-          if (!entry.parsed) {
-            const defaultStyle = engine.getStyle('default');
-            entry.parsed = parseAnsiToRuns(String(entry.text ?? ''), {
-              defaultFg: ColorUtils.from(defaultStyle.fg),
-              defaultBg: engine.currentTheme.bg,
-              tabSize: entry.tabSize ?? 4,
-              bracketSGR: true
-            });
-          }
-          return entry.parsed.height;
+          return ensureAnsiParsed(entry)?.height ?? 0;
         }
       },
 
@@ -4031,19 +4664,13 @@ export class StorieEngine {
         bg?: Color,
         options?: { vertical?: boolean; letterSpacing?: number }
       ) => {
+        const textPack = getTextPack();
+        if (!textPack) return;
         const store = getFigletStore();
         if (!store) return;
         const entry = store.get(String(fontName));
         if (!entry) return;
-        if (!entry.font) {
-          try {
-            entry.font = parseFIGfont(String(entry.text ?? ''), String(entry.name ?? fontName));
-          } catch (e) {
-            console.warn('[figlet] Failed to parse font:', fontName, e);
-            return;
-          }
-        }
-        const font = entry.font;
+        const font = ensureFigletFont(entry, String(fontName));
         if (!font) return;
 
         const layer = this.layers.getActive();
@@ -4053,7 +4680,7 @@ export class StorieEngine {
         if (vertical) {
           let currentY = y;
           for (const ch of Array.from(String(text ?? ''))) {
-            const charLines = renderFigletCharLines(font, ch);
+            const charLines = textPack.renderFigletCharLines(font, ch);
             let lineY = currentY;
             for (const line of charLines) {
               layer.write(x, lineY, line ?? '', fg, bg);
@@ -4067,8 +4694,8 @@ export class StorieEngine {
         if (letterSpacing > 0) {
           let currentX = x;
           for (const ch of Array.from(String(text ?? ''))) {
-            const charLines = renderFigletCharLines(font, ch);
-            const charWidth = measureFigletLinesWidth(charLines);
+            const charLines = textPack.renderFigletCharLines(font, ch);
+            const charWidth = textPack.measureFigletLinesWidth(charLines);
             for (let i = 0; i < charLines.length; i++) {
               layer.write(currentX, y + i, charLines[i] ?? '', fg, bg);
             }
@@ -4077,7 +4704,7 @@ export class StorieEngine {
           return;
         }
 
-        const lines = renderFigletLines(font, String(text ?? ''));
+        const lines = textPack.renderFigletLines(font, String(text ?? ''));
         for (let i = 0; i < lines.length; i++) {
           layer.write(x, y + i, lines[i] ?? '', fg, bg);
         }
@@ -4090,19 +4717,11 @@ export class StorieEngine {
         if (!store) return;
         const entry = store.get(String(name));
         if (!entry) return;
-
-        if (!entry.parsed) {
-          const defaultStyle = engine.getStyle('default');
-          entry.parsed = parseAnsiToRuns(String(entry.text ?? ''), {
-            defaultFg: ColorUtils.from(defaultStyle.fg),
-            defaultBg: engine.currentTheme.bg,
-            tabSize: entry.tabSize ?? 4,
-            bracketSGR: true
-          });
-        }
+        const parsed = ensureAnsiParsed(entry);
+        if (!parsed) return;
 
         const layer = this.layers.getActive();
-        const lines = entry.parsed.lines;
+        const lines = parsed.lines;
         for (let row = 0; row < lines.length; row++) {
           let cx = x;
           const runs = lines[row] ?? [];
@@ -4191,7 +4810,10 @@ export class StorieEngine {
          *   const rng = random.rng(stfxrSeed);
          *   const x = rng(); // deterministic float in [0, 1)
          */
-        rng: (seed: number): (() => number) => mulberry32(seed >>> 0),
+        rng: (seed: number): (() => number) => {
+          const audioPack = getAudioPack();
+          return audioPack ? audioPack.mulberry32(seed >>> 0) : (() => 0);
+        },
         /**
          * Normalise any seed value (number or string) to a uint32 in the same
          * way the engine does before passing it to stfxr / sfx presets.
@@ -4201,7 +4823,10 @@ export class StorieEngine {
          *   random.toSeed('player1') // → stable uint32 every time
          *   random.toSeed(42.7)      // → 42
          */
-        toSeed: (val: number | string): number => toSfxSeed(val),
+        toSeed: (val: number | string): number => {
+          const audioPack = getAudioPack();
+          return audioPack ? audioPack.toSfxSeed(val) : 0;
+        },
       },
 
       /**
@@ -4209,6 +4834,24 @@ export class StorieEngine {
        * the SES sandbox never needs access to `document` or `URL`.
        */
       sys: {
+        params: {
+          get: (name: string, defaultValue?: string | number | boolean | null): string | number | boolean | null | undefined => {
+            try {
+              const search = globalThis.location?.search ?? '';
+              const sp = new URLSearchParams(search);
+              const raw = sp.get(String(name));
+              if (raw === null) return defaultValue;
+              const asNum = Number(raw);
+              if (raw.trim() !== '' && Number.isFinite(asNum)) return asNum;
+              const lower = raw.toLowerCase();
+              if (lower === 'true') return true;
+              if (lower === 'false') return false;
+              return raw;
+            } catch {
+              return defaultValue;
+            }
+          },
+        },
         /**
          * Trigger a browser "Save As" download with raw bytes.
          * Creates a temporary object URL, clicks a hidden anchor, then revokes.
@@ -4283,7 +4926,12 @@ export class StorieEngine {
         automation: {
           compile: (entries: Array<{ ms: number; text: string }>): CompiledAutomation => {
             try {
-              return compileAutomation(entries);
+              const pack = getAuthoredToolsPack();
+              if (!pack) {
+                engine.requestAuthoredToolsRuntimePack();
+                throw new Error('Authored tools runtime pack is not loaded');
+              }
+              return pack.compileAutomation(entries);
             } catch (e) {
               console.warn('[sys.automation.compile] failed:', e);
               return { vars: {}, impulses: [] };
@@ -4291,7 +4939,12 @@ export class StorieEngine {
           },
           valueAt: (compiled: CompiledAutomation, varName: string, timeSec: number, defaultValue: number = 0): number => {
             try {
-              return automationValueAt(compiled, String(varName ?? ''), Number(timeSec) || 0, Number(defaultValue) || 0);
+              const pack = getAuthoredToolsPack();
+              if (!pack) {
+                engine.requestAuthoredToolsRuntimePack();
+                throw new Error('Authored tools runtime pack is not loaded');
+              }
+              return pack.valueAt(compiled, String(varName ?? ''), Number(timeSec) || 0, Number(defaultValue) || 0);
             } catch (e) {
               console.warn('[sys.automation.valueAt] failed:', e);
               return Number(defaultValue) || 0;
@@ -4299,7 +4952,12 @@ export class StorieEngine {
           },
           impulsesBetween: (compiled: CompiledAutomation, prevTimeSec: number, nowTimeSec: number): AutomationImpulseEvent[] => {
             try {
-              return automationImpulsesBetween(compiled, Number(prevTimeSec) || 0, Number(nowTimeSec) || 0);
+              const pack = getAuthoredToolsPack();
+              if (!pack) {
+                engine.requestAuthoredToolsRuntimePack();
+                throw new Error('Authored tools runtime pack is not loaded');
+              }
+              return pack.impulsesBetween(compiled, Number(prevTimeSec) || 0, Number(nowTimeSec) || 0);
             } catch (e) {
               console.warn('[sys.automation.impulsesBetween] failed:', e);
               return [];
@@ -4307,28 +4965,48 @@ export class StorieEngine {
           },
           parseEase: (raw: any): EaseSpec => {
             try {
-              return automationParseEaseSpec(raw);
+              const pack = getAuthoredToolsPack();
+              if (!pack) {
+                engine.requestAuthoredToolsRuntimePack();
+                throw new Error('Authored tools runtime pack is not loaded');
+              }
+              return pack.parseEaseSpec(raw);
             } catch {
               return 'linear' as EaseSpec;
             }
           },
           ease: (u: number, spec?: EaseSpec): number => {
             try {
-              return automationEase(Number(u) || 0, spec ?? 'linear');
+              const pack = getAuthoredToolsPack();
+              if (!pack) {
+                engine.requestAuthoredToolsRuntimePack();
+                throw new Error('Authored tools runtime pack is not loaded');
+              }
+              return pack.ease(Number(u) || 0, spec ?? 'linear');
             } catch {
               return 0;
             }
           },
           entryAt: <T extends { ms: number }>(entries: T[], timeSec: number): T | undefined => {
             try {
-              return automationEntryAt(entries, Number(timeSec) || 0);
+              const pack = getAuthoredToolsPack();
+              if (!pack) {
+                engine.requestAuthoredToolsRuntimePack();
+                throw new Error('Authored tools runtime pack is not loaded');
+              }
+              return pack.entryAt(entries, Number(timeSec) || 0);
             } catch {
               return undefined;
             }
           },
           entriesBetween: <T extends { ms: number }>(entries: T[], prevTimeSec: number, nowTimeSec: number): T[] => {
             try {
-              return automationEntriesBetween(entries, Number(prevTimeSec) || 0, Number(nowTimeSec) || 0);
+              const pack = getAuthoredToolsPack();
+              if (!pack) {
+                engine.requestAuthoredToolsRuntimePack();
+                throw new Error('Authored tools runtime pack is not loaded');
+              }
+              return pack.entriesBetween(entries, Number(prevTimeSec) || 0, Number(nowTimeSec) || 0);
             } catch {
               return [];
             }
@@ -4346,7 +5024,12 @@ export class StorieEngine {
         history: {
           create: (opts?: { maxDepth?: number }): HistoryStack => {
             try {
-              return createHistory(opts);
+              const pack = getAuthoredToolsPack();
+              if (!pack) {
+                engine.requestAuthoredToolsRuntimePack();
+                throw new Error('Authored tools runtime pack is not loaded');
+              }
+              return pack.createHistory(opts);
             } catch (e) {
               console.warn('[sys.history.create] failed:', e);
               // Return a no-op stub so existing code doesn't crash.
@@ -4378,7 +5061,12 @@ export class StorieEngine {
         recorder: {
           create: (): InputRecorder => {
             try {
-              return createInputRecorder();
+              const pack = getAuthoredToolsPack();
+              if (!pack) {
+                engine.requestAuthoredToolsRuntimePack();
+                throw new Error('Authored tools runtime pack is not loaded');
+              }
+              return pack.createInputRecorder();
             } catch (e) {
               console.warn('[sys.recorder.create] failed:', e);
               const noTape: RecordedTape = {
@@ -4412,10 +5100,15 @@ export class StorieEngine {
         beat: {
           clock: (opts: BeatClockOptions): BeatClock => {
             try {
-              return createBeatClock(opts);
+              const pack = getAuthoredToolsPack();
+              if (!pack) {
+                engine.requestAuthoredToolsRuntimePack();
+                throw new Error('Authored tools runtime pack is not loaded');
+              }
+              return pack.createBeatClock(opts);
             } catch (e) {
               console.warn('[sys.beat.clock] failed:', e);
-              return createBeatClock({ bpm: 120 });
+              return engine.createFallbackBeatClock(opts);
             }
           },
           beatAt: (clock: BeatClock, timeSec: number): number => {
@@ -4450,7 +5143,12 @@ export class StorieEngine {
           },
           toTimedEntries: (clock: BeatClock, entries: Array<{ beat: number; text: string }>): Array<{ ms: number; text: string }> => {
             try {
-              return beatToTimedEntries(clock, entries);
+              const pack = getAuthoredToolsPack();
+              if (!pack) {
+                engine.requestAuthoredToolsRuntimePack();
+                throw new Error('Authored tools runtime pack is not loaded');
+              }
+              return pack.beatToTimedEntries(clock, entries);
             } catch (e) {
               console.warn('[sys.beat.toTimedEntries] failed:', e);
               return [];
@@ -4458,7 +5156,12 @@ export class StorieEngine {
           },
           parseBlock: (raw: Array<{ ms: number; text: string }>, clock?: BeatClock): Array<{ ms: number; text: string }> => {
             try {
-              return parseBeatTimedBlock(raw, clock);
+              const pack = getAuthoredToolsPack();
+              if (!pack) {
+                engine.requestAuthoredToolsRuntimePack();
+                throw new Error('Authored tools runtime pack is not loaded');
+              }
+              return pack.parseBeatTimedBlock(raw, clock);
             } catch (e) {
               console.warn('[sys.beat.parseBlock] failed:', e);
               return raw;
@@ -4496,6 +5199,271 @@ export class StorieEngine {
       
       // Web Audio API (Phase 1) - Full exposure with shared instance
       audio: {
+        asset: {
+          load: async (url: string): Promise<AudioAssetHandle | null> => {
+            const buffer = await engine.loadSoundFromUrl(url);
+            if (!buffer) return null;
+            return registerPortableAudioAsset(buffer, 'url', String(url ?? ''));
+          },
+          fromDrop: async (): Promise<AudioAssetHandle | null> => {
+            const buffer = await engine.api.audio.loadSoundFromDrop();
+            if (!buffer) return null;
+            return registerPortableAudioAsset(buffer, 'drop', String(engine.lastDroppedFile?.name ?? 'drop'));
+          },
+          fromBlob: async (name: string, documentId?: string): Promise<AudioAssetHandle | null> => {
+            const buffer = await loadSoundFromBlobCached(String(name ?? ''), documentId);
+            if (!buffer) return null;
+            return registerPortableAudioAsset(buffer, 'blob', String(name ?? ''));
+          },
+          info: (handleOrId: string | AudioAssetHandle): AudioAssetHandle | null => {
+            const entry = resolvePortableAudioAsset(handleOrId);
+            return entry ? cloneAudioAssetHandle(entry.handle) : null;
+          },
+        },
+        analysis: {
+          peaks: (handleOrId: string | AudioAssetHandle, options: PeakDetectionOptions = {}): PeakDetectionResult | null => {
+            const entry = resolvePortableAudioAsset(handleOrId);
+            if (!entry) return null;
+            const audioPack = getAudioPack();
+            return audioPack ? audioPack.detectPeaksFromAudioBuffer(entry.buffer, options) : null;
+          },
+          beats: (handleOrId: string | AudioAssetHandle, options: BeatDetectionOptions = {}): BeatAnalysisResult | null => {
+            const entry = resolvePortableAudioAsset(handleOrId);
+            if (!entry) return null;
+            const audioPack = getAudioPack();
+            return audioPack ? audioPack.analyzeBeatsFromAudioBuffer(entry.buffer, options) : null;
+          },
+        },
+        play: (handleOrId: string | AudioAssetHandle, options?: { loop?: boolean; gain?: number; playbackRate?: number; when?: number; offsetSec?: number }): AudioVoiceHandle | null => {
+          const entry = resolvePortableAudioAsset(handleOrId);
+          if (!entry) return null;
+          return createPortableAudioVoice(entry, options);
+        },
+        stop: (voiceOrId: string | AudioVoiceHandle, when?: number): boolean => {
+          const entry = resolvePortableAudioVoice(voiceOrId);
+          if (!entry) return false;
+          if (entry.handle.startedAtSec !== null) {
+            const stopAt = (typeof when === 'number' && Number.isFinite(when)) ? when : engine.audioContext.currentTime;
+            const elapsed = Math.max(0, stopAt - entry.handle.startedAtSec);
+            const advanced = elapsed * Math.max(0.01, entry.handle.playbackRate);
+            entry.handle.offsetSec = entry.handle.loop
+              ? ((entry.handle.offsetSec + advanced) % Math.max(entry.assetDurationSec, 0.000001))
+              : Math.min(entry.assetDurationSec, entry.handle.offsetSec + advanced);
+          }
+          try {
+            if (typeof when === 'number' && Number.isFinite(when)) entry.source.stop(when);
+            else entry.source.stop();
+          } catch {
+            return false;
+          }
+          entry.handle.state = 'stopped';
+          entry.handle.startedAtSec = null;
+          return true;
+        },
+        setGain: (voiceOrId: string | AudioVoiceHandle, gain: number): boolean => {
+          const entry = resolvePortableAudioVoice(voiceOrId);
+          if (!entry || !Number.isFinite(gain)) return false;
+          const next = Math.max(0, Number(gain));
+          entry.gainNode.gain.value = next;
+          entry.handle.gain = next;
+          return true;
+        },
+        setPlaybackRate: (voiceOrId: string | AudioVoiceHandle, playbackRate: number): boolean => {
+          const entry = resolvePortableAudioVoice(voiceOrId);
+          if (!entry || !Number.isFinite(playbackRate)) return false;
+          const next = Math.max(0.01, Number(playbackRate));
+          entry.source.playbackRate.value = next;
+          entry.handle.playbackRate = next;
+          return true;
+        },
+        voiceInfo: (voiceOrId: string | AudioVoiceHandle): AudioVoiceHandle | null => {
+          const entry = resolvePortableAudioVoice(voiceOrId);
+          return entry ? cloneAudioVoiceHandle(entry.handle) : null;
+        },
+        resume: async (): Promise<boolean> => {
+          try {
+            await engine.audioContext.resume();
+          } catch {
+            // Ignore resume failures and report state below.
+          }
+          return engine.audioContext.state === 'running';
+        },
+        buffer: {
+          create: (channels: number, frameCount: number, sampleRate?: number): AudioBuffer => {
+            const nextChannels = Math.max(1, Math.floor(Number(channels) || 1));
+            const nextFrameCount = Math.max(1, Math.floor(Number(frameCount) || 1));
+            const nextSampleRate = Number.isFinite(sampleRate)
+              ? Math.max(1, Math.floor(Number(sampleRate)))
+              : engine.audioContext.sampleRate;
+            return engine.audioContext.createBuffer(nextChannels, nextFrameCount, nextSampleRate);
+          },
+        },
+        ambient: {
+          createLayeredBed: (config) => {
+            const ctx = engine.audioContext;
+            const clampFinite = (value: unknown, fallback: number, min?: number) => {
+              const next = Number(value);
+              if (!Number.isFinite(next)) return fallback;
+              if (typeof min === 'number') return Math.max(min, next);
+              return next;
+            };
+            const createImpulseBuffer = (seconds: number, decay: number): AudioBuffer => {
+              const sampleRate = ctx.sampleRate;
+              const frameCount = Math.max(1, Math.floor(sampleRate * Math.max(0.001, seconds)));
+              const impulse = ctx.createBuffer(2, frameCount, sampleRate);
+              for (let channel = 0; channel < impulse.numberOfChannels; channel++) {
+                const data = impulse.getChannelData(channel);
+                for (let i = 0; i < frameCount; i++) {
+                  const t = 1 - i / frameCount;
+                  data[i] = (Math.random() * 2 - 1) * Math.pow(t, Math.max(0.001, decay));
+                }
+              }
+              return impulse;
+            };
+            const master = ctx.createGain();
+            const dry = ctx.createGain();
+            const wet = ctx.createGain();
+            const compressor = ctx.createDynamicsCompressor();
+            const convolver = ctx.createConvolver();
+            const lfo = ctx.createOscillator();
+            const lfoDepth = ctx.createGain();
+            const sourceEntries: Array<{ source: AudioBufferSourceNode; offsetSec: number; durationSec: number }> = [];
+            let started = false;
+            let stopped = false;
+
+            master.gain.value = clampFinite(config?.masterGain, 0);
+            dry.gain.value = clampFinite(config?.dryGain, 1, 0);
+            wet.gain.value = clampFinite(config?.wetGain, 0, 0);
+
+            const impulseConfig = config?.impulse;
+            convolver.buffer = impulseConfig?.buffer ?? createImpulseBuffer(
+              clampFinite(impulseConfig?.seconds, 1.2, 0.001),
+              clampFinite(impulseConfig?.decay, 2.5, 0.001),
+            );
+
+            compressor.threshold.value = clampFinite(config?.compressor?.threshold, -24);
+            compressor.knee.value = clampFinite(config?.compressor?.knee, 18, 0);
+            compressor.ratio.value = clampFinite(config?.compressor?.ratio, 2, 1);
+            compressor.attack.value = clampFinite(config?.compressor?.attack, 0.02, 0);
+            compressor.release.value = clampFinite(config?.compressor?.release, 0.25, 0);
+
+            dry.connect(compressor);
+            wet.connect(convolver);
+            convolver.connect(compressor);
+            compressor.connect(master);
+            master.connect(ctx.destination);
+
+            lfo.type = config?.lfo?.type ?? 'sine';
+            lfo.frequency.value = clampFinite(config?.lfo?.frequencyHz, 0.1, 0.001);
+            lfoDepth.gain.value = clampFinite(config?.lfo?.depth, 0, 0);
+            lfo.connect(lfoDepth);
+            lfoDepth.connect(master.gain);
+
+            const layers = Array.isArray(config?.layers) ? config.layers : [];
+            for (const layer of layers) {
+              if (!layer?.buffer) continue;
+              const source = ctx.createBufferSource();
+              source.buffer = layer.buffer;
+              source.loop = !!layer.loop;
+              const routes = Array.isArray(layer.routes) ? layer.routes : [];
+              for (const route of routes) {
+                const highpass = ctx.createBiquadFilter();
+                const lowpass = ctx.createBiquadFilter();
+                const routeGain = ctx.createGain();
+                highpass.type = 'highpass';
+                highpass.frequency.value = clampFinite(route?.hp, 0, 0);
+                highpass.Q.value = clampFinite(route?.hpQ, 0.0001, 0.0001);
+                lowpass.type = 'lowpass';
+                lowpass.frequency.value = clampFinite(route?.lp, ctx.sampleRate / 2, 0);
+                lowpass.Q.value = clampFinite(route?.lpQ, 0.0001, 0.0001);
+                routeGain.gain.value = clampFinite(route?.gain, 1, 0);
+                source.connect(highpass);
+                highpass.connect(lowpass);
+                lowpass.connect(routeGain);
+                routeGain.connect(route?.bus === 'wet' ? wet : dry);
+              }
+              sourceEntries.push({
+                source,
+                offsetSec: clampFinite(layer.offsetSec, 0, 0),
+                durationSec: Math.max(0.000001, source.buffer.duration || 0.000001),
+              });
+            }
+
+            const beginPlayback = () => {
+              if (started || stopped) return started;
+              for (const entry of sourceEntries) {
+                try {
+                  entry.source.start(ctx.currentTime, entry.offsetSec % entry.durationSec);
+                } catch {
+                  entry.source.start();
+                }
+              }
+              try {
+                lfo.start(ctx.currentTime);
+              } catch {
+                lfo.start();
+              }
+              started = true;
+              return true;
+            };
+
+            return {
+              start: async (): Promise<boolean> => {
+                if (stopped) return false;
+                engine.runOrQueueGestureAudioStart(beginPlayback);
+                if (started) {
+                  try {
+                    await ctx.resume();
+                  } catch {
+                    // Ignore resume failures.
+                  }
+                  return ctx.state === 'running';
+                }
+                if (ctx.state === 'running') return beginPlayback();
+                try {
+                  await ctx.resume();
+                } catch {
+                  // Ignore resume failures.
+                }
+                if (started) return true;
+                if (String(ctx.state) !== 'running') return false;
+                return beginPlayback();
+              },
+              stop: (when?: number) => {
+                if (stopped) return;
+                stopped = true;
+                const stopAt = (typeof when === 'number' && Number.isFinite(when)) ? when : undefined;
+                for (const entry of sourceEntries) {
+                  try {
+                    if (stopAt !== undefined) entry.source.stop(stopAt);
+                    else entry.source.stop();
+                  } catch {
+                    // Ignore stop failures.
+                  }
+                }
+                try {
+                  if (stopAt !== undefined) lfo.stop(stopAt);
+                  else lfo.stop();
+                } catch {
+                  // Ignore stop failures.
+                }
+              },
+              setLevel: (level: number, rampSeconds?: number, lfoDepthTarget?: number) => {
+                const now = ctx.currentTime;
+                const nextLevel = clampFinite(level, 0, 0);
+                const nextRamp = Math.max(0.01, clampFinite(rampSeconds, 0.6, 0));
+                const nextLfoDepth = clampFinite(lfoDepthTarget, lfoDepth.gain.value, 0);
+                master.gain.cancelScheduledValues(now);
+                master.gain.setValueAtTime(master.gain.value, now);
+                master.gain.linearRampToValueAtTime(nextLevel, now + nextRamp);
+                lfoDepth.gain.cancelScheduledValues(now);
+                lfoDepth.gain.setValueAtTime(lfoDepth.gain.value, now);
+                lfoDepth.gain.linearRampToValueAtTime(nextLfoDepth, now + nextRamp);
+              },
+              isStarted: () => started,
+            };
+          },
+        },
         // === SHARED INSTANCE (Full Web Audio API) ===
         get context() { return engine.audioContext; },
         startOnGesture: (start: () => void): boolean => {
@@ -4666,7 +5634,10 @@ export class StorieEngine {
          * Dependency-free and deterministic.
          */
         peaksFromBuffer: (buffer: AudioBuffer, options: PeakDetectionOptions = {}): PeakDetectionResult => {
-          return detectPeaksFromAudioBuffer(buffer, options);
+          const audioPack = getAudioPack();
+          return audioPack
+            ? audioPack.detectPeaksFromAudioBuffer(buffer, options)
+            : { peaks: [], envelopeHz: buffer.sampleRate, envelope: new Float32Array(0), threshold: 0 };
         },
 
         /**
@@ -4674,7 +5645,20 @@ export class StorieEngine {
          * Currently assumes 4/4 by default, but returns a `meter` field for future meter detection.
          */
         beatsFromBuffer: (buffer: AudioBuffer, options: BeatDetectionOptions = {}): BeatAnalysisResult => {
-          return analyzeBeatsFromAudioBuffer(buffer, options);
+          const audioPack = getAudioPack();
+          return audioPack
+            ? audioPack.analyzeBeatsFromAudioBuffer(buffer, options)
+            : {
+                bpm: 0,
+                confidence: 0,
+                meter: 4,
+                periodSec: 0,
+                offsetSec: 0,
+                beats: [],
+                downbeats: [],
+                envelopeHz: buffer.sampleRate,
+                envelope: new Float32Array(0)
+              };
         },
 
         /**
@@ -4682,7 +5666,26 @@ export class StorieEngine {
          * Pass prevTimeSec to get edge flags when crossing beat boundaries.
          */
         beatState: (analysis: BeatAnalysisResult, timeSec: number, prevTimeSec?: number): BeatState => {
-          return getBeatState(analysis, timeSec, prevTimeSec);
+          const audioPack = getAudioPack();
+          return audioPack
+            ? audioPack.getBeatState(analysis, timeSec, prevTimeSec)
+            : {
+                bpm: analysis.bpm,
+                meter: analysis.meter,
+                periodSec: analysis.periodSec,
+                offsetSec: analysis.offsetSec,
+                timeSec,
+                beatIndex: 0,
+                beatInBar: 1,
+                barIndex: 0,
+                beatFloat: 0,
+                beatPhase: 0,
+                barPhase: 0,
+                nextBeatSec: analysis.offsetSec,
+                nextDownbeatSec: analysis.offsetSec,
+                isBeatEdge: false,
+                isDownbeatEdge: false,
+              };
         },
 
         /**
@@ -4854,9 +5857,19 @@ export class StorieEngine {
 
         // === SEEDED SFX HELPERS (Chiptone basics) ===
         sfx: {
-          names: () => getSfxPresetNames(),
-          play: (presetName, seed, options) => playSfx(this.audioContext, presetName, seed, options),
-          snippet: (presetName, seed, volume) => sfxSnippet(presetName, seed, volume)
+          names: () => {
+            const audioPack = getAudioPack();
+            return audioPack ? audioPack.getSfxPresetNames() : [];
+          },
+          play: (presetName, seed, options) => {
+            const audioPack = getAudioPack();
+            if (!audioPack) return { stop: () => {} };
+            return audioPack.playSfx(this.audioContext, presetName, seed, options);
+          },
+          snippet: (presetName, seed, volume) => {
+            const audioPack = getAudioPack();
+            return audioPack ? audioPack.sfxSnippet(presetName, seed, volume) : '';
+          }
         },
         
         // === PROPERTIES ===
@@ -5757,6 +6770,7 @@ export class StorieEngine {
           // Treat enable() as a request that can be made before WebGPU is ready.
           // If/when the 3D layer becomes available, it will be enabled.
           engine.worldsEnabled = true;
+          engine.requestWorldsRendererInitialization();
 
           // If the compositor already exists and the 3D layer is registered, enable it now.
           if (engine.compositor?.layers.get('3d')) {
@@ -7005,7 +8019,7 @@ export class StorieEngine {
   private getCurrent3DSectionLayout(): Section3DLayout | null {
     const byId = this.getSectionLayoutById(this.current3DSectionId);
     if (byId) return byId;
-    return this.getSectionLayoutByIndex(this.current3DSectionIndex);
+    return this.getSectionLayoutByIndex(this.getResolvedCurrent3DSectionIndex());
   }
 
   private rebind3DStateToRuntimeSectionStore(): void {
@@ -7146,6 +8160,12 @@ export class StorieEngine {
   }
 
   private getWorldsSectionTextureToScreenAffine(layout: Section3DLayout): { screenFromTexPx: Draw2DAffine; localFromScreenTexPx: Draw2DAffine; clipRectScreen: { x: number; y: number; w: number; h: number } } | null {
+    const uiDocumentPack = this.getUIDocumentPack();
+    if (!uiDocumentPack) {
+      this.requestUIDocumentPack();
+      return null;
+    }
+
     const dims = this.sectionTextureCache.get(layout.sectionId);
     if (!dims || dims.width <= 0 || dims.height <= 0) return null;
 
@@ -7162,7 +8182,7 @@ export class StorieEngine {
     const e = p00.x;
     const f = p00.y;
     const screenFromTexPx: Draw2DAffine = { a, b, c, d, e, f };
-    const localFromScreenTexPx = invertAffine(screenFromTexPx);
+    const localFromScreenTexPx = uiDocumentPack.invertAffine(screenFromTexPx);
     if (!localFromScreenTexPx) return null;
 
     // Clip to the section quad's AABB on screen.
@@ -7295,18 +8315,22 @@ export class StorieEngine {
     return { x: localX, y: localY };
   }
 
-  private renderWorldsSectionBoundGUI(renderer: WebGPUUIRenderer, documentId?: string): void {
+  private renderWorldsSectionBoundGUI(baseUI: Draw2D): void {
     const guiAPI: any = this.api?.gui;
     const system = guiAPI?.getSystem?.();
     if (!system) return;
     if (!this.worldsEnabled || !this.camera3D) return;
 
+    const uiDocumentPack = this.getUIDocumentPack();
+    if (!uiDocumentPack) {
+      this.requestUIDocumentPack();
+      return;
+    }
+
     const bindings: Array<{ group: string | number; sections: number[] }> = Array.isArray(guiAPI?._sectionBindings)
       ? guiAPI._sectionBindings
       : [];
     if (bindings.length === 0) return;
-
-    const baseUI = this.createMarkdownAwareDraw2D(renderer, documentId);
     const { charWidth, charHeight } = this.getGUIPixelMetrics();
 
     for (const binding of bindings) {
@@ -7318,7 +8342,7 @@ export class StorieEngine {
         if (!xform) continue;
 
         // Render only this group's widgets, mapped from texture pixel coords to screen.
-        const transformed = createTransformedDraw2D(baseUI, {
+        const transformed = uiDocumentPack.createTransformedDraw2D(baseUI, {
           screenFromLocal: xform.screenFromTexPx,
           localFromScreen: xform.localFromScreenTexPx,
           clipRectScreen: xform.clipRectScreen,
@@ -7354,9 +8378,183 @@ export class StorieEngine {
     this.worldsInlineWidgetInstances = [];
   }
 
+  private ensureWorldsSectionLayoutCaches(layout: Section3DLayout): boolean {
+    const hasTextureMetrics = this.sectionTextureCache.has(layout.sectionId);
+    const hasWidgetPlacements = this.sectionWidgetPlacementsCache.has(layout.sectionId);
+    if (hasTextureMetrics && hasWidgetPlacements) {
+      return true;
+    }
+
+    const uiDocumentPack = this.getUIDocumentPack();
+    if (!uiDocumentPack) {
+      this.requestUIDocumentPack();
+      return false;
+    }
+
+    const texturePadding = 12;
+    const textureScale = this.getWorldsTextureScale();
+    const textureMode = (this.worldsConfig as any).sectionTextureMode;
+    const minW = 256;
+    const minH = 128;
+    const maxTextureW = textureMode === 'webgpu-ui' ? 1024 : 2048;
+    const maxTextureH = textureMode === 'webgpu-ui' ? 1024 : 2048;
+    const maxW = Math.max(minW, Math.floor(maxTextureW / textureScale));
+    const maxH = Math.max(minH, Math.floor(maxTextureH / textureScale));
+    const logicalFontSizePx = Math.max(1, this.fontSize || 16);
+    const fontStack =
+      this.worldsCardFontStack ||
+      this.fontFamily ||
+      "'3270-regular', 'Consolas', 'Monaco', monospace";
+    const measured = this.measureFontMetrics(fontStack, logicalFontSizePx);
+    const measuredCharW = Math.max(1, measured.charW);
+    const measuredCharH = Math.max(1, measured.charH);
+    const baseLineHeight = Math.max(1, measured.baseLineHeight);
+    const units = (this.worldsConfig as any).sectionSizeUnits === 'px' ? 'px' : 'text';
+    const overflowCfg = (this.worldsConfig as any).sectionOverflow;
+    const overflowMode: 'clip' | 'expand' | 'expand-y' | 'fit' | 'fit-y' =
+      (overflowCfg === 'expand' || overflowCfg === 'expand-y' || overflowCfg === 'fit' || overflowCfg === 'fit-y')
+        ? overflowCfg
+        : 'clip';
+    const layoutOverflow: 'clip' | 'expand' = overflowMode === 'clip' ? 'clip' : 'expand';
+
+    const contentOverride = this.getWorldsSectionContentOverride(layout.sectionId);
+    const markdown = buildWorldsCardMarkdown(layout, contentOverride ?? undefined);
+    const nodes = uiDocumentPack.parseMarkdownLite(markdown);
+    const activeLink = this.getActive3DLink();
+    const activeLinkIndex = activeLink && activeLink.sectionIndex === layout.sectionIndex
+      ? activeLink.linkIndex
+      : null;
+    const proceduralRuledPaper = this.isWorldsSectionBackgroundProceduralChainEnabled();
+    const bakedRuledPaper = this.isWorldsSectionBackgroundBakedRuledLines();
+    const shaderBg = !!this.parseWorldsSectionBackgroundShader();
+    const textureBg = !!this.parseWorldsSectionBackgroundTexture();
+    const surfaceBg = this.resolveWorldsSectionBackground();
+    const mdBg = (proceduralRuledPaper || bakedRuledPaper || shaderBg || textureBg)
+      ? this.withAlpha(surfaceBg, 0)
+      : surfaceBg;
+    const mdStyle = this.createWorldsMarkdownStyle({
+      activeLinkIndex,
+      background: mdBg,
+      foreground: this.resolveEffectiveSectionForeground(layout.sectionId) ?? undefined,
+      textAlign: layout.textAlign,
+    });
+
+    let widthPx = Math.max(
+      minW,
+      Math.min(
+        maxW,
+        units === 'px'
+          ? Math.round(layout.width + texturePadding * 2)
+          : Math.round(layout.width * measuredCharW + texturePadding * 2)
+      )
+    );
+    let heightPx = Math.max(
+      minH,
+      Math.min(
+        maxH,
+        units === 'px'
+          ? Math.round(layout.height + texturePadding * 2)
+          : Math.round(layout.height * baseLineHeight + texturePadding * 2)
+      )
+    );
+
+    const measureCtx = (() => {
+      if (!this.worldsCardFontStack) return null;
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 16;
+        canvas.height = 16;
+        const ctx = canvas.getContext('2d', { alpha: true } as any) as CanvasRenderingContext2D | null;
+        if (!ctx) return null;
+        ctx.textBaseline = 'top';
+        ctx.textAlign = 'left';
+        ctx.font = `${logicalFontSizePx}px ${fontStack}`;
+        return ctx;
+      } catch {
+        return null;
+      }
+    })();
+    const measureTextWidth = this.worldsCardFontStack && measureCtx
+      ? (text: string) => measureCtx.measureText(text).width
+      : undefined;
+
+    if (overflowMode !== 'clip') {
+      const probeWidthPx = overflowMode === 'fit' ? maxW : widthPx;
+      const probe = uiDocumentPack.layoutMarkdownDocument(
+        nodes,
+        { x: 0, y: 0, width: probeWidthPx, height: heightPx },
+        {
+          charW: measuredCharW,
+          charH: measuredCharH,
+          measureTextWidth,
+          getImageSize: (source: string) => this.getMarkdownImageSize(source, this.activeDocumentId ?? undefined),
+        },
+        mdStyle,
+        0,
+        texturePadding,
+        { overflow: 'expand' }
+      );
+
+      const reqW = Math.ceil(probe.contentWidth + texturePadding * 2);
+      const reqH = Math.ceil(probe.contentHeight + texturePadding * 2);
+      const clampedW = Math.max(minW, Math.min(maxW, reqW));
+      const clampedH = Math.max(minH, Math.min(maxH, reqH));
+
+      if (overflowMode === 'expand') {
+        widthPx = Math.max(widthPx, clampedW);
+        heightPx = Math.max(heightPx, clampedH);
+      } else if (overflowMode === 'expand-y') {
+        heightPx = Math.max(heightPx, clampedH);
+      } else if (overflowMode === 'fit') {
+        widthPx = clampedW;
+        heightPx = clampedH;
+      } else if (overflowMode === 'fit-y') {
+        heightPx = clampedH;
+      }
+    }
+
+    const result = uiDocumentPack.layoutMarkdownDocument(
+      nodes,
+      { x: 0, y: 0, width: widthPx, height: heightPx },
+      {
+        charW: measuredCharW,
+        charH: measuredCharH,
+        measureTextWidth,
+        getImageSize: (source: string) => this.getMarkdownImageSize(source, this.activeDocumentId ?? undefined),
+      },
+      mdStyle,
+      0,
+      texturePadding,
+      this.getWorldsWidgetLayoutOptions(layout.sectionIndex, layoutOverflow)
+    );
+
+    this.applyWorldsContentAlignment(result, widthPx, heightPx, texturePadding, layout.contentAlign);
+
+    if (!hasTextureMetrics) {
+      this.sectionTextureCache.set(layout.sectionId, {
+        width: Math.max(1, Math.round(widthPx * textureScale)),
+        height: Math.max(1, Math.round(heightPx * textureScale)),
+        logicalWidth: widthPx,
+        logicalHeight: heightPx,
+        textureScaleX: textureScale,
+        textureScaleY: textureScale,
+        activeLinkIndex,
+      });
+    }
+    if (!this.sectionLinkRegionsCache.has(layout.sectionId)) {
+      this.sectionLinkRegionsCache.set(layout.sectionId, this.scaleLinkRegions(result.linkRegions, textureScale));
+    }
+    if (!hasWidgetPlacements) {
+      this.sectionWidgetPlacementsCache.set(layout.sectionId, this.scaleWidgetPlacements(result.widgetPlacements, textureScale));
+    }
+
+    return true;
+  }
+
   private getActiveWorldsInlineWidgetPlacements(): { layout: Section3DLayout; placements: WidgetPlacement[] } | null {
     const layout = this.getCurrent3DSectionLayout();
-    if (!layout || !layout.texture || !layout.visible || layout.interactive === false) return null;
+    if (!layout || !layout.visible || layout.interactive === false) return null;
+    if (!this.ensureWorldsSectionLayoutCaches(layout)) return null;
     const placements = this.sectionWidgetPlacementsCache.get(layout.sectionId);
     if (!placements || placements.length === 0) return null;
     return { layout, placements };
@@ -7886,15 +9084,56 @@ export class StorieEngine {
       }
     }
     if (!system) {
+      this.debugGuiLogInlineWidgets('no-gui-system', {});
       this.clearWorldsInlineWidgets();
       return;
     }
 
     const active = this.getActiveWorldsInlineWidgetPlacements();
     if (!active) {
+      const layout = this.getCurrent3DSectionLayout();
+      if (!layout) {
+        this.debugGuiLogInlineWidgets('inactive', {
+          reason: 'no-current-layout',
+          currentSectionId: this.current3DSectionId,
+          currentSectionIndex: this.getResolvedCurrent3DSectionIndex(),
+        });
+      } else if (!layout.visible) {
+        this.debugGuiLogInlineWidgets('inactive', {
+          reason: 'layout-hidden',
+          sectionId: layout.sectionId,
+          sectionIndex: layout.sectionIndex,
+        });
+      } else if (layout.interactive === false) {
+        this.debugGuiLogInlineWidgets('inactive', {
+          reason: 'layout-noninteractive',
+          sectionId: layout.sectionId,
+          sectionIndex: layout.sectionIndex,
+        });
+      } else if (!this.ensureWorldsSectionLayoutCaches(layout)) {
+        this.debugGuiLogInlineWidgets('inactive', {
+          reason: 'layout-cache-miss',
+          sectionId: layout.sectionId,
+          sectionIndex: layout.sectionIndex,
+        });
+      } else {
+        const placements = this.sectionWidgetPlacementsCache.get(layout.sectionId) ?? [];
+        this.debugGuiLogInlineWidgets('inactive', {
+          reason: placements.length === 0 ? 'no-widget-placements' : 'projection-failed',
+          sectionId: layout.sectionId,
+          sectionIndex: layout.sectionIndex,
+          placementIds: placements.map((placement) => placement.widget.id),
+        });
+      }
       this.clearWorldsInlineWidgets();
       return;
     }
+
+    this.debugGuiLogInlineWidgets('active', {
+      sectionId: active.layout.sectionId,
+      sectionIndex: active.layout.sectionIndex,
+      placementIds: active.placements.map((placement) => placement.widget.id),
+    });
 
     const nextKeys = new Set(active.placements.map((placement) => this.getWorldsInlineWidgetStateKey(active.layout.sectionIndex, placement.widget.id)));
     const manager = system.getWidgetManager();
@@ -8164,14 +9403,16 @@ export class StorieEngine {
     if (!system) return false;
     if (typeof guiAPI?.isAutoInputEnabled === 'function' && !guiAPI.isAutoInputEnabled()) return false;
 
-    const hasSectionBindings = Array.isArray(guiAPI?._sectionBindings) && guiAPI._sectionBindings.length > 0;
-    if (this.worldsEnabled && hasSectionBindings) return false;
-
-    const hitBefore = this.isPointOverVisibleGUIWidget(pixelX, pixelY);
+    const excludedGroups = this.getWorldsSectionBoundGUIGroupIds(guiAPI);
+    const hitBefore = this.isPointOverVisibleGUIWidget(pixelX, pixelY, excludedGroups);
     const focusedBefore = system.getFocusedWidget?.();
     const { charWidth, charHeight } = this.getGUIPixelMetrics();
 
-    system.handleMouse(pixelX, pixelY, mouseDown, charWidth, charHeight);
+    if (excludedGroups.size > 0 && typeof system.handleMouseExcludingGroups === 'function') {
+      system.handleMouseExcludingGroups(pixelX, pixelY, mouseDown, charWidth, charHeight, excludedGroups);
+    } else {
+      system.handleMouse(pixelX, pixelY, mouseDown, charWidth, charHeight);
+    }
 
     const focusedAfter = system.getFocusedWidget?.();
     return hitBefore || !!focusedBefore || !!focusedAfter;
@@ -8183,8 +9424,14 @@ export class StorieEngine {
     if (!system) return false;
     if (typeof guiAPI?.isAutoInputEnabled === 'function' && !guiAPI.isAutoInputEnabled()) return false;
 
-    const hasSectionBindings = Array.isArray(guiAPI?._sectionBindings) && guiAPI._sectionBindings.length > 0;
-    if (this.worldsEnabled && hasSectionBindings) return false;
+    const focused = system.getFocusedWidget?.();
+    if (!focused) return false;
+
+    const excludedGroups = this.getWorldsSectionBoundGUIGroupIds(guiAPI);
+    if (excludedGroups.has(focused.group)) return false;
+
+    const focusedIsInline = this.worldsInlineWidgetInstances.some((entry) => entry.widget.id === focused.id);
+    if (focusedIsInline) return false;
 
     system.handleKey(key, modifiers);
     return true;
@@ -8211,6 +9458,563 @@ export class StorieEngine {
     return false;
   }
 
+  private async prepareDocumentForActivation(parsed: MarkdownDocument): Promise<void> {
+    if (this.documents.size > 0 || this.activeDocumentId) {
+      try {
+        await this.moduleLoader.unloadAll();
+      } catch (error) {
+        console.warn('[Engine] Failed to unload modules during document swap:', error);
+      }
+
+      this.documents.clear();
+      this.worldsSectionContentOverridesByDocument.clear();
+      this.worldsSectionOverridesByDocument.clear();
+      this.sandbox.clearAll();
+      this.activeDocumentId = null;
+    }
+
+    this.pendingShaderChain = null;
+    if (this.shaderChainManager) {
+      try {
+        this.shaderChainManager.clearChain();
+      } catch (error) {
+        console.warn('[Engine] Failed to clear shader chain during document swap:', error);
+      }
+    }
+
+    try {
+      this.clear3DSectionTextures();
+    } catch {
+      // ignore
+    }
+    this.resetWorldsVisitState();
+    this.resetRuntimeSectionStore();
+    this.section3DLayouts = [];
+    this.worldsEnabled = false;
+    this.worldsOverviewEnabled = false;
+    this.worldsOverviewSavedTransforms = null;
+    this.pendingWorldsOverview = null;
+    this.pending3DCameraFocus = null;
+    if (this.worldsRenderer) {
+      this.camera3D = createCamera3D();
+    }
+
+    if (parsed.wgslShaders && parsed.wgslShaders.length > 0) {
+      console.log(`  Found ${parsed.wgslShaders.length} WGSL shader(s):`);
+      for (const shader of parsed.wgslShaders) {
+        console.log(`    - ${shader.name} (${shader.kind})`);
+      }
+
+      if (this.shaderManager) {
+        console.log('  Registering shaders with ShaderManager...');
+        try {
+          const sm: any = this.shaderManager as any;
+          if (typeof sm.registerShaders === 'function') {
+            await sm.registerShaders(parsed.wgslShaders);
+          } else {
+            for (const shader of parsed.wgslShaders) {
+              await this.shaderManager.registerShader(shader);
+            }
+          }
+          console.log('    ✓ Registered WGSL shaders');
+        } catch (error) {
+          console.error('    ✗ Failed to register WGSL shaders:', error);
+        }
+      } else {
+        console.log('  ⏳ ShaderManager not yet initialized - shaders will be registered when WebGPU starts');
+      }
+    }
+
+    if (parsed.metadata.modules) {
+      if (this.untrustedContent) {
+        console.warn('[Engine] Skipping frontmatter module loading in untrusted mode');
+      } else {
+        const modules = Array.isArray(parsed.metadata.modules)
+          ? parsed.metadata.modules
+          : [parsed.metadata.modules];
+
+        console.log(`  Loading ${modules.length} module(s):`, modules);
+
+        try {
+          await this.moduleLoader.loadAll(modules);
+          console.log('  ✓ All modules loaded successfully');
+        } catch (error) {
+          console.error('  ✗ Failed to load modules:', error);
+        }
+      }
+    }
+
+    this.initializeRuntimeSectionStore(parsed.sections);
+
+    this.compileWorldsLayoutsFromRuntimeSectionStore('load');
+
+    if (this.themeOverrideFromUrl) {
+      this.applyThemeColors(this.themeOverrideFromUrl.theme, this.themeOverrideFromUrl.label, 'url');
+    } else if (parsed.metadata.theme) {
+      const themeName = String(parsed.metadata.theme).toLowerCase().replace(/['"]/g, '');
+      this.applyThemeColors(getTheme(themeName), themeName, 'frontmatter');
+    } else {
+      this.applyThemeColors(getTheme('neotopia'), 'neotopia', 'default');
+    }
+
+    this.layers.clearAll(this.currentTheme.bg);
+
+    if (parsed.metadata.shaders) {
+      const shadersStr = String(parsed.metadata.shaders);
+      console.log(`  Shader chain (frontmatter): ${shadersStr}`);
+
+      if (this.shaderChainManager) {
+        await this.shaderChainManager.activateChainFromString(shadersStr, 'frontmatter');
+      } else {
+        console.log('  Deferring shader chain until WebGPU init');
+        this.pendingShaderChain = { chainStr: shadersStr, source: 'frontmatter' };
+      }
+    }
+
+    const fmW = Number(parsed.metadata.width);
+    const fmH = Number(parsed.metadata.height);
+    this.frontmatterViewport = (Number.isFinite(fmW) && fmW > 0 && Number.isFinite(fmH) && fmH > 0)
+      ? { width: fmW, height: fmH }
+      : null;
+    if (this.frontmatterViewport) {
+      console.log(`  Viewport constraint (frontmatter): ${fmW}x${fmH}px`);
+    }
+
+    const frontmatterKeys = Object.keys(parsed.metadata);
+    if (frontmatterKeys.length > 0) {
+      console.log(`  Exposed ${frontmatterKeys.length} frontmatter variable(s) as globals:`, frontmatterKeys.join(', '));
+    }
+  }
+
+  private buildDocumentAssetStores(parsed: MarkdownDocument): DocumentAssetStores {
+    const audioPack = this.getAudioRuntimePack();
+    if (!audioPack) {
+      throw new Error('Audio runtime pack must be installed before building document asset stores');
+    }
+    const textPack = this.getTextRuntimePack();
+
+    const blobStore = new Map<string, BlobStoreEntry>();
+    if (parsed.blobBlocks && parsed.blobBlocks.length > 0) {
+      for (const b of parsed.blobBlocks) {
+        const name = String(b.name ?? '').trim();
+        if (!name) continue;
+        const mime = String(b.mime ?? 'application/octet-stream').trim() || 'application/octet-stream';
+        const encoding = (String((b as any).encoding ?? 'base64').trim().toLowerCase() === 'hex') ? 'hex' : 'base64';
+        const data = encoding === 'hex'
+          ? String(b.data ?? '')
+          : String(b.data ?? '').replace(/\s+/g, '');
+        if (!data) continue;
+        if (blobStore.has(name)) {
+          console.warn(`  [blob] Duplicate name "${name}"; last one wins.`);
+        }
+        blobStore.set(name, { name, mime, encoding, data });
+      }
+      console.log(`  Found ${blobStore.size} blob block(s)`);
+    }
+
+    const timedStore = new Map<string, TimedStoreEntry>();
+    if (parsed.timedBlocks && parsed.timedBlocks.length > 0) {
+      for (const b of parsed.timedBlocks) {
+        const name = String(b.name ?? '').trim();
+        if (!name) continue;
+        if (timedStore.has(name)) {
+          console.warn(`  [timed] Duplicate name "${name}"; last one wins.`);
+        }
+        timedStore.set(name, { name, entries: b.entries });
+      }
+      console.log(`  Found ${timedStore.size} timed block(s)`);
+    }
+
+    const logicStore = Array.isArray(parsed.logicBlocks)
+      ? parsed.logicBlocks.map((block) => ({
+          ...block,
+          statements: block.statements.map((statement) => ({
+            ...statement,
+            ...(statement.meta ? { meta: { ...statement.meta } } : {}),
+          })),
+          ...(block.metadata ? { metadata: { ...block.metadata } } : {}),
+        }))
+      : [];
+    if (logicStore.length > 0) {
+      console.log(`  Found ${logicStore.length} logic block(s)`);
+    }
+
+    const asciiStore = new Map<string, AsciiStoreEntry>();
+    for (const b of parsed.codeBlocks) {
+      let name: string | null = null;
+
+      if (typeof b.lang === 'string' && b.lang.startsWith('ascii:')) {
+        console.warn(`  [ascii] Legacy fence syntax "${b.lang}" is no longer supported. Use \`\`\`ascii name:...\`\`\` instead.`);
+      }
+
+      if (b.lang === 'ascii') {
+        const n = String(b.metadata?.name ?? '').trim();
+        if (n) name = n;
+      }
+
+      if (!name) continue;
+      const text = String(b.code ?? '');
+      if (asciiStore.has(name)) {
+        console.warn(`  [ascii] Duplicate name "${name}"; last one wins.`);
+      }
+      asciiStore.set(name, { name, text });
+    }
+    if (asciiStore.size > 0) {
+      console.log(`  Found ${asciiStore.size} ascii block(s)`);
+    }
+
+    const figletStore = new Map<string, FigletStoreEntry>();
+    for (const b of parsed.codeBlocks) {
+      let name: string | null = null;
+
+      if (typeof b.lang === 'string' && b.lang.startsWith('figlet:')) {
+        console.warn(`  [figlet] Legacy fence syntax "${b.lang}" is no longer supported. Use \`\`\`figlet name:...\`\`\` instead.`);
+      }
+
+      if (b.lang === 'figlet') {
+        const n = String(b.metadata?.name ?? '').trim();
+        if (n) name = n;
+      }
+
+      if (!name) continue;
+      const text = String(b.code ?? '');
+      if (figletStore.has(name)) {
+        console.warn(`  [figlet] Duplicate name "${name}"; last one wins.`);
+      }
+      figletStore.set(name, { name, text });
+    }
+    if (figletStore.size > 0) {
+      console.log(`  Found ${figletStore.size} figlet font block(s)`);
+    }
+
+    const ansiStore = new Map<string, AnsiStoreEntry>();
+    {
+      const defaultStyle = this.getStyle('default');
+      const defaultFg = ColorUtils.from(defaultStyle.fg);
+      const defaultBg = this.currentTheme.bg;
+
+      for (const b of parsed.codeBlocks) {
+        if (b.lang !== 'ansi') continue;
+        const name = String(b.metadata?.name ?? '').trim();
+        if (!name) continue;
+
+        const rawTab = String((b.metadata?.tab ?? b.metadata?.tabSize ?? '')).trim();
+        const tabSize = rawTab ? Math.max(1, Number.parseInt(rawTab, 10) || 4) : 4;
+        const text = String(b.code ?? '');
+        if (ansiStore.has(name)) {
+          console.warn(`  [ansi] Duplicate name "${name}"; last one wins.`);
+        }
+
+        const parsedAnsi = textPack
+          ? textPack.parseAnsiToRuns(text, {
+              defaultFg,
+              defaultBg,
+              tabSize,
+              bracketSGR: true
+            })
+          : undefined;
+        ansiStore.set(name, { name, text, tabSize, parsed: parsedAnsi });
+      }
+
+      if (ansiStore.size > 0) {
+        console.log(`  Found ${ansiStore.size} ansi block(s)`);
+      }
+    }
+
+    const stfxrStore = new Map<string, StfxrStoreEntry>();
+    const stfxrPending = new Map<string, { name: string; base: string; patch: any; defaultSeed?: number | string; startLine: number; endLine: number }>();
+    for (const b of parsed.codeBlocks) {
+      if (b.lang !== 'stfxr') continue;
+      const name = String(b.metadata?.name ?? '').trim();
+      if (!name) {
+        console.warn(`  [stfxr] Skipping unnamed stfxr block at lines ${b.startLine + 1}-${b.endLine + 1}`);
+        continue;
+      }
+
+      const seedRaw = String(b.metadata?.seed ?? '').trim();
+      let defaultSeed: number | string | undefined = undefined;
+      if (seedRaw) {
+        const n = Number(seedRaw);
+        defaultSeed = Number.isFinite(n) ? n : seedRaw;
+      }
+
+      try {
+        const def = audioPack.parseStfxrDefinitionJson(String(b.code ?? ''));
+        if (def.kind === 'preset') {
+          if (stfxrStore.has(name) || stfxrPending.has(name)) {
+            console.warn(`  [stfxr] Duplicate name "${name}"; last one wins.`);
+          }
+          stfxrStore.set(name, { name, preset: def.preset, defaultSeed });
+        } else {
+          if (stfxrStore.has(name) || stfxrPending.has(name)) {
+            console.warn(`  [stfxr] Duplicate name "${name}"; last one wins.`);
+          }
+          stfxrPending.set(name, {
+            name,
+            base: def.base,
+            patch: def.patch,
+            defaultSeed,
+            startLine: b.startLine,
+            endLine: b.endLine
+          });
+        }
+      } catch (e) {
+        console.warn(`  [stfxr] Failed to parse stfxr block for "${name}" at lines ${b.startLine + 1}-${b.endLine + 1}:`, e);
+      }
+    }
+
+    const clonePreset = (preset: SfxGraphPreset): SfxGraphPreset => {
+      try {
+        if (typeof structuredClone === 'function') return structuredClone(preset);
+      } catch {
+        // ignore
+      }
+      return JSON.parse(JSON.stringify(preset)) as SfxGraphPreset;
+    };
+
+    const sameEdge = (
+      a: { from: string; to: string; fromChannel?: number; toChannel?: number },
+      b: { from: string; to: string; fromChannel?: number; toChannel?: number }
+    ) =>
+      a.from === b.from &&
+      a.to === b.to &&
+      (a.fromChannel ?? null) === (b.fromChannel ?? null) &&
+      (a.toChannel ?? null) === (b.toChannel ?? null);
+
+    const resolveBasePreset = (base: string): SfxGraphPreset | null => {
+      const asBuiltIn = base as SfxPresetName;
+      if ((audioPack.SFX_PRESETS as any)[asBuiltIn]) return (audioPack.SFX_PRESETS as any)[asBuiltIn] as SfxGraphPreset;
+      const entry = stfxrStore.get(base);
+      return entry ? entry.preset : null;
+    };
+
+    if (stfxrPending.size > 0) {
+      const maxPasses = stfxrPending.size + 4;
+      for (let pass = 0; pass < maxPasses && stfxrPending.size > 0; pass++) {
+        let progressed = false;
+        for (const [name, pending] of Array.from(stfxrPending.entries())) {
+          const basePreset = resolveBasePreset(pending.base);
+          if (!basePreset) continue;
+
+          const base = clonePreset(basePreset);
+          const patch = pending.patch ?? {};
+
+          if (patch.vars) {
+            base.vars = { ...(base.vars ?? {}), ...(patch.vars ?? {}) };
+          }
+
+          if (Array.isArray(patch.nodes) && patch.nodes.length > 0) {
+            const out = [...(base.nodes ?? [])];
+            const indexById = new Map<string, number>();
+            for (let i = 0; i < out.length; i++) indexById.set(out[i]!.id, i);
+            for (const n of patch.nodes) {
+              const idx = indexById.get(n.id);
+              if (idx === undefined) {
+                indexById.set(n.id, out.length);
+                out.push(n);
+              } else {
+                out[idx] = n;
+              }
+            }
+            base.nodes = out;
+          }
+
+          if (Array.isArray(patch.edges)) {
+            base.edges = [...patch.edges];
+          }
+          if (Array.isArray(patch.edgesRemove) && patch.edgesRemove.length > 0) {
+            base.edges = (base.edges ?? []).filter(e => !patch.edgesRemove.some((r: any) => sameEdge(e, r)));
+          }
+          if (Array.isArray(patch.edgesAdd) && patch.edgesAdd.length > 0) {
+            const edges = [...(base.edges ?? [])];
+            for (const e of patch.edgesAdd) {
+              if (!edges.some(x => sameEdge(x, e))) edges.push(e);
+            }
+            base.edges = edges;
+          }
+
+          if (Array.isArray(patch.events)) {
+            base.events = [...patch.events];
+          }
+          if (Array.isArray(patch.eventsAdd) && patch.eventsAdd.length > 0) {
+            base.events = [...(base.events ?? []), ...patch.eventsAdd];
+          }
+
+          stfxrStore.set(name, { name, preset: base, defaultSeed: pending.defaultSeed });
+          stfxrPending.delete(name);
+          progressed = true;
+        }
+        if (!progressed) break;
+      }
+
+      for (const pending of stfxrPending.values()) {
+        console.warn(
+          `  [stfxr] Could not resolve base "${pending.base}" for "${pending.name}" at lines ${pending.startLine + 1}-${pending.endLine + 1}`
+        );
+      }
+    }
+
+    if (stfxrStore.size > 0) {
+      console.log(`  Found ${stfxrStore.size} stfxr block(s)`);
+    }
+
+    return {
+      blobStore,
+      timedStore,
+      logicStore,
+      asciiStore,
+      figletStore,
+      ansiStore,
+      stfxrStore,
+    };
+  }
+
+  private storeLoadedDocument(
+    documentId: string,
+    parsed: MarkdownDocument,
+    handlers: UserHandlers,
+    assetStores: DocumentAssetStores,
+    sourceMarkdown?: string,
+  ): void {
+    this.outlineCache = null;
+    this.documents.set(documentId, {
+      id: documentId,
+      handlers,
+      sections: parsed.sections,
+      metadata: parsed.metadata,
+      sourceMarkdown: sourceMarkdown ?? parsed.sourceMarkdown,
+      _parsedMarkdown: parsed,
+      _blobStore: assetStores.blobStore,
+      _asciiStore: assetStores.asciiStore,
+      _figletStore: assetStores.figletStore,
+      _ansiStore: assetStores.ansiStore,
+      _stfxrStore: assetStores.stfxrStore,
+      _timedStore: assetStores.timedStore,
+      _logicStore: assetStores.logicStore,
+      _stfxrBakedStore: new Map()
+    } as any);
+
+    this.activeDocumentId = documentId;
+  }
+
+  private finalizeLoadedDocument(handlers: UserHandlers, successMessage: string): void {
+    console.log('🔍 Extracted handlers:', {
+      init: typeof handlers?.init,
+      export: typeof (handlers as any)?.export,
+      update: typeof handlers?.update,
+      render: typeof handlers?.render,
+      input: typeof handlers?.input,
+      drop: typeof (handlers as any)?.drop
+    });
+
+    if (handlers.init) {
+      console.log('  Calling init handler');
+      try {
+        handlers.init();
+      } catch (error) {
+        console.error('  Error in init:', error);
+      }
+    }
+
+    try {
+      this.canvas.focus();
+    } catch {
+      // ignore
+    }
+
+    console.log(successMessage);
+  }
+
+  private getActiveCompiledSectionContext(): { activeSectionId?: string } {
+    const activeIndex = this._liveRenderCtx?.sectionIndex ?? this._liveSectionInputCtx?.sectionIndex ?? null;
+    if (typeof activeIndex !== 'number' || !Number.isFinite(activeIndex)) return {};
+    const ref = this.resolveRuntimeSectionRef(activeIndex);
+    return ref?.sectionId ? { activeSectionId: ref.sectionId } : {};
+  }
+
+  async loadCompiledApp(documentId: string, compiledModule: CompiledAppModuleLike): Promise<boolean> {
+    try {
+      console.log(`Loading compiled document: ${documentId}`);
+
+      const createCompiledAppRuntime = compiledModule?.createCompiledAppRuntime;
+      const parsed = compiledModule?.content?.rawDocument;
+      if (typeof createCompiledAppRuntime !== 'function') {
+        console.error('Compiled module is missing createCompiledAppRuntime(api, options)');
+        return false;
+      }
+      if (!parsed || !Array.isArray(parsed.sections) || !Array.isArray(parsed.codeBlocks)) {
+        console.error('Compiled module is missing content.rawDocument; regenerate the scaffold with a newer compiler.');
+        return false;
+      }
+
+      await this.applyFrontmatterFontConfig(parsed.metadata ?? {});
+      await this.prepareDocumentForActivation(parsed);
+      await this.ensureAuthoredToolsRuntimeInstalled();
+      await this.ensureGUIRuntimeInstalled();
+      await this.ensureAudioRuntimeInstalled();
+      if (this.documentNeedsTextRuntime(parsed)) {
+        await this.ensureTextRuntimeInstalled();
+      }
+
+      const assetStores = this.buildDocumentAssetStores(parsed);
+      this.sandbox.createCompartment(documentId, parsed.metadata);
+      const scope = this.sandbox.getScope(documentId);
+      if (!scope) {
+        console.error(`Failed to create compiled document scope for ${documentId}`);
+        return false;
+      }
+
+      const runtime = createCompiledAppRuntime(this.api, { scope, currentSectionId: null });
+      const runtimeCtx = () => this.getActiveCompiledSectionContext();
+
+      const handlers: UserHandlers = {
+        init: () => runtime.init?.(runtimeCtx()),
+        update: (delta) => runtime.update?.(delta, runtimeCtx()),
+        render: () => runtime.render?.(runtimeCtx()),
+        input: (event) => {
+          runtime.input?.(event, runtimeCtx());
+          return true;
+        },
+        drop: (file) => {
+          runtime.drop?.(file, runtimeCtx());
+        },
+      };
+      if (typeof runtime.export === 'function') {
+        (handlers as any).export = (options?: { timedBlock?: string | null }) => runtime.export?.(options ?? runtimeCtx());
+      }
+
+      (scope as any).init = handlers.init;
+      (scope as any).update = handlers.update;
+      (scope as any).render = handlers.render;
+      (scope as any).input = handlers.input;
+      (scope as any).drop = handlers.drop;
+      if ((handlers as any).export) {
+        (scope as any).export = (handlers as any).export;
+      }
+
+      const enterHandlers: Record<number, () => void> = {};
+      let sectionIndex = 0;
+      const registerSection = (section: Section) => {
+        const sectionId = String(section.id ?? `${section.title}-${section.startLine}`);
+        enterHandlers[sectionIndex] = () => {
+          runtime.enter?.(sectionId, runtimeCtx());
+        };
+        sectionIndex += 1;
+        const children = Array.isArray(section.children) ? section.children : [];
+        for (const child of children) registerSection(child);
+      };
+      for (const section of parsed.sections) registerSection(section);
+      (scope as any).__enterHandlers = enterHandlers;
+
+      this.storeLoadedDocument(documentId, parsed, handlers, assetStores);
+      this.finalizeLoadedDocument(handlers, '✓ Compiled document loaded successfully');
+      return true;
+    } catch (error) {
+      console.error(`Failed to load compiled document ${documentId}:`, error);
+      return false;
+    }
+  }
+
   async loadMarkdown(documentId: string, markdown: string): Promise<boolean> {
     try {
       console.log(`Loading document: ${documentId}`);
@@ -8223,155 +10027,12 @@ export class StorieEngine {
       // Apply frontmatter font settings early (best-effort). This is most useful
       // when the host loads markdown before `engine.start()` (e.g. the default site).
       await this.applyFrontmatterFontConfig(parsed.metadata);
-
-      // Treat each load as a full content swap.
-      // This ensures drag-and-drop (browser + native) fully replaces the
-      // previous story: old handlers stop receiving input, old modules are
-      // unloaded, and old visuals are cleared.
-      if (this.documents.size > 0 || this.activeDocumentId) {
-        try {
-          await this.moduleLoader.unloadAll();
-        } catch (error) {
-          console.warn('[Engine] Failed to unload modules during document swap:', error);
-        }
-
-        this.documents.clear();
-        this.worldsSectionContentOverridesByDocument.clear();
-        this.worldsSectionOverridesByDocument.clear();
-        this.sandbox.clearAll();
-        this.activeDocumentId = null;
-      }
-
-      // Reset per-document render state.
-      this.pendingShaderChain = null;
-      if (this.shaderChainManager) {
-        try {
-          this.shaderChainManager.clearChain();
-        } catch (error) {
-          console.warn('[Engine] Failed to clear shader chain during document swap:', error);
-        }
-      }
-
-      // Reset 3D state so Worlds does not stay enabled across documents.
-      try {
-        this.clear3DSectionTextures();
-      } catch {
-        // ignore
-      }
-      this.resetWorldsVisitState();
-      this.resetRuntimeSectionStore();
-      this.section3DLayouts = [];
-      this.worldsEnabled = false;
-      this.worldsOverviewEnabled = false;
-      this.worldsOverviewSavedTransforms = null;
-      this.pendingWorldsOverview = null;
-      this.pending3DCameraFocus = null;
-      if (this.worldsRenderer) {
-        this.camera3D = createCamera3D();
-      }
-      
-      // Log WGSL shaders if present
-      if (parsed.wgslShaders && parsed.wgslShaders.length > 0) {
-        console.log(`  Found ${parsed.wgslShaders.length} WGSL shader(s):`);
-        for (const shader of parsed.wgslShaders) {
-          console.log(`    - ${shader.name} (${shader.kind})`);
-        }
-        
-        // Register shaders with ShaderManager if WebGPU is available
-        if (this.shaderManager) {
-          console.log(`  Registering shaders with ShaderManager...`);
-          try {
-            const sm: any = this.shaderManager as any;
-            if (typeof sm.registerShaders === 'function') {
-              await sm.registerShaders(parsed.wgslShaders);
-            } else {
-              for (const shader of parsed.wgslShaders) {
-                await this.shaderManager.registerShader(shader);
-              }
-            }
-            console.log(`    ✓ Registered WGSL shaders`);
-          } catch (error) {
-            console.error(`    ✗ Failed to register WGSL shaders:`, error);
-          }
-        } else {
-          console.log(`  ⏳ ShaderManager not yet initialized - shaders will be registered when WebGPU starts`);
-        }
-      }
-      
-      // Load modules from frontmatter if specified
-      if (parsed.metadata.modules) {
-        if (this.untrustedContent) {
-          console.warn('[Engine] Skipping frontmatter module loading in untrusted mode');
-        } else {
-        const modules = Array.isArray(parsed.metadata.modules) 
-          ? parsed.metadata.modules 
-          : [parsed.metadata.modules];
-        
-        console.log(`  Loading ${modules.length} module(s):`, modules);
-        
-        try {
-          await this.moduleLoader.loadAll(modules);
-          console.log(`  ✓ All modules loaded successfully`);
-        } catch (error) {
-          console.error(`  ✗ Failed to load modules:`, error);
-          // Continue anyway - modules are optional
-        }
-        }
-      }
-
-      this.initializeRuntimeSectionStore(parsed.sections);
-      
-      // Create 3D layouts for sections (if 3D canvas is available)
-      if (this.worldsRenderer) {
-        this.compileWorldsLayoutsFromRuntimeSectionStore('load');
-      }
-      
-      // Apply theme:
-      // - `?theme=` URL param wins (by default) so you can override demo/frontmatter themes.
-      // - Otherwise, use frontmatter `theme:` when provided.
-      if (this.themeOverrideFromUrl) {
-        this.applyThemeColors(this.themeOverrideFromUrl.theme, this.themeOverrideFromUrl.label, 'url');
-      } else if (parsed.metadata.theme) {
-        const themeName = String(parsed.metadata.theme).toLowerCase().replace(/['"]/g, '');
-        this.applyThemeColors(getTheme(themeName), themeName, 'frontmatter');
-      } else {
-        // Reset to default theme when switching documents.
-        this.applyThemeColors(getTheme('neotopia'), 'neotopia', 'default');
-      }
-
-      // Ensure the terminal buffers start clean for the new story.
-      this.layers.clearAll(this.currentTheme.bg);
-      
-      // Apply shader chain from frontmatter if specified
-      if (parsed.metadata.shaders) {
-        const shadersStr = String(parsed.metadata.shaders);
-        console.log(`  Shader chain (frontmatter): ${shadersStr}`);
-        
-        if (this.shaderChainManager) {
-          // ShaderChainManager ready, apply immediately
-          await this.shaderChainManager.activateChainFromString(shadersStr, 'frontmatter');
-        } else {
-          // Defer until WebGPU initialization
-          console.log(`  Deferring shader chain until WebGPU init`);
-          this.pendingShaderChain = { chainStr: shadersStr, source: 'frontmatter' };
-        }
-      }
-      
-      // Viewport dimensions from frontmatter (optional).
-      // Let the host page scale the canvas to fit the window at the requested aspect ratio.
-      const fmW = Number(parsed.metadata.width);
-      const fmH = Number(parsed.metadata.height);
-      this.frontmatterViewport = (Number.isFinite(fmW) && fmW > 0 && Number.isFinite(fmH) && fmH > 0)
-        ? { width: fmW, height: fmH }
-        : null;
-      if (this.frontmatterViewport) {
-        console.log(`  Viewport constraint (frontmatter): ${fmW}x${fmH}px`);
-      }
-
-      // Log exposed frontmatter variables (for debugging)
-      const frontmatterKeys = Object.keys(parsed.metadata);
-      if (frontmatterKeys.length > 0) {
-        console.log(`  Exposed ${frontmatterKeys.length} frontmatter variable(s) as globals:`, frontmatterKeys.join(', '));
+      await this.prepareDocumentForActivation(parsed);
+      await this.ensureAuthoredToolsRuntimeInstalled();
+      await this.ensureGUIRuntimeInstalled();
+      await this.ensureAudioRuntimeInstalled();
+      if (this.documentNeedsTextRuntime(parsed)) {
+        await this.ensureTextRuntimeInstalled();
       }
       
       // Extract JavaScript code blocks
@@ -8379,283 +10040,7 @@ export class StorieEngine {
         block.lang === 'javascript' || block.lang === 'js'
       );
 
-      // Build blob store (```blob name:... enc:base64 mime:...)
-      const blobStore = new Map<string, { name: string; mime: string; encoding: 'base64' | 'hex'; data: string; bytes?: Uint8Array }>();
-      if (parsed.blobBlocks && parsed.blobBlocks.length > 0) {
-        for (const b of parsed.blobBlocks) {
-          const name = String(b.name ?? '').trim();
-          if (!name) continue;
-          const mime = String(b.mime ?? 'application/octet-stream').trim() || 'application/octet-stream';
-          const encoding = (String((b as any).encoding ?? 'base64').trim().toLowerCase() === 'hex') ? 'hex' : 'base64';
-          const data = encoding === 'hex'
-            ? String(b.data ?? '')
-            : String(b.data ?? '').replace(/\s+/g, '');
-          if (!data) continue;
-          if (blobStore.has(name)) {
-            console.warn(`  [blob] Duplicate name "${name}"; last one wins.`);
-          }
-          blobStore.set(name, { name, mime, encoding, data });
-        }
-        console.log(`  Found ${blobStore.size} blob block(s)`);
-      }
-
-      // Build timed lyric/transcript store (```timed name:...)
-      const timedStore = new Map<string, { name: string; entries: Array<{ ms: number; text: string }> }>();
-      if (parsed.timedBlocks && parsed.timedBlocks.length > 0) {
-        for (const b of parsed.timedBlocks) {
-          const name = String(b.name ?? '').trim();
-          if (!name) continue;
-          if (timedStore.has(name)) {
-            console.warn(`  [timed] Duplicate name "${name}"; last one wins.`);
-          }
-          timedStore.set(name, { name, entries: b.entries });
-        }
-        console.log(`  Found ${timedStore.size} timed block(s)`);
-      }
-
-      const logicStore = Array.isArray(parsed.logicBlocks)
-        ? parsed.logicBlocks.map((block) => ({
-            ...block,
-            statements: block.statements.map((statement) => ({
-              ...statement,
-              ...(statement.meta ? { meta: { ...statement.meta } } : {}),
-            })),
-            ...(block.metadata ? { metadata: { ...block.metadata } } : {}),
-          }))
-        : [];
-      if (logicStore.length > 0) {
-        console.log(`  Found ${logicStore.length} logic block(s)`);
-      }
-
-      // Build ASCII store (```ascii name:...)
-      const asciiStore = new Map<string, { name: string; text: string; lines?: string[] }>();
-      for (const b of parsed.codeBlocks) {
-        let name: string | null = null;
-
-        if (typeof b.lang === 'string' && b.lang.startsWith('ascii:')) {
-          console.warn(`  [ascii] Legacy fence syntax "${b.lang}" is no longer supported. Use \`\`\`ascii name:...\`\`\` instead.`);
-        }
-
-        if (b.lang === 'ascii') {
-          const n = String(b.metadata?.name ?? '').trim();
-          if (n) name = n;
-        }
-
-        if (!name) continue;
-        const text = String(b.code ?? '');
-        if (asciiStore.has(name)) {
-          console.warn(`  [ascii] Duplicate name "${name}"; last one wins.`);
-        }
-        asciiStore.set(name, { name, text });
-      }
-      if (asciiStore.size > 0) {
-        console.log(`  Found ${asciiStore.size} ascii block(s)`);
-      }
-
-      // Build FIGlet font store (```figlet name:...)
-      const figletStore = new Map<string, { name: string; text: string; font?: FigletFont }>();
-      for (const b of parsed.codeBlocks) {
-        let name: string | null = null;
-
-        if (typeof b.lang === 'string' && b.lang.startsWith('figlet:')) {
-          console.warn(`  [figlet] Legacy fence syntax "${b.lang}" is no longer supported. Use \`\`\`figlet name:...\`\`\` instead.`);
-        }
-
-        if (b.lang === 'figlet') {
-          const n = String(b.metadata?.name ?? '').trim();
-          if (n) name = n;
-        }
-
-        if (!name) continue;
-        const text = String(b.code ?? '');
-        if (figletStore.has(name)) {
-          console.warn(`  [figlet] Duplicate name "${name}"; last one wins.`);
-        }
-        figletStore.set(name, { name, text });
-      }
-      if (figletStore.size > 0) {
-        console.log(`  Found ${figletStore.size} figlet font block(s)`);
-      }
-
-      // Build ANSI store (```ansi name:...)
-      const ansiStore = new Map<string, { name: string; text: string; tabSize: number; parsed?: AnsiParsed }>();
-      {
-        const defaultStyle = this.getStyle('default');
-        const defaultFg = ColorUtils.from(defaultStyle.fg);
-        const defaultBg = this.currentTheme.bg;
-
-        for (const b of parsed.codeBlocks) {
-          if (b.lang !== 'ansi') continue;
-          const name = String(b.metadata?.name ?? '').trim();
-          if (!name) continue;
-
-          const rawTab = String((b.metadata?.tab ?? b.metadata?.tabSize ?? '')).trim();
-          const tabSize = rawTab ? Math.max(1, Number.parseInt(rawTab, 10) || 4) : 4;
-          const text = String(b.code ?? '');
-          if (ansiStore.has(name)) {
-            console.warn(`  [ansi] Duplicate name "${name}"; last one wins.`);
-          }
-
-          // Parse once at load so rendering is fast.
-          const parsedAnsi = parseAnsiToRuns(text, {
-            defaultFg,
-            defaultBg,
-            tabSize,
-            bracketSGR: true
-          });
-          ansiStore.set(name, { name, text, tabSize, parsed: parsedAnsi });
-        }
-
-        if (ansiStore.size > 0) {
-          console.log(`  Found ${ansiStore.size} ansi block(s)`);
-        }
-      }
-
-      // Build STFXR store (```stfxr name:... seed:...)
-      const stfxrStore = new Map<string, { name: string; preset: SfxGraphPreset; defaultSeed?: number | string }>();
-      const stfxrPending = new Map<string, { name: string; base: string; patch: any; defaultSeed?: number | string; startLine: number; endLine: number }>();
-      for (const b of parsed.codeBlocks) {
-        if (b.lang !== 'stfxr') continue;
-        const name = String(b.metadata?.name ?? '').trim();
-        if (!name) {
-          console.warn(`  [stfxr] Skipping unnamed stfxr block at lines ${b.startLine + 1}-${b.endLine + 1}`);
-          continue;
-        }
-
-        const seedRaw = String(b.metadata?.seed ?? '').trim();
-        let defaultSeed: number | string | undefined = undefined;
-        if (seedRaw) {
-          const n = Number(seedRaw);
-          defaultSeed = Number.isFinite(n) ? n : seedRaw;
-        }
-
-        try {
-          const def = parseStfxrDefinitionJson(String(b.code ?? ''));
-          if (def.kind === 'preset') {
-            if (stfxrStore.has(name) || stfxrPending.has(name)) {
-              console.warn(`  [stfxr] Duplicate name "${name}"; last one wins.`);
-            }
-            stfxrStore.set(name, { name, preset: def.preset, defaultSeed });
-          } else {
-            if (stfxrStore.has(name) || stfxrPending.has(name)) {
-              console.warn(`  [stfxr] Duplicate name "${name}"; last one wins.`);
-            }
-            stfxrPending.set(name, {
-              name,
-              base: def.base,
-              patch: def.patch,
-              defaultSeed,
-              startLine: b.startLine,
-              endLine: b.endLine
-            });
-          }
-        } catch (e) {
-          console.warn(`  [stfxr] Failed to parse stfxr block for "${name}" at lines ${b.startLine + 1}-${b.endLine + 1}:`, e);
-          continue;
-        }
-      }
-
-      const clonePreset = (preset: SfxGraphPreset): SfxGraphPreset => {
-        try {
-          // @ts-ignore
-          if (typeof structuredClone === 'function') return structuredClone(preset);
-        } catch {
-          // ignore
-        }
-        return JSON.parse(JSON.stringify(preset)) as SfxGraphPreset;
-      };
-
-      const sameEdge = (
-        a: { from: string; to: string; fromChannel?: number; toChannel?: number },
-        b: { from: string; to: string; fromChannel?: number; toChannel?: number }
-      ) =>
-        a.from === b.from &&
-        a.to === b.to &&
-        (a.fromChannel ?? null) === (b.fromChannel ?? null) &&
-        (a.toChannel ?? null) === (b.toChannel ?? null);
-
-      const resolveBasePreset = (base: string): SfxGraphPreset | null => {
-        const asBuiltIn = base as SfxPresetName;
-        if ((SFX_PRESETS as any)[asBuiltIn]) return (SFX_PRESETS as any)[asBuiltIn] as SfxGraphPreset;
-        const entry = stfxrStore.get(base);
-        return entry ? entry.preset : null;
-      };
-
-      // Resolve derived presets (base + patch). We allow base to refer to a built-in
-      // audio.sfx preset name or another stfxr preset in this document.
-      if (stfxrPending.size > 0) {
-        const maxPasses = stfxrPending.size + 4;
-        for (let pass = 0; pass < maxPasses && stfxrPending.size > 0; pass++) {
-          let progressed = false;
-          for (const [name, pending] of Array.from(stfxrPending.entries())) {
-            const basePreset = resolveBasePreset(pending.base);
-            if (!basePreset) continue;
-
-            const base = clonePreset(basePreset);
-            const patch = pending.patch ?? {};
-
-            // Vars merge
-            if (patch.vars) {
-              base.vars = { ...(base.vars ?? {}), ...(patch.vars ?? {}) };
-            }
-
-            // Node upsert (by id)
-            if (Array.isArray(patch.nodes) && patch.nodes.length > 0) {
-              const out = [...(base.nodes ?? [])];
-              const indexById = new Map<string, number>();
-              for (let i = 0; i < out.length; i++) indexById.set(out[i]!.id, i);
-              for (const n of patch.nodes) {
-                const idx = indexById.get(n.id);
-                if (idx === undefined) {
-                  indexById.set(n.id, out.length);
-                  out.push(n);
-                } else {
-                  out[idx] = n;
-                }
-              }
-              base.nodes = out;
-            }
-
-            // Edges replace / remove / add
-            if (Array.isArray(patch.edges)) {
-              base.edges = [...patch.edges];
-            }
-            if (Array.isArray(patch.edgesRemove) && patch.edgesRemove.length > 0) {
-              base.edges = (base.edges ?? []).filter(e => !patch.edgesRemove.some((r: any) => sameEdge(e, r)));
-            }
-            if (Array.isArray(patch.edgesAdd) && patch.edgesAdd.length > 0) {
-              const edges = [...(base.edges ?? [])];
-              for (const e of patch.edgesAdd) {
-                if (!edges.some(x => sameEdge(x, e))) edges.push(e);
-              }
-              base.edges = edges;
-            }
-
-            // Events replace / append
-            if (Array.isArray(patch.events)) {
-              base.events = [...patch.events];
-            }
-            if (Array.isArray(patch.eventsAdd) && patch.eventsAdd.length > 0) {
-              base.events = [...(base.events ?? []), ...patch.eventsAdd];
-            }
-
-            stfxrStore.set(name, { name, preset: base, defaultSeed: pending.defaultSeed });
-            stfxrPending.delete(name);
-            progressed = true;
-          }
-          if (!progressed) break;
-        }
-
-        for (const pending of stfxrPending.values()) {
-          console.warn(
-            `  [stfxr] Could not resolve base "${pending.base}" for "${pending.name}" at lines ${pending.startLine + 1}-${pending.endLine + 1}`
-          );
-        }
-      }
-
-      if (stfxrStore.size > 0) {
-        console.log(`  Found ${stfxrStore.size} stfxr block(s)`);
-      }
+      const { blobStore, timedStore, logicStore, asciiStore, figletStore, ansiStore, stfxrStore } = this.buildDocumentAssetStores(parsed);
       
       if (jsBlocks.length === 0) {
         console.warn('  No JavaScript code blocks found');
@@ -8954,54 +10339,16 @@ ${exportVars}
         return false;
       }
       
-      // Store document (include parsed markdown for deferred shader registration)
-      this.outlineCache = null;
-      this.documents.set(documentId, {
-        id: documentId,
-        handlers,
-        sections: parsed.sections,
-        metadata: parsed.metadata,
-        _parsedMarkdown: parsed,  // Store for deferred shader registration
-        _blobStore: blobStore,
-        _asciiStore: asciiStore,
-        _figletStore: figletStore,
-        _ansiStore: ansiStore,
-        _stfxrStore: stfxrStore,
-        _timedStore: timedStore,
-        _logicStore: logicStore,
-        _stfxrBakedStore: new Map()
-      } as any);
-      
-      // Newly loaded document becomes active.
-      this.activeDocumentId = documentId;
-      console.log('🔍 Extracted handlers:', {
-        init: typeof handlers?.init,
-        export: typeof (handlers as any)?.export,
-        update: typeof handlers?.update,
-        render: typeof handlers?.render,
-        input: typeof handlers?.input,
-        drop: typeof (handlers as any)?.drop
+      this.storeLoadedDocument(documentId, parsed, handlers, {
+        blobStore,
+        timedStore,
+        logicStore,
+        asciiStore,
+        figletStore,
+        ansiStore,
+        stfxrStore,
       });
-      
-      
-      // Call init handler
-      if (handlers.init) {
-        console.log('  Calling init handler');
-        try {
-          handlers.init();
-        } catch (error) {
-          console.error('  Error in init:', error);
-        }
-      }
-
-      // Keep keyboard input responsive after document swaps.
-      try {
-        this.canvas.focus();
-      } catch {
-        // ignore
-      }
-      
-      console.log('✓ Document loaded successfully');
+      this.finalizeLoadedDocument(handlers, '✓ Document loaded successfully');
       return true;
       
     } catch (error) {
@@ -9042,6 +10389,19 @@ ${exportVars}
   private getActiveDocument(): UserScript | null {
     if (!this.activeDocumentId) return null;
     return this.documents.get(this.activeDocumentId) || null;
+  }
+
+  getActiveDocumentSourceMarkdown(): string | null {
+    const doc = this.getActiveDocument() as (UserScript & { _parsedMarkdown?: MarkdownDocument | null }) | null;
+    if (!doc) return null;
+    if (typeof doc.sourceMarkdown === 'string') return doc.sourceMarkdown;
+    if (doc._parsedMarkdown) {
+      return serializeMarkdownDocumentSource(doc._parsedMarkdown);
+    }
+    return serializeMarkdownDocumentSource({
+      metadata: doc.metadata ?? {},
+      sections: doc.sections ?? [],
+    });
   }
 
   private getReadableSectionRoots(): Section[] {
@@ -9413,14 +10773,22 @@ ${exportVars}
   }
 
   private syncRuntimeSectionStoreToActiveDocument(): void {
-    const activeDocument = this.getActiveDocument() as (UserScript & { _parsedMarkdown?: { sections?: Section[] } }) | null;
+    const activeDocument = this.getActiveDocument() as (UserScript & { _parsedMarkdown?: MarkdownDocument | null }) | null;
     if (!activeDocument) return;
 
     const nextSections = this.cloneRuntimeSectionTree(this.runtimeSectionStore.sections);
     activeDocument.sections = nextSections;
     if (activeDocument._parsedMarkdown && Array.isArray(activeDocument._parsedMarkdown.sections)) {
       activeDocument._parsedMarkdown.sections = this.cloneRuntimeSectionTree(this.runtimeSectionStore.sections);
+      activeDocument.sourceMarkdown = serializeMarkdownDocumentSource(activeDocument._parsedMarkdown);
+      activeDocument._parsedMarkdown.sourceMarkdown = activeDocument.sourceMarkdown;
+      return;
     }
+
+    activeDocument.sourceMarkdown = serializeMarkdownDocumentSource({
+      metadata: activeDocument.metadata ?? {},
+      sections: nextSections,
+    });
   }
 
   private applyRuntimeSectionStoreMutation(reason: string): void {
@@ -9437,11 +10805,12 @@ ${exportVars}
     this.pruneActiveWorldsSectionOverrides();
     this.applyWorldsHiddenUntilVisitedVisibility();
 
+    this.reflowWorldsAutoLayout();
+    this.applyPending3DCameraFocus();
+    this.applyPendingWorldsOverview();
+
     if (this.worldsRenderer) {
       console.log(`  Created ${this.section3DLayouts.length} 3D layouts from runtime store (${reason})`);
-      this.reflowWorldsAutoLayout();
-      this.applyPending3DCameraFocus();
-      this.applyPendingWorldsOverview();
     }
   }
 
@@ -9936,78 +11305,16 @@ ${exportVars}
         const device = this.renderer.getContext().getDevice();
         if (device) {
           this.webgpuDevice = device;
-          if (!this.shaderManager) {
-            this.shaderManager = new ShaderManager(device);
-            console.log('✓ ShaderManager initialized (renderer device)');
-          }
-          
-          if (!this.shaderChainManager) {
-            this.shaderChainManager = new ShaderChainManager(this.shaderManager, device);
-            console.log('✓ ShaderChainManager initialized (renderer device)');
-          }
-          
-          // Initialize 3D Canvas renderer
-          if (!this.worldsRenderer) {
-            try {
-              this.worldsRenderer = new WorldsRenderer(device, this.canvas.width, this.canvas.height, this.shaderManager);
-              await this.worldsRenderer.init();
-              if (!this.camera3D) {
-                this.camera3D = createCamera3D();
-              }
-              
-              // Register 3D layer with compositor
-              const renderTexture = this.worldsRenderer.getRenderTexture();
-              if (renderTexture && this.compositor) {
-                this.compositor.registerLayer('3d', {
-                  texture: renderTexture,
-                  width: this.canvas.width,
-                  height: this.canvas.height,
-                  zIndex: 5,  // Above terminal (0) but below UI (20)
-                  enabled: this.worldsEnabled,  // Honor early worlds.enable() calls
-                  opacity: 1.0,  // Full opacity
-                  blendMode: 'normal'  // Normal blend (not multiply)
-                });
-
-                // Audience/client windows may hide the terminal layer once 3D is active.
-                this.updateAudienceViewLayers();
-              } else {
-                console.warn('✗ Failed to register 3D layer');
-              }
-              
-              // (init logs removed)
-              
-              // Create section3DLayouts for any documents that were loaded before Worlds was ready
-              // (debug log removed)
-              for (const [docId, docData] of this.documents.entries()) {
-                const anyDocData = docData as any;
-                if (anyDocData._parsedMarkdown?.sections) {
-                  if (this.runtimeSectionStore.order.length === 0) {
-                    this.initializeRuntimeSectionStore(anyDocData._parsedMarkdown.sections);
-                  }
-                  this.compileWorldsLayoutsFromRuntimeSectionStore(`deferred init for document ${docId}`);
-                } else {
-                  // (debug log removed)
-                }
-              }
-              
-            } catch (error) {
-              console.warn('Failed to initialize WorldsRenderer:', error);
-            }
+          const needsShaderSupport = this.hasPendingDocumentShaders() || !!this.pendingShaderChain;
+          if (needsShaderSupport || this.worldsEnabled) {
+            await this.ensureShaderSupport(device);
           }
 
-          // Let the compositor use the ShaderManager and ShaderChainManager for post-processing.
-          if (this.compositor) {
-            this.compositor.setShaderManager(this.shaderManager);
-            this.compositor.setShaderChainManager(this.shaderChainManager);
+          if (this.worldsEnabled) {
+            await this.ensureWorldsRendererInitialized(device);
           }
 
-          // Register any WGSL shaders that were parsed before WebGPU was initialized
-          // before activating a deferred shader chain. Otherwise, document-local
-          // shaders referenced by frontmatter can be dropped from the chain.
-          await this.registerPendingShaders();
-          
-          // Apply any pending shader chain
-          if (this.pendingShaderChain) {
+          if (this.pendingShaderChain && this.shaderChainManager) {
             console.log(`✓ Applying deferred shader chain (${this.pendingShaderChain.source}): ${this.pendingShaderChain.chainStr}`);
             await this.shaderChainManager.activateChainFromString(
               this.pendingShaderChain.chainStr,
@@ -10016,11 +11323,6 @@ ${exportVars}
             this.pendingShaderChain = null;
           }
         }
-
-        // Eagerly create the UI layer once WebGPU + compositor are ready.
-        // This avoids a class of issues where demo code calls ui.* but the
-        // layer isn't registered due to timing/guardrails.
-        this.ensureWebGPUUI();
       }
     }
     
@@ -10090,6 +11392,10 @@ ${exportVars}
         }
 
         // Render 3D canvas to offscreen texture (before compositing)
+        if (this.worldsEnabled && !this.worldsRenderer) {
+          this.requestWorldsRendererInitialization();
+        }
+
         if (this.worldsEnabled && this.worldsRenderer && this.camera3D) {
           const pick = this.pick3DAt(this.input.getMouseX(), this.input.getMouseY());
 
@@ -10304,13 +11610,16 @@ ${exportVars}
           this.worldsRenderer.render(this.camera3D, this.section3DLayouts, null, backgroundConfig, linkConnectors, sectionArtStates);
         }
 
-        // Render GPU UI into its own texture (if created)
-        if (this.webgpuUIRenderer) {
+        const guiSystemForOverlay = (this.api?.gui as any)?.getSystem?.();
+        const overlayRenderer = this.webgpuUIRenderer ?? (guiSystemForOverlay ? this.ensureWebGPUUI() : null);
+
+        // Render GPU UI into its own texture.
+        if (overlayRenderer) {
           this.syncWorldsInlineWidgets();
 
           let inlineGui: any = null;
           if (this.worldsInlineWidgetInstances.length > 0) {
-            inlineGui = (this.api?.gui as any)?.getSystem?.();
+            inlineGui = guiSystemForOverlay ?? (this.api?.gui as any)?.getSystem?.();
           }
           if (inlineGui) {
             const { charWidth, charHeight } = this.getGUIPixelMetrics();
@@ -10350,7 +11659,7 @@ ${exportVars}
               }
             }
 
-            let preferredIndex = this.current3DSectionIndex;
+            let preferredIndex = this.getResolvedCurrent3DSectionIndex();
             const selectedSectionIndex = this.getResolvedSelected3DSectionIndex();
             if (typeof selectedSectionIndex === 'number' && Number.isFinite(selectedSectionIndex)) {
               preferredIndex = selectedSectionIndex;
@@ -10384,27 +11693,65 @@ ${exportVars}
           const guiSystem = guiAPI?.getSystem?.();
           if (guiAPI && guiSystem) {
             const hasSectionBindings = Array.isArray((guiAPI as any)?._sectionBindings) && (guiAPI as any)._sectionBindings.length > 0;
+            const excludedGroups = hasSectionBindings ? this.getWorldsSectionBoundGUIGroupIds(guiAPI) : null;
+            const manager = typeof (guiSystem as any).getWidgetManager === 'function'
+              ? (guiSystem as any).getWidgetManager()
+              : null;
+            const visibleWidgets = manager && typeof manager.getVisible === 'function'
+              ? manager.getVisible()
+              : [];
             const autoUpdateEnabled = typeof (guiAPI as any).isAutoUpdateEnabled === 'function' && !!(guiAPI as any).isAutoUpdateEnabled();
-            if (autoUpdateEnabled && (!this.worldsEnabled || !hasSectionBindings)) {
+            if (autoUpdateEnabled) {
               const { charWidth, charHeight } = this.getGUIPixelMetrics();
-              guiSystem.update(this.input.getMouseX(), this.input.getMouseY(), this.input.isMouseDown(0), charWidth, charHeight);
+              if (this.worldsEnabled && hasSectionBindings && excludedGroups && excludedGroups.size > 0 && typeof guiSystem.updateExcludingGroups === 'function') {
+                guiSystem.updateExcludingGroups(this.input.getMouseX(), this.input.getMouseY(), this.input.isMouseDown(0), charWidth, charHeight, excludedGroups);
+              } else if (!this.worldsEnabled || !hasSectionBindings) {
+                guiSystem.update(this.input.getMouseX(), this.input.getMouseY(), this.input.isMouseDown(0), charWidth, charHeight);
+              }
             }
             // When sections are bound, render those groups in section-space.
             // Avoid double-rendering the same widgets in the global overlay pass.
             const sectionGuiMode = this.getWorldsSectionGUIMode();
+            const overlayUI = this.createMarkdownAwareDraw2D(overlayRenderer, this.activeDocumentId ?? undefined);
             if (sectionGuiMode !== 'baked') {
-              this.renderWorldsSectionBoundGUI(this.webgpuUIRenderer, this.activeDocumentId ?? undefined);
+              this.renderWorldsSectionBoundGUI(overlayUI);
             }
-            if (!this.worldsEnabled || !hasSectionBindings) {
-              guiAPI.render(this.createMarkdownAwareDraw2D(this.webgpuUIRenderer, this.activeDocumentId ?? undefined));
+            this.debugGuiLogOverlayRender('pre-render', {
+              hasSectionBindings,
+              excludedGroups: excludedGroups ? Array.from(excludedGroups) : [],
+              visibleWidgetIds: Array.isArray(visibleWidgets)
+                ? visibleWidgets.map((widget: any) => ({
+                    id: widget?.id ?? null,
+                    group: widget?.group ?? null,
+                    visible: !!widget?.state?.visible,
+                  }))
+                : [],
+            });
+            if (this.worldsEnabled && hasSectionBindings && excludedGroups && excludedGroups.size > 0 && typeof guiSystem.renderExcludingGroups === 'function') {
+              const { charWidth, charHeight } = this.getGUIPixelMetrics();
+              guiSystem.renderExcludingGroups(
+                excludedGroups,
+                overlayUI,
+                charWidth,
+                charHeight,
+              );
+              this.debugGuiLogOverlayRender('render-excluding-groups', {
+                excludedGroups: Array.from(excludedGroups),
+                visibleWidgetCount: Array.isArray(visibleWidgets) ? visibleWidgets.length : 0,
+              });
+            } else if (!this.worldsEnabled || !hasSectionBindings) {
+              guiAPI.render(overlayUI);
+              this.debugGuiLogOverlayRender('render-all', {
+                visibleWidgetCount: Array.isArray(visibleWidgets) ? visibleWidgets.length : 0,
+              });
             }
           }
           
-          this.webgpuUIRenderer.flush();
+          overlayRenderer.flush();
 
           // Thread the material render target to the compositor so the shader
           // chain can access per-pixel material properties (Phase 1 PBR).
-          this.compositor.setMaterialTexture(this.webgpuUIRenderer.getMaterialTexture());
+          this.compositor.setMaterialTexture(overlayRenderer.getMaterialTexture());
         }
 
         // Only auto-composite in auto mode. In manual mode, user code controls
@@ -10424,6 +11771,61 @@ ${exportVars}
         // Canvas2D fallback: render directly
         const composited = this.layers.composite();
         this.renderer.render(composited);
+
+        if (this.renderer instanceof Canvas2DRenderer) {
+          this.syncWorldsInlineWidgets();
+
+          const guiAPI = this.api?.gui as any;
+          const guiSystem = guiAPI?.getSystem?.();
+          if (guiAPI && guiSystem) {
+            const hasSectionBindings = Array.isArray(guiAPI?._sectionBindings) && guiAPI._sectionBindings.length > 0;
+            const excludedGroups = hasSectionBindings ? this.getWorldsSectionBoundGUIGroupIds(guiAPI) : null;
+            const manager = typeof guiSystem.getWidgetManager === 'function'
+              ? guiSystem.getWidgetManager()
+              : null;
+            const visibleWidgets = manager && typeof manager.getVisible === 'function'
+              ? manager.getVisible()
+              : [];
+            const autoUpdateEnabled = typeof guiAPI.isAutoUpdateEnabled === 'function' && !!guiAPI.isAutoUpdateEnabled();
+            if (autoUpdateEnabled) {
+              const { charWidth, charHeight } = this.getGUIPixelMetrics();
+              if (this.worldsEnabled && hasSectionBindings && excludedGroups && excludedGroups.size > 0 && typeof guiSystem.updateExcludingGroups === 'function') {
+                guiSystem.updateExcludingGroups(this.input.getMouseX(), this.input.getMouseY(), this.input.isMouseDown(0), charWidth, charHeight, excludedGroups);
+              } else if (!this.worldsEnabled || !hasSectionBindings) {
+                guiSystem.update(this.input.getMouseX(), this.input.getMouseY(), this.input.isMouseDown(0), charWidth, charHeight);
+              }
+            }
+            const overlayUI = this.renderer.createDraw2D();
+            const sectionGuiMode = this.getWorldsSectionGUIMode();
+            if (sectionGuiMode !== 'baked') {
+              this.renderWorldsSectionBoundGUI(overlayUI);
+            }
+            this.debugGuiLogOverlayRender('pre-render', {
+              hasSectionBindings,
+              excludedGroups: excludedGroups ? Array.from(excludedGroups) : [],
+              visibleWidgetIds: Array.isArray(visibleWidgets)
+                ? visibleWidgets.map((widget: any) => ({
+                    id: widget?.id ?? null,
+                    group: widget?.group ?? null,
+                    visible: !!widget?.state?.visible,
+                  }))
+                : [],
+            });
+            if (this.worldsEnabled && hasSectionBindings && excludedGroups && excludedGroups.size > 0 && typeof guiSystem.renderExcludingGroups === 'function') {
+              const { charWidth, charHeight } = this.getGUIPixelMetrics();
+              guiSystem.renderExcludingGroups(excludedGroups, overlayUI, charWidth, charHeight);
+              this.debugGuiLogOverlayRender('render-excluding-groups', {
+                excludedGroups: Array.from(excludedGroups),
+                visibleWidgetCount: Array.isArray(visibleWidgets) ? visibleWidgets.length : 0,
+              });
+            } else if (!this.worldsEnabled || !hasSectionBindings) {
+              guiAPI.render(overlayUI);
+              this.debugGuiLogOverlayRender('render-all', {
+                visibleWidgetCount: Array.isArray(visibleWidgets) ? visibleWidgets.length : 0,
+              });
+            }
+          }
+        }
       }
     } catch (error) {
       console.error('[Engine] Uncaught error in runFrame:', error);
@@ -10761,7 +12163,12 @@ ${exportVars}
 
     // Ensure the section-dedicated WebGPU UI renderer exists.
     if (!this.sectionWebGPUUIRenderer) {
-      this.sectionWebGPUUIRenderer = new WebGPUUIRenderer(device, atlas, 1, 1);
+      const webgpuPack = this.getWebGPUFeaturePack();
+      if (!webgpuPack) {
+        this.requestWebGPUFeaturePack();
+        return false;
+      }
+      this.sectionWebGPUUIRenderer = new webgpuPack.WebGPUUIRenderer(device, atlas, 1, 1);
     }
     const sectionUI = this.sectionWebGPUUIRenderer;
     const baseMetricScale = this.getWorldsTextureScale();
@@ -10874,6 +12281,12 @@ ${exportVars}
 
   private ensure3DSectionTextures(device: GPUDevice): void {
     if (!this.worldsEnabled || !this.camera3D) return;
+
+    const uiDocumentPack = this.getUIDocumentPack();
+    if (!uiDocumentPack) {
+      this.requestUIDocumentPack();
+      return;
+    }
 
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
@@ -10999,7 +12412,7 @@ ${exportVars}
       let heightPx = Math.max(minH, Math.min(maxH, desiredH));
 
       const contentOverride = this.getWorldsSectionContentOverride(layout.sectionId);
-      const nodes = parseMarkdownLite(buildWorldsCardMarkdown(layout, contentOverride ?? undefined));
+      const nodes = uiDocumentPack.parseMarkdownLite(buildWorldsCardMarkdown(layout, contentOverride ?? undefined));
 
       // Overflow resize modes: do a cheap layout pass to compute required pixel
       // size from the actual rendered markdown content.
@@ -11026,7 +12439,7 @@ ${exportVars}
           : undefined;
 
         const probeWidthPx = overflowMode === 'fit' ? maxW : widthPx;
-        const probe = layoutMarkdownDocument(
+        const probe = uiDocumentPack.layoutMarkdownDocument(
           nodes,
           { x: 0, y: 0, width: probeWidthPx, height: heightPx },
           {
@@ -11134,7 +12547,7 @@ ${exportVars}
         foreground: this.resolveEffectiveSectionForeground(layout.sectionId) ?? undefined,
         textAlign: layout.textAlign,
       });
-      const result = layoutMarkdownDocument(
+      const result = uiDocumentPack.layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: widthPx, height: heightPx },
         {
@@ -11430,9 +12843,10 @@ ${exportVars}
 
 
   private getWorldsWidgetLayoutOptions(sectionIndex: number, overflow: 'clip' | 'expand'): LayoutOptions {
+    const currentSectionIndex = this.getResolvedCurrent3DSectionIndex();
     return {
       overflow,
-      widgetPlaceholderMode: this.current3DSectionIndex === sectionIndex ? 'none' : 'full',
+      widgetPlaceholderMode: currentSectionIndex === sectionIndex ? 'none' : 'full',
     };
   }
 
@@ -12023,6 +13437,12 @@ ${exportVars}
     if (!(this.renderer instanceof WebGPURenderer)) return;
     if (!this.worldsEnabled || !this.camera3D) return;
 
+    const uiDocumentPack = this.getUIDocumentPack();
+    if (!uiDocumentPack) {
+      this.requestUIDocumentPack();
+      return;
+    }
+
     const canvasW = this.canvas.width;
     const canvasH = this.canvas.height;
     const aspect = canvasW > 0 && canvasH > 0 ? canvasW / canvasH : 1;
@@ -12047,7 +13467,12 @@ ${exportVars}
 
     if (!this.sectionWebGPUUIRenderer) {
       // Internal texture is unused for this renderer; we only use flushTo().
-      this.sectionWebGPUUIRenderer = new WebGPUUIRenderer(device, atlas, 1, 1);
+      const webgpuPack = this.getWebGPUFeaturePack();
+      if (!webgpuPack) {
+        this.requestWebGPUFeaturePack();
+        return;
+      }
+      this.sectionWebGPUUIRenderer = new webgpuPack.WebGPUUIRenderer(device, atlas, 1, 1);
     }
 
     const ui = this.sectionWebGPUUIRenderer;
@@ -12109,7 +13534,7 @@ ${exportVars}
 
       const contentOverride = this.getWorldsSectionContentOverride(layout.sectionId);
       const markdown = buildWorldsCardMarkdown(layout, contentOverride ?? undefined);
-      const nodes = parseMarkdownLite(markdown);
+      const nodes = uiDocumentPack.parseMarkdownLite(markdown);
       const style = this.createWorldsMarkdownStyle({
         activeLinkIndex,
         background: mdBg,
@@ -12119,7 +13544,7 @@ ${exportVars}
 
       if (overflowMode === 'expand' || overflowMode === 'expand-y' || overflowMode === 'fit' || overflowMode === 'fit-y') {
         const probeWidthPx = overflowMode === 'fit' ? maxW : widthPx;
-        const probe = layoutMarkdownDocument(
+        const probe = uiDocumentPack.layoutMarkdownDocument(
           nodes,
           { x: 0, y: 0, width: probeWidthPx, height: heightPx },
           {
@@ -12177,7 +13602,7 @@ ${exportVars}
             foreground: this.resolveEffectiveSectionForeground(layout.sectionId) ?? undefined,
             textAlign: layout.textAlign,
           });
-          const result = layoutMarkdownDocument(
+          const result = uiDocumentPack.layoutMarkdownDocument(
             nodes,
             { x: 0, y: 0, width: widthPx, height: heightPx },
             {
@@ -12213,7 +13638,7 @@ ${exportVars}
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
       });
 
-      const result = layoutMarkdownDocument(
+      const result = uiDocumentPack.layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: widthPx, height: heightPx },
         {
@@ -12726,7 +14151,19 @@ ${exportVars}
     return null;
   }
 
-  private isPointOverVisibleGUIWidget(pixelX: number, pixelY: number): boolean {
+  private getWorldsSectionBoundGUIGroupIds(guiAPI?: any): Set<string | number> {
+    const source = guiAPI ?? (this.api as any)?.gui;
+    const bindings: Array<{ group: string | number; sections: number[] }> = Array.isArray(source?._sectionBindings)
+      ? source._sectionBindings
+      : [];
+    const groups = new Set<string | number>();
+    for (const binding of bindings) {
+      groups.add(binding.group);
+    }
+    return groups;
+  }
+
+  private isPointOverVisibleGUIWidget(pixelX: number, pixelY: number, excludedGroups?: ReadonlySet<string | number>): boolean {
     const guiAPI = (this.api as any)?.gui;
     const system = guiAPI?.getSystem?.();
     const manager = system?.getWidgetManager?.();
@@ -12750,6 +14187,7 @@ ${exportVars}
 
     return widgets.some((widget: any) => {
       if (!widget?.state?.visible) return false;
+      if (excludedGroups?.has(widget.group)) return false;
       return typeof widget.containsPoint === 'function' && widget.containsPoint(coord);
     });
   }
@@ -13035,8 +14473,14 @@ ${exportVars}
     const target = this.getFocusedGUITextInput();
     if (!input || !target) return;
 
+    const guiRuntimePack = this.getGUIRuntimePack();
+    if (!guiRuntimePack) {
+      this.requestGUIRuntimePack();
+      return;
+    }
+
     const options = target.getTextInputOptions();
-    let nextValue = normalizeSingleLineText(input.value ?? '');
+    let nextValue = guiRuntimePack.normalizeSingleLineText(input.value ?? '');
     if (options.multiline) {
       nextValue = String(input.value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     }
@@ -13080,10 +14524,16 @@ ${exportVars}
       return;
     }
 
+    const guiRuntimePack = this.getGUIRuntimePack();
+    if (!guiRuntimePack) {
+      this.requestGUIRuntimePack();
+      return;
+    }
+
     const options = target.getTextInputOptions();
-    const value = options.multiline ? target.getValue() : normalizeSingleLineText(target.getValue());
+    const value = options.multiline ? target.getValue() : guiRuntimePack.normalizeSingleLineText(target.getValue());
     const selection = target.getSelectionRange();
-    const bridgeAttributes = getHiddenTextInputBridgeAttributes(options);
+    const bridgeAttributes = guiRuntimePack.getHiddenTextInputBridgeAttributes(options);
 
     if (!options.showSoftKeyboard) {
       if (document.activeElement === input) {
@@ -14770,6 +16220,12 @@ ${exportVars}
     // If we already have pixel-derived world size, don't stomp it.
     if (layout.worldWidth && layout.worldHeight) return;
 
+    const uiDocumentPack = this.getUIDocumentPack();
+    if (!uiDocumentPack) {
+      this.requestUIDocumentPack();
+      return;
+    }
+
     const texturePadding = 12;
 
     const units = (this.worldsConfig as any).sectionSizeUnits === 'px' ? 'px' : 'text';
@@ -14782,7 +16238,7 @@ ${exportVars}
     // Derive markdown content to measure.
     const contentOverride = this.getWorldsSectionContentOverride(layout.sectionId);
     const markdown = buildWorldsCardMarkdown(layout, contentOverride ?? undefined);
-    const nodes = parseMarkdownLite(markdown);
+    const nodes = uiDocumentPack.parseMarkdownLite(markdown);
 
     // We intentionally mimic the sizing logic in ensure3DSectionTextures*() as
     // closely as possible, but without requiring a GPU device.
@@ -14867,7 +16323,7 @@ ${exportVars}
         ? (text: string) => measureCtx.measureText(text).width
         : undefined;
 
-      const probe = layoutMarkdownDocument(
+      const probe = uiDocumentPack.layoutMarkdownDocument(
         nodes,
         { x: 0, y: 0, width: probeWidthPx, height: heightPx },
         {

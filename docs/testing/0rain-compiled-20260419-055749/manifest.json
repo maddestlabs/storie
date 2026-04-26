@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "sourcePath": "docs/demos/0rain.md",
+  "target": "web",
+  "portabilityProfile": "js",
+  "generatedAt": "2026-04-19T05:58:05.798Z",
+  "documentName": "0RAIN",
+  "capabilityPacks": [
+    "audio",
+    "blobs",
+    "gui",
+    "input",
+    "random",
+    "shader",
+    "sys",
+    "terminal",
+    "themes",
+    "ui",
+    "worlds"
+  ],
+  "modules": [],
+  "lifecycleUsage": {
+    "global": 1,
+    "init": 1,
+    "update": 2,
+    "render": 2,
+    "input": 2,
+    "drop": 0,
+    "export": 0,
+    "enter": 32
+  },
+  "assets": {
+    "timedBlocks": 0,
+    "logicBlocks": 0,
+    "blobBlocks": 1,
+    "shaderBlocks": 0
+  },
+  "warnings": [
+    {
+      "code": "CPPORT002",
+      "severity": "warning",
+      "category": "portability",
+      "message": "Portability review: backend-adapter surfaces detected (audio ambient bridge, audio buffer bridge, gui, ui, worlds, shader). These APIs are useful, but they still need stable Storie-level contracts before they should be treated as backend-neutral compile semantics. The new audio.asset/audio.analysis/audio.play handle layer is the preferred migration target for portable audio work."
+    }
+  ]
+}

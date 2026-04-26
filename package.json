@@ -3,15 +3,92 @@
   "version": "2.0.0-alpha.1",
   "description": "S|torie - Interactive story and game engine rebuilt with SES sandboxing and modern web APIs",
   "type": "module",
-  "main": "dist/storie.js",
-  "types": "dist/storie.d.ts",
+  "main": "./dist/main.js",
+  "types": "./dist/main.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/main.d.ts",
+      "import": "./dist/main.js"
+    },
+    "./content-source": {
+      "types": "./dist/content-source.d.ts",
+      "import": "./dist/content-source.js"
+    },
+    "./compile": {
+      "types": "./dist/compile/compile.d.ts",
+      "import": "./dist/compile/compile.js"
+    },
+    "./analyze": {
+      "types": "./dist/compile/analyze.d.ts",
+      "import": "./dist/compile/analyze.js"
+    },
+    "./worlds": {
+      "types": "./dist/worlds.d.ts",
+      "import": "./dist/worlds.js"
+    },
+    "./worlds-content": {
+      "types": "./dist/worlds-content.d.ts",
+      "import": "./dist/worlds-content.js"
+    },
+    "./worlds-timeline": {
+      "types": "./dist/worlds-timeline.d.ts",
+      "import": "./dist/worlds-timeline.js"
+    },
+    "./audio/sfx-graph-document": {
+      "types": "./dist/audio/sfx-graph-document.d.ts",
+      "import": "./dist/audio/sfx-graph-document.js"
+    },
+    "./sequencer/document": {
+      "types": "./dist/sequencer/document.d.ts",
+      "import": "./dist/sequencer/document.js"
+    },
+    "./modules/loader": {
+      "types": "./dist/modules/loader.d.ts",
+      "import": "./dist/modules/loader.js"
+    },
+    "./modules/types": {
+      "types": "./dist/modules/types.d.ts",
+      "import": "./dist/modules/types.js"
+    },
+    "./runtime/audio-pack": {
+      "types": "./dist/runtime/audio-pack.d.ts",
+      "import": "./dist/runtime/audio-pack.js"
+    },
+    "./runtime/capability-api": {
+      "types": "./dist/runtime/capability-api.d.ts",
+      "import": "./dist/runtime/capability-api.js"
+    },
+    "./runtime/authored-tools-pack": {
+      "types": "./dist/runtime/authored-tools-pack.d.ts",
+      "import": "./dist/runtime/authored-tools-pack.js"
+    },
+    "./runtime/gui-pack": {
+      "types": "./dist/runtime/gui-pack.d.ts",
+      "import": "./dist/runtime/gui-pack.js"
+    },
+    "./runtime/text-pack": {
+      "types": "./dist/runtime/text-pack.d.ts",
+      "import": "./dist/runtime/text-pack.js"
+    },
+    "./runtime/ui-document-pack": {
+      "types": "./dist/runtime/ui-document-pack.d.ts",
+      "import": "./dist/runtime/ui-document-pack.js"
+    },
+    "./runtime/webgpu-pack": {
+      "types": "./dist/runtime/webgpu-pack.d.ts",
+      "import": "./dist/runtime/webgpu-pack.js"
+    },
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "dev": "vite",
-    "build": "npm run check:authoring && npm run build:lib && npm run build:site",
+    "build": "npm run check:authoring && npm run build:lib && npm run build:site-runtime && npm run build:site",
     "build:lib": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\" && tsc && vite build",
+    "build:site-runtime": "vite build --config vite.site.config.ts",
     "build:site": "node scripts/build-site.js",
     "check:authoring": "node scripts/check-authored-conditionals.js",
     "compile:app": "npm run build:lib && node scripts/compile-app.js",
+    "validate:app": "npm run build:lib && node scripts/validate-app.js",
     "generate-favicons": "node scripts/generate-favicons.js",
     "preview": "vite preview --outDir docs",
     "typecheck": "tsc --noEmit",

@@ -18,6 +18,14 @@ The main problem is "how do we make Storie scripts depend less on host-language 
 
 This roadmap describes that shift.
 
+The runtime assembly target for that shift is documented in [documentation/MINIMAL_RUNTIME_ARCHITECTURE.md](documentation/MINIMAL_RUNTIME_ARCHITECTURE.md): compiled outputs should contain a tiny kernel plus only the capability packs and modules actually required by the authored source.
+
+The backend-neutral constraints for an eventual Nim/native target are documented in [documentation/NIM_COMPILATION_CONSIDERATIONS.md](documentation/NIM_COMPILATION_CONSIDERATIONS.md). The short version is that JS can remain the current authoring notation and dev runtime, but it must not remain the semantic source of truth.
+
+The current compile warning catalog and migration guidance live in [documentation/COMPILE_WARNING_CODES.md](documentation/COMPILE_WARNING_CODES.md).
+
+The first subsystem-specific portability target is documented in [documentation/AUDIO_PORTABILITY_CONTRACT.md](documentation/AUDIO_PORTABILITY_CONTRACT.md).
+
 ## Architectural Decision
 
 Storie should treat the engine API as the real scripting language.
@@ -127,6 +135,8 @@ The intended end state is:
 - lifecycle behavior is explicit
 - capability use is explicit
 - compilation is a normal execution path, not a special case
+
+This is not only a semantic cleanup. It is what makes app-specific minimal bundles possible. The more authored behavior maps cleanly to Storie semantics, the more aggressively the compiler can omit unused runtime systems.
 
 ## Storie Script Profile v1
 
@@ -649,6 +659,180 @@ The next implementation work should proceed in this order:
 5. split runtime APIs into stable capability packs
 
 This keeps the project moving toward a simpler scripting engine, a stronger API contract, and a realistic path to OS-native compilation.
+
+## Current Repo Gaps
+
+The repository now has enough real compiler and runtime seams that the next work can be described concretely.
+
+### 1. Compilation still stops at scaffold generation
+
+Today the compile path can:
+
+- parse Markdown
+- analyze capabilities and warnings
+- build a manifest
+- generate behavior and runtime scaffold files
+
+But it still stops before runtime assembly.
+
+The missing next step is a real assembly phase that consumes `manifest.capabilityPacks` and emits:
+
+- a kernel import
+- only the required capability-pack imports
+- only the required domain-module imports
+- a runnable app bundle instead of a host-dependent scaffold
+
+Until that exists, compile mode is still mostly a diagnostic and codegen path rather than a true minimal-binary path.
+
+### 2. The generated runtime still depends on a broad ambient API
+
+The current generated runtime no longer depends only on an unstructured ambient API object, but it still depends on host-provided capability adapters for meaningful parts of execution.
+
+Today the generated scaffold can already forward explicit seams such as:
+
+- `audioContextRuntime`
+- `audioAssetDecoder`
+- `audioBufferFactory`
+- `audioExportCapture`
+- `stfxrDocumentStore`
+- `stfxrBakedStore`
+
+That is real progress because remaining host ownership is now partly named and compile-visible instead of hidden behind one giant engine object.
+
+What is still missing is the actual assembly step that can satisfy more of those seams from imported runtime packs or a smaller compiled host instead of the current development engine.
+
+The concrete next change here is:
+
+- keep replacing broad generated API assumptions with pack-scoped adapters and explicit runtime options
+- make each compiled app import or construct only the adapters named in its manifest
+- stop treating the compatibility-shaped API object as the compiled contract
+
+### 3. Development mode still injects too much by default
+
+The sandbox currently constructs a large ambient API surface for authored documents. That remains useful for compatibility and iteration, but it keeps the dev runtime semantically wider than the compile target.
+
+The next modularization step should be to let document loading in development mode become increasingly capability-aware:
+
+- derive allowed capabilities from compile analysis and frontmatter
+- inject only the packs a document needs when possible
+- keep the current broad projection as a compatibility fallback, not the default semantic model
+
+This is important because minimal compilation will stay fragile if development keeps normalizing access to everything.
+
+### 4. Capability packs exist, but they are not yet the final packaging boundaries
+
+There are already useful runtime pack seams in the engine, but they are still incomplete and somewhat coarse.
+
+Remaining work includes:
+
+- define the kernel as code, not only as documentation
+- split large mixed packs where needed
+- make pack dependencies explicit and machine-readable
+- add stable package/build entrypoints per pack
+
+Examples of likely follow-up work:
+
+- keep `worlds` separate from generic `shader` and generic `webgpu` concerns
+- keep `gui` separate from document-layout helpers unless required together
+- avoid treating "lazy loaded in engine" as equivalent to "omittable from compiled output"
+
+### 5. The engine is still the development host, not the compiled kernel
+
+The current `StorieEngine` still centralizes rendering setup, sandboxing, module loading, capability bridging, and feature installation.
+
+That is workable for dev mode, but compiled minimal apps need a smaller composition root.
+
+The next structural step is to extract a true compiled kernel responsible only for:
+
+- explicit state storage
+- lifecycle dispatch
+- section navigation
+- capability registration
+- asset lookup
+- deterministic startup and teardown
+
+Everything else should install on top of that kernel as optional packs.
+
+### 6. Capability analysis is still heuristic rather than contractual
+
+The analyzer is already useful, but much of its current detection is based on regex-pattern matching over authored JS.
+
+That is a good bootstrap, not a durable contract.
+
+The next stage should keep moving from regex bootstrap toward declared contracts plus verification.
+
+Some of that transition is already in place. The compiler already accepts and emits compile-visible declarations for:
+
+- required capabilities
+- host permissions
+- document exports and accepts
+- runtime assembly metadata describing pack-constructible surfaces, host-required surfaces, and named host adapters
+
+What is still missing is deeper verification and broader adoption for:
+
+- module dependencies
+- backend restrictions where a feature is intentionally non-portable
+
+### 7. Dynamic module loading is still outside the minimal-bundle model
+
+The current module system remains useful for development and optional runtime integrations, but `modules.load()` still implies runtime discovery rather than compile-time assembly.
+
+For compiled outputs, the preferred direction should be:
+
+- frontmatter or IR-declared module requirements
+- compile-time resolution of allowed modules
+- generated static imports or explicit packaged artifacts
+
+Dynamic module loading can remain in dev mode, but it should not define the minimal export path.
+
+### 8. Document-module contracts still need to become compile-visible
+
+The document composition work is now partly wired into compilation: `exports`, `accepts`, and `hostPermissions` already flow into manifests and generated scaffold output.
+
+The remaining gap is that assembly and composition still do not consume those contracts deeply enough to determine:
+
+- what a document publishes
+- what it consumes
+- which packs it requires
+- which domain modules it expects
+
+Without that, composed apps will keep pulling in too much runtime because the assembly layer cannot trust document boundaries.
+
+### 9. Build outputs still favor the broad compatibility entrypoint
+
+The package exports have improved, but the default library and build flow still center the broad root entrypoint.
+
+The next packaging work should make it normal for generated code and internal consumers to import:
+
+- the compile front end directly
+- capability packs directly
+- kernel/runtime entrypoints directly
+
+The compatibility root can stay, but it should stop being the path that new compile-oriented code reaches for first.
+
+### 10. A proving-ground app should be used as a regression target
+
+`0rain.md` is a good candidate because it exercises exactly the kind of surface that tends to regress during rewrites: content flow, Worlds presentation, GUI, audio mood-setting, and authored behavior.
+
+That makes it useful for two parallel checks:
+
+1. behavior does not regress during modularization
+2. the exported bundle eventually converges toward only the packs that `0rain` actually needs
+
+The goal is not that `0rain` becomes tiny in one step. The goal is that it becomes a stable end-to-end benchmark for whether the architecture is genuinely converging.
+
+## Recommended Near-Term Work Order
+
+Based on the current codebase, the highest-value sequence now looks like this:
+
+1. define the compiled kernel as a real code unit under `src/runtime` or `src/compile-runtime`
+2. continue converting remaining host-backed capability surfaces into either pack-provided behavior or explicit runtime adapter seams
+3. turn capability packs into importable assembly units with explicit dependencies
+4. change generated JS to assemble from manifest imports plus explicit runtime adapters instead of assuming the development host
+5. narrow development-mode API injection around the same capability model
+6. extend compile-visible contracts beyond `requires`, `exports`, `accepts`, and host permissions to include module dependencies and stricter verification
+7. convert dynamic module needs into declared compile-time dependencies wherever possible
+8. use `0rain.md` and one or two smaller demos such as `docs/demos/stfxr.md` as regression fixtures for both behavior and bundle composition
 
 ## Summary
 

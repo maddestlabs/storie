@@ -81,7 +81,8 @@
     import { startStorieApp } from '../bootstrap.js?v=__BUILD_ID__';
 
     startStorieApp({
-      engineModuleUrl: '../storie.es.js?v=__BUILD_ID__',
+      engineModuleUrl: '../storie-site.js?v=__BUILD_ID__',
+      contentSourceModuleUrl: '../content-source.js?v=__BUILD_ID__',
       buildId: '__BUILD_ID__',
       serviceWorker: { url: './sw.js', scope: './' },
       demoBaseUrl: '../demos/',

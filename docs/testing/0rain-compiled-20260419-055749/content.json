@@ -1,0 +1,294 @@
+{
+  "metadata": {
+    "name": "0RAIN",
+    "theme": "zerorain",
+    "requiresAudioGesture": true,
+    "width": 1080,
+    "height": 2400,
+    "shaders": "bloom+zerorain+zerocrt",
+    "font": "AnomalyMono",
+    "fontsize": 28
+  },
+  "sections": [
+    {
+      "id": "0rain-12",
+      "title": "0RAIN",
+      "level": 1,
+      "startLine": 11,
+      "endLine": 26,
+      "children": []
+    },
+    {
+      "id": "h3r-28",
+      "title": "H3R",
+      "level": 1,
+      "startLine": 27,
+      "endLine": 29,
+      "children": []
+    },
+    {
+      "id": "awake-31",
+      "title": "Awake",
+      "level": 1,
+      "startLine": 30,
+      "endLine": 47,
+      "children": []
+    },
+    {
+      "id": "assess-damage-49",
+      "title": "Assess Damage",
+      "level": 1,
+      "startLine": 48,
+      "endLine": 62,
+      "children": []
+    },
+    {
+      "id": "question-location-64",
+      "title": "Question Location",
+      "level": 1,
+      "startLine": 63,
+      "endLine": 77,
+      "children": []
+    },
+    {
+      "id": "meridian-79",
+      "title": "Meridian",
+      "level": 1,
+      "startLine": 78,
+      "endLine": 87,
+      "children": []
+    },
+    {
+      "id": "plan-with-kess-89",
+      "title": "Plan with Kess",
+      "level": 1,
+      "startLine": 88,
+      "endLine": 104,
+      "children": []
+    },
+    {
+      "id": "day-one-106",
+      "title": "Day One",
+      "level": 1,
+      "startLine": 105,
+      "endLine": 120,
+      "children": []
+    },
+    {
+      "id": "day-two-122",
+      "title": "Day Two",
+      "level": 1,
+      "startLine": 121,
+      "endLine": 136,
+      "children": []
+    },
+    {
+      "id": "day-three-138",
+      "title": "Day Three",
+      "level": 1,
+      "startLine": 137,
+      "endLine": 150,
+      "children": []
+    },
+    {
+      "id": "day-four-152",
+      "title": "Day Four",
+      "level": 1,
+      "startLine": 151,
+      "endLine": 166,
+      "children": []
+    },
+    {
+      "id": "cautious-approach-168",
+      "title": "Cautious Approach",
+      "level": 1,
+      "startLine": 167,
+      "endLine": 180,
+      "children": []
+    },
+    {
+      "id": "inside-laundromat-182",
+      "title": "Inside Laundromat",
+      "level": 1,
+      "startLine": 181,
+      "endLine": 197,
+      "children": []
+    },
+    {
+      "id": "maintenance-room-199",
+      "title": "Maintenance Room",
+      "level": 1,
+      "startLine": 198,
+      "endLine": 211,
+      "children": []
+    },
+    {
+      "id": "rest-here-213",
+      "title": "Rest Here",
+      "level": 1,
+      "startLine": 212,
+      "endLine": 229,
+      "children": []
+    },
+    {
+      "id": "city-approach-231",
+      "title": "City Approach",
+      "level": 1,
+      "startLine": 230,
+      "endLine": 247,
+      "children": []
+    },
+    {
+      "id": "city-entrance-249",
+      "title": "City Entrance",
+      "level": 1,
+      "startLine": 248,
+      "endLine": 263,
+      "children": []
+    },
+    {
+      "id": "find-contact-265",
+      "title": "Find Contact",
+      "level": 1,
+      "startLine": 264,
+      "endLine": 281,
+      "children": []
+    },
+    {
+      "id": "marcus-begins-283",
+      "title": "Marcus Begins",
+      "level": 1,
+      "startLine": 282,
+      "endLine": 298,
+      "children": []
+    },
+    {
+      "id": "ask-voice-300",
+      "title": "Ask Voice",
+      "level": 1,
+      "startLine": 299,
+      "endLine": 312,
+      "children": []
+    },
+    {
+      "id": "ask-station-314",
+      "title": "Ask Station",
+      "level": 1,
+      "startLine": 313,
+      "endLine": 328,
+      "children": []
+    },
+    {
+      "id": "sirens-approach-330",
+      "title": "Sirens Approach",
+      "level": 1,
+      "startLine": 329,
+      "endLine": 346,
+      "children": []
+    },
+    {
+      "id": "maintenance-tunnels-348",
+      "title": "Maintenance Tunnels",
+      "level": 1,
+      "startLine": 347,
+      "endLine": 362,
+      "children": []
+    },
+    {
+      "id": "deep-tunnels-364",
+      "title": "Deep Tunnels",
+      "level": 1,
+      "startLine": 363,
+      "endLine": 378,
+      "children": []
+    },
+    {
+      "id": "enter-core-380",
+      "title": "Enter Core",
+      "level": 1,
+      "startLine": 379,
+      "endLine": 396,
+      "children": []
+    },
+    {
+      "id": "who-speaks-398",
+      "title": "Who Speaks",
+      "level": 1,
+      "startLine": 397,
+      "endLine": 415,
+      "children": []
+    },
+    {
+      "id": "trust-figure-417",
+      "title": "Trust Figure",
+      "level": 1,
+      "startLine": 416,
+      "endLine": 433,
+      "children": []
+    },
+    {
+      "id": "ask-administrator-435",
+      "title": "Ask Administrator",
+      "level": 1,
+      "startLine": 434,
+      "endLine": 451,
+      "children": []
+    },
+    {
+      "id": "lift-up-453",
+      "title": "Lift Up",
+      "level": 1,
+      "startLine": 452,
+      "endLine": 471,
+      "children": []
+    },
+    {
+      "id": "station-v-enter-473",
+      "title": "Station V Enter",
+      "level": 1,
+      "startLine": 472,
+      "endLine": 491,
+      "children": []
+    },
+    {
+      "id": "aria-awakens-493",
+      "title": "Aria Awakens",
+      "level": 1,
+      "startLine": 492,
+      "endLine": 511,
+      "children": []
+    },
+    {
+      "id": "aftermath-513",
+      "title": "Aftermath",
+      "level": 1,
+      "startLine": 512,
+      "endLine": 531,
+      "children": []
+    },
+    {
+      "id": "play-533",
+      "title": "Play",
+      "level": 1,
+      "startLine": 532,
+      "endLine": 553,
+      "children": []
+    },
+    {
+      "id": "settings-555",
+      "title": "Settings",
+      "level": 1,
+      "startLine": 554,
+      "endLine": 2477,
+      "children": []
+    }
+  ],
+  "assets": {
+    "timedBlockNames": [],
+    "logicBlockNames": [],
+    "blobNames": [
+      "rain_over_huh"
+    ],
+    "shaderNames": []
+  }
+}

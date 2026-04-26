@@ -101,11 +101,89 @@ export async function parseMarkdown(source: string): Promise<MarkdownDocument> {
     sections,
     codeBlocks,
     metadata,
+    sourceMarkdown: normalizedSource,
     wgslShaders,
     blobBlocks,
     timedBlocks,
     logicBlocks,
   };
+}
+
+function serializeFrontmatterValue(value: any): string {
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'null';
+  if (Array.isArray(value) || (typeof value === 'object' && value !== null)) {
+    return JSON.stringify(value);
+  }
+
+  const text = String(value);
+  if (text.length === 0) return '""';
+  if (/^[A-Za-z0-9._/+:-]+$/.test(text) && !/^(true|false|null|nil|none|~)$/i.test(text)) {
+    return text;
+  }
+  return JSON.stringify(text);
+}
+
+function serializeHeadingDirective(section: Section): string {
+  const directive: Record<string, any> = section.directive ? { ...section.directive } : {};
+  if (section.timedMs !== undefined) {
+    directive.timed = `${section.timedMs}ms`;
+  }
+  const keys = Object.keys(directive);
+  if (keys.length === 0) return '';
+  return ` ${JSON.stringify(directive)}`;
+}
+
+function serializeSectionTree(sections: Section[]): string {
+  const parts: string[] = [];
+
+  const visit = (section: Section) => {
+    const heading = `${'#'.repeat(Math.max(1, Math.min(6, Math.round(section.level || 1))))} ${section.title}${serializeHeadingDirective(section)}`;
+    const body = String(section.content || '').replace(/\s+$/g, '');
+    const children = Array.isArray(section.children) ? section.children : [];
+
+    let chunk = heading;
+    if (body.length > 0) {
+      chunk += `\n\n${body}`;
+    }
+    if (children.length > 0) {
+      const childMarkdown = children.map((child) => {
+        visit(child);
+        return parts.pop() || '';
+      }).filter(Boolean).join('\n\n');
+      if (childMarkdown.length > 0) {
+        chunk += `\n\n${childMarkdown}`;
+      }
+    }
+
+    parts.push(chunk);
+  };
+
+  for (const section of sections) {
+    visit(section);
+  }
+
+  return parts.join('\n\n');
+}
+
+export function serializeMarkdownDocumentSource(document: Pick<MarkdownDocument, 'metadata' | 'sections'>): string {
+  const metadata = document.metadata && typeof document.metadata === 'object' ? document.metadata : {};
+  const sections = Array.isArray(document.sections) ? document.sections : [];
+  const body = serializeSectionTree(sections);
+  const frontmatterKeys = Object.keys(metadata);
+
+  if (frontmatterKeys.length === 0) {
+    return body;
+  }
+
+  const frontmatter = [
+    '---',
+    ...frontmatterKeys.map((key) => `${key}: ${serializeFrontmatterValue(metadata[key])}`),
+    '---',
+  ].join('\n');
+
+  return body.length > 0 ? `${frontmatter}\n\n${body}` : `${frontmatter}\n`;
 }
 
 // ── Heading directive helpers ──────────────────────────────────────────────────

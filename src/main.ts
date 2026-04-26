@@ -9,7 +9,10 @@ export { InputManager } from './input.js';
 export { Canvas2DRenderer } from './renderer.js';
 export { WebGPURenderer } from './webgpu-renderer.js';
 export { compileMarkdownApp } from './compile/compile.js';
+export { validateMarkdownApp } from './compile/compile.js';
+export { CompilePolicyError } from './compile/compile.js';
 export { analyzeMarkdownDocument } from './compile/analyze.js';
+export { parseMarkdownContentReference, resolveMarkdownSource } from './content-source.js';
 export { parseMarkdown, findSection, flattenSections } from './markdown.js';
 export { getTheme, applyTheme, getAvailableThemes, THEMES } from './themes.js';
 export { ModuleLoader } from './modules/loader.js';
@@ -59,16 +62,19 @@ export {
 
 export type {
   CompileTarget,
+  CompilePortabilityProfile,
   CompileCapabilityName,
   CompileLifecycleHook,
   CompileAppIR,
   CompileBehaviorBlock,
   CompileSectionNode,
+  CompileWarning,
+  CompileWarningSeverity,
+  CompileWarningCategory,
 } from './compile/ir.js';
 
 export type {
   CompileManifest,
-  CompileWarning,
   CompileManifestLifecycleUsage,
   CompileManifestAssetSummary,
 } from './compile/manifest.js';
@@ -80,7 +86,15 @@ export type {
 export type {
   CompileMarkdownAppOptions,
   CompiledMarkdownApp,
+  ValidatedMarkdownApp,
 } from './compile/compile.js';
+
+export type {
+  MarkdownContentSourceKind,
+  ParsedMarkdownContentReference,
+  ResolvedMarkdownSource,
+  ResolveMarkdownSourceOptions,
+} from './content-source.js';
 
 export type {
   Color,
@@ -93,6 +107,8 @@ export type {
   UserScript,
   InputState,
   InputEvent,
+  AudioAssetHandle,
+  AudioVoiceHandle,
   ThemeColors,
   ThemeStyleSheet,
   NamedStyle

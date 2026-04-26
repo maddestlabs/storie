@@ -513,7 +513,7 @@ import type {
   Camera3D,
   Section3DLayout,
   WorldsConfig
-} from 'storie';
+} from 'storie/worlds';
 
 // Example
 const defaults: Partial<WorldsConfig> = {
@@ -526,5 +526,7 @@ const defaults: Partial<WorldsConfig> = {
   sectionBorderWidth: 2
 };
 ```
+
+The root `storie` entry still re-exports these types, but `storie/worlds` avoids routing type-only or helper imports through the broader package entry surface.
 
 See [worlds-types.ts](../src/worlds-types.ts) for full type definitions.

@@ -2,13 +2,23 @@ import type { MarkdownDocument, Section } from '../types.js';
 import { parseMarkdown } from '../markdown.js';
 import { analyzeMarkdownDocument } from './analyze.js';
 import { generateCompileScaffold, type GeneratedCompileFile } from './generate-js.js';
-import type { CompileAppIR, CompileBehaviorBlock, CompileGlobalBinding, CompileTarget } from './ir.js';
+import type { CompileAppIR, CompileBehaviorBlock, CompileGlobalBinding, CompilePortabilityProfile, CompileTarget, CompileWarning } from './ir.js';
 import { sectionTreeToCompileNodes } from './ir.js';
 import type { CompileManifest } from './manifest.js';
+import {
+  CAPABILITY_RUNTIME_PACK_IMPORTS,
+  collectCapabilityAssemblyStatus,
+  collectCapabilityApiNames,
+  collectCapabilityHostAdapters,
+  collectCapabilitySurfaceDetails,
+  collectHostRequiredApiNames,
+  collectRuntimePackConstructibleApiNames,
+} from '../runtime/capability-api.js';
 
 export interface CompileMarkdownAppOptions {
   sourcePath?: string;
   target?: CompileTarget;
+  portabilityProfile?: CompilePortabilityProfile;
 }
 
 export interface CompiledMarkdownApp {
@@ -18,9 +28,59 @@ export interface CompiledMarkdownApp {
   files: GeneratedCompileFile[];
 }
 
+export interface ValidatedMarkdownApp {
+  document: MarkdownDocument;
+  analysis: ReturnType<typeof analyzeMarkdownDocument>;
+  portabilityProfile: CompilePortabilityProfile;
+  blockingWarnings: CompileWarning[];
+  ok: boolean;
+}
+
+export class CompilePolicyError extends Error {
+  readonly profile: CompilePortabilityProfile;
+  readonly warnings: CompileWarning[];
+
+  constructor(profile: CompilePortabilityProfile, warnings: CompileWarning[]) {
+    const summary = warnings.map((warning) => `${warning.code}: ${warning.message}`).join(' | ');
+    super(`Compilation failed for portability profile "${profile}" due to policy violations: ${summary}`);
+    this.name = 'CompilePolicyError';
+    this.profile = profile;
+    this.warnings = warnings;
+  }
+}
+
 function normalizeSourcePath(sourcePath?: string): string {
   const normalized = String(sourcePath ?? 'document.md').trim();
   return normalized || 'document.md';
+}
+
+function normalizePortabilityProfile(profile?: CompilePortabilityProfile): CompilePortabilityProfile {
+  const normalized = String(profile ?? 'js').trim().toLowerCase();
+  switch (normalized) {
+    case 'portable':
+      return 'portable';
+    case 'nim':
+      return 'nim';
+    default:
+      return 'js';
+  }
+}
+
+function shouldFailWarningForProfile(profile: CompilePortabilityProfile, warning: CompileWarning): boolean {
+  if (profile === 'js') return false;
+  if (profile === 'portable') return warning.severity === 'error';
+  return warning.severity === 'error' || warning.category === 'portability';
+}
+
+function enforceCompilePolicy(profile: CompilePortabilityProfile, warnings: CompileWarning[]): void {
+  const blockingWarnings = warnings.filter((warning) => shouldFailWarningForProfile(profile, warning));
+  if (blockingWarnings.length > 0) {
+    throw new CompilePolicyError(profile, blockingWarnings);
+  }
+}
+
+function collectBlockingWarnings(profile: CompilePortabilityProfile, warnings: CompileWarning[]): CompileWarning[] {
+  return warnings.filter((warning) => shouldFailWarningForProfile(profile, warning));
 }
 
 function findSectionForLine(sections: Section[], line: number): string | null {
@@ -156,6 +216,27 @@ function collectGlobalBindings(blocks: CompileBehaviorBlock[]): CompileGlobalBin
     .map(([name, kind]) => ({ name, kind }));
 }
 
+function normalizeStringList(rawValue: unknown): string[] {
+  if (Array.isArray(rawValue)) {
+    return rawValue.map((value) => String(value).trim()).filter(Boolean);
+  }
+  if (rawValue === undefined || rawValue === null) return [];
+  const text = String(rawValue).trim();
+  if (!text) return [];
+  if (text.includes(',')) {
+    return text.split(',').map((value) => value.trim()).filter(Boolean);
+  }
+  return [text];
+}
+
+function extractDocumentContract(metadata: Record<string, unknown>) {
+  return {
+    exports: normalizeStringList(metadata.exports),
+    accepts: normalizeStringList(metadata.accepts),
+    hostPermissions: normalizeStringList(metadata.hostPermissions ?? metadata.permissions),
+  };
+}
+
 function buildBehaviorBlocks(document: MarkdownDocument): CompileBehaviorBlock[] {
   let index = 0;
   return document.codeBlocks
@@ -175,20 +256,33 @@ function buildBehaviorBlocks(document: MarkdownDocument): CompileBehaviorBlock[]
     });
 }
 
-function createManifest(app: CompileAppIR, sourcePath: string): CompileManifest {
-  const analysisWarnings = app.capability.warnings.map((message, index) => ({
-    code: `W${index + 1}`,
-    message,
-  }));
+function createManifest(app: CompileAppIR, sourcePath: string, portabilityProfile: CompilePortabilityProfile): CompileManifest {
+  const documentContract = extractDocumentContract(app.content.metadata);
+  const capabilityPacks = app.capability.capabilities;
+  const runtimePackImports = capabilityPacks.reduce<Record<string, string[]>>((acc, capability) => {
+    acc[capability] = [...(CAPABILITY_RUNTIME_PACK_IMPORTS[capability] ?? [])];
+    return acc;
+  }, {});
 
   return {
     version: 1,
     sourcePath,
     target: app.target,
+    portabilityProfile,
     generatedAt: new Date().toISOString(),
     documentName: String(app.content.metadata.name ?? sourcePath),
-    capabilityPacks: app.capability.capabilities,
+    capabilityPacks,
     modules: app.capability.modules,
+    documentContract,
+    runtimeAssembly: {
+      apiSurface: collectCapabilityApiNames(capabilityPacks),
+      runtimePackConstructibleApi: collectRuntimePackConstructibleApiNames(capabilityPacks),
+      hostRequiredApi: collectHostRequiredApiNames(capabilityPacks),
+      capabilityStatus: collectCapabilityAssemblyStatus(capabilityPacks),
+      capabilitySurfaceDetails: collectCapabilitySurfaceDetails(capabilityPacks),
+      capabilityHostAdapters: collectCapabilityHostAdapters(capabilityPacks),
+      runtimePackImports,
+    },
     lifecycleUsage: {
       global: app.behavior.blocks.filter((block) => block.hook === 'global').length,
       init: app.behavior.blocks.filter((block) => block.hook === 'init').length,
@@ -205,15 +299,34 @@ function createManifest(app: CompileAppIR, sourcePath: string): CompileManifest 
       blobBlocks: app.assets.blobNames.length,
       shaderBlocks: app.assets.shaderNames.length,
     },
-    warnings: analysisWarnings,
+    warnings: app.capability.warnings,
+  };
+}
+
+export async function validateMarkdownApp(markdown: string, options: CompileMarkdownAppOptions = {}): Promise<ValidatedMarkdownApp> {
+  const portabilityProfile = normalizePortabilityProfile(options.portabilityProfile);
+  const document = await parseMarkdown(markdown);
+  const analysis = analyzeMarkdownDocument(document);
+  const blockingWarnings = collectBlockingWarnings(portabilityProfile, analysis.warnings);
+
+  return {
+    document,
+    analysis,
+    portabilityProfile,
+    blockingWarnings,
+    ok: blockingWarnings.length === 0,
   };
 }
 
 export async function compileMarkdownApp(markdown: string, options: CompileMarkdownAppOptions = {}): Promise<CompiledMarkdownApp> {
   const sourcePath = normalizeSourcePath(options.sourcePath);
   const target = options.target ?? 'web';
-  const document = await parseMarkdown(markdown);
-  const analysis = analyzeMarkdownDocument(document);
+  const validation = await validateMarkdownApp(markdown, options);
+  const portabilityProfile = validation.portabilityProfile;
+  const document = validation.document;
+  const analysis = validation.analysis;
+
+  enforceCompilePolicy(portabilityProfile, analysis.warnings);
 
   const app: CompileAppIR = {
     target,
@@ -242,7 +355,7 @@ export async function compileMarkdownApp(markdown: string, options: CompileMarkd
 
   app.behavior.globalBindings = collectGlobalBindings(app.behavior.blocks);
 
-  const manifest = createManifest(app, sourcePath);
+  const manifest = createManifest(app, sourcePath, portabilityProfile);
   const files = generateCompileScaffold(app, manifest);
 
   return {
